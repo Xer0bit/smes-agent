@@ -1,0 +1,180 @@
+import { useState } from "react";
+import { ChevronRight, ChevronDown, Search, X } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
+
+interface FileNode {
+  name: string;
+  path: string;
+  type: 'file' | 'folder';
+  children?: FileNode[];
+}
+
+interface FileTreeProps {
+  files: Array<{ path: string; content: string }>;
+  selectedFile: string | null;
+  onFileSelect: (path: string) => void;
+}
+
+function fileColor(name: string): string {
+  if (name.endsWith('.tsx') || name.endsWith('.jsx')) return 'text-cyan-400/80';
+  if (name.endsWith('.ts') || name.endsWith('.js')) return 'text-yellow-400/70';
+  if (name.endsWith('.css') || name.endsWith('.scss')) return 'text-blue-400/70';
+  if (name.endsWith('.json')) return 'text-amber-400/70';
+  if (name.endsWith('.html')) return 'text-orange-400/70';
+  if (name.endsWith('.svg')) return 'text-green-400/60';
+  return 'text-white/30';
+}
+
+function FileIcon({ name }: { name: string }) {
+  const color = fileColor(name);
+  return (
+    <span className={cn("inline-flex flex-shrink-0", color)} style={{ width: 12, height: 12 }}>
+      <svg viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+        <rect x="1.5" y="0.5" width="7" height="9" rx="0.75" stroke="currentColor" strokeWidth="1" fill="none"/>
+        <path d="M7 0.5v2.5h2.5" stroke="currentColor" strokeWidth="1" fill="none"/>
+      </svg>
+    </span>
+  );
+}
+
+export const FileTree = ({ files, selectedFile, onFileSelect }: FileTreeProps) => {
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    new Set(['src', 'src/components', 'src/pages'])
+  );
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
+
+  const buildTree = (files: Array<{ path: string; content: string }>): FileNode => {
+    const root: FileNode = { name: 'root', path: '', type: 'folder', children: [] };
+    files.forEach((file) => {
+      const parts = file.path.split('/');
+      let current = root;
+      parts.forEach((part, index) => {
+        const isFile = index === parts.length - 1;
+        const currentPath = parts.slice(0, index + 1).join('/');
+        if (!current.children) current.children = [];
+        let child = current.children.find((c) => c.name === part);
+        if (!child) {
+          child = {
+            name: part,
+            path: currentPath,
+            type: isFile ? 'file' : 'folder',
+            children: isFile ? undefined : [],
+          };
+          current.children.push(child);
+        }
+        if (!isFile) current = child;
+      });
+    });
+    const sortNodes = (nodes: FileNode[]) => {
+      nodes.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      nodes.forEach((node) => { if (node.children) sortNodes(node.children); });
+    };
+    if (root.children) sortNodes(root.children);
+    return root;
+  };
+
+  const toggleFolder = (path: string) => {
+    const next = new Set(expandedFolders);
+    next.has(path) ? next.delete(path) : next.add(path);
+    setExpandedFolders(next);
+  };
+
+  const filteredFiles = searchQuery
+    ? files.filter((f) => f.path.toLowerCase().includes(searchQuery.toLowerCase()))
+    : files;
+
+  const tree = buildTree(filteredFiles);
+
+  const renderNode = (node: FileNode, level: number = 0): JSX.Element | null => {
+    if (node.name === 'root') {
+      return <>{node.children?.map((child) => renderNode(child, level))}</>;
+    }
+
+    const isExpanded = expandedFolders.has(node.path);
+    const isSelected = selectedFile === node.path;
+    const indent = level * 10 + 8;
+
+    if (node.type === 'folder') {
+      return (
+        <div key={node.path}>
+          <div
+            className={cn(
+              "flex items-center gap-[3px] h-[20px] cursor-pointer select-none text-[11px]",
+              "text-white/45 hover:text-white/75 hover:bg-white/[0.04]",
+              isSelected && "bg-white/[0.07] text-white/80"
+            )}
+            style={{ paddingLeft: `${indent}px` }}
+            onClick={() => toggleFolder(node.path)}
+          >
+            {isExpanded
+              ? <ChevronDown className="w-[10px] h-[10px] flex-shrink-0 opacity-60" />
+              : <ChevronRight className="w-[10px] h-[10px] flex-shrink-0 opacity-60" />
+            }
+            <span className="ml-0.5 truncate">{node.name}</span>
+          </div>
+          {isExpanded && node.children && (
+            <div>{node.children.map((child) => renderNode(child, level + 1))}</div>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div
+        key={node.path}
+        className={cn(
+          "flex items-center gap-[5px] h-[20px] cursor-pointer select-none text-[11px]",
+          "text-white/45 hover:text-white/75 hover:bg-white/[0.04]",
+          isSelected && "bg-cyan-500/10 text-white/85 hover:bg-cyan-500/10"
+        )}
+        style={{ paddingLeft: `${indent + 14}px` }}
+        onClick={() => onFileSelect(node.path)}
+      >
+        <FileIcon name={node.name} />
+        <span className="truncate">{node.name}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex h-full flex-col bg-[#0b0b0d]">
+      {/* Compact header row */}
+      <div className="flex items-center justify-between px-2.5 h-[26px] border-b border-white/[0.04] flex-shrink-0">
+        <span className="text-[9px] font-semibold uppercase tracking-[0.1em] text-white/25">Files</span>
+        <button
+          onClick={() => { setShowSearch(s => !s); if (showSearch) setSearchQuery(''); }}
+          className="p-0.5 rounded hover:bg-white/10 text-white/25 hover:text-white/60 transition-colors"
+        >
+          {showSearch ? <X className="w-[10px] h-[10px]" /> : <Search className="w-[10px] h-[10px]" />}
+        </button>
+      </div>
+
+      {showSearch && (
+        <div className="px-2 py-1 flex-shrink-0 border-b border-white/[0.04]">
+          <input
+            autoFocus
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Filter…"
+            className="w-full h-[20px] px-2 text-[10px] bg-white/5 border border-white/10 rounded text-white/70 placeholder-white/20 outline-none focus:border-white/20 font-mono"
+          />
+        </div>
+      )}
+
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="py-0.5">
+          {filteredFiles.length === 0 ? (
+            <div className="px-4 py-3 text-[10px] text-white/20">No files match.</div>
+          ) : (
+            renderNode(tree)
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+};

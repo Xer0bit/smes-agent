@@ -1,0 +1,63 @@
+# =============================================================================
+# docker-compose.dev.yml — LOCAL DEV: Preview Service only
+# =============================================================================
+# Frontend  → runs on HOST:  npm run dev          (http://localhost:8080)
+# Preview   → runs in Docker: docker compose -f docker-compose.dev.yml up
+# Hosting   → runs in Docker: or standalone:  cd hosting-service && npm run dev
+# Agent     → runs on HOST:  cd server && npm run dev
+# Supabase  → runs in Docker: supabase start      (http://localhost:54321)
+#
+# Quickstart:  ./start-dev.sh
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Preview Service — per-project Vite sandboxes
+  # ---------------------------------------------------------------------------
+  preview-service:
+    build:
+      context: ./preview-service
+    container_name: ecg-preview-dev
+    ports:
+      - "3001:3001"
+      - "24679:24679"   # Vite HMR WebSocket port for preview sandboxes
+    volumes:
+      - ./preview-data:/app/projects
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Hosting Service — local dev (no Caddy, file-based, auto-verify DNS)
+  # ---------------------------------------------------------------------------
+  hosting-service:
+    build:
+      context: ./hosting-service
+    container_name: ecomgear-hosting-dev
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./hosting-data:/app/.local-sites
+    environment:
+      - NODE_ENV=development
+      - HOSTING_PORT=4000
+      - HOSTING_PUBLIC_IP=127.0.0.1
+      - HOSTING_NODE_NAME=local-dev
+      - DEFAULT_DOMAIN=localhost.test
+      - SITES_ROOT=/app/.local-sites
+      - CADDY_CONFIG_DIR=/app/.local-caddy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:4000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

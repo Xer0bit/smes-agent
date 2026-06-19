@@ -1,0 +1,123 @@
+project_id = "zurneeqpussrefamhtoq"
+
+[functions.chat-with-agent]
+verify_jwt = false
+
+[functions.agent-with-tools]
+verify_jwt = false
+
+[functions.build-preview]
+verify_jwt = false
+
+[functions.parse-file]
+verify_jwt = false
+
+[functions.revision-generate-app]
+verify_jwt = false
+
+[functions.debug-sandbox]
+verify_jwt = false
+
+[functions.batch-validate-revisions]
+verify_jwt = false
+
+[functions.syntax-preflight]
+verify_jwt = false
+
+[functions.serve-preview]
+verify_jwt = false
+
+[functions.deploy-cloudflare]
+verify_jwt = false
+
+[functions.test-deploy]
+verify_jwt = false
+
+[functions.generate-agent-summary]
+verify_jwt = false
+
+[functions.create-ai-agent]
+verify_jwt = false
+
+[functions.get-billing-info]
+verify_jwt = false
+
+[functions.calculate-monthly-cost]
+verify_jwt = false
+
+[functions.org-create-checkout]
+verify_jwt = false
+
+[functions.org-customer-portal]
+verify_jwt = false
+
+[functions.org-setup-payment]
+verify_jwt = false
+
+[functions.signup-complete]
+verify_jwt = false
+
+[functions.confirm-email]
+verify_jwt = false
+
+[functions.welcome]
+verify_jwt = false
+
+[functions.password-reset]
+verify_jwt = false
+
+[functions.quota-alert]
+verify_jwt = false
+
+[functions.project-invitation]
+verify_jwt = false
+
+[functions.org-invitation]
+verify_jwt = false
+
+[functions.revision-create-project]
+verify_jwt = false
+
+[functions.bundle-files]
+verify_jwt = false
+
+[functions.check-subscription]
+verify_jwt = false
+
+[functions.cleanup-orphaned-projects]
+verify_jwt = false
+
+[functions.create-checkout]
+verify_jwt = false
+
+[functions.customer-portal]
+verify_jwt = false
+
+[functions.generate-invoice]
+verify_jwt = false
+
+[functions.process-job]
+verify_jwt = false
+
+[functions.track-referral]
+verify_jwt = false
+
+[functions.admin-delete-user]
+verify_jwt = false
+
+[analytics]
+enabled = false
+
+[storage]
+enabled = true
+
+[auth]
+enabled = true
+site_url = "https://www.ecomgear.dev"
+additional_redirect_urls = ["https://www.ecomgear.dev/auth/callback", "https://ecomgear.dev/auth/callback", "http://localhost:8080/auth/callback", "http://localhost:3000/auth/callback"]
+
+[auth.external.google]
+enabled = true
+client_id = "env(GOOGLE_CLIENT_ID)"
+secret = "env(GOOGLE_CLIENT_SECRET)"
+redirect_uri = "https://api.ecomgear.dev/auth/v1/callback"

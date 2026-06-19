@@ -1,0 +1,109 @@
+{
+  "auth": {
+    "welcome": "Welcome to eComGear",
+    "subtitle": "Sign in to your account or create a new one",
+    "backToHome": "Back to Home",
+    "email": "Email",
+    "password": "Password",
+    "fullName": "Full Name",
+    "fullNamePlaceholder": "John Doe",
+    "organizationName": "Organization Name",
+    "organizationPlaceholder": "My Company",
+    "projectName": "Project Name",
+    "projectPlaceholder": "My First Project",
+    "confirmPassword": "Confirm Password",
+    "passwordHint": "Min 10 characters, must include uppercase, lowercase, and number",
+    "orContinueWith": "Or continue with",
+    "validationError": "Validation Error",
+    "login": {
+      "title": "Login",
+      "submit": "Sign In",
+      "success": "Login Successful",
+      "welcomeBack": "Welcome back!",
+      "error": "Login Failed",
+      "invalidCredentials": "Invalid email or password"
+    },
+    "signup": {
+      "title": "Sign Up",
+      "submit": "Create Account",
+      "success": "Account Created",
+      "accountCreated": "Your account has been created successfully!",
+      "checkEmail": "Check Your Email",
+      "verificationSent": "A verification link has been sent to your email",
+      "error": "Sign Up Failed",
+      "emailExists": "An account with this email already exists"
+    }
+  },
+  "loginDialog": {
+    "description": "Choose how you'd like to sign in to eComGear",
+    "login": "Log In",
+    "signup": "Sign Up",
+    "socialLogin": "Or use social login"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "welcome": "Welcome",
+    "subtitle": "Manage your organizations, projects, and profile",
+    "logout": "Logout",
+    "organizations": "Organizations",
+    "organizationsDesc": "View and manage your organizations",
+    "viewOrganizations": "View Organizations",
+    "projects": "Projects",
+    "projectsDesc": "Access your projects across all organizations",
+    "viewProjects": "View Projects",
+    "profile": "Profile",
+    "profileDesc": "Update your profile information",
+    "editProfile": "Edit Profile",
+    "home": "Home",
+    "settings": "Settings",
+    "navigation": "Navigation"
+  },
+  "admin": {
+    "title": "eComGear Admin",
+    "dashboard": "Dashboard",
+    "organizations": "Organizations",
+    "projects": "Projects",
+    "users": "Users",
+    "usage": "Usage Tracking",
+    "settings": "Settings",
+    "logout": "Logout",
+    "login": {
+      "title": "Admin Login",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Sign In",
+      "error": "Invalid credentials"
+    },
+    "stats": {
+      "totalOrgs": "Total Organizations",
+      "totalProjects": "Total Projects",
+      "totalUsers": "Total Users",
+      "activeProjects": "Active Projects"
+    },
+    "org": {
+      "create": "Create Organization",
+      "name": "Organization Name",
+      "maxUsers": "Max Users",
+      "status": "Status",
+      "actions": "Actions",
+      "edit": "Edit",
+      "delete": "Delete",
+      "approve": "Approve",
+      "suspend": "Suspend"
+    },
+    "project": {
+      "name": "Project Name",
+      "organization": "Organization",
+      "status": "Status",
+      "createdAt": "Created At",
+      "actions": "Actions"
+    },
+    "user": {
+      "email": "Email",
+      "name": "Full Name",
+      "role": "Role",
+      "createdAt": "Created At",
+      "impersonate": "Impersonate"
+    }
+  }
+}

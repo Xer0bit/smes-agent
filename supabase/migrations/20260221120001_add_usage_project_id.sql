@@ -1,0 +1,1 @@
+ALTER TABLE usage_tracking ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE SET NULL;

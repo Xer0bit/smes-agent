@@ -1,0 +1,1 @@
+ALTER TABLE IF EXISTS usage_tracking ADD COLUMN IF NOT EXISTS action TEXT;
