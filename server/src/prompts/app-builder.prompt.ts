@@ -80,6 +80,8 @@ This is the single most important rule in this prompt.
 
 **In BUILD mode: your response MUST begin with a tool call. Text before the first tool call is FORBIDDEN.**
 
+**Exception — Requirement Gathering only:** When proposing a spec for a new/empty project (steps 1–4 of Requirement Gathering), you MAY respond with text after calling \`think\`. Call \`think\` first, then write your spec text. This is the ONLY case where text follows a tool call without another tool call after it.
+
 The pattern that DESTROYS builds and wastes user money:
 ❌ WRONG — announcing then narrating:
   "Now I'll build all 5 pages. Starting with the Home page..."
@@ -210,12 +212,11 @@ When a build requires 5 or more new files, you MUST chunk the work. You have a h
 
 ## Installing npm Packages
 
-Use the \`run_command\` tool to install or remove npm packages during a build:
-- \`run_command("npm install framer-motion")\` — install a package
-- \`run_command("npm install react-hook-form zod")\` — install multiple packages at once
-- \`run_command("npm uninstall some-package")\` — remove a package
+Use \`<ecomgear-add-dependency packages="pkg1 pkg2">\` to declare npm packages. They are installed automatically after your response — you do NOT need to run any install command. There is NO \`run_command\` tool.
 
-Call \`run_command\` immediately when you discover a dependency is missing — before writing the file that needs it. Do NOT use \`<ecomgear-add-dependency>\` XML tags — those are deprecated. Use \`run_command\` directly.
+- Check "Pre-installed Packages" first — many common packages are already available.
+- Declare only what is actually missing.
+- After declaring a dependency, you MAY see "Module not found" from \`get_build_errors\` — this is expected while the package is installing. IGNORE those errors and do not remove the imports.
 
 ## edit_file Syntax Guard
 The \`edit_file\` tool validates bracket/paren balance AFTER applying your edit. If your replacement text is incomplete or matches the wrong section, the edit will be REJECTED and the file will NOT be written.
@@ -264,7 +265,7 @@ Before writing \`import { X } from './SomeFile'\`:
 **Every token costs real money. The user watches you in real time. Be efficient.**
 
 ## Hard Limits
-- \`get_build_errors\`: MAX 4 calls per response
+- \`get_build_errors\`: MAX 3 calls per response
 - Total tool calls: MAX 40 steps (system hard-stops at 40 regardless)
 - Same file rewrites: MAX 2. After that, full rewrite with \`write_file\` then STOP.
 - Same error twice → \`write_file\` full rewrite (not patches)
@@ -433,7 +434,7 @@ Procedure:
 2. **Call \`get_build_errors\`** — If clean → done.
 3. If errors → identify the root file, REWRITE it completely with \`write_file\`, call \`get_build_errors\` again.
 4. If same error persists → your mental model is wrong. Call \`read_file\` + \`list_files\` to check actual state, then rewrite.
-5. **MAX 4 calls to \`get_build_errors\`** per response. After 4 → stop.
+5. **MAX 3 calls to \`get_build_errors\`** per response. After 3 → stop.
 6. If \`get_build_errors\` returns HTTP error (400/404/500) → NOT a code error. STOP immediately. Files are pushed after you finish.
 
 **CIRCUIT BREAKER**: The system detects repeated identical errors and will tell you to STOP. When you see "CIRCUIT BREAKER" in a \`get_build_errors\` response, obey it immediately — rewrite the file ONE final time, then stop.
@@ -991,6 +992,16 @@ function stripSections(prompt: string, ...titles: string[]): string {
   return result;
 }
 
+/** Strip `## SubSection` blocks by exact title (stops at next `## ` or `# ` heading). */
+function stripSubSections(prompt: string, ...titles: string[]): string {
+  let result = prompt;
+  for (const title of titles) {
+    const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(new RegExp(`\\n## ${escaped}[\\s\\S]*?(?=\\n## |\\n# |$)`), '');
+  }
+  return result;
+}
+
 /** Returns the system prompt for build mode, stripping unused sections based on options. */
 export function getAppBuilderBuildSystemPrompt(options?: AppBuilderBuildOptions): string {
   const toStrip: string[] = [];
@@ -1054,12 +1065,56 @@ TOOL FORMAT for writes:
  * ~1.2K tokens — strips everything except core rules + error-fix guidance.
  */
 export function getFixSystemPrompt(): string {
-  return stripSections(
+  // Keep 'Starting a New Project' because it contains the pre-built shadcn/ui component
+  // manifest and installed package list — without it, the agent uses wrong import paths
+  // and tries to recreate already-existing components, which is the #1 cause of fix loops.
+  const base = stripSections(
     APP_BUILDER_SYSTEM_PROMPT,
     'Design Philosophy (MANDATORY — apply to every pixel you produce)',
     'Requirement Gathering',
-    'Starting a New Project (MANDATORY)',
     'SEO (MANDATORY — auto-run after every website build)',
     'Integration And Database Guidance',
+    'Reference Screenshots (CRITICAL — never embed)',
+  );
+  // Strip new-project-specific subsections only (keep component manifest + build order)
+  return stripSubSections(
+    base,
+    'For NEW projects (no existing pages):',
+    'Large Build Chunking (MANDATORY for 5+ files)',
+  );
+}
+
+/**
+ * Compact prompt for edit tier (changes to existing projects — 80% of runs).
+ *
+ * Strips ONLY sections that are genuinely irrelevant for editing existing code:
+ *   - Design Philosophy    (aesthetic principles for new builds)
+ *   - Requirement Gathering (only needed when gathering specs for new projects)
+ *   - SEO                  (only needed after a full website build)
+ *   - Integration / DB      (only when the user asks for API/DB work)
+ *   - Reference Screenshots (rule about NOT embedding screenshots — rarely applies)
+ *
+ * KEPT (these cause errors when missing):
+ *   - File Registry Protocol  → cross-import verification checklist (#1 source of import errors)
+ *   - Starting a New Project  → pre-built shadcn/ui manifest + installed package list
+ *   - App Preview / Commands  → rebuild/restart/refresh buttons
+ *   - Guidelines              → <ecomgear-chat-summary> tag + behavioral rules
+ */
+export function getEditSystemPrompt(): string {
+  const base = stripSections(
+    APP_BUILDER_SYSTEM_PROMPT,
+    'Design Philosophy (MANDATORY — apply to every pixel you produce)',
+    'Requirement Gathering',
+    'SEO (MANDATORY — auto-run after every website build)',
+    'Integration And Database Guidance',
+    'Reference Screenshots (CRITICAL — never embed)',
+  );
+  // Strip new-project / large-build sub-sections inside Starting a New Project
+  // but leave the component manifest + build order intact.
+  return stripSubSections(
+    base,
+    'For NEW projects (no existing pages):',
+    'Large Build Chunking (MANDATORY for 5+ files)',
+    'Hosted database (paid plans only):',
   );
 }

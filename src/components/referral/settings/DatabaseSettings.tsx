@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Database, Copy, Trash2, Zap, Lock, Table, Terminal, Key, ChevronRight, RefreshCw, Play, AlertCircle, Download, Wifi, WifiOff } from "lucide-react";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useOrganization } from "@/contexts/OrganizationContext";
@@ -22,16 +23,23 @@ interface QueryResult { rows: object[]; fields: string[]; }
 interface PingResult { connected: boolean; latencyMs?: number; error?: string; }
 
 // ── Utils ────────────────────────────────────────────────────────────────────
-async function apiFetch(path: string, opts: RequestInit = {}) {
+async function apiFetch(path: string, opts: RequestInit = {}, timeoutMs = 10_000) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error("Not authenticated");
-  const res = await fetch(getGenServerUrl(`/api/v1/database${path}`), {
-    ...opts,
-    headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json", ...(opts.headers || {}) },
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error || "Request failed");
-  return json;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(getGenServerUrl(`/api/v1/database${path}`), {
+      ...opts,
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json", ...(opts.headers || {}) },
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Request failed");
+    return json;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function CopyButton({ value, label }: { value: string; label?: string }) {
@@ -337,6 +345,8 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
   const [loading, setLoading]             = useState(true);
   const [provisioning, setProvisioning]   = useState(false);
   const [deprovisioning, setDeprovisioning] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [ping, setPing]                   = useState<PingResult | null>(null);
   const [pinging, setPinging]             = useState(false);
   const [syncing, setSyncing]             = useState(false);
@@ -430,7 +440,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
   const handleDeprovision = async () => {
     setDeprovisioning(true);
     try {
-      await apiFetch('/deprovision', { method: 'DELETE' });
+      await apiFetch('/deprovision', { method: 'DELETE' }, 60_000);
       setDb(null); setCreds(null); setTables([]); setSelectedTable(null);
       toast.success("Database removed.");
     } catch (err) { toast.error((err as Error).message); }
@@ -441,7 +451,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
   if (!isPaid) return (
     <div className="space-y-6 w-full max-w-full overflow-hidden">
       <div>
-        <h2 className="text-xl font-semibold mb-1">Hosted Database</h2>
+        <h2 className="text-xl font-semibold mb-1">ECG CLAUDE DB</h2>
         <p className="text-sm text-white/45">Dedicated PostgreSQL database with REST API and agent access</p>
       </div>
       <Card className="bg-[#0f0f12] border-indigo-500/25">
@@ -507,38 +517,38 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
 
   // ── No DB yet ───────────────────────────────────────────────────────────
   if (!db) return (
-    <div className="space-y-6 w-full max-w-full overflow-hidden">
-      <div>
-        <h2 className="text-xl font-semibold mb-1">Hosted Database</h2>
-        <p className="text-sm text-white/45">Dedicated PostgreSQL with REST API, schema browser, and AI agent access</p>
+    <div className="w-full max-w-full overflow-hidden">
+      <div className="mb-5">
+        <h2 className="text-xl font-semibold mb-1">ECG CLAUDE DB</h2>
+        <p className="text-sm text-white/40">Isolated PostgreSQL schema with REST API and AI agent access</p>
       </div>
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Zap className="h-4 w-4 text-primary" />
-            <CardTitle className="text-base">Provision your database</CardTitle>
+      <div className="rounded-xl border border-white/[0.07] bg-[#0f0f12] p-5 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <Database className="h-4 w-4 text-primary" />
           </div>
-          <CardDescription>Get your own isolated schema in seconds.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <ul className="space-y-2 text-sm text-white/45">
-            {["Full REST API via PostgREST — works with Supabase client", "Anon key (read) + service key (full) — agent uses service key", "Schema browser, table viewer, SQL editor — all inside eComGear", "Direct Postgres connection string for any ORM or tool", "Agent can create tables, insert data, run migrations"].map(f => (
-              <li key={f} className="flex items-start gap-2"><span className="text-primary mt-0.5">•</span>{f}</li>
-            ))}
-          </ul>
-          <Button className="w-full" onClick={handleProvision} disabled={provisioning}>
-            <Database className="h-4 w-4 mr-2" />
-            {provisioning ? "Provisioning…" : "Provision Database"}
-          </Button>
-        </CardContent>
-      </Card>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-white/85">No database yet</p>
+            <p className="text-xs text-white/40 truncate">Click to provision your dedicated schema</p>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          onClick={handleProvision}
+          disabled={provisioning}
+          className="shrink-0 gap-1.5"
+        >
+          <Zap className="h-3.5 w-3.5" />
+          {provisioning ? "Provisioning…" : "Provision"}
+        </Button>
+      </div>
     </div>
   );
 
   // ── Error state ─────────────────────────────────────────────────────────
   if (db.status === 'error') return (
     <div className="space-y-6 w-full max-w-full overflow-hidden">
-      <div><h2 className="text-xl font-semibold mb-1">Hosted Database</h2></div>
+      <div><h2 className="text-xl font-semibold mb-1">ECG CLAUDE DB</h2></div>
       <Card className="bg-[#0f0f12] border-red-500/25">
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -564,7 +574,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div className="min-w-0">
-          <h2 className="text-xl font-semibold mb-1">Hosted Database</h2>
+          <h2 className="text-xl font-semibold mb-1">ECG CLAUDE DB</h2>
           <div className="flex items-center gap-2 flex-wrap">
             <code className="text-xs text-white/45 font-mono bg-white/[0.04] px-2 py-0.5 rounded truncate max-w-[200px]">{db.schema_name}</code>
             <StatusBadge status={db.status} />
@@ -580,28 +590,60 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
             <Download className="h-3.5 w-3.5 mr-1.5" />
             {dumping ? "Dumping…" : "Dump"}
           </Button>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="ghost" size="sm" className="text-red-400 hover:text-red-300 hover:bg-red-500/10" disabled={deprovisioning}>
-                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                {deprovisioning ? "Removing…" : "Delete"}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete database?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This permanently deletes <strong>{db.schema_name}</strong> and all its data. This cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={handleDeprovision} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                  Delete permanently
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+            disabled={deprovisioning}
+            onClick={() => { setDeleteConfirmText(''); setDeleteDialogOpen(true); }}
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+            {deprovisioning ? "Removing…" : "Delete"}
+          </Button>
+
+          <Dialog open={deleteDialogOpen} onOpenChange={(o) => { if (!deprovisioning) { setDeleteDialogOpen(o); setDeleteConfirmText(''); } }}>
+            <DialogContent className="bg-[#111318] border-white/10 max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-white flex items-center gap-2">
+                  <Trash2 className="h-4 w-4 text-red-400" />
+                  Delete database
+                </DialogTitle>
+                <DialogDescription className="text-white/50">
+                  This permanently deletes <span className="font-mono text-white/75">{db.schema_name}</span> and all its data. This cannot be undone.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 py-1">
+                <p className="text-xs text-white/50">
+                  Type <span className="font-mono text-white/80 bg-white/[0.06] px-1.5 py-0.5 rounded">delete my database</span> to confirm.
+                </p>
+                <Input
+                  value={deleteConfirmText}
+                  onChange={e => setDeleteConfirmText(e.target.value)}
+                  placeholder="delete my database"
+                  className="bg-white/[0.04] border-white/[0.10] text-white placeholder:text-white/25 font-mono text-sm"
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && deleteConfirmText.trim().toLowerCase() === 'delete my database' && !deprovisioning) {
+                      setDeleteDialogOpen(false);
+                      handleDeprovision();
+                    }
+                  }}
+                  autoFocus
+                />
+              </div>
+              <DialogFooter className="gap-2">
+                <Button variant="ghost" onClick={() => { setDeleteDialogOpen(false); setDeleteConfirmText(''); }} disabled={deprovisioning} className="text-white/50">
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={deleteConfirmText.trim().toLowerCase() !== 'delete my database' || deprovisioning}
+                  onClick={() => { if (deprovisioning) return; setDeleteDialogOpen(false); handleDeprovision(); }}
+                >
+                  {deprovisioning ? "Removing…" : "Delete permanently"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 

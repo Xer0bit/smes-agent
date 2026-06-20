@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
+import { projectService } from '../services/project.service.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -69,7 +70,7 @@ function injectGoogleVerification(html: string, content: string): string {
   return injectMeta(html, 'name="google-site-verification"', content);
 }
 
-function applySeoToHtml(html: string, seo: SeoData, projectUrl = ''): string {
+export function applySeoToHtml(html: string, seo: SeoData, projectUrl = ''): string {
   let out = html;
 
   if (seo.title)               out = injectTitle(out, seo.title);
@@ -100,42 +101,51 @@ function applySeoToHtml(html: string, seo: SeoData, projectUrl = ''): string {
 router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
   try {
-    // 1. Verify user owns this project
-    const { data: project } = await supabase
-      .from('projects')
-      .select('id, name, custom_domain, subdomain')
-      .eq('id', projectId)
-      .eq('user_id', req.user!.id)
-      .maybeSingle();
-
-    if (!project) {
+    // 1. Verify user has access to this project (owner, org admin, or explicit member)
+    let project: any;
+    try {
+      project = await projectService.getProject(projectId, req.user!.id);
+    } catch {
       res.status(404).json({ error: 'Project not found or access denied.' });
       return;
     }
 
-    // 2. Load SEO settings from DB
-    const { data: setting } = await supabase
-      .from('project_settings')
-      .select('setting_value')
-      .eq('project_id', projectId)
-      .eq('setting_key', 'seo')
-      .maybeSingle();
+    // 2. Load SEO settings + all needed project columns in parallel (single projects query)
+    const [{ data: setting }, { data: projectFull }] = await Promise.all([
+      supabase
+        .from('project_settings')
+        .select('setting_value')
+        .eq('project_id', projectId)
+        .eq('setting_key', 'seo')
+        .maybeSingle(),
+      supabase
+        .from('projects')
+        .select('name, description, published_subdomain, published_url, server_path')
+        .eq('id', projectId)
+        .maybeSingle(),
+    ]);
 
-    const seo: SeoData = (setting?.setting_value as SeoData) ?? {};
+    const projectSubdomain = projectFull?.published_subdomain || project.slug || '';
+    const projectCustomDomain = (() => {
+      const url = (projectFull?.published_url as string) ?? '';
+      return url && !url.includes('ecomgear.app') ? url.replace(/^https?:\/\//, '') : '';
+    })();
 
-    if (!seo.title && !seo.description && !seo.og_title) {
-      res.status(400).json({ error: 'No SEO settings saved yet. Fill in at least a title and description first.' });
-      return;
-    }
+    const saved = (setting?.setting_value as SeoData) ?? {};
+    const seo: SeoData = {
+      title:              saved.title              || (projectFull as any)?.name        || '',
+      description:        saved.description        || (projectFull as any)?.description || '',
+      keywords:           saved.keywords           || '',
+      favicon:            saved.favicon            || '',
+      og_title:           saved.og_title           || '',
+      og_description:     saved.og_description     || '',
+      og_image:           saved.og_image           || '',
+      robots:             saved.robots             || 'index, follow',
+      google_verification: saved.google_verification || '',
+    };
 
-    // 3. Resolve project path
-    const { data: serverPathRow } = await supabase
-      .from('projects')
-      .select('server_path')
-      .eq('id', projectId)
-      .maybeSingle();
-
-    const appPath = resolveProjectPath(projectId, (serverPathRow as any)?.server_path);
+    // 3. Resolve project path (from the same projectFull query above)
+    const appPath = resolveProjectPath(projectId, (projectFull as any)?.server_path);
     const htmlPath = path.join(appPath, 'index.html');
 
     if (!fs.existsSync(htmlPath)) {
@@ -145,10 +155,10 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
 
     // 4. Read, inject, write back
     const original = fs.readFileSync(htmlPath, 'utf8');
-    const projectUrl = project.custom_domain
-      ? `https://${project.custom_domain}`
-      : project.subdomain
-        ? `https://${project.subdomain}.ecomgear.app`
+    const projectUrl = projectCustomDomain
+      ? `https://${projectCustomDomain}`
+      : projectSubdomain
+        ? `https://${projectSubdomain}.ecomgear.app`
         : '';
 
     const updated = applySeoToHtml(original, seo, projectUrl);
@@ -253,14 +263,12 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
 router.get('/:projectId/preview', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
   try {
-    const { data: project } = await supabase
-      .from('projects')
-      .select('id')
-      .eq('id', projectId)
-      .eq('user_id', req.user!.id)
-      .maybeSingle();
-
-    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+    try {
+      await projectService.getProject(projectId, req.user!.id);
+    } catch {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
 
     const { data: serverPathRow } = await supabase
       .from('projects').select('server_path').eq('id', projectId).maybeSingle();

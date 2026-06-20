@@ -57,6 +57,7 @@ export function VersionHistoryPanel({ projectId, onRestored, onClose }: VersionH
   const [confirming, setConfirming] = useState<string | null>(null);
 
   const loadVersions = useCallback(async () => {
+    if (!projectId) return;
     setLoading(true);
     try {
       const { data: { session } } = await lovableCloud.auth.getSession();
@@ -280,15 +281,7 @@ export function VersionHistoryPanel({ projectId, onRestored, onClose }: VersionH
             })
           )}
         </div>
-      </ScrollArea>
-
-      {/* Footer */}
-      {versions.length > 0 && (
-        <div className="px-4 py-2 border-t border-border text-xs text-muted-foreground flex items-center gap-1 shrink-0">
-          <CheckCircle2 className="h-3 w-3 text-green-500" />
-          Snapshots are stored persistently and survive server restarts.
-        </div>
-      )}
+      </ScrollArea>``
     </div>
   );
 }

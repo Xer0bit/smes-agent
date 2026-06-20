@@ -18,6 +18,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { classifyRequest, isCheapTier, TIER_MAX_STEPS } from '../services/intentClassifier.js';
 import { indexFiles, deleteProjectEmbeddings } from '../knowledgebase/index.js';
+import { applySeoToHtml } from './seo.routes.js';
 
 const router = Router();
 
@@ -627,13 +628,12 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
     }
 
     // ── Backend eco enforcement ─────────────────────────────────────────────
-    // Deduct 1 eco BEFORE running the agent. This is the authoritative guard —
-    // even if the frontend is bypassed, the backend won't run without quota.
+    // Check budget BEFORE running the agent (no deduction yet — charge only if
+    // files are actually written). Ghost runs (text-only answers) are free.
     // Guests use their own separate limit (checked above), so skip here.
     // Set DISABLE_ECO_ENFORCEMENT=true in .env to bypass for local development.
     const ecoEnforced = process.env.DISABLE_ECO_ENFORCEMENT !== 'true';
-    // Org charged for this run — captured so we can reconcile actual token usage
-    // (1 gen = 10K tokens) after the run completes, beyond the flat 1 gen guard.
+    // Org that will be charged after the run if files were written.
     let ecoOrgId: string | null = null;
     if (!isGuest && req.user?.id && ecoEnforced) {
         try {
@@ -644,20 +644,16 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 // for this run, but we should not prevent the user from using the product.
                 logger.warn(`[agent-stream] No org found for eco debit (user=${req.user.id}, project=${projectId}) — allowing request without eco tracking`);
             } else {
-                const ecoResult = await incrementEcoUsage(effectiveOrgId);
-                if (!ecoResult.allowed) {
-                    if (ecoResult.error) {
-                        // RPC unavailable (e.g. migration not run yet) — warn and allow
-                        logger.warn(`[agent-stream] Eco RPC unavailable for org ${effectiveOrgId}: ${ecoResult.error} — allowing request`);
-                    } else {
-                        // Genuine limit reached — block
-                        logger.info(`[agent-stream] Eco limit reached for user ${req.user.id} (org ${effectiveOrgId})`);
-                        res.status(429).json({
-                            error: 'Monthly eco limit reached. Please upgrade your plan or wait for the reset.',
-                            code: 'ECO_LIMIT_REACHED',
-                        });
-                        return;
-                    }
+                // Budget check only — no deduction. Deduction happens post-run if files written.
+                const withinLimit = await isWithinEcoPolicyLimit(effectiveOrgId);
+                if (!withinLimit) {
+                    // Genuine limit reached — block
+                    logger.info(`[agent-stream] Eco limit reached for user ${req.user.id} (org ${effectiveOrgId})`);
+                    res.status(429).json({
+                        error: 'Monthly eco limit reached. Please upgrade your plan or wait for the reset.',
+                        code: 'ECO_LIMIT_REACHED',
+                    });
+                    return;
                 }
             }
         } catch (ecoErr) {
@@ -720,6 +716,8 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         currentRun.bus.emit('chunk', str);
         return originalWrite(chunk, ...args);
     };
+
+    let agentResult: Awaited<ReturnType<typeof runAgentLoop>> | undefined;
 
     try {
         // ── Model selection ─────────────────────────────────────────────
@@ -817,18 +815,32 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         // ── Intent classification + cost routing ─────────────────────────────
         // Classify the request tier (zero LLM cost — pure regex) so we can:
         //   1. Right-size MAX_STEPS in the agent loop
-        //   2. Route micro/fix requests to the cheap model (Gemini Flash)
+        //   2. Route micro requests to the cheap model (Gemini Flash)
         // isEmptyProject: no user files on disk = this is a fresh project.
         const projectHasFiles = fs.existsSync(appPath)
             && fs.readdirSync(appPath).some(f => !['node_modules', '.git', 'dist'].includes(f));
-        const requestTier = classifyRequest(prompt, !projectHasFiles);
 
-        // Override model to cheap tier for micro/fix requests — saves ~80% cost
-        // on requests that don't need Claude's reasoning capability.
-        if (isCheapTier(requestTier) && !isGuest) {
-            const cheapModel = process.env.CHEAP_TASK_MODEL || DEFAULT_FREE_MODEL;
-            logger.info(`[agent-stream] Routing ${requestTier} request to cheap model: ${cheapModel} (was ${effectiveModel})`);
-            effectiveModel = cheapModel;
+        // Detect auto-repair prompts (from the frontend Repair button or auto-fix escalation).
+        // These MUST use the user's selected model with full context — routing them to a cheap
+        // model with a stripped prompt is what causes infinite repair loops.
+        const isRepairPrompt = /build errors that could not be auto-repaired|please fix all of them|auto.?repair|🔧/i.test(prompt);
+        const requestTier = isRepairPrompt ? 'feature' : classifyRequest(prompt, !projectHasFiles);
+
+        // Tier-based model routing:
+        //   micro → Gemini Flash  (visual tweaks, $0.075/MTok — 40× cheaper than Sonnet)
+        //   fix   → Gemini Pro    (error diagnosis, $1.25/MTok — 2.4× cheaper than Sonnet)
+        //   edit/feature/build → user's selected model (needs full reasoning + library knowledge)
+        // Guests always stay on GUEST_MODEL regardless.
+        if (!isGuest) {
+            if (isCheapTier(requestTier)) {
+                const cheapModel = process.env.CHEAP_TASK_MODEL || DEFAULT_FREE_MODEL;
+                logger.info(`[agent-stream] Tier=${requestTier} → cheap model: ${cheapModel} (was ${effectiveModel})`);
+                effectiveModel = cheapModel;
+            } else if (requestTier === 'fix') {
+                const fixModel = process.env.FIX_TIER_MODEL || 'gemini-2.5-pro';
+                logger.info(`[agent-stream] Tier=fix → mid model: ${fixModel} (was ${effectiveModel})`);
+                effectiveModel = fixModel;
+            }
         }
 
         logger.info(`[agent-stream] Request tier=${requestTier} maxSteps=${TIER_MAX_STEPS[requestTier]} model=${effectiveModel}`);
@@ -878,7 +890,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             }
         }
 
-        await runAgentLoop({
+        agentResult = await runAgentLoop({
             prompt,
             projectId,
             appPath,
@@ -906,6 +918,41 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             userId,
             abortSignal: routeAbortController.signal,
         });
+
+        // Auto-reapply saved SEO settings whenever the agent writes a new index.html.
+        // This prevents agent rebuilds from overwriting previously-synced SEO tags.
+        if (agentResult && projectId && !isGuest) {
+            const wroteIndex = (agentResult.filesToWrite ?? []).some(
+                f => f.path === 'index.html' || f.path === '/index.html',
+            );
+            if (wroteIndex) {
+                // fire-and-forget — never block the response
+                (async () => {
+                    try {
+                        const { data: setting } = await supabase
+                            .from('project_settings')
+                            .select('setting_value')
+                            .eq('project_id', projectId)
+                            .eq('setting_key', 'seo')
+                            .maybeSingle();
+                        const seo = setting?.setting_value as Record<string, string> | null;
+                        if (seo && (seo.title || seo.description)) {
+                            const htmlPath = path.join(appPath, 'index.html');
+                            if (fs.existsSync(htmlPath)) {
+                                const html = fs.readFileSync(htmlPath, 'utf8');
+                                const updated = applySeoToHtml(html, seo);
+                                if (updated !== html) {
+                                    fs.writeFileSync(htmlPath, updated, 'utf8');
+                                    logger.info(`[agent-stream] Auto-applied SEO tags to rebuilt index.html for ${projectId}`);
+                                }
+                            }
+                        }
+                    } catch (seoErr) {
+                        logger.warn(`[agent-stream] Auto-SEO reapply failed: ${(seoErr as Error).message}`);
+                    }
+                })();
+            }
+        }
     } catch (error) {
         if ((error as { clientAborted?: boolean }).clientAborted || routeAbortController.signal.aborted) {
             logger.warn(`[agent-stream] Client disconnected, cancelled run for project ${projectId}`);
@@ -918,15 +965,19 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             }
         }
     } finally {
-        // Reconcile eco against actual token usage (1 gen = 10K tokens). One gen
-        // was already charged as the pre-run guard, so only deduct the surplus.
-        if (ecoOrgId && capturedTokensUsed > 0) {
-            const extraGens = tokensToGens(capturedTokensUsed) - 1;
-            if (extraGens > 0) {
-                incrementEcoUsage(ecoOrgId, extraGens).catch((err) =>
-                    logger.warn(`[agent-stream] Eco reconciliation failed for org ${ecoOrgId}: ${(err as Error).message}`),
-                );
-            }
+        // Charge eco only if the agent actually wrote or deleted files.
+        // Ghost runs (text-only answers, plan proposals) are free.
+        const wroteFiles = (agentResult?.filesToWrite?.length ?? 0) > 0
+            || (agentResult?.filesToDelete?.length ?? 0) > 0;
+        if (ecoOrgId && wroteFiles) {
+            // Base charge: 1 eco per code-writing run.
+            // Reconcile upward if actual token usage exceeded 10K tokens.
+            const baseGens = 1;
+            const extraGens = capturedTokensUsed > 0 ? Math.max(0, tokensToGens(capturedTokensUsed) - 1) : 0;
+            const totalGens = baseGens + extraGens;
+            incrementEcoUsage(ecoOrgId, totalGens).catch((err) =>
+                logger.warn(`[agent-stream] Eco charge failed for org ${ecoOrgId}: ${(err as Error).message}`),
+            );
         }
 
         activeAgentRuns.delete(projectId);
@@ -938,48 +989,55 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
     }
 });
 
-// Generate contextual follow-up suggestions via LLM based on what was just built.
-// Uses cheapest available model (Haiku / Gemini Flash) — fast, low-cost.
+// Generate contextual follow-up suggestions via Gemini Flash based on what was just built.
 router.post('/suggestions', optionalAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-    const { summary, filePaths = [] } = req.body as { summary?: string; filePaths?: string[] };
-    if (!summary?.trim()) {
+    const { summary, filePaths = [], userPrompt = '' } = req.body as {
+        summary?: string;
+        filePaths?: string[];
+        userPrompt?: string;
+    };
+    if (!summary?.trim() && !userPrompt?.trim()) {
+        res.json({ suggestions: [] });
+        return;
+    }
+
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (!geminiKey || process.env.AI_DISABLE_GEMINI === '1') {
         res.json({ suggestions: [] });
         return;
     }
 
     try {
-        // Pick cheapest available model: Haiku first, then Gemini Flash, then skip.
-        const anthropicKey = process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
-        const geminiKey = process.env.GEMINI_API_KEY;
-        let model: any;
-
-        if (anthropicKey && process.env.AI_DISABLE_ANTHROPIC !== '1') {
-            model = createAnthropic({ apiKey: anthropicKey })('claude-haiku-4-5-20251001');
-        } else if (geminiKey && process.env.AI_DISABLE_GEMINI !== '1') {
-            model = createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-2.0-flash');
-        } else {
-            res.json({ suggestions: [] });
-            return;
-        }
+        const model = createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-2.5-flash');
 
         const fileContext = filePaths.length > 0
-            ? `\nFiles changed: ${filePaths.slice(0, 6).join(', ')}`
+            ? `\nFiles changed: ${filePaths.slice(0, 8).join(', ')}`
+            : '';
+
+        const requestContext = userPrompt?.trim()
+            ? `\nUser's original request: "${userPrompt.slice(0, 200)}"`
             : '';
 
         const { text } = await generateText({
             model,
-            maxOutputTokens: 160,
-            temperature: 0.4,
-            prompt: `A developer just built something using an AI app builder. Based on what was just built, suggest exactly 3 short follow-up actions they might want to do next. Each suggestion must be a specific, actionable next step DIRECTLY related to what was just built — not a generic feature unrelated to it.
+            maxOutputTokens: 500,
+            temperature: 0.6,
+            // Disable Gemini 2.5 Flash thinking budget — it eats output tokens on tiny tasks
+            providerOptions: { google: { thinkingConfig: { thinkingBudget: 0 } } },
+            prompt: `You are a product assistant inside an AI web app builder. The user just completed a task and you need to suggest 3 smart follow-up actions they might want to take next.
 
-What was just built:
-${summary.slice(0, 600)}${fileContext}
+Context:
+- What was built/changed: ${(summary || '').slice(0, 600)}${requestContext}${fileContext}
+
+Your goal: suggest the 3 most USEFUL next steps that naturally extend what was JUST built.
+Think like a product designer — what would make this feature more complete, polished, or useful?
 
 Rules:
-- Each suggestion must be 5–10 words
-- Suggestions must be about the SAME component or feature that was just built
-- No generic suggestions like "add dark mode" unless dark mode was just built
-- Return ONLY a raw JSON array of exactly 3 strings — nothing else
+- Each suggestion is a short imperative sentence (6–12 words max)
+- Must be DIRECTLY related to what was just built — no unrelated features
+- Vary the suggestions: one UX polish, one content/data, one functional enhancement
+- Write as direct instructions to the AI builder, e.g. "Make the navbar sticky on scroll"
+- Return ONLY a raw JSON array of exactly 3 strings — no markdown, no explanation
 
 ["suggestion 1","suggestion 2","suggestion 3"]`,
         });
@@ -995,7 +1053,7 @@ Rules:
         }
         res.json({ suggestions: [] });
     } catch (err) {
-        logger.warn('[/suggestions] LLM call failed, returning empty:', (err as Error)?.message);
+        logger.warn('[/suggestions] Gemini call failed:', (err as Error)?.message);
         res.json({ suggestions: [] });
     }
 });
@@ -1275,12 +1333,14 @@ router.get('/versions/:projectId', authMiddleware, async (req: AuthenticatedRequ
         .lt('created_at', stuckCutoff)
         .then(() => {});
 
-    // Fetch all completed runs for this project (with or without snapshot_id)
+    // Fetch only completed runs that actually wrote files — plan-only or no-op runs are excluded.
+    // A run without file changes has no restore point and adds noise to the history panel.
     const { data, error } = await supabase
         .from('agent_runs')
         .select('id, prompt, summary, files_written, files_deleted, steps_taken, snapshot_id, created_at')
         .eq('project_id', projectId)
         .eq('status', 'completed')
+        .gt('files_written', 0)
         .order('created_at', { ascending: false })
         .limit(20);
 

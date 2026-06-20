@@ -330,7 +330,7 @@ export async function getUserPlanTier(userId: string): Promise<'free' | 'paid'> 
 
     if (orgError || !orgs) return 'free';
 
-    const PAID_TIERS = ['pro', 'agency', 'professional', 'enterprise'];
+    const PAID_TIERS = ['starter', 'pro', 'agency', 'professional', 'enterprise'];
     const hasPaid = orgs.some((o: { plan_tier: string }) => PAID_TIERS.includes(o.plan_tier));
     return hasPaid ? 'paid' : 'free';
   } catch {

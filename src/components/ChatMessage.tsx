@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { Copy, Check } from 'lucide-react';
 import { FileText } from 'lucide-react';
+import agentLogo from '@/assets/ecgagent.png';
 
 // ─── Code block ───────────────────────────────────────────────────────────────
 
@@ -157,15 +158,36 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
   }
 
   // ── Assistant streaming / complete ────────────────────────────────────────────
+  const isStreaming = status === 'streaming';
+
   return (
     <div className="flex items-start gap-2 animate-msg-appear">
-      <AvatarBadge streaming={status === 'streaming'} />
-      <div className="flex-1 min-w-0">
-        <div className={status === 'streaming' ? 'animate-fade-in-stream' : ''}>
+      <AvatarBadge streaming={isStreaming} />
+
+      {/* Pulsing left accent — sits outside the content box so it's never clipped */}
+      {isStreaming && (
+        <div
+          aria-hidden="true"
+          className="w-[2px] self-stretch rounded-full shrink-0 animate-stream-border"
+          style={{
+            background: 'linear-gradient(180deg, #a78bfa 0%, #6366f1 55%, transparent 100%)',
+          }}
+        />
+      )}
+
+      <div className="flex-1 min-w-0 relative">
+        <div className={isStreaming ? 'animate-fade-in-stream' : ''}>
           <MarkdownBody content={content} />
         </div>
-        {status === 'streaming' && (
-          <span className="inline-block w-[5px] h-[14px] bg-indigo-400/80 rounded-sm ml-0.5 animate-blink align-middle" />
+
+        {/* Premium gradient cursor with glow */}
+        {isStreaming && (
+          <span
+            className="inline-block w-[2.5px] h-[15px] rounded-full ml-0.5 animate-cursor-glow align-middle"
+            style={{
+              background: 'linear-gradient(180deg, #c4b5fd 0%, #818cf8 100%)',
+            }}
+          />
         )}
       </div>
     </div>
@@ -188,16 +210,9 @@ function AvatarBadge({ error = false, streaming = false, thinking = false }: {
     );
   }
 
-  const gradientClass = thinking
-    ? 'bg-gradient-to-br from-indigo-600/40 via-purple-600/30 to-indigo-600/40 animate-gradient-orbit animate-pulse-subtle'
-    : streaming
-    ? 'bg-gradient-to-br from-indigo-500/50 via-purple-500/40 to-cyan-500/30 animate-gradient-orbit'
-    : 'bg-gradient-to-br from-indigo-600/35 via-purple-600/25 to-indigo-500/30';
-
   return (
-    <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5
-      ring-1 ring-inset ring-white/[0.12] transition-all duration-500 ${gradientClass}`}>
-      <span className="text-[8px] font-bold text-indigo-200/90 tracking-tight">AI</span>
+    <div className={`w-5 h-5 shrink-0 mt-0.5 overflow-hidden transition-opacity duration-300 ${thinking ? 'opacity-60 animate-pulse' : 'opacity-100'}`}>
+      <img src={agentLogo} alt="Agent" className="w-full h-full object-contain" />
     </div>
   );
 }

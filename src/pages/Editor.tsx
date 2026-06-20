@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { revisionService } from "@/services/revisionService";
 import { RevisionPanel } from "@/components/RevisionPanel";
 import { VersionHistoryPanel } from "@/components/VersionHistoryPanel";
+import { WorkspaceLoader } from "@/components/WorkspaceLoader";
 import { CodeEditorPanel } from "@/components/CodeEditorPanel";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { MultiDevicePreview } from "@/components/MultiDevicePreview";
@@ -39,7 +40,7 @@ import {
   Link,
   Eye,
   Database,
-  Sparkles,
+  ArrowUpRight,
 } from "lucide-react";
 import ecgLogo from "@/assets/ecg-logo.png";
 import {
@@ -414,6 +415,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
 
         // Check if this is actually a navigation event wrapped as a log
         if (type === 'navigation') {
+          lastUserNavigationAtRef.current = Date.now();
           const path = typeof message === 'string' ? message : message?.pathname;
           if (path) setPreviewPath(normalizePreviewRoute(path));
           return;
@@ -446,13 +448,17 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
           }
         }
       } else if (event.data?.type === 'navigation') {
+        lastUserNavigationAtRef.current = Date.now();
         setPreviewPath(normalizePreviewRoute(event.data.pathname));
       } else if (event.data?.type === 'PREVIEW_BLANK') {
         const now = Date.now();
         const cooldownOk = now - lastAutoRepairAtRef.current > AUTO_REPAIR_COOLDOWN_MS;
         const underLimit = consecutiveRepairsRef.current < MAX_CONSECUTIVE_REPAIRS;
         const agentIdle = !isAgentRunningRef.current;
-        if (cooldownOk && underLimit && agentIdle && document.visibilityState === 'visible') {
+        // Skip auto-repair if the blank screen arrived shortly after a user-initiated
+        // navigation — this is a missing route (404), not a code error.
+        const afterUserNav = now - lastUserNavigationAtRef.current < NAV_BLANK_GRACE_MS;
+        if (cooldownOk && underLimit && agentIdle && !afterUserNav && document.visibilityState === 'visible') {
           lastAutoRepairAtRef.current = now;
           consecutiveRepairsRef.current += 1;
           isAgentRunningRef.current = true;
@@ -519,8 +525,13 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   const consecutiveRepairsRef = useRef<number>(0);
   const isAgentRunningRef = useRef<boolean>(false);
   const pendingAutoRepairRef = useRef<boolean>(false);
+  const lastUserNavigationAtRef = useRef<number>(0); // timestamp of last user-initiated route change
   const AUTO_REPAIR_COOLDOWN_MS = 60_000; // 60 s between auto-repairs
   const MAX_CONSECUTIVE_REPAIRS = 2;      // stop looping after 2 back-to-back attempts
+  // How long after a user-initiated navigation to suppress blank-screen auto-repair.
+  // Covers slow initial loads on new routes (SPA hydration + lazy chunks).
+  // If users report missed repairs after navigating, lower this value.
+  const NAV_BLANK_GRACE_MS = 8_000;
 
   // Route navigation state
   const [currentRoutePath, setCurrentRoutePath] = useState<string>(() => searchParams.get('page') || '/');
@@ -1286,6 +1297,11 @@ export default defineConfig({
           loadWorkspaceFromDb().catch(err => {
             console.warn('[Editor] Failed to load workspace from db:', err);
           });
+        } else {
+          // Revision files loaded directly — isWorkspaceLoading never cycled,
+          // so mark the initial load done here to prevent the WorkspaceLoader
+          // from flashing during subsequent saveToDatabase calls.
+          setHasInitialLoadCompleted(true);
         }
       });
     }
@@ -1463,8 +1479,10 @@ export default defineConfig({
       console.log('[Editor] Workspace loading completed. Files loaded:', workspaceFiles.size);
       setHasInitialLoadCompleted(true);
 
-      // If loadLatestCode didn't establish a preview URL (e.g. JSONB was null), build now.
-      if (!previewUrl) {
+      // Only build if there's no URL and the preview is not already building.
+      // Guards against a double-build race where saveToDatabase completes (isWorkspaceLoading
+      // briefly → true → false) while buildPreviewNow from onFilesGenerated is still running.
+      if (!previewUrl && previewStatus !== 'building') {
         buildPreviewNow().catch((err) => {
           console.warn('[Editor] Initial preview build from workspace failed:', err);
         });
@@ -1472,7 +1490,7 @@ export default defineConfig({
     }
 
     prevWorkspaceLoadingRef.current = isWorkspaceLoading;
-  }, [isWorkspaceLoading, workspaceFiles, previewUrl, buildPreviewNow]);
+  }, [isWorkspaceLoading, workspaceFiles, previewUrl, previewStatus, buildPreviewNow]);
 
 
   const loadMessages = async () => {
@@ -2353,6 +2371,11 @@ export default defineConfig({
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#09090b]">
+      <WorkspaceLoader
+        visible={isWorkspaceLoading && !hasInitialLoadCompleted}
+        projectName={project?.name}
+        fileCount={workspaceFiles.size > 0 ? workspaceFiles.size : undefined}
+      />
       {!isMobileViewport && !isMinimized && (
         <button
           type="button"
@@ -2424,7 +2447,7 @@ export default defineConfig({
           </div>
         )}
         {/* Header */}
-        <div className="h-10 flex items-center justify-between px-3 bg-[#131315]/60 backdrop-blur-xl border-b border-white/[0.04]">
+        <div className="h-10 flex items-center justify-between px-3 bg-[#131315]/60 backdrop-blur-xl border-b border-white/[0.04] relative z-[100]">
           {!isMinimized && (
             <>
               {isEditingProjectName ? (
@@ -2705,9 +2728,9 @@ export default defineConfig({
       />
 
       {/* Main Workspace - Preview / Code */}
-      <div className="order-2 flex-1 min-w-0 flex flex-col bg-[#09090b] overflow-hidden">
+      <div className="order-2 flex-1 min-w-0 flex flex-col bg-[#09090b]">
         {/* Preview Header */}
-        <div className="h-10 flex items-center justify-between px-3 bg-[#131315]/60 backdrop-blur-xl border-b border-white/[0.04]">
+        <div className="h-10 flex items-center justify-between px-3 bg-[#131315]/60 backdrop-blur-xl border-b border-white/[0.04] relative z-10">
           <div className="flex gap-2 items-center min-w-0">
             <div className="flex items-center gap-0.5 min-w-0 overflow-x-auto">
               {visibleBuilderTabs.map((tab) => (
@@ -2798,6 +2821,23 @@ export default defineConfig({
                 </span>
               </div>
 
+              {(tier === 'free' || tier === 'starter') && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => openSettings('workspace-plans')}
+                      className="flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] font-medium text-white/60 hover:text-white/90 border border-white/[0.10] hover:border-white/[0.22] bg-white/[0.03] hover:bg-white/[0.06] transition-colors duration-6000 animate-border-flash"
+                    >
+                      {tier === 'free' ? 'Upgrade' : 'Go Pro'}
+                      <ArrowUpRight className="h-3 w-3 opacity-60" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="z-[300] max-w-[180px] text-center">
+                    <p>{tier === 'free' ? 'Unlock custom domains, more AI gens & export code' : 'Unlock unlimited projects & custom domains'}</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="ghost" size="icon" onClick={() => openSettings()}
@@ -2829,46 +2869,22 @@ export default defineConfig({
                       <Database className="h-3.5 w-3.5" />
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent className="z-[300]"><p>Hosted Database &amp; REST API</p></TooltipContent>
+                  <TooltipContent className="z-[300]"><p>ECG CLAUDE DB &amp; REST API</p></TooltipContent>
                 </Tooltip>
               )}
 
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" disabled={!projectId}
+                  <button
                     onClick={() => setShowVersionHistory(true)}
-                    className="h-7 w-7 rounded-md text-white/25 hover:text-white/70 hover:bg-white/[0.06] disabled:text-white/10 disabled:hover:bg-transparent">
+                    className="h-7 w-7 flex items-center justify-center rounded-md text-white/30 hover:text-white/70 hover:bg-white/[0.06] transition-colors">
                     <History className="h-3.5 w-3.5" />
-                  </Button>
+                  </button>
                 </TooltipTrigger>
                 <TooltipContent className="z-[300]"><p>Version history</p></TooltipContent>
               </Tooltip>
 
               {/* Legacy Agent Menu trigger removed */}
-
-              {(tier === 'free' || tier === 'starter') && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={() => openSettings('workspace-plans')}
-                      className="relative flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-semibold overflow-hidden group"
-                      style={{
-                        background: 'linear-gradient(135deg, #7c3aed 0%, #4f46e5 50%, #0ea5e9 100%)',
-                        boxShadow: '0 0 12px rgba(99,102,241,0.35)',
-                      }}
-                    >
-                      <span className="absolute inset-0 bg-white/0 group-hover:bg-white/[0.08] transition-colors" />
-                      <Sparkles className="h-3 w-3 text-white/90 relative z-10 shrink-0" />
-                      <span className="text-white relative z-10 tracking-tight">
-                        {tier === 'free' ? 'Upgrade' : 'Go Pro'}
-                      </span>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="z-[300] max-w-[180px] text-center">
-                    <p>{tier === 'free' ? 'Unlock custom domains, more AI gens & export code' : 'Unlock unlimited projects & custom domains'}</p>
-                  </TooltipContent>
-                </Tooltip>
-              )}
 
               {canRenderProjectActions && (
                 /* ── Single Publish button → popover panel ── */
@@ -3017,7 +3033,7 @@ export default defineConfig({
                               onClick={() => openSettings('ecomgear-database')}
                             >
                               <Cloud className="h-3.5 w-3.5 shrink-0 text-orange-400" />
-                              <span className="flex-1 text-left">Hosted Database</span>
+                              <span className="flex-1 text-left">ECG CLAUDE DB</span>
                               <span className="px-1.5 py-0.5 text-[10px] font-bold bg-orange-500/20 text-orange-400 rounded leading-none">HOT</span>
                             </button>
                           </div>
@@ -3091,7 +3107,7 @@ export default defineConfig({
                             onClick={() => openSettings('ecomgear-database')}
                           >
                             <Cloud className="h-3.5 w-3.5 shrink-0 text-orange-400" />
-                            <span className="flex-1 text-left">Hosted Database</span>
+                            <span className="flex-1 text-left">ECG CLAUDE DB</span>
                             <span className="px-1.5 py-0.5 text-[10px] font-bold bg-orange-500/20 text-orange-400 rounded leading-none">HOT</span>
                           </button>
                         </div>
@@ -3757,22 +3773,25 @@ export default defineConfig({
           />
         )}
 
-        {/* Version History Panel */}
-        <Sheet open={showVersionHistory} onOpenChange={setShowVersionHistory}>
-          <SheetContent side="right" className="w-[400px] sm:w-[480px] p-0 bg-[#0c0c0e] border-white/[0.08] [&>button.absolute]:hidden" aria-describedby={undefined}>
-            <SheetTitle className="sr-only">Version History</SheetTitle>
-            {projectId && (
+        {/* Version History Panel — plain fixed overlay, no Radix Dialog */}
+        {showVersionHistory && (
+          <>
+            <div
+              className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm"
+              onClick={() => setShowVersionHistory(false)}
+            />
+            <div className="fixed inset-y-0 right-0 z-[201] w-[400px] sm:w-[480px] bg-[#0c0c0e] border-l border-white/[0.08] flex flex-col shadow-2xl">
               <VersionHistoryPanel
-                projectId={projectId}
+                projectId={projectId ?? ''}
                 onClose={() => setShowVersionHistory(false)}
                 onRestored={() => {
                   setShowVersionHistory(false);
                   window.dispatchEvent(new CustomEvent('preview:refresh'));
                 }}
               />
-            )}
-          </SheetContent>
-        </Sheet>
+            </div>
+          </>
+        )}
 
       </div>
     </div>

@@ -35,7 +35,7 @@ import { queryDatabaseTool } from '../agent-tools/query_database.js';
 import { provisionDatabaseTool } from '../agent-tools/provision_database.js';
 import { sanitizeFileContent, sanitizeConfigFile } from '../agent-tools/sanitize.js';
 import ts from 'typescript';
-import { getAppBuilderBuildSystemPrompt, getAppBuilderSystemPrompt, MICRO_SYSTEM_PROMPT, getFixSystemPrompt } from '../prompts/app-builder.prompt.js';
+import { getAppBuilderBuildSystemPrompt, getAppBuilderSystemPrompt, MICRO_SYSTEM_PROMPT, getFixSystemPrompt, getEditSystemPrompt } from '../prompts/app-builder.prompt.js';
 import { PRE_INSTALLED_PACKAGES } from './baseTemplateService.js';
 import { RunStateLedger } from './runStateLedger.js';
 import { canonicalizeModelId, DEFAULT_FREE_MODEL, DEFAULT_PRIMARY_MODEL } from '../config/models.js';
@@ -47,6 +47,10 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABAS
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 const SUPPRESS_RECOVERY_UI = (process.env.AGENT_SUPPRESS_RECOVERY_UI ?? '1') !== '0';
+
+// Circuit breaker: providers that returned a credit/billing error this server session.
+// Avoids retrying a dead provider on every subsequent run until restart.
+const billingFailedProviders = new Set<string>();
 const MAX_PROMPT_CHARS = 8_000;
 const MAX_OLDER_SUMMARY_CHARS = 6_000;
 const MAX_FILE_TREE_CHARS = 5_000;   // trimmed: agent uses list_files for full tree
@@ -1069,15 +1073,17 @@ function buildFallbackCandidates(primaryProviderName: string, primaryModelId?: s
     if (mid.includes('deepseek')) {
       return Boolean(process.env.DEEPSEEK_API_KEY)
         && process.env.AI_DISABLE_DEEPSEEK !== '1'
-        && primaryProviderName !== 'deepseek';
+        && primaryProviderName !== 'deepseek'
+        && !billingFailedProviders.has('deepseek');
     }
     if (mid.includes('gemini')) {
       // Allow same-provider (gemini) fallback to a different model — e.g. 2.5-pro → 2.0-flash
       return Boolean(process.env.GEMINI_API_KEY)
-        && process.env.AI_DISABLE_GEMINI !== '1';
+        && process.env.AI_DISABLE_GEMINI !== '1'
+        && !billingFailedProviders.has('gemini');
     }
     const hasAnthropic = Boolean(process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY) && process.env.AI_DISABLE_ANTHROPIC !== '1';
-    return hasAnthropic && primaryProviderName !== 'anthropic';
+    return hasAnthropic && primaryProviderName !== 'anthropic' && !billingFailedProviders.has('anthropic');
   });
 }
 
@@ -1115,6 +1121,13 @@ function resolveProviderWithFallback(requestedModelId: string): { provider: any;
   const uniqueCandidates = Array.from(new Set(candidates));
   const triedProviders: string[] = [];
   for (const candidate of uniqueCandidates) {
+    const providerGuess = candidate.includes('deepseek') ? 'deepseek'
+      : candidate.includes('gemini') ? 'gemini' : 'anthropic';
+    // Skip providers circuit-broken by a billing/credit error this session
+    if (billingFailedProviders.has(providerGuess)) {
+      console.warn(`[AgentLoop] Skipping ${providerGuess} (billing circuit open) — trying next candidate`);
+      continue;
+    }
     const resolved = createProviderForModel(candidate);
     if (resolved) {
       if (candidate !== normalizedRequested) {
@@ -1272,11 +1285,45 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   };
 
   // ── Snapshot disk state BEFORE agent writes ─────────────────────────────────
-  // This is the authoritative pre-agent state used for surgical revert when the
-  // frontend doesn't send existingFiles (which is the normal case for agent-stream).
+  // preAgentDiskSnapshot is used for: (a) file context assembly, (b) surgical revert
+  // during validation, (c) full rollback on catastrophic failure.
+  //
+  // Tier-gated loading: micro only snapshots the target file (zero wasted I/O);
+  // all other tiers read the full project as before.
   const SNAP_SKIP_FILES = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
   const preAgentDiskSnapshot = new Map<string, string>();
-  {
+  const promptLower = prompt.toLowerCase();
+
+  if (_tier === 'micro') {
+    // ── MICRO FAST PATH ──────────────────────────────────────────────────────
+    // A color/text/spacing change touches exactly one file. Find it with a
+    // targeted scan — no full disk read, no import graph, no KB query.
+    const promptWords = promptLower.split(/[\s,./'"!?()[\]{}]+/).filter(w => w.length > 2);
+    const findMentioned = (dir: string): void => {
+      let entries: fs.Dirent[];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) { findMentioned(fullPath); continue; }
+        const relPath = path.relative(appPath, fullPath);
+        const fname = entry.name.toLowerCase().replace(/\.(tsx?|jsx?|css)$/, '');
+        if (fname && promptWords.some(w => fname.includes(w) || w.includes(fname))) {
+          try { preAgentDiskSnapshot.set(relPath, fs.readFileSync(fullPath, 'utf8')); } catch {}
+        }
+      }
+    };
+    try { findMentioned(path.join(appPath, 'src')); } catch {}
+    // If nothing matched by name, grab App.tsx as fallback orientation
+    if (preAgentDiskSnapshot.size === 0) {
+      const appTsx = path.join(appPath, 'src', 'App.tsx');
+      try {
+        const rel = path.relative(appPath, appTsx);
+        preAgentDiskSnapshot.set(rel, fs.readFileSync(appTsx, 'utf8'));
+      } catch {}
+    }
+  } else {
+    // ── FULL DISK SNAPSHOT (fix / edit / feature / build) ────────────────────
     const snapDisk = (dir: string) => {
       let entries: fs.Dirent[];
       try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -1294,54 +1341,47 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     try { snapDisk(appPath); } catch {}
   }
 
-  // Build existing files context string
-  // Score each file by relevance: direct mention > import relationship > critical file > size
-  const promptLower = prompt.toLowerCase();
-
   // Unified file source: prefer frontend-sent existingFiles, fall back to disk snapshot.
-  // The normal agent-stream flow sends NO existingFiles — the disk snapshot is the only
-  // source for building the import graph and scoring context relevance.
   const fileSources: Array<{ path: string; content: string }> =
     (existingFiles && existingFiles.length > 0)
       ? existingFiles
       : Array.from(preAgentDiskSnapshot.entries()).map(([p, c]) => ({ path: p, content: c }));
 
   // KB batch index — runs once per project per server boot in the background.
-  // Indexes all existing files so vector retrieval works immediately, even for files
-  // the agent hasn't touched yet. Individual writes keep the index up-to-date after this.
-  if (projectId && !kbBatchIndexedProjects.has(projectId) && fileSources.length > 0) {
+  // Skip for micro (snapshot is partial) and fix (no benefit for error diagnosis).
+  if (_tier !== 'micro' && _tier !== 'fix' && projectId && !kbBatchIndexedProjects.has(projectId) && fileSources.length > 0) {
     kbBatchIndexedProjects.add(projectId);
     indexFiles(projectId, fileSources).catch(() => {});
   }
 
-  // Build a lightweight import graph: for each file, which files does it import?
+  // Build a lightweight import graph — skip for micro (single file, no cross-file analysis needed).
   const importGraph = new Map<string, Set<string>>();
   const reverseGraph = new Map<string, Set<string>>(); // importers of each file
-  for (const f of fileSources) {
-    if (!/\.(tsx?|jsx?)$/.test(f.path)) continue; // only scan source files
-    const imports = new Set<string>();
-    const importRegex = /(?:import\s+.*?from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\))/g;
-    let m: RegExpExecArray | null;
-    while ((m = importRegex.exec(f.content)) !== null) {
-      const raw = m[1] || m[2];
-      if (!raw || raw.startsWith('react') || raw.startsWith('@radix') || raw.startsWith('class-variance') || raw.startsWith('clsx') || raw.startsWith('tailwind') || raw.startsWith('lucide')) continue;
-      // Resolve relative import to a path
-      const resolved = raw.startsWith('.')
-        ? path.posix.normalize(path.posix.join(path.posix.dirname(f.path), raw)).replace(/^\.\//, '')
-        : raw.startsWith('@/') ? raw.replace('@/', 'src/') : null;
-      if (resolved) {
-        // Try to match against known file paths (with or without extension)
-        for (const candidate of fileSources) {
-          const base = candidate.path.replace(/\.(tsx?|jsx?)$/, '');
-          if (resolved === candidate.path || resolved === base || resolved + '/index' === base) {
-            imports.add(candidate.path);
-            if (!reverseGraph.has(candidate.path)) reverseGraph.set(candidate.path, new Set());
-            reverseGraph.get(candidate.path)!.add(f.path);
+  if (_tier !== 'micro') {
+    for (const f of fileSources) {
+      if (!/\.(tsx?|jsx?)$/.test(f.path)) continue;
+      const imports = new Set<string>();
+      const importRegex = /(?:import\s+.*?from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\))/g;
+      let m: RegExpExecArray | null;
+      while ((m = importRegex.exec(f.content)) !== null) {
+        const raw = m[1] || m[2];
+        if (!raw || raw.startsWith('react') || raw.startsWith('@radix') || raw.startsWith('class-variance') || raw.startsWith('clsx') || raw.startsWith('tailwind') || raw.startsWith('lucide')) continue;
+        const resolved = raw.startsWith('.')
+          ? path.posix.normalize(path.posix.join(path.posix.dirname(f.path), raw)).replace(/^\.\//, '')
+          : raw.startsWith('@/') ? raw.replace('@/', 'src/') : null;
+        if (resolved) {
+          for (const candidate of fileSources) {
+            const base = candidate.path.replace(/\.(tsx?|jsx?)$/, '');
+            if (resolved === candidate.path || resolved === base || resolved + '/index' === base) {
+              imports.add(candidate.path);
+              if (!reverseGraph.has(candidate.path)) reverseGraph.set(candidate.path, new Set());
+              reverseGraph.get(candidate.path)!.add(f.path);
+            }
           }
         }
       }
+      importGraph.set(f.path, imports);
     }
-    importGraph.set(f.path, imports);
   }
 
   // Wire reverseGraph into ctx so tools can emit dependency warnings
@@ -1354,38 +1394,38 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     if (fname && promptLower.includes(fname)) directlyMentioned.add(f.path);
   }
 
-  // Expand to imports/importers of mentioned files (1 hop)
+  // Expand to imports/importers of mentioned files (1 hop) — skip for micro
   const relatedByImport = new Set<string>();
-  for (const mentionedPath of directlyMentioned) {
-    for (const imp of importGraph.get(mentionedPath) ?? []) relatedByImport.add(imp);
-    for (const importer of reverseGraph.get(mentionedPath) ?? []) relatedByImport.add(importer);
+  const importersOfMentioned = new Set<string>();
+  if (_tier !== 'micro') {
+    for (const mentionedPath of directlyMentioned) {
+      for (const imp of importGraph.get(mentionedPath) ?? []) relatedByImport.add(imp);
+      for (const importer of reverseGraph.get(mentionedPath) ?? []) relatedByImport.add(importer);
+    }
+    for (const mentionedPath of directlyMentioned) {
+      for (const importer of reverseGraph.get(mentionedPath) ?? []) importersOfMentioned.add(importer);
+    }
   }
 
   // Always-include critical files
   const criticalFiles = new Set(['src/App.tsx', 'src/index.css', 'src/lib/utils.ts', 'package.json']);
 
-  // Importers of mentioned files: editing Navbar.tsx → its importers (Home, About, App) should be in context
-  const importersOfMentioned = new Set<string>();
-  for (const mentionedPath of directlyMentioned) {
-    for (const importer of reverseGraph.get(mentionedPath) ?? []) {
-      importersOfMentioned.add(importer);
-    }
-  }
-
-  // KB vector retrieval — augments heuristic sort with semantic similarity scores.
-  // Runs in parallel; if it fails or times out, falls back to heuristic scores only.
+  // KB vector retrieval — skip for micro (partial snapshot) and fix (2s latency with no benefit;
+  // fix agent calls get_build_errors first and reads only the broken file).
   const kbScores = new Map<string, number>(); // path → 0-50 bonus points
-  if (projectId) {
+  if (_tier !== 'micro' && _tier !== 'fix' && projectId) {
     try {
       const kbResults = await Promise.race([
         retrieveRelevantFiles(projectId, prompt, fileSources, {
           maxFiles: 6,
-          graphExpansion: false, // in-memory graph already handles expansion
+          graphExpansion: false,
           mentionedPaths: [...directlyMentioned],
         }),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('kb timeout')), 2000)),
       ]);
-      for (const r of kbResults) kbScores.set(r.path, Math.round(r.score * 50));
+      // Multiply by 80 so a strong KB hit (score 0.8) = 64 pts — enough to beat the
+      // criticalFiles baseline (60) and actually influence file selection.
+      for (const r of kbResults) kbScores.set(r.path, Math.round(r.score * 80));
     } catch {
       // Non-fatal — heuristic sort still works without KB
     }
@@ -1412,14 +1452,10 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     return a.content.length - b.content.length;
   });
 
-  // GitHub Copilot-style context selection: send a small focused working set,
-  // not a bulk dump of project files. The agent already has read_file/list_files
-  // tools, so prompt context should bias toward high-signal seeds only.
-  // Read-before-write guard enforces that the agent fetches each file fully
-  // before editing, so it is safe to send only short peeks upfront.
+  // GitHub Copilot-style context selection: small focused working set — agent uses
+  // read_file/list_files tools to pull anything else it needs.
   const MAX_CONTEXT_CHARS = parseInt(process.env.AI_MAX_CONTEXT_CHARS || '8000', 10);
   const MAX_CONTEXT_FILES = parseInt(process.env.AI_MAX_CONTEXT_FILES || '4', 10);
-  // Short orientation peeks — agent calls read_file before editing anyway (enforced by pre-write rules).
   const MAX_FILE_CONTEXT_CHARS = parseInt(process.env.AI_MAX_FILE_CONTEXT_CHARS || '800', 10);
   const MAX_MENTIONED_FILE_CONTEXT_CHARS = parseInt(process.env.AI_MAX_MENTIONED_FILE_CONTEXT_CHARS || '3000', 10);
 
@@ -1476,15 +1512,12 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     .map((f) => `=== ${f.path} ===\n${f.contextContent}`)
     .join('\n\n');
 
-  // Pre-mark non-truncated context files as already read — the full content is in the
-  // prompt so there is no reason to force a read_file round-trip before editing them.
-  // Truncated files still require a read_file call to get their full content.
+  // Pre-mark non-truncated context files as already read — full content is in prompt.
   for (const f of cappedFiles) {
     if (!f.truncated && ctx.readFiles) ctx.readFiles.add(f.path);
   }
 
-  // Build a list of files that are in the file tree but NOT included in context
-  // so the agent knows to read_file before importing from them.
+  // Build excluded/truncated file notes so agent knows to read_file before importing.
   const cappedPaths = new Set(cappedFiles.map(f => f.path));
   const excludedFiles = fileSources
     .filter(f => !cappedPaths.has(f.path))
@@ -1717,7 +1750,32 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const shouldConfirmFirst = isEmptyProject && isFirstMessage && runtimeMode === 'build';
 
   const modeInstruction = runtimeMode === 'plan'
-    ? '\n\n# Runtime Mode Instruction\n\nMode is locked to PLAN by backend policy. Do not self-switch modes.\n\nHard requirements:\n- Do NOT call any tools.\n- Do NOT emit any <ecomgear-*> tags.\n- Output a compact site map + phase breakdown. No verbose descriptions, no code, no architecture prose.\n- Use EXACTLY this format:\n\n## Site Map\n[Section Name]\n├── [Page/Feature] · [Page/Feature]\n\n[Section Name]\n├── [Page/Feature]\n\n## Phases\nPhase 1 — [1–2 visual pages only, e.g. Homepage + one more]\nPhase 2 — [next 1–2 pages]\n(add Phase 3 or more if the project has many pages)\n\nReply **execute** to start Phase 1.\n\n- STRICT: Each phase covers AT MOST 2 pages. Never put 3+ pages in one phase.\n- ORDER: Visual/landing pages first (Homepage, Hero, About), functional pages later (Cart, Checkout, Dashboard, Auth).\n- Each phase should be ~4–8 files of work — small enough to review before continuing.\n- Keep phase descriptions to one line each.\n- Do NOT include any text outside the Site Map, Phases, and reply line.'
+    ? `\n\n# Runtime Mode Instruction
+
+You are operating in **PLAN MODE**. You are a strategic planning assistant — your role is to think, discuss, advise, and help the user design their project. You do NOT make any changes to files.
+
+## Hard rules
+- NEVER call write_file, edit_file, delete_file, or any file-modification tool.
+- NEVER emit <ecomgear-write>, <ecomgear-edit>, or any operational tags.
+- Do NOT produce code blocks that represent final implementation — only illustrative snippets to explain a concept.
+- Do NOT emit any <ecomgear-*> tags.
+
+## What you CAN do
+- Discuss the project vision, goals, and target users.
+- Suggest features, pages, components, and architecture.
+- Break work into phases or milestones.
+- Answer questions about technology choices, best practices, UX patterns.
+- Help the user refine requirements and spot gaps or conflicts.
+- Produce structured plans, site maps, or feature lists when helpful.
+- Be concise — bullet points over paragraphs where possible.
+
+## If the user asks you to make changes or implement something
+Respond briefly. Acknowledge what they want, then say:
+> "I'm in **Plan mode** — I can only plan and advise here. Switch to **Build mode** to implement this."
+Keep that redirect to one or two sentences. Do not lecture or repeat it.
+
+## Tone
+Conversational, sharp, helpful. Think of yourself as a senior technical co-founder reviewing the project with the user — not a code generator. Stay focused on what the user is asking.`
     : shouldConfirmFirst
     ? '\n\n# Runtime Mode Instruction\n\nMode: BUILD (confirm-first). This is a NEW empty project — the user\'s first request.\n\n' +
       'IMPORTANT EXCEPTION: If the user\'s message is a simple greeting ("hi", "hello", "hey", etc.), general chat, or does NOT describe what they want to build, respond with a friendly welcome and ask what they\'d like to build. Do NOT invent or assume a project idea. Do NOT call any tools.\n\n' +
@@ -1729,10 +1787,15 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       '5. When the user confirms in the NEXT message, you will receive BUILD mode and should execute immediately.'
     : '\n\n# Runtime Mode Instruction\n\nMode is locked to BUILD by backend policy. Do not self-switch modes.\n\nHard requirements:\n- Execute now: use tools and produce real file changes immediately.\n- Do NOT ask for confirmation to start coding (unless the user\'s intent is genuinely unclear — see EXCEPTION below).\n- Do NOT end with planning-only instructions.\n- PHASED BUILD: If the conversation history contains a phase plan (look for "## Phases" and "Phase N —" lines), you are in phased build mode. Count how many "Phase N done ✓" messages already appear in the history to determine which phase is current. Build ONLY the files for that phase — do NOT build files from future phases. When all files for the current phase are written and verified, end your final message with exactly: "Phase N done ✓ — ready to build Phase N+1 ([one-line description])? Reply **continue** to proceed." If this is the last phase, write instead: "All phases complete ✓ — your app is ready." IMPORTANT: In phased mode the rule below about writing ALL files is scoped to the current phase only.\n- NON-PHASED BUILD: You MUST write ALL files the app needs before finishing — pages, components, utilities, AND src/App.tsx. Never stop after writing just a few files. A partial build = broken preview.\n- STRICTLY FORBIDDEN: Never say "I didn\'t make any changes", "I haven\'t changed anything", "no changes were made", or any equivalent. If you ran without writing files, you failed — do not announce it, just start writing.\n- ALSO FORBIDDEN: Never output a future-tense promise like "Let me do this", "I\'ll implement that", "I will go ahead and", "I\'m going to build" unless you IMMEDIATELY follow it with actual file writes in the same response. If you say it and then stop with no files written — that is a failure. Either write files right away or ask what the user wants.\n- EXCEPTION (greetings only): If the user\'s message is EXCLUSIVELY a greeting ("hi", "hello", "hey", "how are you") or an identity question ("who are you", "what are you") with NO build request attached — respond with a short text answer only and do NOT call tools. This exception does NOT apply to any message that contains a feature request, a page name, a description, a confirmation ("ok", "yes", "go", "proceed", "build it", "do it"), or ANY reference to the project.\n- EXCEPTION (ambiguous statement): If the user\'s message is a vague statement with NO specific build content (no feature name, page, component, or change described) AND you cannot identify a pending plan in the conversation history to execute — ask ONE short clarifying question about what they\'d like you to build or change. Do NOT invent a task. Do NOT write files for a made-up goal.\n- If the user confirmed a plan you already presented (e.g. "ok", "yes", "go ahead", "looks good", "build it") — that IS a build command. Execute immediately.\n- BRAIN MEMORY: Your older tool call history is automatically compacted to save tokens. Use `save_memory` after your initial `think` to persist key architecture decisions, file purposes, and user requirements so they survive compaction.';
 
-  // Efficiency instruction for cheap tiers — keeps the agent focused and brief.
-  const tierInstruction = (_tier === 'micro' || _tier === 'fix' || _tier === 'edit')
-    ? '\n\n# Efficiency Mode\nThis is a targeted change — do NOT run the full blueprint protocol.\n1. Call `think` once — max 80 words, identify the exact file and line to change.\n2. Read that file, make the surgical edit, done.\n3. Do NOT explore unrelated files. Do NOT rewrite entire components for a small change.\n4. Keep your chat response under 30 words.'
-    : '';
+  // Efficiency instruction — scope it to the tier so micro/fix stay fast but edit
+  // still verifies imports (skipping that check is the #1 source of build errors).
+  const tierInstruction = _tier === 'micro'
+    ? '\n\n# Efficiency Mode\nOne visual tweak. Call `think` once (≤40 words), read the file, make the change, done. No blueprint. No extra files.'
+    : _tier === 'fix'
+      ? '\n\n# Fix Mode\nDo NOT run the full blueprint protocol. Call `think` once — identify root cause, read the broken file, fix the exact broken lines, call `get_build_errors` once to verify. Zero narration.'
+      : _tier === 'edit'
+        ? '\n\n# Edit Mode\nTargeted change. Call `think` once — list the 1–3 files you will touch and verify each import resolves. Read files before editing. Do NOT rewrite unrelated components. Keep chat under 30 words.'
+        : '';
 
   const boundedFileTree = clampContextSection('Project file tree', liveFileTree, MAX_FILE_TREE_CHARS);
 
@@ -1744,24 +1807,29 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         ? 'fix'
         : 'build';
 
-  // Micro tier: 600-token prompt (96% smaller than full 16.8K)
-  // Fix tier: stripped prompt (~3K tokens)
-  // All others: full prompt or build-stripped version
+  // Tier-based prompt selection (smallest prompt that can handle the task):
+  //   micro  →  ~600 tokens   (color/text/spacing tweaks)
+  //   fix    →  ~3K tokens    (error fixes — no design/new-project sections)
+  //   edit   →  ~4K tokens    (changes to existing apps — strips registry/chunking/new-project)
+  //   build  →  ~6-10K tokens (new projects / features — context-stripped build prompt)
+  //   other  →  full prompt   (plan/confirm profiles)
   const staticSystemPrompt = _tier === 'micro'
     ? MICRO_SYSTEM_PROMPT
     : _tier === 'fix'
       ? getFixSystemPrompt()
-      : promptProfile === 'build'
-        ? getAppBuilderBuildSystemPrompt({
-            includeRequirementGathering: isEmptyProject,
-            includeStartingNewProject: isEmptyProject,
-            includeSeo: promptIntent?.isWebsiteBuild === true,
-            includeIntegration: promptIntent?.hasIntegrationRequest === true,
-            includeErrorPatterns: isEmptyProject,
-            includeCapabilities: isEmptyProject,
-            includePreviewEnvironment: isEmptyProject,
-          })
-        : getAppBuilderSystemPrompt(promptProfile);
+      : _tier === 'edit' && !isEmptyProject
+        ? getEditSystemPrompt()
+        : promptProfile === 'build'
+          ? getAppBuilderBuildSystemPrompt({
+              includeRequirementGathering: isEmptyProject,
+              includeStartingNewProject: isEmptyProject,
+              includeSeo: promptIntent?.isWebsiteBuild === true,
+              includeIntegration: promptIntent?.hasIntegrationRequest === true,
+              includeErrorPatterns: isEmptyProject,
+              includeCapabilities: isEmptyProject,
+              includePreviewEnvironment: isEmptyProject,
+            })
+          : getAppBuilderSystemPrompt(promptProfile);
 
   console.log(
     `[AgentLoop] Prompt profile=${promptProfile} tier=${_tier ?? 'unset'} maxSteps=${MAX_STEPS} staticChars=${staticSystemPrompt.length} ` +
@@ -1974,10 +2042,12 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     };
     let streamError: any = null;
 
-    const snapshotId = `${projectId}_${randomUUID().replace(/-/g, '')}`;
-    const snapshotDir = path.join(SNAPSHOTS_DIR, snapshotId);
-    // Fire-and-forget — snapshot is only needed for user-triggered rollback, not agent work.
-    snapshotProject(appPath, snapshotDir).catch(() => {});
+    // Only snapshot in build mode — plan mode never touches files so there's nothing to restore.
+    const snapshotId = runtimeMode !== 'plan' ? `${projectId}_${randomUUID().replace(/-/g, '')}` : null;
+    const snapshotDir = snapshotId ? path.join(SNAPSHOTS_DIR, snapshotId) : null;
+    if (snapshotDir) {
+      snapshotProject(appPath, snapshotDir).catch(() => {});
+    }
 
     let currentUserContent: any = boundedPrompt;
     if (visionCapable && imageVisionData.length > 0) {
@@ -2110,13 +2180,19 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
             (userId ? ` | user=${userId}` : ''),
           );
 
-          // ── Per-run token cap ────────────────────────────────────────────
-          // Abort if this single run exceeds the budget ceiling to prevent
-          // runaway multi-step builds from costing $3+.
+          // ── Per-run hard caps ────────────────────────────────────────────
+          // Two gates: token count + dollar cost. Whichever fires first aborts the run.
+          // Prevents runaway builds from costing $3+ per run.
+          // Defaults: 200K tokens (~$0.80 on Sonnet), $1.50 hard cost ceiling.
+          // Override via env: AGENT_TOKEN_CAP, AGENT_COST_CAP_USD.
           const HARD_TOKEN_CAP = parseInt(process.env.AGENT_TOKEN_CAP || '200000', 10);
-          if (runTokens.total > HARD_TOKEN_CAP) {
-            console.warn(`[AgentLoop] Token cap hit: ${runTokens.total} > ${HARD_TOKEN_CAP} — aborting run (user=${userId ?? 'unknown'})`);
-            sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: 'Wrapping up — step budget reached.' });
+          const HARD_COST_CAP  = parseFloat(process.env.AGENT_COST_CAP_USD || '1.50');
+          if (runTokens.total > HARD_TOKEN_CAP || runCost > HARD_COST_CAP) {
+            const reason = runCost > HARD_COST_CAP
+              ? `cost cap $${HARD_COST_CAP} hit ($${runCost.toFixed(3)} spent)`
+              : `token cap ${HARD_TOKEN_CAP} hit (${runTokens.total} used)`;
+            console.warn(`[AgentLoop] Run aborted — ${reason} (user=${userId ?? 'unknown'})`);
+            sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: 'Wrapping up — run budget reached.' });
             abortController.abort();
           }
         },
@@ -2126,6 +2202,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     const consumeResultStream = async (stream: ReturnType<typeof streamText>): Promise<{ text: string; err: any | null }> => {
       let textBuffer = '';
       let partError: any = null;
+      let lastFinishReason: string | undefined;
       try {
         for await (const part of stream.fullStream) {
           if (part.type === 'text-delta') {
@@ -2135,6 +2212,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
               sseWrite(res, 'text-delta', { text: safeText });
             }
           } else if (part.type === 'finish') {
+            lastFinishReason = (part as any).finishReason;
             // Final overall finish — log cumulative run totals (onStepFinish already
             // captured per-step detail; this is the authoritative end-of-run summary).
             const u    = (part as any).usage;
@@ -2150,9 +2228,18 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
               ` | input=${totalIn} output=${totalOut} cacheRead=${totalCR} cacheWrite=${totalCW}` +
               ` | total tokens=${totalIn + totalOut + totalCR + totalCW}` +
               ` | est cost $${totalCost.toFixed(4)}` +
+              ` | finishReason=${lastFinishReason ?? 'unknown'}` +
               (userId ? ` | user=${userId}` : '') +
               (agentRunId ? ` | runId=${agentRunId}` : ''),
             );
+            // Warn when model produces nothing — helps diagnose Gemini empty-response issues
+            if (totalOut === 0) {
+              console.warn(
+                `[AgentLoop] ⚠️  Model produced 0 output tokens (finishReason=${lastFinishReason ?? 'unknown'}).` +
+                ` This usually means conflicting prompt instructions or a safety filter triggered.` +
+                ` provider=${providerName} model=${modelId}`,
+              );
+            }
           } else if (part.type === 'error') {
             partError = part.error;
           }
@@ -2190,7 +2277,8 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         }
         // Auth/billing errors (org disabled, 401, 403) won't resolve with retries — go straight to fallback.
         if (isAuthOrBillingError(err)) {
-          console.warn(`[AgentLoop] Auth/billing error on ${providerName} — skipping retries, going to fallback: ${err?.message}`);
+          billingFailedProviders.add(providerName);
+          console.warn(`[AgentLoop] Auth/billing error on ${providerName} — circuit-breaking provider for this session: ${err?.message}`);
           break;
         }
         if (!isRetryableError(err) || attempt === MAX_RETRIES) break;
@@ -2266,7 +2354,9 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     // Recovery path: transient transport drops can emit undici "terminated" / ECONNRESET
     // after stream start. Retry once via fallback providers before failing the run.
     if (streamError && !abortController.signal.aborted && (isNetworkError(streamError) || isAuthOrBillingError(streamError))) {
-      const recoveryReason = isAuthOrBillingError(streamError) ? 'Billing/auth error mid-stream' : 'Stream interrupted';
+      const isBillingErr = isAuthOrBillingError(streamError);
+      if (isBillingErr) billingFailedProviders.add(providerName);
+      const recoveryReason = isBillingErr ? 'Billing/auth error mid-stream' : 'Stream interrupted';
       console.warn(`[AgentLoop] ${recoveryReason} (${streamError?.message ?? streamError}). Trying fallback recovery once.`);
       if (!SUPPRESS_RECOVERY_UI) {
         const statusMsg = isAuthOrBillingError(streamError)
@@ -3121,7 +3211,8 @@ RULES:
       mode: runtimeMode,
       summary,
       tokensUsed: 0,
-      snapshotId,
+      // Only expose snapshot to frontend when code actually changed
+      snapshotId: doneFilesToWrite.length > 0 ? snapshotId : null,
       previewPushed: previewPushOk,
     });
 
@@ -3171,12 +3262,18 @@ RULES:
           output_tokens:      runTokens.outputTokens,
           cache_read_tokens:  runTokens.cacheReadTokens,
           cache_write_tokens: runTokens.cacheWriteTokens,
-          snapshot_id: snapshotId,
+          // Only link snapshot when code actually changed; null means no restore point
+          snapshot_id: doneFilesToWrite.length > 0 ? snapshotId : null,
           completed_at: new Date().toISOString(),
         }).eq('id', agentRunId).then(
           ({ error }) => { if (error) console.warn(`[AgentLoop] agent_runs update failed: ${error.message}`); },
           (e: any) => console.warn('[AgentLoop] agent_runs update rejected:', e?.message)
         );
+      }
+
+      // If no code changed (ghost run or plan), delete the snapshot dir we pre-created
+      if (snapshotDir && doneFilesToWrite.length === 0) {
+        fs.promises.rm(snapshotDir, { recursive: true, force: true }).catch(() => {});
       }
 
       // Update the latest revision's preview_url after a successful preview push

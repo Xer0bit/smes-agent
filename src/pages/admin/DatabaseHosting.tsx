@@ -101,7 +101,7 @@ export default function DatabaseHosting() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Database className="h-6 w-6" />Hosted Databases</h1>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Database className="h-6 w-6" />ECG CLAUDE DBs</h1>
           <p className="text-sm text-muted-foreground">Tenant databases provisioned on VPS5, across all projects and organizations.</p>
         </div>
         <div className="flex items-center gap-2">

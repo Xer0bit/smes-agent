@@ -16,6 +16,23 @@ const supabaseKey =
   process.env.SUPABASE_SERVICE_KEY ||
   process.env.SUPABASE_ANON_KEY || '';
 
+// Must match the vector(N) column in project_file_embeddings.
+// BM25 fallback produces 256-dim — those cannot be stored here.
+const DB_VECTOR_DIMS = 768;
+
+let _dimsMismatchWarned = false;
+function checkDims(embedding: number[], context: string): boolean {
+  if (embedding.length === DB_VECTOR_DIMS) return true;
+  if (!_dimsMismatchWarned) {
+    _dimsMismatchWarned = true;
+    console.warn(
+      `[kb/vectorStore] ${context}: embedding is ${embedding.length}-dim but DB expects ${DB_VECTOR_DIMS}-dim. ` +
+      'KB indexing disabled — set GOOGLE_GENERATIVE_AI_API_KEY or OPENAI_API_KEY to enable it.',
+    );
+  }
+  return false;
+}
+
 function getClient() {
   if (!supabaseUrl || !supabaseKey) return null;
   return createClient(supabaseUrl, supabaseKey);
@@ -38,13 +55,14 @@ export function hashContent(content: string): string {
   return crypto.createHash('md5').update(content).digest('hex');
 }
 
-/** Upsert a file embedding. Skips if content_hash unchanged. */
+/** Upsert a file embedding. Skips if content_hash unchanged or dims don't match DB column. */
 export async function upsertFileEmbedding(
   projectId: string,
   filePath: string,
   content: string,
   embedding: number[],
 ): Promise<void> {
+  if (!checkDims(embedding, 'upsert')) return;
   const db = getClient();
   if (!db) return;
 
@@ -95,6 +113,7 @@ export async function searchSimilarFiles(
   queryEmbedding: number[],
   limit = 5,
 ): Promise<SimilarFile[]> {
+  if (!checkDims(queryEmbedding, 'search')) return [];
   const db = getClient();
   if (!db) return [];
 

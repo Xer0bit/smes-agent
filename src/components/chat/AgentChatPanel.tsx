@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, StopCircle, ChevronDown, Zap, Paperclip, X, FileText, Image as ImageIcon, RotateCcw, Sparkles } from 'lucide-react';
+import { Send, Loader2, StopCircle, ChevronDown, Zap, Paperclip, X, FileText, Image as ImageIcon, RotateCcw, Sparkles, Bot, ClipboardList } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { streamAgentGeneration } from '@/eCG/UserPrompt/agentStreamService';
@@ -38,8 +38,8 @@ interface Message {
   snapshotId?: string;
   /** Commands the agent suggested (e.g. 'restart', 'refresh', 'rebuild') */
   suggestedCommands?: string[];
-  /** AI-generated follow-up prompt chips shown after a build completes */
-  followUpSuggestions?: string[];
+  /** AI-generated follow-up prompt chips shown after a build completes. null = loading */
+  followUpSuggestions?: string[] | null;
 }
 
 // ─── Tag helpers ──────────────────────────────────────────────────────────────
@@ -108,12 +108,8 @@ function parseCommandSuggestions(raw: string): string[] {
   return cmds;
 }
 
-/**
- * Generate 3 contextual follow-up suggestions based on what was JUST changed/built.
- * Matches the specific component or action from the AI summary, not the broad domain.
- * Each rule reads: "if the last thing built was X, suggest the natural next steps for X."
- */
-function generateFollowUpSuggestions(filePaths: string[], summaryText: string): string[] {
+/** @deprecated Replaced by Gemini-generated suggestions from /api/v1/ai/suggestions */
+function generateFollowUpSuggestions(_filePaths: string[], _summaryText: string): string[] {
   // Use the summary as the primary signal — it describes exactly what changed.
   // File paths are used as fallback context when the summary is vague.
   const summary = summaryText.toLowerCase();
@@ -492,7 +488,21 @@ function generateFollowUpSuggestions(filePaths: string[], summaryText: string): 
 function stripEcomgearTags(raw: string): string {
   let s = raw;
 
-  // Remove complete block tags + their content (replace with paragraph break)
+  // Strip model-internal reasoning/tool-call markup (thinking blocks, function calls)
+  // that leaks from DeepSeek, Gemini, and plan-mode responses into the text stream.
+  s = s.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+  s = s.replace(/<thinking>[\s\S]*?<\/antml:thinking>/gi, '');
+  s = s.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, '');
+  s = s.replace(/<tool_calls>[\s\S]*?<\/tool_calls>/gi, '');
+  s = s.replace(/<invoke[\s\S]*?<\/invoke>/gi, '');
+  // Partial/unclosed internal block still streaming — truncate at start of tag
+  const internalPartials: RegExp[] = [/<(?:antml:)?thinking>/i, /<function_calls[\s>]/i, /<tool_calls[\s>]/i, /<invoke[\s>]/i];
+  for (const re of internalPartials) {
+    const idx = s.search(re);
+    if (idx !== -1) { s = s.slice(0, idx); break; }
+  }
+
+  // Remove complete ecomgear/egear block tags + their content
   s = s.replace(/<ecomgear-write[\s\S]*?<\/ecomgear-write>/gi, '\n\n');
   s = s.replace(/<ecomgear-edit[\s\S]*?<\/ecomgear-edit>/gi, '\n\n');
   s = s.replace(/<ecomgear-chat-summary>[\s\S]*?<\/ecomgear-chat-summary>/gi, '');
@@ -507,31 +517,10 @@ function stripEcomgearTags(raw: string): string {
   const partialIdx = s.search(/<(?:ecomgear|egear)-/i);
   if (partialIdx !== -1) s = s.slice(0, partialIdx);
 
-  // Normalize whitespace: collapse 3+ newlines → 2, trim blank lines at edges
+  // Normalize whitespace
   s = s.replace(/\n{3,}/g, '\n\n');
 
   return s.trim();
-}
-
-interface AgentChatPanelProps {
-  projectId: string;
-  userId: string;
-  currentOrganizationId?: string | null;
-  onFilesGenerated?: (files: { path: string; content: string }[], filesToDelete?: string[], previewPushed?: boolean) => void;
-  onGenerationComplete?: (tokensUsed: number) => void;
-  /** Called with the real token count once the server resolves usage (fires after onGenerationComplete) */
-  onUsage?: (tokensUsed: number) => void;
-  isMinimized?: boolean;
-  /** When set, automatically send this prompt to the agent (e.g. from Repair button). */
-  triggerPrompt?: string | null;
-  /** Called once after triggerPrompt has been consumed so the parent can clear it. */
-  onTriggerConsumed?: () => void;
-  /** Called when user clicks a preview command button (e.g. 'restart', 'refresh'). */
-  onPreviewCommand?: (cmd: string) => void;
-  /** Called with each text-delta chunk as it streams from the agent. */
-  onAgentStreamText?: (chunk: string) => void;
-  /** Called when the stream resets (new generation started). */
-  onAgentStreamClear?: () => void;
 }
 
 // ─── Human-friendly file path labels ────────────────────────────────────────
@@ -553,59 +542,29 @@ function filePathToLabel(filePath: string): string {
 }
 
 // ─── Model branding ───────────────────────────────────────────────────────────
-const isClaude = (id: string) => id.includes('claude');
-const isGemini = (id: string) => id.includes('gemini');
-const isDeepSeek = (id: string) => id.includes('deepseek');
-
-// Readable Gemini version from model ID, e.g. "gemini-2.5-flash" → "Gemini 2.5 Flash"
-const geminiVersionName = (id: string): string => {
-  const part = id.replace(/^gemini-/, '');
-  const readable = part.replace(/-([a-zA-Z])/g, (_: string, c: string) => ' ' + c.toUpperCase());
-  return `Gemini ${readable}`;
-};
-
-// Backbone provider name shown in the toolbar and dropdown
-const backboneName = (id: string) => {
-  if (isClaude(id)) return 'Claude';
-  if (isGemini(id)) return geminiVersionName(id);
-  if (isDeepSeek(id)) return 'DeepSeek';
-  return id;
-};
-
-// Short label shown in the toolbar button: "Normal · DeepSeek"
-const shortLabel = (id: string) => {
-  if (isClaude(id)) return 'EcomSmart · Claude';
-  if (isGemini(id)) return geminiVersionName(id);
-  if (isDeepSeek(id)) return 'DeepSeek';
-  return id.length > 22 ? id.slice(0, 22) + '…' : id;
-};
-
-// Full display name shown in the dropdown
-const modelDisplayName = (id: string) => {
-  if (isClaude(id)) return 'EcomSmart';
-  if (isGemini(id)) return geminiVersionName(id);
-  if (isDeepSeek(id)) return 'DeepSeek';
-  return id.length > 22 ? id.slice(0, 22) + '…' : id;
-};
-
-// Short description shown under the model name in the dropdown
-const modelDescription = (id: string) => {
-  if (isClaude(id)) return 'Best quality · Paid plan';
-  if (isGemini(id)) return 'Fast & free · All plans';
-  if (isDeepSeek(id)) return 'Everyday tasks · All plans';
-  return '';
-};
-
-// Fallback models shown when the server can't be reached
-const FALLBACK_MODELS = [
-  { id: 'gemini-2.5-flash', provider: 'gemini' },
-  { id: 'deepseek-chat', provider: 'deepseek' },
-];
-const GUEST_FALLBACK_MODELS = [
-  { id: 'gemini-2.5-flash', provider: 'gemini' },
-];
 
 // ─── Component ────────────────────────────────────────────────────────────────
+
+interface AgentChatPanelProps {
+  projectId: string;
+  userId: string;
+  currentOrganizationId?: string | null;
+  onFilesGenerated?: (files: { path: string; content: string }[], filesToDelete?: string[], previewPushed?: boolean) => void;
+  onGenerationComplete?: (tokensUsed: number) => void;
+  /** Called with the real token count once the server resolves usage (fires after onGenerationComplete) */
+  onUsage?: (tokensUsed: number) => void;
+  isMinimized?: boolean;
+  /** When set, automatically send this prompt to the agent (e.g. from Repair button). */
+  triggerPrompt?: string | null;
+  /** Called once after triggerPrompt has been consumed so the parent can clear it. */
+  onTriggerConsumed?: () => void;
+  /** Called when user clicks a preview command button (e.g. 'restart', 'refresh'). */
+  onPreviewCommand?: (cmd: string) => void;
+  /** Called with each text-delta chunk as it streams from the agent. */
+  onAgentStreamText?: (chunk: string) => void;
+  /** Called when the stream resets (new generation started). */
+  onAgentStreamClear?: () => void;
+}
 
 export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   projectId,
@@ -643,9 +602,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [liveFiles, setLiveFiles] = useState<LiveFileChange[]>([]);
   const [filesWritten, setFilesWritten] = useState(0);
 
-  const [availableModels, setAvailableModels] = useState<Array<{ id: string; provider: string }>>([]);
-  const [selectedModel, setSelectedModel] = useState('');
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [agentMode, setAgentMode] = useState<'agent' | 'plan'>(() => {
+    try {
+      const saved = localStorage.getItem('ecomgear:agentMode');
+      return saved === 'plan' ? 'plan' : 'agent';
+    } catch { return 'agent'; }
+  });
 
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
@@ -687,6 +650,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     }
   }, [isGenerating]);
 
+  // Persist plan/build mode across refreshes
+  useEffect(() => {
+    try { localStorage.setItem('ecomgear:agentMode', agentMode); } catch {}
+  }, [agentMode]);
+
   // ── Auto-trigger from external prompt (e.g. Repair button) ──────────────
   useEffect(() => {
     if (!triggerPrompt || isGenerating) return;
@@ -702,53 +670,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const isGuest = userId.startsWith('guest:');
   const guestFingerprint = isGuest ? userId.slice('guest:'.length) : undefined;
 
-  // ── Fetch models ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    const fetchAbort = new AbortController();
-    (async () => {
-      try {
-        const { data: { session } } = await lovableCloud.auth.getSession();
-        // For guests, proceed without session; for auth users, require it
-        if (!session && !isGuest) return;
-        if (fetchAbort.signal.aborted) return;
-        const urls = getGenServerCandidateUrls('/api/v1/ai/models');
-        let fetched = false;
-        for (const url of urls) {
-          try {
-            const headers: Record<string, string> = {};
-            if (session) headers.Authorization = `Bearer ${session.access_token}`;
-            const res = await fetch(url, { headers, signal: fetchAbort.signal });
-            if (!res.ok) continue;
-            const json = await res.json();
-            if (fetchAbort.signal.aborted) return;
-            if (json.success && json.allowed) {
-              setAvailableModels(json.allowed);
-              setSelectedModel(json.primary || json.allowed[0]?.id || '');
-              fetched = true;
-            }
-            break;
-          } catch (e) {
-            if ((e as Error)?.name === 'AbortError') return;
-            /* try next */
-          }
-        }
-        if (!fetched && !fetchAbort.signal.aborted) {
-          const fb = isGuest ? GUEST_FALLBACK_MODELS : FALLBACK_MODELS;
-          setAvailableModels(fb);
-          setSelectedModel(fb[0].id);
-          toast.error('Could not load AI models from server. Using default.');
-        }
-      } catch (err) {
-        if ((err as Error)?.name === 'AbortError') return;
-        console.error('Failed to fetch models', err);
-        const fb = isGuest ? GUEST_FALLBACK_MODELS : FALLBACK_MODELS;
-        setAvailableModels(fb);
-        setSelectedModel(fb[0].id);
-        toast.error('Could not load AI models. Using default.');
-      }
-    })();
-    return () => fetchAbort.abort();
-  }, [isGuest]);
+  // Model is now auto-selected server-side based on request tier and user plan.
 
   // ── Load message history ──────────────────────────────────────────────────
   useEffect(() => {
@@ -761,6 +683,20 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     let cancelled = false;
     (async () => {
       try {
+        // Ensure a valid session before querying — on page refresh the token
+        // may be stale and getSession() returns null until the refresh completes.
+        // Try getSession() first; if null, call refreshSession() once before giving up.
+        let { data: { session } } = await lovableCloud.auth.getSession();
+        if (!session && !cancelled) {
+          const { data: refreshed } = await lovableCloud.auth.refreshSession();
+          session = refreshed.session;
+        }
+        // Still no session — user is truly not logged in; show clean slate but
+        // do NOT overwrite an already-populated messages array (e.g. a run is in progress)
+        if (!session || cancelled) {
+          if (!cancelled) setMessages(prev => prev.length <= 1 ? [GREETING] : prev);
+          return;
+        }
         const history = await messageService.loadMessages(projectId);
         if (cancelled) return;
         if (history.length === 0) {
@@ -783,7 +719,8 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       } catch (err) {
         if (cancelled) return;
         console.error('Failed to load message history', err);
-        setMessages([GREETING]);
+        // Don't wipe existing messages on a transient error
+        setMessages(prev => prev.length <= 1 ? [GREETING] : prev);
       }
     })();
     return () => { cancelled = true; };
@@ -870,11 +807,12 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                     setStepCount(0);
                     setLiveFiles([]);
                     setFilesWritten(0);
-                    const rawContent = currentContent || result.summary || 'Done.';
+                    const rawContent = currentContent || result.summary || '';
                     const { body: finalContent, summary } = extractSummary(stripEcomgearTags(rawContent));
                     const toolActivities = parseToolActivities(toolXmlAccum || rawContent);
+                    const displayContent = finalContent || (toolActivities.length > 0 ? '' : 'Something went wrong — please try again.');
                     setMessages(prev => prev.map(m => m.id === asstId
-                      ? { ...m, status: 'complete', content: finalContent, summary, toolActivities, snapshotId: result.snapshotId }
+                      ? { ...m, status: 'complete', content: displayContent, summary, toolActivities, snapshotId: result.snapshotId }
                       : m));
                     if (onFilesGenerated && (result.filesToWrite?.length > 0 || result.filesToDelete?.length > 0)) {
                       onFilesGenerated(
@@ -1013,9 +951,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
     // Persist user message (skip for guests — no DB project row)
     if (!isGuest) {
-      messageService.saveUserMessage(projectId, raw, userId).catch(err =>
-        console.error('Failed to save user message', err)
-      );
+      messageService.saveUserMessage(projectId, raw, userId).catch(err => {
+        console.error('Failed to save user message', err);
+        toast.error('Message could not be saved. Check your connection.');
+      });
     }
 
     // ── Build conversation history ─────────────────────────────────────────
@@ -1097,8 +1036,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         prompt: effectivePrompt,
         projectId,
         orgId: currentOrganizationId,
-        model: selectedModel || undefined,
-        mode: forcedMode,
+        mode: forcedMode ?? (agentMode === 'plan' ? 'plan' : undefined),
         history,
         olderSummary,
         fingerprint: guestFingerprint,
@@ -1181,15 +1119,16 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             setFilesWritten(0);
 
             // Prefer full streamed text over backend summary
-            const rawContent = currentContent || result.summary || 'Done.';
+            const rawContent = currentContent || result.summary || '';
             const { body: strippedContent, summary } = extractSummary(stripEcomgearTags(rawContent));
             const isPlan = result.mode === 'plan'
               || (!result.mode && /reply\s+\*\*execute\*\*/i.test(rawContent) && !overridePrompt);
             // Tool activities come from tool-output XML (accumulated during streaming),
             // not from the text-delta stream which rarely contains ecomgear tags.
             const toolActivities = isPlan ? [] : parseToolActivities(toolXmlAccum || rawContent);
-            // Always show the LLM's actual output. Only use a bare fallback if the model returned nothing.
-            const finalContent = strippedContent.trim() || result.summary?.trim() || '';
+            // Show actual output; if model returned nothing and no tool activity, show a retry hint.
+            const finalContent = strippedContent.trim() || result.summary?.trim()
+              || (toolActivities.length > 0 ? '' : 'The model didn\'t respond. Please try rephrasing your request.');
 
             const suggestedCommands = isPlan ? [] : parseCommandSuggestions(toolXmlAccum || rawContent);
             const filePaths = (result.filesToWrite ?? []).map((f: { path: string }) => f.path);
@@ -1197,48 +1136,57 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             // (ghostRun=true because no files written yet, but it's not a plan-mode response).
             const isConfirmRequest = !isPlan && result.ghostRun === true &&
               /shall i (start building|begin|proceed|start coding|go ahead)|let me know if you.{0,10}d like (any changes|to (change|adjust))|ready to (start|build)|should i (start|build|proceed)|confirm or adjust/i.test(rawContent);
-            const followUpSuggestions = isConfirmRequest
+
+            // For confirm requests, show fixed chips immediately. For real builds, set null (loading)
+            // while Gemini generates contextual suggestions — skeleton chips show in the meantime.
+            const initialSuggestions: string[] | null = isConfirmRequest
               ? ['Yes, build it!', 'Make some changes first']
-              : !isPlan
-              ? generateFollowUpSuggestions(filePaths, summary || finalContent)
+              : !isPlan && filePaths.length > 0 ? null   // null = Gemini loading
               : [];
+
             setMessages(prev =>
               prev.map(m =>
                 m.id === asstId
-                  ? { ...m, status: 'complete', content: finalContent, isPlan, summary, toolActivities, snapshotId: result.snapshotId, suggestedCommands, followUpSuggestions }
+                  ? { ...m, status: 'complete', content: finalContent, isPlan, summary, toolActivities, snapshotId: result.snapshotId, suggestedCommands, followUpSuggestions: initialSuggestions }
                   : m
               )
             );
 
-            // Async LLM refinement: replace static suggestions with AI-generated ones.
-            // Fire-and-forget — static suggestions stay visible until the LLM responds.
-            if (!isConfirmRequest && !isPlan && (summary || finalContent)) {
-              const summaryForLlm = summary || finalContent;
+            // Fire Gemini suggestion call — replaces null (loading) with real chips when done.
+            if (!isConfirmRequest && !isPlan && filePaths.length > 0) {
               fetch(getGenServerUrl('/api/v1/ai/suggestions'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ summary: summaryForLlm.slice(0, 800), filePaths }),
+                body: JSON.stringify({
+                  summary: (summary || finalContent).slice(0, 800),
+                  filePaths,
+                  userPrompt: effectivePrompt.slice(0, 300),
+                }),
               })
                 .then(r => r.ok ? r.json() : null)
                 .then((data: { suggestions?: string[] } | null) => {
-                  if (data?.suggestions && data.suggestions.length > 0) {
-                    setMessages(prev =>
-                      prev.map(m =>
-                        m.id === asstId
-                          ? { ...m, followUpSuggestions: data.suggestions }
-                          : m
-                      )
-                    );
-                  }
+                  setMessages(prev =>
+                    prev.map(m =>
+                      m.id === asstId
+                        ? { ...m, followUpSuggestions: data?.suggestions?.length ? data.suggestions : [] }
+                        : m
+                    )
+                  );
                 })
-                .catch(() => { /* keep static suggestions on failure */ });
+                .catch(() => {
+                  // On failure, clear the loading state so skeleton doesn't stay forever
+                  setMessages(prev =>
+                    prev.map(m => m.id === asstId ? { ...m, followUpSuggestions: [] } : m)
+                  );
+                });
             }
 
-            // Persist assistant message (skip for guests)
-            if (!isPlan && !isGuest) {
-              messageService.saveAssistantMessage(projectId, finalContent, userId).catch(err =>
-                console.error('Failed to save assistant message', err)
-              );
+            // Persist assistant message (skip for guests, save plan messages too)
+            if (!isGuest && finalContent.trim()) {
+              messageService.saveAssistantMessage(projectId, finalContent, userId).catch(err => {
+                console.error('Failed to save assistant message', err);
+                toast.error('Message could not be saved. Check your connection.');
+              });
             }
 
             if (!isPlan) {
@@ -1371,6 +1319,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   };
 
   const executePlan = (planContent: string) => {
+    setAgentMode('agent');
     handleSubmit(`Execute the following plan:\n\n${planContent}`, 'Execute plan', 'build');
   };
 
@@ -1378,6 +1327,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
+    }
+    if (e.altKey && e.key.toLowerCase() === 'p') {
+      e.preventDefault();
+      setAgentMode(m => m === 'plan' ? 'agent' : 'plan');
     }
   };
 
@@ -1408,6 +1361,27 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         <div className="px-3 py-3 space-y-3">
           {messages.map((msg) => (
             <div key={msg.id} className="group">
+              {msg.id === 'greeting' ? (
+                <div className="relative overflow-hidden rounded-2xl p-4 mb-1"
+                  style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.18) 0%, rgba(139,92,246,0.14) 40%, rgba(6,182,212,0.08) 100%)' }}>
+                  {/* Grid dot texture */}
+                  <div className="absolute inset-0 opacity-[0.04]"
+                    style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.9) 1px, transparent 1px)' }} />
+                  {/* Glow orb */}
+                  <div className="absolute -top-6 -right-6 w-28 h-28 rounded-full opacity-20"
+                    style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.8), transparent 70%)' }} />
+                  <div className="relative z-10 flex items-center gap-3 mb-3">
+                    <img src="/src/assets/ecgagent.png" alt="EcomGear Agent" className="w-10 h-8 shrink-0" />
+                    <div>
+                      <p className="text-[13px] font-semibold text-white/90 leading-tight">EcomGear Agent</p>
+                      <p className="text-[10px] text-indigo-300/60 font-medium tracking-wide">App Builder · AI Powered</p>
+                    </div>
+                  </div>
+                  <p className="relative z-10 text-[12.5px] text-white/75 leading-relaxed">
+                    Welcome to <span className="font-semibold text-white">EcomGear App Builder</span> describe what you want to build and I'll generate it for you.
+                  </p>
+                </div>
+              ) : (<>
               <ChatMessage role={msg.role} content={msg.content} status={msg.status} attachments={msg.attachments} />
 
               {/* Retry button — shown on hover below user messages */}
@@ -1459,18 +1433,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 </div>
               )}
 
-              {/* Execute Plan button */}
-              {msg.isPlan && msg.status === 'complete' && (
-                <div className="mt-2 ml-[30px]">
-                  <button
-                    onClick={() => executePlan(msg.content)}
-                    disabled={isGenerating}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-[11px] font-medium transition-colors"
-                  >
-                    <Zap className="w-3 h-3" /> Execute Plan
-                  </button>
-                </div>
-              )}
 
               {/* Undo button — only on completed non-plan assistant messages that have a snapshot (hidden for guests) */}
               {!isGuest && msg.role === 'assistant' && msg.status === 'complete' && !msg.isPlan && msg.snapshotId && (
@@ -1536,33 +1498,43 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 </div>
               )}
 
-              {/* Product Assistant — follow-up prompt suggestion chips */}
-              {msg.role === 'assistant' && msg.status === 'complete' && msg.followUpSuggestions && msg.followUpSuggestions.length > 0 && !isGenerating && (
-                <div className="mt-2 ml-[30px] space-y-1">
-                  <p className="text-[9px] text-gray-700 uppercase tracking-wide font-medium flex items-center gap-1">
-                    <Sparkles className="w-2.5 h-2.5" />
-                    {msg.followUpSuggestions.includes('Yes, build it!') ? 'Quick reply' : 'Next'}
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {msg.followUpSuggestions.map((suggestion) => (
-                      <button
-                        key={suggestion}
-                        disabled={isGenerating}
-                        onClick={() => handleSubmit(suggestion)}
-                        className="animate-chip-pop px-2.5 py-1 rounded-full
-                          bg-gradient-to-r from-white/[0.04] to-white/[0.02]
-                          hover:from-indigo-500/[0.1] hover:to-purple-500/[0.07]
-                          border border-white/[0.07] hover:border-indigo-500/30
-                          text-gray-500 hover:text-gray-200 text-[11px]
-                          transition-all duration-200 disabled:opacity-40
-                          shadow-[0_1px_3px_rgba(0,0,0,0.2)]"
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
-                  </div>
+              {/* Follow-up suggestion chips — skeleton while Gemini is loading (null), chips when ready */}
+              {msg.role === 'assistant' && msg.status === 'complete' && msg.followUpSuggestions !== undefined && !isGenerating && (
+                <div className="mt-2 ml-[30px]">
+                  {msg.followUpSuggestions === null ? (
+                    /* Skeleton loading chips */
+                    <div className="flex flex-wrap gap-1.5">
+                      {[72, 96, 84].map((w) => (
+                        <div
+                          key={w}
+                          className="h-[26px] rounded-full border border-white/[0.06] bg-white/[0.03] animate-pulse"
+                          style={{ width: w }}
+                        />
+                      ))}
+                    </div>
+                  ) : msg.followUpSuggestions.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {msg.followUpSuggestions.map((suggestion) => (
+                        <button
+                          key={suggestion}
+                          disabled={isGenerating}
+                          onClick={() => handleSubmit(suggestion)}
+                          className="animate-chip-pop px-2.5 py-1 rounded-full
+                            bg-gradient-to-r from-white/[0.04] to-white/[0.02]
+                            hover:from-indigo-500/[0.1] hover:to-purple-500/[0.07]
+                            border border-white/[0.07] hover:border-indigo-500/30
+                            text-gray-500 hover:text-gray-200 text-[11px]
+                            transition-all duration-200 disabled:opacity-40
+                            shadow-[0_1px_3px_rgba(0,0,0,0.2)]"
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               )}
+              </>)}
             </div>
           ))}
 
@@ -1745,66 +1717,70 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           </p>
         )}
 
-        {/* Toolbar — lives OUTSIDE overflow-hidden so the model dropdown is never clipped */}
+        {/* Toolbar */}
         <div className="flex items-center justify-between mt-1.5 px-0.5">
 
-          {/* Model selector */}
-          <div className="relative" ref={modelMenuRef}>
-            <button
-              onClick={() => setModelMenuOpen(v => !v)}
-              disabled={isGenerating}
-              className="flex items-center gap-1 px-1.5 py-1 rounded-md text-[11px] text-white/50 hover:text-white/80 hover:bg-white/[0.05] disabled:opacity-40 disabled:cursor-default transition-colors"
-            >
-              <span>{selectedModel ? shortLabel(selectedModel) : '…'}</span>
-              <ChevronDown className="w-3 h-3 opacity-60" />
-            </button>
+          {/* Left: attach */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isGenerating || !projectId}
+            className="h-6 w-6 flex items-center justify-center rounded-md text-gray-600 hover:text-gray-300 hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-default transition-all"
+            title="Attach file"
+          >
+            <Paperclip className="w-3 h-3" />
+          </button>
 
-            {/* Dropdown — opens upward */}
-            {modelMenuOpen && availableModels.length > 0 && (
-              <div className="absolute bottom-full left-0 mb-1 bg-[#18181c] border border-white/[0.12] rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.6)] z-[100] overflow-hidden animate-msg-appear" style={{ minWidth: 'max-content' }}>
-                {availableModels.map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() => { setSelectedModel(m.id); setModelMenuOpen(false); }}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${
-                      m.id === selectedModel ? 'bg-indigo-500/10 text-white' : 'text-gray-300 hover:bg-white/[0.06]'
-                    }`}
-                  >
-                    <div className={`w-1 h-1 rounded-full shrink-0 ${m.id === selectedModel ? 'bg-indigo-400' : 'bg-white/20'}`} />
-                    <span className="text-[12px] font-medium">{modelDisplayName(m.id)}</span>
-                    <span className="text-[10px] text-white/30 ml-1">{backboneName(m.id)}</span>
-                    {isClaude(m.id) && (
-                      <span className="text-[9px] px-1 rounded bg-amber-500/10 text-amber-400/80 border border-amber-500/15 uppercase tracking-wide">Pro</span>
-                    )}
-                  </button>
-                ))}
-              </div>
+          {/* Right: char counter + mode dropdown + send */}
+          <div className="flex items-center gap-1.5">
+            {input.length >= MAX_INPUT_CHARS * 0.8 && (
+              <span className={`text-[10px] tabular-nums transition-colors ${
+                input.length >= MAX_INPUT_CHARS ? 'text-red-400' : input.length >= MAX_INPUT_CHARS * 0.95 ? 'text-amber-400' : 'text-gray-500'
+              }`}>
+                {input.length}/{MAX_INPUT_CHARS}
+              </span>
             )}
-          </div>
 
-          {/* Character counter — only visible when near or over limit */}
-          {input.length >= MAX_INPUT_CHARS * 0.8 && (
-            <span className={`text-[10px] tabular-nums transition-colors ${
-              input.length >= MAX_INPUT_CHARS
-                ? 'text-red-400'
-                : input.length >= MAX_INPUT_CHARS * 0.95
-                  ? 'text-amber-400'
-                  : 'text-gray-500'
-            }`}>
-              {input.length}/{MAX_INPUT_CHARS}
-            </span>
-          )}
+            {/* Build / Plan mode dropdown */}
+            <div className="relative" ref={modelMenuRef}>
+              <button
+                onClick={() => setModelMenuOpen(v => !v)}
+                disabled={isGenerating}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] font-medium text-white/70 hover:text-white hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-default transition-colors"
+              >
+                <span>{agentMode === 'plan' ? 'Plan' : 'Build'}</span>
+                <ChevronDown className="w-3 h-3 opacity-60" />
+              </button>
 
-          {/* Attach + Send */}
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isGenerating || !projectId}
-              className="h-6 w-6 flex items-center justify-center rounded-md text-gray-600 hover:text-gray-300 hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-default transition-all"
-              title="Attach file"
-            >
-              <Paperclip className="w-3 h-3" />
-            </button>
+              {/* Dropdown — opens upward */}
+              {modelMenuOpen && (
+                <div className="absolute bottom-full right-0 mb-1.5 bg-[#1c1c20] border border-white/[0.10] rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.7)] z-[200] overflow-hidden" style={{ minWidth: 210 }}>
+                  <button
+                    onClick={() => { setAgentMode('agent'); setModelMenuOpen(false); }}
+                    className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.05] ${agentMode === 'agent' ? 'text-white' : 'text-white/60'}`}
+                  >
+                    <span className="mt-0.5 w-3.5 shrink-0 text-indigo-400">{agentMode === 'agent' ? '✓' : ''}</span>
+                    <div>
+                      <p className="text-[13px] font-semibold leading-none mb-1">Build</p>
+                      <p className="text-[11px] text-white/40">Make changes directly</p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { setAgentMode('plan'); setModelMenuOpen(false); }}
+                    className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.05] ${agentMode === 'plan' ? 'text-white' : 'text-white/60'}`}
+                  >
+                    <span className="mt-0.5 w-3.5 shrink-0 text-indigo-400">{agentMode === 'plan' ? '✓' : ''}</span>
+                    <div>
+                      <p className="text-[13px] font-semibold leading-none mb-1">Plan</p>
+                      <p className="text-[11px] text-white/40">Discuss before building</p>
+                    </div>
+                  </button>
+                  <div className="px-4 py-2 border-t border-white/[0.06]">
+                    <span className="text-[11px] text-white/25">Toggle with <kbd className="px-1 py-0.5 rounded bg-white/[0.07] text-white/40 font-mono text-[10px]">Alt</kbd> <kbd className="px-1 py-0.5 rounded bg-white/[0.07] text-white/40 font-mono text-[10px]">P</kbd></span>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <button
               onClick={() => handleSubmit()}
               disabled={(!input.trim() && pendingAttachments.length === 0) || isGenerating || !projectId || input.length > MAX_INPUT_CHARS}

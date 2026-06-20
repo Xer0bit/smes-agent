@@ -100,21 +100,48 @@ export default function AdminApp() {
         navigate('/admin/login');
     };
 
-    const navItems: NavItem[] = [
-        { title: 'Overview', path: '/admin/dashboard', icon: LayoutDashboard },
-        { title: 'User Management', path: '/admin/users', icon: Users },
-        { title: 'Organization Control', path: '/admin/organizations', icon: Building2 },
-        { title: 'Projects Overview', path: '/admin/projects', icon: FolderKanban },
-        { title: 'System Invitations', path: '/admin/invitations', icon: Mail },
-        { title: 'Billing & Tiers', path: '/admin/subscriptions', icon: CreditCard },
-        { title: 'Demo Requests', path: '/admin/demo-requests', icon: Mail },
-        { title: 'Access Control', path: '/admin/roles', icon: Shield },
-        { title: 'System Metrics', path: '/admin/usage', icon: Activity },
-        { title: 'AI Cost Metrics', path: '/admin/ai-metrics', icon: Zap },
-        { title: 'Hosting & Domains', path: '/admin/hosting', icon: Server },
-        { title: 'Hosted Databases', path: '/admin/database-hosting', icon: Database },
-        { title: 'System Status', path: '/admin/system-status', icon: Settings },
+    const navGroups = [
+        {
+            label: null,
+            items: [
+                { title: 'Overview', path: '/admin/dashboard', icon: LayoutDashboard },
+            ],
+        },
+        {
+            label: 'Users & Orgs',
+            items: [
+                { title: 'Users', path: '/admin/users', icon: Users },
+                { title: 'Organizations', path: '/admin/organizations', icon: Building2 },
+                { title: 'Projects', path: '/admin/projects', icon: FolderKanban },
+                { title: 'Invitations', path: '/admin/invitations', icon: Mail },
+                { title: 'Demo Requests', path: '/admin/demo-requests', icon: Mail },
+            ],
+        },
+        {
+            label: 'Billing & Access',
+            items: [
+                { title: 'Billing & Tiers', path: '/admin/subscriptions', icon: CreditCard },
+                { title: 'Access Control', path: '/admin/roles', icon: Shield },
+            ],
+        },
+        {
+            label: 'Analytics',
+            items: [
+                { title: 'Usage Analytics', path: '/admin/usage', icon: Activity },
+                { title: 'AI Cost Metrics', path: '/admin/ai-metrics', icon: Zap },
+            ],
+        },
+        {
+            label: 'Infrastructure',
+            items: [
+                { title: 'Hosting & Domains', path: '/admin/hosting', icon: Server },
+                { title: 'ECG CLAUDE DBs', path: '/admin/database-hosting', icon: Database },
+                { title: 'System Status', path: '/admin/system-status', icon: Settings },
+            ],
+        },
     ];
+
+    const navItems: NavItem[] = navGroups.flatMap(g => g.items);
 
     const getPageTitle = () => {
         if (location.pathname.includes('system-status') || location.pathname.includes('settings')) return 'System Status';
@@ -125,9 +152,9 @@ export default function AdminApp() {
     if (loading) {
         return (
             <div className="min-h-screen flex items-center justify-center p-4 bg-[#07080a]">
-                <div className="relative">
-                    <div className="absolute inset-0 bg-purple-500/20 blur-3xl animate-pulse" />
-
+                <div className="flex flex-col items-center gap-3">
+                    <div className="h-8 w-8 rounded-full border-2 border-purple-500/60 border-t-transparent animate-spin" />
+                    <span className="text-[11px] text-white/25 tracking-widest uppercase font-medium">Loading</span>
                 </div>
             </div>
         );
@@ -176,55 +203,62 @@ export default function AdminApp() {
                 </div>
 
                 {/* Primary Navigation */}
-                <div className="flex-1 py-4 px-3 space-y-1.5 overflow-y-auto custom-scrollbar scrollbar-hide">
-                    {navItems.map((item) => (
-                        <NavLink
-                            key={item.path}
-                            to={item.path}
-                            className={({ isActive }) => cn(
-                                "group relative flex items-center h-11 rounded-xl text-sm transition-all duration-300 px-3",
-                                isActive
-                                    ? "text-white bg-white/[0.05] shadow-[0_4px_12px_rgba(0,0,0,0.1)] border border-white/[0.08]"
-                                    : "text-gray-400 hover:text-white hover:bg-white/[0.03] border border-transparent"
+                <div className="flex-1 py-4 px-3 overflow-y-auto custom-scrollbar scrollbar-hide space-y-4">
+                    {navGroups.map((group, gi) => (
+                        <div key={gi}>
+                            {group.label && !sidebarCollapsed && (
+                                <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/20 px-3 mb-1.5">{group.label}</p>
                             )}
-                        >
-                            {({ isActive }) => (
-                                <>
-                                    {isActive && (
-                                        <motion.div
-                                            layoutId="nav-glow"
-                                            className="absolute inset-0 bg-gradient-to-r from-purple-500/10 to-transparent blur-md opacity-50"
-                                        />
-                                    )}
-                                    <div className={cn(
-                                        "h-8 w-8 rounded-lg flex items-center justify-center transition-all duration-300",
-                                        isActive ? "bg-purple-500/20 text-purple-400" : "text-gray-500 group-hover:text-gray-300"
-                                    )}>
-                                        <item.icon size={18} strokeWidth={isActive ? 2.5 : 2} />
-                                    </div>
-                                    <AnimatePresence mode="wait">
-                                        {!sidebarCollapsed && (
-                                            <motion.span
-                                                initial={{ opacity: 0, x: -5 }}
-                                                animate={{ opacity: 1, x: 0 }}
-                                                exit={{ opacity: 0, x: -5 }}
-                                                className="ml-3 font-semibold tracking-tight truncate flex-1"
-                                            >
-                                                {item.title}
-                                                {item.badge !== undefined && item.badge > 0 && (
-                                                    <span className="ml-2 px-1.5 py-0.5 rounded-md bg-purple-500/20 text-purple-400 text-[9px] font-bold">
-                                                        {item.badge}
-                                                    </span>
-                                                )}
-                                            </motion.span>
+                            {group.label && sidebarCollapsed && gi > 0 && (
+                                <div className="h-px bg-white/[0.04] mx-2 mb-2" />
+                            )}
+                            <div className="space-y-0.5">
+                                {group.items.map((item) => (
+                                    <NavLink
+                                        key={item.path}
+                                        to={item.path}
+                                        className={({ isActive }) => cn(
+                                            "group relative flex items-center h-10 rounded-xl text-sm transition-all duration-200 px-2.5",
+                                            isActive
+                                                ? "text-white bg-white/[0.05] border border-white/[0.08]"
+                                                : "text-gray-400 hover:text-white hover:bg-white/[0.03] border border-transparent"
                                         )}
-                                    </AnimatePresence>
-                                    {!sidebarCollapsed && isActive && (
-                                        <div className="absolute right-3 w-1 h-3 rounded-full bg-purple-500" />
-                                    )}
-                                </>
-                            )}
-                        </NavLink>
+                                    >
+                                        {({ isActive }) => (
+                                            <>
+                                                {isActive && (
+                                                    <motion.div
+                                                        layoutId="nav-glow"
+                                                        className="absolute inset-0 bg-gradient-to-r from-purple-500/10 to-transparent blur-md opacity-50 rounded-xl"
+                                                    />
+                                                )}
+                                                <div className={cn(
+                                                    "h-7 w-7 rounded-lg flex items-center justify-center shrink-0 transition-all duration-200",
+                                                    isActive ? "bg-purple-500/20 text-purple-400" : "text-gray-500 group-hover:text-gray-300"
+                                                )}>
+                                                    <item.icon size={15} strokeWidth={isActive ? 2.5 : 2} />
+                                                </div>
+                                                <AnimatePresence mode="wait">
+                                                    {!sidebarCollapsed && (
+                                                        <motion.span
+                                                            initial={{ opacity: 0, x: -5 }}
+                                                            animate={{ opacity: 1, x: 0 }}
+                                                            exit={{ opacity: 0, x: -5 }}
+                                                            className="ml-2.5 text-[13px] font-medium tracking-tight truncate flex-1"
+                                                        >
+                                                            {item.title}
+                                                        </motion.span>
+                                                    )}
+                                                </AnimatePresence>
+                                                {!sidebarCollapsed && isActive && (
+                                                    <div className="absolute right-3 w-1 h-3 rounded-full bg-purple-500" />
+                                                )}
+                                            </>
+                                        )}
+                                    </NavLink>
+                                ))}
+                            </div>
+                        </div>
                     ))}
                 </div>
 

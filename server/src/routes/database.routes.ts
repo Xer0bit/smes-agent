@@ -86,9 +86,10 @@ router.post('/provision', dbProvisionLimiter, async (req: AuthenticatedRequest, 
 });
 
 // ── DELETE /api/v1/database/deprovision ─────────────────────────────────────
-router.delete('/deprovision', dbProvisionLimiter, async (req: AuthenticatedRequest, res: Response) => {
+// No plan gate: if you own the database you can always delete it.
+// databaseService.deprovision already verifies ownership via getStatus(userId).
+router.delete('/deprovision', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!(await requirePaidPlan(req, res))) return;
     await databaseService.deprovision(req.user!.id);
     res.json({ success: true });
   } catch (err) {

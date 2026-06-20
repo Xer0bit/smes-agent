@@ -8,12 +8,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Search, Plus, Grid3x3, List, Database, Cloud, Settings, Users, Trash2, Edit, Crown, Shield, Share2, Globe, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -117,6 +116,7 @@ export default function DashboardProjects() {
 
   // Delete confirmation
   const [deleteProjectId, setDeleteProjectId] = useState<string | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [statusFilter, setStatusFilter] = useState<'active' | 'deleted' | 'all'>('active');
 
   // Current user (for permissions)
@@ -1247,26 +1247,50 @@ export default function DashboardProjects() {
       </Dialog>
 
       {/* Delete Project Confirmation */}
-      <AlertDialog open={!!deleteProjectId} onOpenChange={() => setDeleteProjectId(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the project
-              and all associated data including settings and collaborators.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteProject}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+      <Dialog open={!!deleteProjectId} onOpenChange={(o) => { if (!o) { setDeleteProjectId(null); setDeleteConfirmText(''); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-4 w-4 text-destructive" />
+              Delete project
+            </DialogTitle>
+            <DialogDescription>
+              This permanently deletes the project and all its data including settings and collaborators. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <p className="text-xs text-muted-foreground">
+              Type <span className="font-mono text-foreground bg-muted px-1.5 py-0.5 rounded">delete my project</span> to confirm.
+            </p>
+            <Input
+              value={deleteConfirmText}
+              onChange={e => setDeleteConfirmText(e.target.value)}
+              placeholder="delete my project"
+              className="font-mono text-sm"
+              onKeyDown={e => {
+                if (e.key === 'Enter' && deleteConfirmText.trim().toLowerCase() === 'delete my project') {
+                  setDeleteProjectId(null);
+                  setDeleteConfirmText('');
+                  handleDeleteProject();
+                }
+              }}
+              autoFocus
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => { setDeleteProjectId(null); setDeleteConfirmText(''); }}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteConfirmText.trim().toLowerCase() !== 'delete my project'}
+              onClick={() => { setDeleteProjectId(null); setDeleteConfirmText(''); handleDeleteProject(); }}
             >
-              Delete Project
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              Delete project
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <SettingsDialog
         open={isProjectSettingsOpen}
