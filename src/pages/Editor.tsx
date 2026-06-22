@@ -72,12 +72,11 @@ import { checkPreviewHealth, updateDockerPreview, getPreviewUrl, handlePreviewSe
 import { validateAndFixFiles, getFixedContent } from "@/services/fileValidationService";
 import { ProjectShareDialog } from "@/components/ProjectShareDialog";
 import { QuotaLimitDialog } from "@/components/QuotaLimitDialog";
-import { useSubscription } from "@/contexts/SubscriptionContext";
+import { useSubscription } from "@/contexts/SubscriptionContext"; // single source — hasFeature/tier/tierLabel now on context
 import { domainService } from "@/eCG/Publish";
 import type { DomainConfiguration, DomainStatus } from "@/eCG/Publish/types";
 import { countNonEmptyLines } from "@/utils/ecoCounter";
 import { checkAndIncrementPublishLines, showLimitToast } from "@/services/subscriptionService";
-import { useSubscription as usePlanSubscription } from "@/hooks/useSubscription";
 
 const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   type BuilderTab = 'brief' | 'generate' | 'code' | 'preview' | 'revisions' | 'publish';
@@ -92,8 +91,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { currentOrganizationId, refreshOrganization, setCurrentOrganizationId } = useOrganization();
   const { ensureWithinLimit, refreshUsage, applyUsageDelta, usageRecord, getUsagePercentage, getUsageLimit } = useUsage();
-  const { subscribed } = useSubscription();
-  const { hasFeature, tierLabel, tier } = usePlanSubscription();
+  const { subscribed, hasFeature, tierLabel, tier } = useSubscription();
 
   // Workspace integration
   const {

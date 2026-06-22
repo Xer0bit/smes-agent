@@ -165,7 +165,11 @@ const applyRuntimeEnv = (state: LlmControlState): void => {
   
   if (state.apiKeys.anthropic) process.env.AI_ANTHROPIC_API_KEY = state.apiKeys.anthropic;
   if (state.apiKeys.deepseek) process.env.DEEPSEEK_API_KEY = state.apiKeys.deepseek;
-  if (state.apiKeys.gemini) process.env.GEMINI_API_KEY = state.apiKeys.gemini;
+  if (state.apiKeys.gemini) {
+    process.env.GEMINI_API_KEY = state.apiKeys.gemini;
+    // KB vector store uses GOOGLE_GENERATIVE_AI_API_KEY for 768-dim text-embedding-004
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY = state.apiKeys.gemini;
+  }
 };
 
 async function loadPersisted(): Promise<PersistedLlmControl | null> {

@@ -5,6 +5,7 @@ import os from 'node:os';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
 import { projectService } from '../services/project.service.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -105,7 +106,8 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
     let project: any;
     try {
       project = await projectService.getProject(projectId, req.user!.id);
-    } catch {
+    } catch (projErr) {
+      logger.warn('[SEO sync] getProject failed', { projectId, userId: req.user!.id, error: (projErr as Error).message });
       res.status(404).json({ error: 'Project not found or access denied.' });
       return;
     }

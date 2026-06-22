@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import { ToolDefinition, AgentContext } from './types.js';
 import { databaseService } from '../services/database.service.js';
+import { logger } from '../utils/logger.js';
 
 const schema = z.object({});
 
@@ -20,23 +21,41 @@ export const getDatabaseSchemaTool: ToolDefinition<z.infer<typeof schema>> = {
   execute: async (_args, ctx: AgentContext) => {
     if (!ctx.userId) return 'ERROR: no user context available for database access.';
 
-    const status = await databaseService.getStatus(ctx.userId);
-    if (!status || status.status !== 'active') {
+    const creds = await databaseService.getCredentials(ctx.userId, ctx.projectId);
+    if (!creds) {
       return 'No hosted database is provisioned for this project. Tell the user to provision one from Settings > Hosted Database before you write database-dependent code.';
     }
 
-    const tables = await databaseService.listTables(ctx.userId);
-    if (tables.length === 0) {
-      return `Database schema "${status.schema_name}" exists but has no tables yet. Use query_database with CREATE TABLE statements to add some.`;
+    let tables: Awaited<ReturnType<typeof databaseService.listTables>>;
+    try {
+      tables = await databaseService.listTables(ctx.userId, ctx.projectId);
+    } catch (err) {
+      logger.warn('[get_database_schema] listTables failed', err);
+      tables = [];
     }
 
-    const lines = tables.map((t) => {
-      const cols = t.columns
-        .map((c) => `${c.name} ${c.type}${c.nullable ? '' : ' NOT NULL'}${c.default ? ` DEFAULT ${c.default}` : ''}`)
-        .join(', ');
-      return `- ${t.name} (${t.row_count ?? '?'} rows): ${cols}`;
-    });
+    const tableLines = tables.length === 0
+      ? '(no tables yet — use query_database with CREATE TABLE statements to add some)'
+      : tables.map((t) => {
+          const cols = t.columns
+            .map((c) => `${c.name} ${c.type}${c.nullable ? '' : ' NOT NULL'}${c.default ? ` DEFAULT ${c.default}` : ''}`)
+            .join(', ');
+          return `- ${t.name} (${t.row_count ?? '?'} rows): ${cols}`;
+        }).join('\n');
 
-    return `Schema "${status.schema_name}":\n${lines.join('\n')}`;
+    return [
+      `Schema: "${creds.schema}"`,
+      `API_URL: ${creds.api_url}`,
+      `ANON_KEY: ${creds.anon_key}`,
+      '',
+      'Tables:',
+      tableLines,
+      '',
+      'IMPORTANT — Frontend database rules:',
+      `  • All fetch requests go to: ${creds.api_url}/rest/v1/<table>`,
+      `  • ALWAYS include these headers: { "Authorization": "Bearer ${creds.anon_key}", "apikey": "${creds.anon_key}" }`,
+      '  • NEVER use placeholder URLs or hardcoded keys — always use the API_URL and ANON_KEY above',
+      '  • NEVER call /api/auth/* routes — there is no Express backend in the preview; use direct PostgREST calls only',
+    ].join('\n');
   },
 };

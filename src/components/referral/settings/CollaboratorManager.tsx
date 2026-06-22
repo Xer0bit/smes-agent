@@ -12,7 +12,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { UserPlus, Trash2, Shield, Clock, Mail, X } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { useSubscription } from "@/hooks/useSubscription";
+import { useSubscription } from "@/contexts/SubscriptionContext";
 
 interface CollaboratorManagerProps {
   projectId?: string;

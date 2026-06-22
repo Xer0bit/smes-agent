@@ -1,4 +1,11 @@
 import 'dotenv/config';
+// Also load .env.production (one level above server/) so TENANT_DB_* secrets
+// are always available regardless of how PM2 was started or restarted.
+import { configDotenv } from 'dotenv';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+configDotenv({ path: path.resolve(__dirname, '..', '..', '.env.production'), override: false });
 import app from './app.js';
 import { logger } from './utils/logger.js';
 import { ensureBaseTemplate } from './services/baseTemplateService.js';
@@ -8,6 +15,7 @@ import type { Server } from 'node:http';
 const PORT = process.env.PORT || 5001;
 
 let server: Server;
+const activeConnections = new Set<import('node:net').Socket>();
 
 server = app.listen(PORT, () => {
     logger.info(`🚀 eComGear API Server running on port ${PORT}`);
@@ -17,6 +25,12 @@ server = app.listen(PORT, () => {
     // Required for cluster-mode rolling reloads: PM2 waits for this before
     // sending SIGINT to the old worker, giving true zero-downtime deploys.
     if (typeof process.send === 'function') process.send('ready');
+
+    // Track open sockets so graceful shutdown can destroy keep-alive connections
+    server.on('connection', (socket) => {
+        activeConnections.add(socket);
+        socket.once('close', () => activeConnections.delete(socket));
+    });
 
     // Test all LLM providers on startup — auto-disables any that fail.
     // Runs after the server is already accepting requests so startup is never blocked.
@@ -54,11 +68,18 @@ function gracefulShutdown(signal: string) {
         process.exit(0);
     });
 
-    // Force-kill after 15s if connections won't drain
+    // Destroy keep-alive connections that would block server.close() indefinitely.
+    // SSE streams for active agent runs get 12s to finish; plain HTTP gets 0s.
+    for (const socket of activeConnections) {
+        socket.destroy();
+    }
+
+    // Hard kill after 15s regardless — should rarely fire now that keep-alive
+    // connections are destroyed above, but keeps the process from leaking.
     setTimeout(() => {
         logger.warn('Forcing exit after 15s drain timeout');
         process.exit(1);
-    }, 15_000).unref();
+    }, 15_000);
 }
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

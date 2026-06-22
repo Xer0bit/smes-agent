@@ -27,7 +27,7 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
     if (!ctx.userId) return 'ERROR: no user context available.';
 
     // Check if already provisioned
-    const existing = await databaseService.getStatus(ctx.userId);
+    const existing = await databaseService.getStatus(ctx.userId, ctx.projectId);
     if (existing && existing.status === 'active') {
       return `Database is already provisioned (schema: ${existing.schema_name}). Call get_database_schema to see the current tables.`;
     }
@@ -53,7 +53,7 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
     }
 
     try {
-      const record = await databaseService.provision(ctx.userId, orgId);
+      const record = await databaseService.provision(ctx.userId, orgId, ctx.projectId);
       return (
         `Database provisioned successfully!\n` +
         `Schema: ${record.schema_name}\n` +

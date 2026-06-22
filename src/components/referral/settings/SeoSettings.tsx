@@ -95,17 +95,30 @@ export const SeoSettings = ({ projectId }: SeoSettingsProps) => {
     if (!projectId) return;
     setSaving(true);
     try {
-      const { error } = await supabase
+      // Check if a row already exists (table may not have the unique constraint yet)
+      const { data: existing } = await supabase
         .from("project_settings")
-        .upsert(
-          { project_id: projectId, setting_key: "seo", setting_value: data },
-          { onConflict: "project_id,setting_key" }
-        );
+        .select("id")
+        .eq("project_id", projectId)
+        .eq("setting_key", "seo")
+        .maybeSingle();
+
+      const { error } = existing
+        ? await supabase
+            .from("project_settings")
+            .update({ setting_value: data, updated_at: new Date().toISOString() })
+            .eq("id", existing.id)
+        : await supabase
+            .from("project_settings")
+            .insert({ project_id: projectId, setting_key: "seo", setting_value: data });
+
       if (error) throw error;
       setSyncStatus('saved');
       setTimeout(() => setSyncStatus(s => s === 'saved' ? 'idle' : s), 2000);
-    } catch {
-      // silent
+    } catch (e: any) {
+      toast.error("Failed to save SEO settings: " + (e?.message ?? "unknown error"));
+      setSyncStatus('error');
+      setTimeout(() => setSyncStatus('idle'), 4000);
     } finally {
       setSaving(false);
     }

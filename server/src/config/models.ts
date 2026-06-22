@@ -2,11 +2,13 @@
  * Canonical LLM model registry.
  *
  * Single source of truth for valid model IDs across the whole server.
- * Historically, invalid IDs (gemini-3-flash-preview, gemini-3.1-pro-preview,
- * claude-3-7-sonnet-latest, ...) were hardcoded in 6+ places and persisted to
- * the DB, causing `not_found_error` / 400s at call time. `canonicalizeModelId`
- * maps any known-stale or unknown ID to a valid one so a bad value can never
- * reach a provider.
+ * Historically, invalid IDs (gemini-3-flash-preview, claude-3-7-sonnet-latest, ...)
+ * were hardcoded in 6+ places and persisted to the DB, causing `not_found_error` /
+ * 400s at call time. `canonicalizeModelId` maps any known-stale or unknown ID to a
+ * valid one so a bad value can never reach a provider.
+ *
+ * gemini-3.1-pro-preview is a thinking model — it always reasons before responding.
+ * Never pass thinkingBudget: 0 to it; it requires maxOutputTokens >= 8000.
  */
 
 export type LlmProvider = 'anthropic' | 'deepseek' | 'gemini';
@@ -19,13 +21,14 @@ export interface ModelDef {
 
 /** Models surfaced to users (admin settings, model picker). */
 export const CANONICAL_MODELS: ModelDef[] = [
-  { id: 'gemini-2.5-pro',           provider: 'gemini',    label: 'Gemini 2.5 Pro (Advanced)' },
+  { id: 'gemini-3.1-pro-preview',   provider: 'gemini',    label: 'Gemini 3.1 Pro (Advanced)' },
+  { id: 'gemini-2.5-pro',           provider: 'gemini',    label: 'Gemini 2.5 Pro' },
   { id: 'gemini-2.5-flash',         provider: 'gemini',    label: 'Gemini 2.5 Flash (Fast)' },
   { id: 'deepseek-chat',            provider: 'deepseek',  label: 'DeepSeek (Everyday)' },
   { id: 'claude-sonnet-4-6',        provider: 'anthropic', label: 'Claude (EcomSmart)' },
 ];
 
-export const DEFAULT_PRIMARY_MODEL = 'gemini-2.5-pro';
+export const DEFAULT_PRIMARY_MODEL = 'gemini-3.1-pro-preview';
 export const DEFAULT_FREE_MODEL = 'gemini-2.5-flash';
 export const DEFAULT_FALLBACK_MODEL = 'deepseek-chat';
 
@@ -44,8 +47,7 @@ const STALE_ID_MAP: Record<string, string> = {
   'gemini-2.5-flash-preview':          'gemini-2.5-flash',
   'gemini-3-flash-preview':            'gemini-2.5-flash',
   'gemini-3-flash':                    'gemini-2.5-flash',
-  'gemini-3-pro':                      'gemini-2.5-pro',
-  'gemini-3.1-pro-preview':            'gemini-2.5-pro',
+  'gemini-3-pro':                      'gemini-3.1-pro-preview',
   'gemini-1.5-flash':                  'gemini-2.5-flash',
   'gemini-1.5-pro':                    'gemini-2.5-pro',
   'claude-3-7-sonnet-latest':          'claude-sonnet-4-6',

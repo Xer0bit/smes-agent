@@ -319,9 +319,10 @@ deploy_vps3() {
         info "No server/src/index.ts — skipping server build"
     fi
     step "Uploading server to VPS3 (staging dir)..."
-    ssh_vps3 "mkdir -p $DEPLOY_PATH/server.staging $DEPLOY_PATH/logs"
+    ssh_vps3 "mkdir -p $DEPLOY_PATH/server.staging $DEPLOY_PATH/logs $DEPLOY_PATH/backups"
     [ -d "$PROJECT_DIR/server/dist" ] && \
-        scp_vps3 "$PROJECT_DIR/server/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/server.staging/"
+        scp_vps3 --exclude='.env' --exclude='.env.*' \
+            "$PROJECT_DIR/server/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/server.staging/"
     step "Uploading supabase functions + migrations..."
     scp_vps3 "$PROJECT_DIR/supabase/functions/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/supabase/functions/"
     scp_vps3 "$PROJECT_DIR/supabase/migrations/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/supabase/migrations/"
@@ -329,14 +330,46 @@ deploy_vps3() {
     step "Uploading nginx config..."
     scp_vps3 "$PROJECT_DIR/infrastructure/nginx/vps3-gen.ecomgear.dev.conf" \
              "$VPS3_USER@$VPS3_IP:/etc/nginx/sites-available/ecomgear-gen"
-    step "Remote: atomic swap + pm2 cluster rolling reload..."
+    step "Remote: atomic swap + clean PM2 restart..."
     SK="${SUPABASE_SERVICE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"; SAK="${SUPABASE_ANON_KEY:-}"
-    ssh_vps3 "bash -s" << REMOTE
-set -e
-cd $DEPLOY_PATH
+    ssh_vps3 "bash -s" << 'REMOTE_EOF'
+set -euo pipefail
+DEPLOY_PATH="/var/www/ecomgear"
+APP_NAME="ecomgear-gen"
+PORT=5001
+BACKUP_DIR="$DEPLOY_PATH/backups"
+TS=$(date +%Y%m%d-%H%M%S)
+BACKUP_KEEP=5   # keep last N timestamped backups
 
-# Write new env before swap so the new process picks it up immediately
-cat > $DEPLOY_PATH/.env.production << ENV
+cd "$DEPLOY_PATH"
+
+# ── 1. Write env ──────────────────────────────────────────────────────────────
+REMOTE_EOF
+
+    # Write env (substitutions happen locally, not inside the heredoc)
+    TDB_HOST="${TENANT_DB_HOST:-}"
+    TDB_PORT="${TENANT_DB_PORT:-5432}"
+    TDB_USER="${TENANT_DB_SUPERUSER:-ecg_provisioner}"
+    TDB_PASS="${TENANT_DB_SUPERUSER_PASSWORD:-}"
+    TDB_NAME="${TENANT_DB_NAME:-ecg_tenants}"
+    TDB_JWT="${TENANT_DB_JWT_SECRET:-}"
+    TDB_API_URL="${TENANT_DB_API_URL:-https://db.ecomgear.app}"
+    TDB_SSL="${TENANT_DB_SSL:-true}"
+    TDB_RELOAD_URL="${TENANT_DB_RELOAD_URL:-}"
+    TDB_RELOAD_SECRET="${TENANT_DB_RELOAD_SECRET:-}"
+    ssh_vps3 "bash -s" << REMOTE
+set -euo pipefail
+DEPLOY_PATH="/var/www/ecomgear"
+APP_NAME="ecomgear-gen"
+PORT=5001
+BACKUP_DIR="\$DEPLOY_PATH/backups"
+TS=\$(date +%Y%m%d-%H%M%S)
+BACKUP_KEEP=5
+
+cd "\$DEPLOY_PATH"
+
+# ── 1. Write env ──────────────────────────────────────────────────────────────
+cat > "\$DEPLOY_PATH/.env.production" << ENV
 NODE_ENV=production
 PORT=5001
 PREVIEW_SERVICE_URL=https://preview.ecomgear.app
@@ -344,49 +377,171 @@ SUPABASE_URL=https://api.ecomgear.dev
 SUPABASE_SERVICE_ROLE_KEY=${SK}
 SUPABASE_SERVICE_KEY=${SK}
 SUPABASE_ANON_KEY=${SAK}
+TENANT_DB_HOST=${TDB_HOST}
+TENANT_DB_PORT=${TDB_PORT}
+TENANT_DB_SUPERUSER=${TDB_USER}
+TENANT_DB_SUPERUSER_PASSWORD=${TDB_PASS}
+TENANT_DB_NAME=${TDB_NAME}
+TENANT_DB_JWT_SECRET=${TDB_JWT}
+TENANT_DB_API_URL=${TDB_API_URL}
+TENANT_DB_SSL=${TDB_SSL}
+TENANT_DB_RELOAD_URL=${TDB_RELOAD_URL}
+TENANT_DB_RELOAD_SECRET=${TDB_RELOAD_SECRET}
 # LLM API keys are managed via the Admin panel — stored in Supabase, not here.
 ENV
 
-# Atomic directory swap
-rm -rf server.old
+# ── 2. Timestamped backup of current server dir ───────────────────────────────
+if [ -d "\$DEPLOY_PATH/server" ]; then
+    mkdir -p "\$BACKUP_DIR"
+    cp -a "\$DEPLOY_PATH/server" "\$BACKUP_DIR/server-\$TS"
+    echo "  Backup created: backups/server-\$TS"
+    # Prune: keep only the last \$BACKUP_KEEP backups
+    ls -1dt "\$BACKUP_DIR"/server-* 2>/dev/null | tail -n +\$((\$BACKUP_KEEP + 1)) | xargs rm -rf 2>/dev/null || true
+    KEPT=\$(ls -1d "\$BACKUP_DIR"/server-* 2>/dev/null | wc -l)
+    echo "  Backups retained: \$KEPT (max \$BACKUP_KEEP)"
+fi
+
+# ── 3. Atomic directory swap ──────────────────────────────────────────────────
 [ -d server ] && mv server server.old
 mv server.staging server
+rm -rf server.old   # only the swap-temp dir; real history is in backups/
 
+# ── 4. Nginx ─────────────────────────────────────────────────────────────────
 ln -sf /etc/nginx/sites-available/ecomgear-gen /etc/nginx/sites-enabled/ecomgear-gen
-rm -f /etc/nginx/sites-enabled/gen-agent.conf
-rm -f /etc/nginx/sites-enabled/default
+rm -f /etc/nginx/sites-enabled/gen-agent.conf /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable nginx >/dev/null 2>&1 || true
-systemctl start nginx
+systemctl start nginx 2>/dev/null || true
 systemctl reload nginx
 systemctl is-active nginx >/dev/null
 
+# ── 5. Kill zombie node workers (processes that share port \$PORT but are
+#       NOT in the current PM2 roster — leftover from manual starts or
+#       previous PM2 cluster lifecycles) ────────────────────────────────────
+PM2_PIDS=\$(pm2 jlist 2>/dev/null | python3 -c "
+import sys, json
+procs = json.load(sys.stdin)
+print(' '.join(str(p['pid']) for p in procs if p.get('name') == '\$APP_NAME' and p.get('pid', 0) > 0))
+" 2>/dev/null || echo "")
+
+# Find all node processes running the server binary
+ALL_PIDS=\$(pgrep -f "\$DEPLOY_PATH/server/dist/index.js" 2>/dev/null || true)
+ZOMBIE_PIDS=""
+for pid in \$ALL_PIDS; do
+    is_managed=0
+    for mp in \$PM2_PIDS; do
+        [ "\$pid" = "\$mp" ] && is_managed=1 && break
+    done
+    [ \$is_managed -eq 0 ] && ZOMBIE_PIDS="\$ZOMBIE_PIDS \$pid"
+done
+if [ -n "\$ZOMBIE_PIDS" ]; then
+    echo "  Killing zombie node processes:\$ZOMBIE_PIDS"
+    kill -TERM \$ZOMBIE_PIDS 2>/dev/null || true
+    sleep 2
+    kill -KILL \$ZOMBIE_PIDS 2>/dev/null || true
+else
+    echo "  No zombie node processes found"
+fi
+
+# ── 6. Hard PM2 restart (delete + start — no socket inheritance) ──────────────
 [ -f .env.production ] && set -a && . ./.env.production && set +a
 
-# Cluster-mode rolling reload: PM2 starts new workers one at a time,
-# waits for each to send process.send('ready'), then stops old workers.
-# At least one worker is always running — zero downtime.
-pm2 reload ecomgear-gen --update-env 2>/dev/null || {
-    echo "pm2 reload failed — falling back to start"
-    [ -f server/dist/index.js ] && pm2 start server/dist/index.js \
-        --name ecomgear-gen --cwd $DEPLOY_PATH/server --update-env --max-memory-restart 2G
-}
+pm2 delete "\$APP_NAME" 2>/dev/null || true
+sleep 2
+
+# NOTE: PM2 master daemon (not the workers) holds port \$PORT permanently.
+# There is no "port release" to wait for — the master socket stays bound
+# across all worker restarts. New workers receive connections via IPC from
+# the master. Do NOT wait for port release here.
+
+# Start only ecomgear-gen from the ecosystem file (ecomgear-preview lives on VPS2)
+if [ -f "\$DEPLOY_PATH/ecosystem.config.cjs" ]; then
+    pm2 start "\$DEPLOY_PATH/ecosystem.config.cjs" --only "\$APP_NAME" --update-env 2>/dev/null || \
+    pm2 start "\$DEPLOY_PATH/server/dist/index.js" \
+        --name "\$APP_NAME" \
+        --cwd "\$DEPLOY_PATH/server" \
+        --instances 2 \
+        --exec-mode cluster \
+        --max-memory-restart 2G \
+        --update-env
+else
+    pm2 start "\$DEPLOY_PATH/server/dist/index.js" \
+        --name "\$APP_NAME" \
+        --cwd "\$DEPLOY_PATH/server" \
+        --instances 2 \
+        --exec-mode cluster \
+        --max-memory-restart 2G \
+        --update-env
+fi
 pm2 save --force
 
-sleep 6
-if ! curl -sf http://127.0.0.1:5001/health; then
-    echo "ERROR: gen API health check failed — rolling back"
-    pm2 stop ecomgear-gen 2>/dev/null || true
-    rm -rf server.failed
-    mv server server.failed
-    [ -d server.old ] && mv server.old server
-    pm2 reload ecomgear-gen --update-env 2>/dev/null || \
-        pm2 start server/dist/index.js --name ecomgear-gen --cwd $DEPLOY_PATH/server --update-env
-    echo "ROLLED BACK to previous version"
+# ── 7. Final cleanup: wait for graceful drain then force-kill survivors ────────
+# Old workers received SIGTERM and have server.close() + 15s force-exit timer.
+# Wait 18s (3s buffer over the 15s timeout) then SIGKILL any survivors that are
+# NOT in PM2's final roster. This handles processes stuck on keep-alive connections.
+# We check against the FINAL PM2 roster to avoid killing active workers.
+echo "  Waiting 18s for graceful shutdown of old workers..."
+sleep 18
+FINAL_PIDS=\$(pm2 jlist 2>/dev/null | python3 -c "
+import sys, json
+procs = json.load(sys.stdin)
+print(' '.join(str(p['pid']) for p in procs if p.get('name') == '\$APP_NAME' and p.get('pid', 0) > 0))
+" 2>/dev/null || echo "")
+ALL_PIDS3=\$(pgrep -f "\$DEPLOY_PATH/server/dist/index.js" 2>/dev/null || true)
+STUCK_PIDS=""
+for pid in \$ALL_PIDS3; do
+    is_managed=0
+    for fp in \$FINAL_PIDS; do
+        [ "\$pid" = "\$fp" ] && is_managed=1 && break
+    done
+    [ \$is_managed -eq 0 ] && STUCK_PIDS="\$STUCK_PIDS \$pid"
+done
+if [ -n "\$STUCK_PIDS" ]; then
+    echo "  Force-killing stuck old workers (survived 18s drain):\$STUCK_PIDS"
+    kill -KILL \$STUCK_PIDS 2>/dev/null || true
+else
+    echo "  All old workers exited cleanly"
+fi
+
+# ── 8. Health check with retry ───────────────────────────────────────────────
+HEALTHY=0
+for i in \$(seq 1 12); do
+    if curl -sf "http://127.0.0.1:\$PORT/health" >/dev/null 2>&1; then
+        RESP=\$(curl -s "http://127.0.0.1:\$PORT/health")
+        echo "\$RESP gen API healthy"
+        HEALTHY=1
+        break
+    fi
+    echo "  Health check \$i/12 — waiting..."
+    sleep 3
+done
+
+if [ \$HEALTHY -eq 0 ]; then
+    echo "ERROR: gen API failed to respond after 36s — rolling back"
+    pm2 delete "\$APP_NAME" 2>/dev/null || true
+    sleep 1
+    # Restore latest backup
+    LATEST_BACKUP=\$(ls -1dt "\$BACKUP_DIR"/server-* 2>/dev/null | head -1)
+    if [ -n "\$LATEST_BACKUP" ]; then
+        rm -rf "\$DEPLOY_PATH/server.failed" && mv "\$DEPLOY_PATH/server" "\$DEPLOY_PATH/server.failed"
+        cp -a "\$LATEST_BACKUP" "\$DEPLOY_PATH/server"
+        echo "  Restored backup: \$LATEST_BACKUP"
+    fi
+    pm2 start "\$DEPLOY_PATH/ecosystem.config.cjs" --only "\$APP_NAME" --update-env 2>/dev/null || \
+        pm2 start "\$DEPLOY_PATH/server/dist/index.js" --name "\$APP_NAME" --cwd "\$DEPLOY_PATH/server" --update-env
+    pm2 save --force
+    echo "  ROLLED BACK — check server.failed for the broken build"
     exit 1
 fi
-echo " gen API healthy"
-echo "Backup preserved at server.old for manual rollback"
+
+FINAL_PM2_PIDS=\$(pm2 jlist 2>/dev/null | python3 -c "
+import sys, json
+procs = json.load(sys.stdin)
+print(' '.join(str(p['pid']) for p in procs if p.get('name') == '\$APP_NAME' and p.get('pid', 0) > 0))
+" 2>/dev/null || echo "unknown")
+echo "  Active PM2 workers: \$FINAL_PM2_PIDS"
+BACKUP_COUNT=\$(ls -1d "\$BACKUP_DIR"/server-* 2>/dev/null | wc -l)
+echo "  Backups stored: \$BACKUP_COUNT (in \$BACKUP_DIR)"
 REMOTE
     success "VPS3 deploy complete → https://gen.ecomgear.dev"
 }

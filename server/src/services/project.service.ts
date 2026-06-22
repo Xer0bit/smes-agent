@@ -185,40 +185,50 @@ export class ProjectService {
     /**
      * Permanently deletes the project row immediately (so the API responds fast),
      * then cleans up all related records and storage files asynchronously.
+     * Before deleting, writes an archive row to deleted_projects for support recovery.
      */
     async permanentlyDeleteProject(projectId: string, userId: string): Promise<void> {
-        await this.getProject(projectId, userId); // Verify ownership (throws if not found/unauthorized)
+        const project = await this.getProject(projectId, userId); // Verify ownership
 
-        // Delete FK-constrained child tables BEFORE removing the project row,
-        // since those tables have no ON DELETE CASCADE defined on the projects FK.
-        const FK_TABLES = [
-            'project_custom_domains',
-            'project_subdomains',
-            'project_billing',
-            'project_add_ons',
-        ];
-        await Promise.allSettled(
-            FK_TABLES.map((table) =>
-                supabase.from(table).delete().eq('project_id', projectId)
-            )
-        );
+        // 1. Snapshot project + settings into deleted_projects archive BEFORE any deletes.
+        //    This gives support a 2-year recovery window.
+        try {
+            const { data: settings } = await supabase
+                .from('project_settings')
+                .select('setting_key, setting_value')
+                .eq('project_id', projectId);
 
-        // Hard-delete the project row right away so the user never sees it again.
-        // Note: ownership was already verified by getProject() above, so we only
-        // filter by id — not user_id — to handle projects where created_by !== user_id.
-        const { error } = await supabase
-            .from('projects')
-            .delete()
-            .eq('id', projectId);
-
-        if (error) {
-            logger.error(`Failed to permanently delete project: ${error.message}`);
-            throw new Error(`Failed to permanently delete project: ${error.message}`);
+            await supabase.from('deleted_projects').insert({
+                project_id:     projectId,
+                project_name:   (project as any).name ?? 'unknown',
+                project_slug:   (project as any).slug ?? null,
+                owner_user_id:  (project as any).created_by ?? (project as any).user_id ?? userId,
+                organization_id:(project as any).organization_id ?? null,
+                deleted_by:     userId,
+                metadata: {
+                    project:  project,
+                    settings: settings ?? [],
+                    deleted_at: new Date().toISOString(),
+                },
+            });
+        } catch (archiveErr) {
+            // Archive failure must never block actual deletion
+            logger.warn(`[deleteProject] Archive write failed for ${projectId}: ${(archiveErr as Error).message}`);
         }
 
-        logger.info(`Project ${projectId} hard-deleted from DB — background cleanup started`);
+        // 2. Delete everything via a single atomic SQL transaction.
+        //    The delete_project_cascade() SECURITY DEFINER function handles all 41 FK tables
+        //    in the correct order — non-CASCADE tables explicitly, CASCADE tables automatically.
+        const { error } = await supabase.rpc('delete_project_cascade', { p_project_id: projectId });
 
-        // Fire-and-forget: clean up remaining related records and storage in the background.
+        if (error) {
+            logger.error(`Failed to delete project ${projectId}: ${error.message}`);
+            throw new Error(`Failed to delete project: ${error.message}`);
+        }
+
+        logger.info(`Project ${projectId} deleted — archive saved, background cleanup started`);
+
+        // 4. Fire-and-forget: clean up storage files
         setImmediate(() => { void this._cleanupProjectAsync(projectId); });
     }
 

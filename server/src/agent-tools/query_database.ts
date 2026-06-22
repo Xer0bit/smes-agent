@@ -38,7 +38,7 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
     }
 
     try {
-      const result = await databaseService.runQuery(ctx.userId, args.sql, 'service');
+      const result = await databaseService.runQuery(ctx.userId, args.sql, 'service', ctx.projectId);
       const stmtNote = result.statementsRun && result.statementsRun > 1
         ? ` (${result.statementsRun} statements executed)`
         : '';

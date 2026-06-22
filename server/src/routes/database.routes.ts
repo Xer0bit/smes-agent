@@ -11,13 +11,22 @@ router.use(authMiddleware);
 const dbProvisionLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 5, message: { error: 'Too many provision requests, try again later.' } });
 const dbQueryLimiter    = rateLimit({ windowMs: 60 * 1000, max: 60, message: { error: 'Query rate limit exceeded.' } });
 
+// ── Extract project_id from request (query param, body, or header) ───────────
+function getProjectId(req: AuthenticatedRequest): string | undefined {
+  return (req.query.project_id as string | undefined)
+      || (req.body?.project_id as string | undefined)
+      || (req.headers['x-project-id'] as string | undefined)
+      || undefined;
+}
+
 // ── Plan gate ────────────────────────────────────────────────────────────────
 // Verifies BOTH that the org has a paid plan AND that the requesting user is
 // actually a member of that org (prevents org_id forgery from the request body).
 async function requirePaidPlan(req: AuthenticatedRequest, res: Response, organizationId?: string | null): Promise<boolean> {
+  const projectId = getProjectId(req);
   let orgId = organizationId ?? null;
   if (!orgId) {
-    const existing = await databaseService.getStatus(req.user!.id);
+    const existing = await databaseService.getStatus(req.user!.id, projectId);
     orgId = existing?.organization_id ?? null;
   }
   if (!orgId) {
@@ -48,7 +57,7 @@ async function requirePaidPlan(req: AuthenticatedRequest, res: Response, organiz
 // ── GET /api/v1/database/status ──────────────────────────────────────────────
 router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const record = await databaseService.getStatus(req.user!.id);
+    const record = await databaseService.getStatus(req.user!.id, getProjectId(req));
     res.json({ database: record });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -61,7 +70,7 @@ router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
 router.get('/credentials', async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!(await requirePaidPlan(req, res))) return;
-    const creds = await databaseService.getCredentials(req.user!.id);
+    const creds = await databaseService.getCredentials(req.user!.id, getProjectId(req));
     if (!creds) { res.status(404).json({ error: 'No active database' }); return; }
     res.json(creds);
   } catch (err) {
@@ -73,9 +82,10 @@ router.get('/credentials', async (req: AuthenticatedRequest, res: Response) => {
 router.post('/provision', dbProvisionLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { organization_id } = req.body;
+    const projectId = getProjectId(req);
     if (!(await requirePaidPlan(req, res, organization_id))) return;
-    const record = await databaseService.provision(req.user!.id, organization_id || null);
-    const creds  = await databaseService.getCredentials(req.user!.id);
+    const record = await databaseService.provision(req.user!.id, organization_id || null, projectId);
+    const creds  = await databaseService.getCredentials(req.user!.id, projectId);
     res.status(201).json({ database: record, credentials: creds });
   } catch (err) {
     const msg = (err as Error).message;
@@ -87,10 +97,9 @@ router.post('/provision', dbProvisionLimiter, async (req: AuthenticatedRequest, 
 
 // ── DELETE /api/v1/database/deprovision ─────────────────────────────────────
 // No plan gate: if you own the database you can always delete it.
-// databaseService.deprovision already verifies ownership via getStatus(userId).
 router.delete('/deprovision', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    await databaseService.deprovision(req.user!.id);
+    await databaseService.deprovision(req.user!.id, getProjectId(req));
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -101,7 +110,7 @@ router.delete('/deprovision', async (req: AuthenticatedRequest, res: Response) =
 router.get('/ping', async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!(await requirePaidPlan(req, res))) return;
-    const result = await databaseService.testConnection(req.user!.id);
+    const result = await databaseService.testConnection(req.user!.id, getProjectId(req));
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -113,7 +122,7 @@ router.get('/ping', async (req: AuthenticatedRequest, res: Response) => {
 router.get('/dump', async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!(await requirePaidPlan(req, res))) return;
-    const { sql, schema, truncated } = await databaseService.dumpDatabase(req.user!.id);
+    const { sql, schema, truncated } = await databaseService.dumpDatabase(req.user!.id, getProjectId(req));
     res.setHeader('Content-Type', 'application/sql');
     res.setHeader('Content-Disposition', `attachment; filename="${schema}-dump-${Date.now()}.sql"`);
     if (truncated) res.setHeader('X-Dump-Truncated', 'true');
@@ -127,7 +136,7 @@ router.get('/dump', async (req: AuthenticatedRequest, res: Response) => {
 router.get('/tables', async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!(await requirePaidPlan(req, res))) return;
-    const tables = await databaseService.listTables(req.user!.id);
+    const tables = await databaseService.listTables(req.user!.id, getProjectId(req));
     res.json({ tables });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -140,7 +149,7 @@ router.get('/tables/:table/rows', async (req: AuthenticatedRequest, res: Respons
     if (!(await requirePaidPlan(req, res))) return;
     const limit  = Math.min(parseInt(req.query.limit as string || '50', 10), 200);
     const offset = parseInt(req.query.offset as string || '0', 10);
-    const result = await databaseService.queryTable(req.user!.id, req.params.table, limit, offset);
+    const result = await databaseService.queryTable(req.user!.id, req.params.table, limit, offset, getProjectId(req));
     res.json(result);
   } catch (err) {
     const msg = (err as Error).message;
@@ -158,7 +167,7 @@ router.post('/query', dbQueryLimiter, async (req: AuthenticatedRequest, res: Res
     // Both roles require a paid plan (anon could otherwise be used by downgraded users)
     if (!(await requirePaidPlan(req, res))) return;
 
-    const result = await databaseService.runQuery(req.user!.id, sql, role || 'anon');
+    const result = await databaseService.runQuery(req.user!.id, sql, role || 'anon', getProjectId(req));
     res.json(result);
   } catch (err) {
     const msg = (err as Error).message;

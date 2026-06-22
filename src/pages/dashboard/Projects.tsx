@@ -21,7 +21,7 @@ import { SettingsDialog } from '@/components/referral/settings/SettingsDialog';
 import { DashboardPageHeader } from '@/components/dashboard/DashboardPageHeader';
 import { ProjectThumbnail } from '@/components/dashboard/ProjectThumbnail';
 import { DESIGN_TEMPLATES, type DesignTemplate, buildTemplatePrompt } from '@/data/designTemplates';
-import { useSubscription } from '@/hooks/useSubscription';
+import { useSubscription } from '@/contexts/SubscriptionContext';
 import { TemplateQuestionnaire } from '@/components/TemplateQuestionnaire';
 
 // Types
@@ -676,17 +676,22 @@ export default function DashboardProjects() {
     setSelectedProject(null);
     toast.success('Project deleted');
 
-    // 2. Fire the backend call in the background — cleanup happens server-side async
+    // 2. Fire the backend delete — show error and restore project in list if it fails
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return;
 
     fetch(getGenServerUrl(`/api/v1/projects/${projectId}`), {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${session.access_token}` },
+    }).then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Server error ${res.status}`);
+      }
     }).catch((err) => {
-      console.error('Background project deletion failed:', err);
-      // Silently refetch to restore state if the call actually failed
-      loadProjects();
+      console.error('Project deletion failed:', err);
+      toast.error(`Failed to delete project: ${(err as Error).message}`);
+      loadProjects(); // restore the project in the list
     });
   };
 

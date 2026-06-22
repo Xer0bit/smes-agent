@@ -18,7 +18,7 @@ import { Loader2, Globe, Copy, ExternalLink, CheckCircle2, AlertCircle, Clock, Z
 import { useToast } from '@/hooks/use-toast';
 import { domainService } from '@/eCG/Publish';
 import type { ProjectSubdomain, ProjectCustomDomain, DomainStatus } from '@/eCG/Publish/types';
-import { useSubscription } from '@/hooks/useSubscription';
+import { useSubscription } from '@/contexts/SubscriptionContext';
 import { supabase } from '@/integrations/supabase/client';
 
 interface DomainSettingsProps {

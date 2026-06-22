@@ -21,7 +21,7 @@ import { Globe, Smartphone, CreditCard, ExternalLink } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { useSubscription } from "@/hooks/useSubscription";
+import { useSubscription } from "@/contexts/SubscriptionContext";
 
 interface SettingsContentProps {
   activeSection: string;
@@ -139,7 +139,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
 
     switch (activeSection) {
       case "ecomgear-database":
-        return <DatabaseSettings organizationId={project?.organization_id ?? null} />;
+        return <DatabaseSettings organizationId={project?.organization_id ?? null} projectId={projectId} />;
         
       case "ecomgear-llm":
         return (

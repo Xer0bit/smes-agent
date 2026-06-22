@@ -272,16 +272,11 @@ async function resolveEffectiveOrgIdForEco(userId: string, projectId: string, re
     return orgCandidates.values().next().value ?? null;
 }
 
-function getEcoPolicyLimit(planTierRaw: string | null | undefined): number {
-    const tier = (planTierRaw || 'free').toLowerCase();
-    if (tier === 'free') return 10;
-    return 100;
-}
 
 async function isWithinEcoPolicyLimit(orgId: string): Promise<boolean> {
     const { data, error } = await supabase
         .from('organizations')
-        .select('plan_tier, ai_gens_used, ai_gens_reset_at')
+        .select('ai_gens_limit, ai_gens_used, ai_gens_reset_at')
         .eq('id', orgId)
         .limit(1)
         .maybeSingle();
@@ -291,9 +286,11 @@ async function isWithinEcoPolicyLimit(orgId: string): Promise<boolean> {
         return true;
     }
 
-    const policyLimit = getEcoPolicyLimit((data as Record<string, unknown>).plan_tier as string | null | undefined);
-    const used = Number((data as Record<string, unknown>).ai_gens_used ?? 0);
-    const resetAtRaw = (data as Record<string, unknown>).ai_gens_reset_at;
+    const d = data as Record<string, unknown>;
+    // Use the DB column (set by sync_org_plan_limits trigger) so admin overrides are respected.
+    const policyLimit = Number(d.ai_gens_limit ?? 10);
+    const used = Number(d.ai_gens_used ?? 0);
+    const resetAtRaw = d.ai_gens_reset_at;
     const resetAt = typeof resetAtRaw === 'string' ? Date.parse(resetAtRaw) : NaN;
 
     // If the reset window has elapsed, allow this request and let DB RPC roll usage forward.
@@ -304,21 +301,15 @@ async function isWithinEcoPolicyLimit(orgId: string): Promise<boolean> {
     return used < policyLimit;
 }
 
-// 1 gen ≈ 10K tokens. Convert a raw token count into the gen units the
-// increment_ai_gen RPC charges against the org's eco budget (floor of 1 gen).
-function tokensToGens(tokensUsed: number): number {
-    return Math.max(1, Math.round((tokensUsed || 0) / 10_000));
-}
-
-async function incrementEcoUsage(orgId: string, gens = 1): Promise<{ allowed: boolean; source: 'v2' | 'legacy'; error?: string }> {
-    const allowedByPolicy = await isWithinEcoPolicyLimit(orgId);
-    if (!allowedByPolicy) {
-        return { allowed: false, source: 'v2' };
-    }
-
+async function incrementEcoUsage(orgId: string): Promise<{ allowed: boolean; source: 'v2' | 'legacy'; error?: string }> {
+    // Each code-writing run costs exactly 1 eco unit regardless of token count.
+    // Token-based scaling was removed because thinking models (gemini-3.1-pro-preview)
+    // can use 100K+ tokens per run, which would drain free-tier budgets in a single request.
+    // The DB function increment_ai_gen already enforces the limit atomically with FOR UPDATE,
+    // so the redundant pre-check here is omitted.
     const v2 = await supabase.rpc('increment_ai_gen', {
         p_org_id: orgId,
-        p_tokens: gens,
+        p_tokens: 1,
     } as any);
 
     if (!v2.error) {
@@ -696,22 +687,10 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
     // output; they'll only miss very old chunks from the start of the run.
     const SSE_BUFFER_CAP = 2000;
     const originalWrite = res.write.bind(res);
-    // Captured from the agent loop's `usage` SSE event so we can charge eco by
-    // actual tokens (1 gen = 10K) after the run rather than a flat 1 gen.
-    let capturedTokensUsed = 0;
     (res as any).write = (chunk: any, ...args: any[]): boolean => {
         const str: string = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
         if (currentRun.buffer.length < SSE_BUFFER_CAP) {
             currentRun.buffer.push(str);
-        }
-        if (str.includes('event: usage')) {
-            const dataLine = str.split('\n').find(l => l.startsWith('data:'));
-            if (dataLine) {
-                try {
-                    const parsed = JSON.parse(dataLine.slice('data:'.length).trim());
-                    if (typeof parsed?.tokensUsed === 'number') capturedTokensUsed = parsed.tokensUsed;
-                } catch { /* ignore malformed usage payload */ }
-            }
         }
         currentRun.bus.emit('chunk', str);
         return originalWrite(chunk, ...args);
@@ -775,6 +754,39 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         } catch {
             // Non-fatal — proceed without secrets
         }
+
+        // Inject Supabase URL + anon key so the agent always uses the correct
+        // custom domain instead of the raw supabase.co project URL (which causes CORS errors).
+        const supabaseUrl  = process.env.SUPABASE_URL  || '';
+        const supabaseAnon = process.env.SUPABASE_ANON_KEY || '';
+        if (supabaseUrl && supabaseAnon) {
+            const userKeys = new Set(projectSecrets.map(s => s.key_name));
+            const sbSecrets = [
+                { key_name: 'VITE_SUPABASE_URL',      key_value: supabaseUrl },
+                { key_name: 'VITE_SUPABASE_ANON_KEY', key_value: supabaseAnon },
+            ].filter(s => !userKeys.has(s.key_name));
+            projectSecrets = [...sbSecrets, ...projectSecrets];
+        }
+
+        // Inject hosted DB credentials as project secrets so the agent can use
+        // them in generated code without needing to call get_database_schema first.
+        try {
+            const { databaseService } = await import('../services/database.service.js');
+            const dbCreds = await databaseService.getCredentials(userId, projectId);
+            if (dbCreds) {
+                const dbSecrets = [
+                    { key_name: 'VITE_DB_API_URL',     key_value: dbCreds.api_url },
+                    { key_name: 'VITE_DB_ANON_KEY',    key_value: dbCreds.anon_key },
+                    { key_name: 'VITE_DB_SERVICE_KEY', key_value: dbCreds.service_key },
+                    { key_name: 'VITE_DB_SCHEMA',      key_value: dbCreds.schema },
+                ];
+                // Prepend DB creds; user-defined secrets with same key name take precedence
+                const userKeys2 = new Set(projectSecrets.map(s => s.key_name));
+                projectSecrets = [...dbSecrets.filter(s => !userKeys2.has(s.key_name)), ...projectSecrets];
+            }
+        } catch {
+            // Non-fatal — agent can still discover credentials via get_database_schema tool
+        }
         // Resolve the agent working directory.
         //
         // Priority:
@@ -837,7 +849,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 logger.info(`[agent-stream] Tier=${requestTier} → cheap model: ${cheapModel} (was ${effectiveModel})`);
                 effectiveModel = cheapModel;
             } else if (requestTier === 'fix') {
-                const fixModel = process.env.FIX_TIER_MODEL || 'gemini-2.5-pro';
+                const fixModel = process.env.FIX_TIER_MODEL || 'gemini-3.1-pro-preview';
                 logger.info(`[agent-stream] Tier=fix → mid model: ${fixModel} (was ${effectiveModel})`);
                 effectiveModel = fixModel;
             }
@@ -970,12 +982,8 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         const wroteFiles = (agentResult?.filesToWrite?.length ?? 0) > 0
             || (agentResult?.filesToDelete?.length ?? 0) > 0;
         if (ecoOrgId && wroteFiles) {
-            // Base charge: 1 eco per code-writing run.
-            // Reconcile upward if actual token usage exceeded 10K tokens.
-            const baseGens = 1;
-            const extraGens = capturedTokensUsed > 0 ? Math.max(0, tokensToGens(capturedTokensUsed) - 1) : 0;
-            const totalGens = baseGens + extraGens;
-            incrementEcoUsage(ecoOrgId, totalGens).catch((err) =>
+            // 1 eco per code-writing run (flat). Token-based scaling removed — see incrementEcoUsage.
+            incrementEcoUsage(ecoOrgId).catch((err) =>
                 logger.warn(`[agent-stream] Eco charge failed for org ${ecoOrgId}: ${(err as Error).message}`),
             );
         }
@@ -988,6 +996,31 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         }
     }
 });
+
+// Find the outermost JSON array using bracket-depth counting (handles nested brackets in suggestions)
+function extractOutermostJsonArray(text: string): unknown[] | null {
+    const cleaned = text.replace(/```(?:json)?\n?/g, '').trim();
+    let start = -1, depth = 0, inStr = false, escape = false;
+    for (let i = 0; i < cleaned.length; i++) {
+        const ch = cleaned[i];
+        if (escape) { escape = false; continue; }
+        if (ch === '\\' && inStr) { escape = true; continue; }
+        if (ch === '"') { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (ch === '[') { if (depth === 0) start = i; depth++; }
+        else if (ch === ']') {
+            depth--;
+            if (depth === 0 && start !== -1) {
+                try {
+                    const arr = JSON.parse(cleaned.slice(start, i + 1));
+                    if (Array.isArray(arr) && arr.length > 0) return arr;
+                } catch { /* keep looking */ }
+                start = -1;
+            }
+        }
+    }
+    return null;
+}
 
 // Generate contextual follow-up suggestions via Gemini Flash based on what was just built.
 router.post('/suggestions', optionalAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
@@ -1020,9 +1053,9 @@ router.post('/suggestions', optionalAuthMiddleware, async (req: AuthenticatedReq
 
         const { text } = await generateText({
             model,
-            maxOutputTokens: 500,
+            maxOutputTokens: 300,
             temperature: 0.6,
-            // Disable Gemini 2.5 Flash thinking budget — it eats output tokens on tiny tasks
+            // Disable thinking budget — saves tokens on this tiny task
             providerOptions: { google: { thinkingConfig: { thinkingBudget: 0 } } },
             prompt: `You are a product assistant inside an AI web app builder. The user just completed a task and you need to suggest 3 smart follow-up actions they might want to take next.
 
@@ -1042,14 +1075,11 @@ Rules:
 ["suggestion 1","suggestion 2","suggestion 3"]`,
         });
 
-        const jsonMatch = text.match(/\[[\s\S]*?\]/);
-        if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-                const suggestions = parsed.slice(0, 3).map((s: unknown) => String(s).trim()).filter(Boolean);
-                res.json({ suggestions });
-                return;
-            }
+        const parsed = extractOutermostJsonArray(text);
+        if (parsed && parsed.length > 0) {
+            const suggestions = parsed.slice(0, 3).map((s: unknown) => String(s).trim()).filter(Boolean);
+            res.json({ suggestions });
+            return;
         }
         res.json({ suggestions: [] });
     } catch (err) {

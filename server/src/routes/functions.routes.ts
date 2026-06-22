@@ -1,0 +1,216 @@
+import { Router, Response } from 'express';
+import rateLimit from 'express-rate-limit';
+import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
+import { supabase } from '../config/database.js';
+import { databaseService } from '../services/database.service.js';
+import { runEdgeFunction } from '../services/functionRunner.service.js';
+import { logger } from '../utils/logger.js';
+
+const router = Router();
+router.use(authMiddleware);
+
+const invokeLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  message: { error: 'Too many function invocations. Limit: 30/min.' },
+});
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function getProjectId(req: AuthenticatedRequest): string | undefined {
+  return (req.query.project_id as string | undefined)
+      || (req.body?.project_id as string | undefined)
+      || (req.headers['x-project-id'] as string | undefined)
+      || undefined;
+}
+
+async function getDbCredentials(userId: string, projectId?: string) {
+  const creds = await databaseService.getCredentials(userId, projectId);
+  if (!creds) throw new Error('No active database. Provision a database first.');
+  return creds;
+}
+
+async function requirePaidDb(userId: string, res: Response, projectId?: string): Promise<boolean> {
+  try {
+    await getDbCredentials(userId, projectId);
+    return true;
+  } catch (err) {
+    res.status(403).json({ error: (err as Error).message });
+    return false;
+  }
+}
+
+// ── GET /api/v1/functions ────────────────────────────────────────────────────
+router.get('/', async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
+  try {
+    const { data, error } = await supabase
+      .from('edge_functions')
+      .select('id, name, description, is_active, created_at, updated_at')
+      .eq('user_id', req.user!.id)
+      .order('created_at', { ascending: true });
+    if (error) throw new Error(error.message);
+    res.json({ functions: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── GET /api/v1/functions/:name ──────────────────────────────────────────────
+router.get('/:name', async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
+  try {
+    const { data, error } = await supabase
+      .from('edge_functions')
+      .select('*')
+      .eq('user_id', req.user!.id)
+      .eq('name', req.params.name)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) { res.status(404).json({ error: 'Function not found.' }); return; }
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── POST /api/v1/functions ───────────────────────────────────────────────────
+router.post('/', async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
+  const { name, description, code } = req.body;
+  if (!name || typeof name !== 'string') {
+    res.status(400).json({ error: 'name is required.' }); return;
+  }
+  if (!code || typeof code !== 'string') {
+    res.status(400).json({ error: 'code is required.' }); return;
+  }
+  try {
+    const { data, error } = await supabase
+      .from('edge_functions')
+      .upsert({
+        user_id: req.user!.id,
+        name: name.trim(),
+        description: description || null,
+        code,
+      }, { onConflict: 'user_id,name' })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    res.status(201).json(data);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── PATCH /api/v1/functions/:name ────────────────────────────────────────────
+router.patch('/:name', async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
+  const updates: Record<string, unknown> = {};
+  if (req.body.code        !== undefined) updates.code        = req.body.code;
+  if (req.body.description !== undefined) updates.description = req.body.description;
+  if (req.body.is_active   !== undefined) updates.is_active   = req.body.is_active;
+  try {
+    const { data, error } = await supabase
+      .from('edge_functions')
+      .update(updates)
+      .eq('user_id', req.user!.id)
+      .eq('name', req.params.name)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── DELETE /api/v1/functions/:name ──────────────────────────────────────────
+router.delete('/:name', async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
+  try {
+    const { error } = await supabase
+      .from('edge_functions')
+      .delete()
+      .eq('user_id', req.user!.id)
+      .eq('name', req.params.name);
+    if (error) throw new Error(error.message);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── POST /api/v1/functions/:name/invoke ─────────────────────────────────────
+router.post('/:name/invoke', invokeLimiter, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const creds = await databaseService.getCredentials(req.user!.id, getProjectId(req));
+    if (!creds) { res.status(403).json({ error: 'No active database.' }); return; }
+
+    const { data: fn, error } = await supabase
+      .from('edge_functions')
+      .select('id, code, is_active')
+      .eq('user_id', req.user!.id)
+      .eq('name', req.params.name)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    if (!fn) { res.status(404).json({ error: 'Function not found.' }); return; }
+    if (!fn.is_active) { res.status(400).json({ error: 'Function is disabled.' }); return; }
+
+    const params = req.body?.params ?? {};
+    const result = await runEdgeFunction(fn.code, params, {
+      apiUrl:     creds.api_url,
+      schema:     creds.schema,
+      anonKey:    creds.anon_key,
+      serviceKey: creds.service_key,
+    });
+
+    // persist log (fire-and-forget)
+    supabase.from('edge_function_logs').insert({
+      user_id:     req.user!.id,
+      function_id: fn.id,
+      params,
+      result:      result.result,
+      logs:        result.logs,
+      duration_ms: result.durationMs,
+      error:       result.error ?? null,
+    }).then(() => {}, () => {});
+
+    if (result.error) {
+      res.status(422).json(result);
+    } else {
+      res.json(result);
+    }
+  } catch (err) {
+    logger.error('[EdgeFunction] invoke error', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── GET /api/v1/functions/:name/logs ────────────────────────────────────────
+router.get('/:name/logs', async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
+  try {
+    const { data: fn } = await supabase
+      .from('edge_functions')
+      .select('id')
+      .eq('user_id', req.user!.id)
+      .eq('name', req.params.name)
+      .maybeSingle();
+    if (!fn) { res.status(404).json({ error: 'Function not found.' }); return; }
+
+    const { data } = await supabase
+      .from('edge_function_logs')
+      .select('id, params, result, logs, duration_ms, error, invoked_at')
+      .eq('user_id', req.user!.id)
+      .eq('function_id', fn.id)
+      .order('invoked_at', { ascending: false })
+      .limit(50);
+
+    res.json({ logs: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+export default router;

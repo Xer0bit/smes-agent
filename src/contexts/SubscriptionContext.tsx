@@ -1,8 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useOrganization } from '@/contexts/OrganizationContext';
-import { fetchOrgLimits, type OrgLimits } from '@/services/subscriptionService';
+import { fetchOrgLimits, type OrgLimits, TIER_FEATURES, TIER_LABELS } from '@/services/subscriptionService';
 import { normalizeTier } from '@/hooks/useSubscription';
 
 type PlanTier = string | null;
@@ -19,10 +19,14 @@ const PLAN_PRODUCT_IDS: Record<string, string> = {
 interface SubscriptionContextType {
   subscribed: boolean;
   planTier: PlanTier;
+  tier: string;
+  tierLabel: string;
   status: OrgLimits['status'] | null;
   productId: string | null;
   subscriptionEnd: string | null;
   loading: boolean;
+  limits: OrgLimits | null;
+  hasFeature: (feature: string) => boolean;
   refreshSubscription: () => Promise<void>;
   createCheckout: (priceId: string) => Promise<void>;
   openCustomerPortal: () => Promise<void>;
@@ -38,6 +42,7 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const [productId, setProductId] = useState<string | null>(null);
   const [subscriptionEnd, setSubscriptionEnd] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [limits, setLimits] = useState<OrgLimits | null>(null);
   const { toast } = useToast();
 
   const resetState = useCallback(() => {
@@ -64,11 +69,12 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({ 
         return;
       }
 
-      const limits = await fetchOrgLimits(currentOrganizationId);
-      const nextPlanTier = normalizeTier(limits?.plan_tier);
-      const nextStatus = limits?.status ?? 'active';
+      const fetchedLimits = await fetchOrgLimits(currentOrganizationId);
+      const nextPlanTier = normalizeTier(fetchedLimits?.plan_tier);
+      const nextStatus = fetchedLimits?.status ?? 'active';
       const isPaidOrg = nextStatus === 'active' && nextPlanTier !== 'free';
 
+      setLimits(fetchedLimits);
       setSubscribed(isPaidOrg);
       setPlanTier(nextPlanTier);
       setStatus(nextStatus);
@@ -81,6 +87,12 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({ 
       setLoading(false);
     }
   }, [currentOrganizationId, resetState]);
+
+  const tier = normalizeTier(planTier);
+  const tierLabel = TIER_LABELS[tier] ?? 'Free';
+  const hasFeature = useCallback((feature: string): boolean => {
+    return TIER_FEATURES[tier]?.[feature] ?? false;
+  }, [tier]);
 
   const createCheckout = async (priceId: string) => {
     try {
@@ -182,10 +194,14 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({ 
       value={{
         subscribed,
         planTier,
+        tier,
+        tierLabel,
         status,
         productId,
         subscriptionEnd,
         loading,
+        limits,
+        hasFeature,
         refreshSubscription,
         createCheckout,
         openCustomerPortal

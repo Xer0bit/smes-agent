@@ -62,11 +62,11 @@ function tenantJwts(schemaId: string): { anon_key: string; service_key: string }
 }
 
 // ---------------------------------------------------------------------------
-// Schema ID: short, stable, postgres-safe from userId
+// Schema ID: short, stable, postgres-safe from projectId.
 // Uses 16 hex chars (64 bits of UUID entropy) to make collisions negligible.
 // ---------------------------------------------------------------------------
-function schemaId(userId: string): string {
-  return 'tenant_' + userId.replace(/-/g, '').slice(0, 16);
+function schemaId(projectId: string): string {
+  return 'tenant_' + projectId.replace(/-/g, '').slice(0, 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +75,7 @@ function schemaId(userId: string): string {
 export interface TenantDb {
   id: string;
   user_id: string;
+  project_id: string | null;
   organization_id: string | null;
   schema_name: string;
   status: 'provisioning' | 'active' | 'error' | 'deprovisioned';
@@ -114,7 +115,22 @@ function sqlLiteral(value: unknown): string {
 export const databaseService = {
 
   // ── Status ──────────────────────────────────────────────────────────────
-  async getStatus(userId: string): Promise<TenantDb | null> {
+  // Look up by project_id first (new rows), fall back to user_id (legacy rows
+  // provisioned before the project_id migration — those have project_id = NULL).
+  async getStatus(userId: string, projectId?: string): Promise<TenantDb | null> {
+    if (projectId) {
+      const { data } = await supabase
+        .from('tenant_databases')
+        .select('*')
+        .eq('project_id', projectId)
+        .not('status', 'eq', 'deprovisioned')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (data) return data as TenantDb;
+    }
+
+    // Fallback: legacy rows (project_id IS NULL) or no projectId provided
     const { data, error } = await supabase
       .from('tenant_databases')
       .select('*')
@@ -130,8 +146,8 @@ export const databaseService = {
   // ── Credentials (regenerated on-demand, never stored) ───────────────────
   // db_url intentionally omitted: direct Postgres connections bypass SET ROLE
   // and search_path isolation. Use the PostgREST API URL with these JWT keys.
-  async getCredentials(userId: string): Promise<TenantCredentials | null> {
-    const record = await this.getStatus(userId);
+  async getCredentials(userId: string, projectId?: string): Promise<TenantCredentials | null> {
+    const record = await this.getStatus(userId, projectId);
     if (!record || record.status !== 'active') return null;
     const c = cfg();
     const { anon_key, service_key } = tenantJwts(record.schema_name);
@@ -145,23 +161,28 @@ export const databaseService = {
   },
 
   // ── Provision ────────────────────────────────────────────────────────────
-  async provision(userId: string, organizationId: string | null): Promise<TenantDb> {
-    const existing = await this.getStatus(userId);
+  async provision(userId: string, organizationId: string | null, projectId?: string): Promise<TenantDb> {
+    const existing = await this.getStatus(userId, projectId);
     if (existing && existing.status === 'active') {
       throw new Error('already_provisioned');
     }
 
-    const schema = schemaId(userId);
+    // Schema name derived from projectId (isolated per project) or userId (legacy).
+    const schema = schemaId(projectId ?? userId);
     const anonRole    = `${schema}_anon`;
     const serviceRole = `${schema}_service`;
     const ownerRole   = `${schema}_owner`;
-    const ownerPass   = Buffer.from(userId + process.env.TENANT_DB_JWT_SECRET!).toString('base64').slice(0, 24);
+    const ownerPass   = Buffer.from((projectId ?? userId) + process.env.TENANT_DB_JWT_SECRET!).toString('base64').slice(0, 24);
     const { user: superuser } = cfg();
 
-    // Insert tracking record
+    // Upsert tracking record — reuses an existing deprovisioned row with the same
+    // schema_name instead of inserting a duplicate (which would violate the unique constraint).
     const { data: row, error: insertErr } = await supabase
       .from('tenant_databases')
-      .insert({ user_id: userId, organization_id: organizationId, schema_name: schema, status: 'provisioning' })
+      .upsert(
+        { user_id: userId, project_id: projectId ?? null, organization_id: organizationId, schema_name: schema, status: 'provisioning', error_message: null },
+        { onConflict: 'schema_name' }
+      )
       .select().single();
     if (insertErr) throw new Error(insertErr.message);
     const record = row as TenantDb;
@@ -258,8 +279,8 @@ export const databaseService = {
   },
 
   // ── Deprovision ──────────────────────────────────────────────────────────
-  async deprovision(userId: string): Promise<void> {
-    const record = await this.getStatus(userId);
+  async deprovision(userId: string, projectId?: string): Promise<void> {
+    const record = await this.getStatus(userId, projectId);
     if (!record) throw new Error('No active database found');
 
     await supabase.from('tenant_databases').update({ status: 'deprovisioning' }).eq('id', record.id);
@@ -270,7 +291,7 @@ export const databaseService = {
       const c  = await pg.connect();
       try {
         // Remove from registry first
-        await c.query(`DELETE FROM public.ecg_tenant_registry WHERE id = $1`, [userId]);
+        await c.query(`DELETE FROM public.ecg_tenant_registry WHERE schema_name = $1`, [schema]);
 
         // Drop schema and all its objects
         await c.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
@@ -285,7 +306,7 @@ export const databaseService = {
 
       await this._reloadPostgREST();
       await supabase.from('tenant_databases').update({ status: 'deprovisioned' }).eq('id', record.id);
-      logger.info('Tenant DB deprovisioned', { userId, schema });
+      logger.info('Tenant DB deprovisioned', { userId, projectId, schema });
 
     } catch (err) {
       const msg = (err as Error).message;
@@ -295,8 +316,8 @@ export const databaseService = {
   },
 
   // ── List tables in tenant schema ─────────────────────────────────────────
-  async listTables(userId: string): Promise<TenantTable[]> {
-    const record = await this.getStatus(userId);
+  async listTables(userId: string, projectId?: string): Promise<TenantTable[]> {
+    const record = await this.getStatus(userId, projectId);
     if (!record || record.status !== 'active') return [];
 
     const pg = await pool();
@@ -337,12 +358,12 @@ export const databaseService = {
   },
 
   // ── Query rows from a table ──────────────────────────────────────────────
-  async queryTable(userId: string, tableName: string, limit = 50, offset = 0): Promise<{ rows: object[]; total: number }> {
-    const record = await this.getStatus(userId);
+  async queryTable(userId: string, tableName: string, limit = 50, offset = 0, projectId?: string): Promise<{ rows: object[]; total: number }> {
+    const record = await this.getStatus(userId, projectId);
     if (!record || record.status !== 'active') throw new Error('No active database');
 
     // Validate table exists in their schema
-    const tables = await this.listTables(userId);
+    const tables = await this.listTables(userId, projectId);
     if (!tables.find(t => t.name === tableName)) throw new Error('Table not found');
 
     const pg = await pool();
@@ -355,8 +376,8 @@ export const databaseService = {
   },
 
   // ── Connection check — live ping, separate from the stored provisioning status ──
-  async testConnection(userId: string): Promise<{ connected: boolean; latencyMs?: number; error?: string }> {
-    const record = await this.getStatus(userId);
+  async testConnection(userId: string, projectId?: string): Promise<{ connected: boolean; latencyMs?: number; error?: string }> {
+    const record = await this.getStatus(userId, projectId);
     if (!record || record.status !== 'active') return { connected: false, error: 'No active database' };
 
     const start = Date.now();
@@ -371,12 +392,12 @@ export const databaseService = {
 
   // ── Full SQL dump (schema + data) of the tenant's schema ──────────────────
   // Capped at DUMP_ROW_LIMIT rows per table to prevent DoS via huge responses.
-  async dumpDatabase(userId: string): Promise<{ sql: string; schema: string; truncated: boolean }> {
+  async dumpDatabase(userId: string, projectId?: string): Promise<{ sql: string; schema: string; truncated: boolean }> {
     const DUMP_ROW_LIMIT = 10_000;
-    const record = await this.getStatus(userId);
+    const record = await this.getStatus(userId, projectId);
     if (!record || record.status !== 'active') throw new Error('No active database');
 
-    const tables = await this.listTables(userId);
+    const tables = await this.listTables(userId, projectId);
     const pg = await pool();
     let truncated = false;
     const lines: string[] = [
@@ -421,8 +442,8 @@ export const databaseService = {
   },
 
   // ── Safe SQL execution (SELECT only for users, full for agent) ───────────
-  async runQuery(userId: string, sql: string, role: 'anon' | 'service' = 'anon'): Promise<{ rows: object[]; fields: string[]; statementsRun?: number }> {
-    const record = await this.getStatus(userId);
+  async runQuery(userId: string, sql: string, role: 'anon' | 'service' = 'anon', projectId?: string): Promise<{ rows: object[]; fields: string[]; statementsRun?: number }> {
+    const record = await this.getStatus(userId, projectId);
     if (!record || record.status !== 'active') throw new Error('No active database');
 
     const trimmed = sql.trim();

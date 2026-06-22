@@ -8,8 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Database, Copy, Trash2, Zap, Lock, Table, Terminal, Key, ChevronRight, RefreshCw, Play, AlertCircle, Download, Wifi, WifiOff } from "lucide-react";
-import { useSubscription } from "@/hooks/useSubscription";
+import { Database, Copy, Trash2, Zap, Lock, Table, Terminal, Key, ChevronRight, RefreshCw, Play, AlertCircle, Download, Wifi, WifiOff, FunctionSquare, Plus, Clock } from "lucide-react";
+import { useSubscription } from "@/contexts/SubscriptionContext";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { cn } from "@/lib/utils";
 import { getGenServerUrl } from "@/config/external-api";
@@ -23,13 +23,15 @@ interface QueryResult { rows: object[]; fields: string[]; }
 interface PingResult { connected: boolean; latencyMs?: number; error?: string; }
 
 // ── Utils ────────────────────────────────────────────────────────────────────
-async function apiFetch(path: string, opts: RequestInit = {}, timeoutMs = 10_000) {
+async function apiFetch(path: string, opts: RequestInit = {}, timeoutMs = 10_000, projectId?: string | null) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error("Not authenticated");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const sep = path.includes('?') ? '&' : '?';
+  const qs  = projectId ? `${sep}project_id=${encodeURIComponent(projectId)}` : '';
   try {
-    const res = await fetch(getGenServerUrl(`/api/v1/database${path}`), {
+    const res = await fetch(getGenServerUrl(`/api/v1/database${path}${qs}`), {
       ...opts,
       signal: controller.signal,
       headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json", ...(opts.headers || {}) },
@@ -190,7 +192,7 @@ function SchemaBrowser({ tables, loading, onRefresh, onSelectTable, selectedTabl
 }
 
 // ── Table Data Viewer ────────────────────────────────────────────────────────
-function TableViewer({ tableName, userId }: { tableName: string; userId?: string }) {
+function TableViewer({ tableName, userId, projectId }: { tableName: string; userId?: string; projectId?: string | null }) {
   const [data, setData]   = useState<{ rows: object[]; total: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [offset, setOffset]  = useState(0);
@@ -199,7 +201,7 @@ function TableViewer({ tableName, userId }: { tableName: string; userId?: string
   const load = useCallback(async (off: number) => {
     setLoading(true);
     try {
-      const result = await apiFetch(`/tables/${encodeURIComponent(tableName)}/rows?limit=${limit}&offset=${off}`);
+      const result = await apiFetch(`/tables/${encodeURIComponent(tableName)}/rows?limit=${limit}&offset=${off}`, {}, 10_000, projectId);
       setData(result);
       setOffset(off);
     } catch (err) {
@@ -247,7 +249,7 @@ function TableViewer({ tableName, userId }: { tableName: string; userId?: string
 }
 
 // ── SQL Editor ───────────────────────────────────────────────────────────────
-function SqlEditor() {
+function SqlEditor({ projectId }: { projectId?: string | null }) {
   const [sql, setSql]       = useState("SELECT * FROM your_table LIMIT 10;");
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError]   = useState<string | null>(null);
@@ -259,7 +261,7 @@ function SqlEditor() {
     try {
       const res = await apiFetch('/query', {
         method: 'POST', body: JSON.stringify({ sql, role }),
-      });
+      }, 10_000, projectId);
       setResult(res);
     } catch (err) {
       setError((err as Error).message);
@@ -328,14 +330,252 @@ function SqlEditor() {
   );
 }
 
+// ── Edge Functions Panel ─────────────────────────────────────────────────────
+interface EdgeFn { id: string; name: string; description: string | null; is_active: boolean; created_at: string; code?: string; }
+interface InvokeResult { result: unknown; logs: string[]; durationMs: number; error?: string; }
+
+function EdgeFunctionsPanel({ apiFetch: apiFetchProp }: { apiFetch: (p: string, o?: RequestInit, t?: number) => Promise<any> }) {
+  const [fns, setFns]             = useState<EdgeFn[]>([]);
+  const [selected, setSelected]   = useState<EdgeFn | null>(null);
+  const [code, setCode]           = useState('// Return a value with `return`\nreturn { message: "Hello from edge function!", params }');
+  const [desc, setDesc]           = useState('');
+  const [name, setName]           = useState('');
+  const [params, setParams]       = useState('{}');
+  const [result, setResult]       = useState<InvokeResult | null>(null);
+  const [loading, setLoading]     = useState(true);
+  const [saving, setSaving]       = useState(false);
+  const [invoking, setInvoking]   = useState(false);
+  const [creating, setCreating]   = useState(false);
+  const [newName, setNewName]     = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiFetchProp('/functions');
+      setFns(res.functions || []);
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setLoading(false); }
+  }, [apiFetchProp]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openFn = async (fn: EdgeFn) => {
+    const full = await apiFetchProp(`/functions/${fn.name}`);
+    setSelected(full);
+    setCode(full.code || '');
+    setDesc(full.description || '');
+    setResult(null);
+  };
+
+  const save = async () => {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      await apiFetchProp(`/functions/${selected.name}`, { method: 'PATCH', body: JSON.stringify({ code, description: desc }) });
+      toast.success('Function saved.');
+      load();
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setSaving(false); }
+  };
+
+  const invoke = async () => {
+    if (!selected) return;
+    let parsed: unknown = {};
+    try { parsed = JSON.parse(params); } catch { toast.error('Params must be valid JSON'); return; }
+    setInvoking(true); setResult(null);
+    try {
+      const res = await apiFetchProp(`/functions/${selected.name}/invoke`, {
+        method: 'POST', body: JSON.stringify({ params: parsed }),
+      }, 10_000);
+      setResult(res);
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setInvoking(false); }
+  };
+
+  const deleteFn = async () => {
+    if (!selected) return;
+    if (!confirm(`Delete function "${selected.name}"?`)) return;
+    try {
+      await apiFetchProp(`/functions/${selected.name}`, { method: 'DELETE' });
+      toast.success('Deleted.');
+      setSelected(null); setCode(''); setDesc('');
+      load();
+    } catch (e) { toast.error((e as Error).message); }
+  };
+
+  const createFn = async () => {
+    if (!newName.trim()) return;
+    setSaving(true);
+    try {
+      await apiFetchProp('/functions', {
+        method: 'POST',
+        body: JSON.stringify({ name: newName.trim(), code: '// Write your function here\nreturn { ok: true };', description: '' }),
+      });
+      setCreating(false); setNewName('');
+      await load();
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setSaving(false); }
+  };
+
+  if (loading) return <div className="py-8 text-center text-sm text-white/45">Loading functions…</div>;
+
+  return (
+    <div className="flex gap-4 h-[520px] min-h-0 overflow-hidden">
+      {/* Sidebar */}
+      <div className="w-48 shrink-0 flex flex-col gap-1 border-r border-white/[0.07] pr-3 overflow-y-auto">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs text-white/45 font-medium">Functions</span>
+          <button onClick={() => setCreating(true)} className="text-white/45 hover:text-white/85 transition-colors">
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        {fns.length === 0 && !creating && (
+          <p className="text-xs text-white/30 py-4 text-center">No functions yet.<br/>Click + to create one.</p>
+        )}
+        {fns.map(fn => (
+          <button
+            key={fn.id}
+            onClick={() => openFn(fn)}
+            className={cn(
+              "text-left text-xs px-2 py-1.5 rounded-md transition-colors flex items-center gap-1.5 truncate",
+              selected?.id === fn.id ? "bg-primary/15 text-primary" : "text-white/60 hover:text-white/85 hover:bg-white/[0.04]"
+            )}
+          >
+            <FunctionSquare className="h-3 w-3 shrink-0" />
+            <span className="truncate font-mono">{fn.name}</span>
+          </button>
+        ))}
+        {creating && (
+          <div className="flex flex-col gap-1 mt-1">
+            <Input
+              autoFocus
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              placeholder="function-name"
+              className="text-xs h-7 font-mono bg-white/[0.04] border-white/[0.10]"
+              onKeyDown={e => { if (e.key === 'Enter') createFn(); if (e.key === 'Escape') { setCreating(false); setNewName(''); } }}
+            />
+            <div className="flex gap-1">
+              <Button size="sm" className="h-6 text-xs flex-1" onClick={createFn} disabled={saving}>Create</Button>
+              <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => { setCreating(false); setNewName(''); }}>✕</Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Editor */}
+      {!selected ? (
+        <div className="flex-1 flex items-center justify-center text-sm text-white/30">
+          Select a function or create a new one
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col gap-3 min-w-0 overflow-hidden">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <FunctionSquare className="h-4 w-4 text-primary shrink-0" />
+              <span className="font-mono text-sm font-medium truncate">{selected.name}</span>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button size="sm" variant="ghost" className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10" onClick={deleteFn}>
+                <Trash2 className="h-3 w-3 mr-1" />Delete
+              </Button>
+              <Button size="sm" className="h-7 text-xs" onClick={save} disabled={saving}>
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </div>
+
+          <Input
+            value={desc}
+            onChange={e => setDesc(e.target.value)}
+            placeholder="Description (optional)"
+            className="text-xs h-7 bg-white/[0.04] border-white/[0.10]"
+          />
+
+          <Textarea
+            value={code}
+            onChange={e => setCode(e.target.value)}
+            className="flex-1 font-mono text-xs resize-none bg-white/[0.03] border-white/[0.07] min-h-[180px]"
+            placeholder="// Write JavaScript. Use `db`, `params`, `fetch`, `console`."
+            spellCheck={false}
+          />
+
+          <p className="text-xs text-white/30">
+            Available: <code className="text-white/50">params</code> · <code className="text-white/50">db.select/insert/update/delete/rpc</code> · <code className="text-white/50">fetch</code> (HTTPS only) · <code className="text-white/50">console.log</code>
+          </p>
+
+          {/* Invoke section */}
+          <div className="border-t border-white/[0.07] pt-3 flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <Input
+                value={params}
+                onChange={e => setParams(e.target.value)}
+                placeholder='{"key": "value"}'
+                className="text-xs h-7 font-mono bg-white/[0.04] border-white/[0.10] flex-1"
+              />
+              <Button size="sm" className="h-7 text-xs shrink-0 gap-1" onClick={invoke} disabled={invoking}>
+                <Play className="h-3 w-3" />{invoking ? 'Running…' : 'Run'}
+              </Button>
+            </div>
+
+            {result && (
+              <div className={cn(
+                "rounded-lg border p-2 text-xs space-y-1 max-h-28 overflow-y-auto",
+                result.error ? "border-red-500/30 bg-red-500/5" : "border-green-500/20 bg-green-500/5"
+              )}>
+                <div className="flex items-center gap-1.5 text-white/45 mb-1">
+                  <Clock className="h-3 w-3" /><span>{result.durationMs}ms</span>
+                  {result.error
+                    ? <span className="text-red-400 ml-auto">Error</span>
+                    : <span className="text-green-400 ml-auto">OK</span>}
+                </div>
+                {result.error && <p className="text-red-400 font-mono break-all">{result.error}</p>}
+                {result.logs.length > 0 && result.logs.map((l, i) => (
+                  <p key={i} className="text-white/45 font-mono break-all">{l}</p>
+                ))}
+                {!result.error && (
+                  <pre className="text-green-300/80 font-mono break-all whitespace-pre-wrap">
+                    {JSON.stringify(result.result, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
-export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { organizationId?: string | null }) => {
+export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectId }: { organizationId?: string | null; projectId?: string | null }) => {
   const { hasFeature } = useSubscription();
-  // Use the active workspace's org, not the project's org — this is the same
-  // source useSubscription() reads from, so the plan check the backend performs
-  // (organizations.plan_tier) stays consistent with the gate that shows this UI.
   const { currentOrganizationId } = useOrganization();
   const isPaid = hasFeature("ecomgear_cloud");
+
+  // Append project_id query param to all API calls so the server can scope
+  // the tenant database lookup to this project (one DB per project).
+  const projectQs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+
+  // Fetcher for /api/v1/functions/* — base is /api/v1, paths include /functions
+  const fnApiFetch = useCallback(async (path: string, opts: RequestInit = {}, timeoutMs = 10_000) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error("Not authenticated");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const sep = path.includes('?') ? '&' : '?';
+    const qs  = projectId ? `${sep}project_id=${encodeURIComponent(projectId)}` : '';
+    try {
+      const res = await fetch(getGenServerUrl(`/api/v1${path}${qs}`), {
+        ...opts,
+        signal: controller.signal,
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json", ...(opts.headers || {}) },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Request failed");
+      return json;
+    } finally { clearTimeout(timer); }
+  }, [projectId]);
 
   const [db, setDb]         = useState<TenantDb | null>(null);
   const [creds, setCreds]   = useState<Credentials | null>(null);
@@ -355,7 +595,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
   const checkConnection = useCallback(async () => {
     setPinging(true);
     try {
-      const res = await apiFetch('/ping');
+      const res = await apiFetch('/ping', {}, 10_000, projectId);
       setPing(res);
     } catch (err) {
       setPing({ connected: false, error: (err as Error).message });
@@ -366,12 +606,12 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
 
   const loadStatus = useCallback(async () => {
     try {
-      const res = await apiFetch('/status');
+      const res = await apiFetch('/status', {}, 10_000, projectId);
       setDb(res.database);
       if (res.database?.status === 'active') {
         const [c, t] = await Promise.all([
-          apiFetch('/credentials').catch(() => null),
-          apiFetch('/tables').catch(() => ({ tables: [] })),
+          apiFetch('/credentials', {}, 10_000, projectId).catch(() => null),
+          apiFetch('/tables', {}, 10_000, projectId).catch(() => ({ tables: [] })),
         ]);
         setCreds(c);
         setTables(t.tables || []);
@@ -419,7 +659,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
   const refreshTables = async () => {
     setTablesLoading(true);
     try {
-      const t = await apiFetch('/tables');
+      const t = await apiFetch('/tables', {}, 10_000, projectId);
       setTables(t.tables || []);
     } finally { setTablesLoading(false); }
   };
@@ -429,7 +669,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
     try {
       const res = await apiFetch('/provision', {
         method: 'POST', body: JSON.stringify({ organization_id: currentOrganizationId || null }),
-      });
+      }, 30_000, projectId);
       setDb(res.database);
       setCreds(res.credentials);
       toast.success("Database provisioned!");
@@ -440,7 +680,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
   const handleDeprovision = async () => {
     setDeprovisioning(true);
     try {
-      await apiFetch('/deprovision', { method: 'DELETE' }, 60_000);
+      await apiFetch('/deprovision', { method: 'DELETE' }, 60_000, projectId);
       setDb(null); setCreds(null); setTables([]); setSelectedTable(null);
       toast.success("Database removed.");
     } catch (err) { toast.error((err as Error).message); }
@@ -649,7 +889,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
 
       {/* Tabs */}
       <Tabs defaultValue="credentials">
-        <TabsList className="w-full grid grid-cols-3">
+        <TabsList className="w-full grid grid-cols-4">
           <TabsTrigger value="credentials" className="flex items-center gap-1.5">
             <Key className="h-3.5 w-3.5" />Keys
           </TabsTrigger>
@@ -658,6 +898,9 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
           </TabsTrigger>
           <TabsTrigger value="sql" className="flex items-center gap-1.5">
             <Terminal className="h-3.5 w-3.5" />SQL
+          </TabsTrigger>
+          <TabsTrigger value="functions" className="flex items-center gap-1.5">
+            <FunctionSquare className="h-3.5 w-3.5" />Functions
           </TabsTrigger>
         </TabsList>
 
@@ -675,7 +918,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
                 ← Back to tables
               </button>
               <h3 className="font-mono text-sm font-medium">{activeTable.name}</h3>
-              <TableViewer tableName={activeTable.name} />
+              <TableViewer tableName={activeTable.name} projectId={projectId} />
             </div>
           ) : (
             <SchemaBrowser
@@ -689,7 +932,11 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp }: { orga
         </TabsContent>
 
         <TabsContent value="sql" className="mt-4">
-          <SqlEditor />
+          <SqlEditor projectId={projectId} />
+        </TabsContent>
+
+        <TabsContent value="functions" className="mt-4">
+          <EdgeFunctionsPanel apiFetch={fnApiFetch} />
         </TabsContent>
       </Tabs>
     </div>

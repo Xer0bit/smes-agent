@@ -1237,6 +1237,8 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // Per-model pricing per 1M tokens
   const PRICE = modelId.includes('claude')
     ? { input: 3.00,   output: 15.00,  cacheRead: 0.30,  cacheWrite: 3.75  }  // Claude Sonnet 4.6
+    : modelId.includes('gemini-3.1-pro-preview')
+    ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 3.1 Pro (thinking)
     : modelId.includes('gemini-2.5-pro')
     ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 2.5 Pro
     : modelId.includes('gemini')
@@ -1856,7 +1858,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   const secretsBlock = (() => {
     if (!projectSecrets || projectSecrets.length === 0) return '';
     const lines = projectSecrets.map(s => `${s.key_name}=${s.key_value}`).join('\n');
-    return `\n\n# Project Environment Variables\n\nThe following secrets are available as environment variables in this project. Use them in code via \`import.meta.env.VITE_XXX\` (frontend) or \`process.env.XXX\` (backend). NEVER echo, print, log, or mention their values in your chat responses — treat them as confidential.\n\n\`\`\`\n${lines}\n\`\`\``;
+    const hasSb = projectSecrets.some(s => s.key_name === 'VITE_SUPABASE_URL');
+    const hasDb = projectSecrets.some(s => s.key_name === 'VITE_DB_API_URL');
+    const sbNote = hasSb
+      ? '\n\nFor Supabase auth/data in generated code ALWAYS use `import.meta.env.VITE_SUPABASE_URL` and `import.meta.env.VITE_SUPABASE_ANON_KEY`. NEVER hardcode any `*.supabase.co` URL — it will cause CORS errors in the preview.'
+      : '';
+    const dbNote = hasDb
+      ? '\n\nFor the hosted database use PostgREST calls to `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` with headers `{ "Authorization": "Bearer <VITE_DB_ANON_KEY>", "apikey": "<VITE_DB_ANON_KEY>" }`. Call `get_database_schema` to inspect tables, `query_database` to run SQL.'
+      : '';
+    return `\n\n# Project Environment Variables\n\nThe following secrets are available as \`import.meta.env.VITE_XXX\` (frontend) or \`process.env.XXX\` (backend). NEVER echo, print, log, or reveal their values in chat responses — treat them as confidential.${sbNote}${dbNote}\n\n\`\`\`\n${lines}\n\`\`\``;
   })();
 
   // micro: no modeInstruction (MICRO_SYSTEM_PROMPT already embeds directives)

@@ -41,7 +41,8 @@ export function useSubscription(): SubscriptionState {
   const { currentOrganizationId } = useOrganization();
   const [limits, setLimits] = useState<OrgLimits | null>(null);
   const [projectCount, setProjectCount] = useState(0);
-  const [loading, setLoading] = useState(false);
+  // Start as loading so components never flash "free" before the first fetch resolves
+  const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     if (!currentOrganizationId) {

@@ -26,7 +26,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useUsage } from '@/contexts/UsageContext';
 import { useOrganization } from '@/contexts/OrganizationContext';
-import { useSubscription } from '@/hooks/useSubscription';
+import { useSubscription } from '@/contexts/SubscriptionContext';
 import { getUsageColor, getProgressColor } from '@/hooks/useUsage';
 import { toast } from 'sonner';
 

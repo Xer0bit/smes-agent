@@ -14,6 +14,7 @@ import systemRoutes from './routes/system.routes.js';
 import runtimeRoutes from './routes/runtime.routes.js';
 import databaseRoutes from './routes/database.routes.js';
 import seoRoutes from './routes/seo.routes.js';
+import functionsRoutes from './routes/functions.routes.js';
 
 // Import middleware
 import { errorHandler } from './middleware/error.middleware.js';
@@ -23,6 +24,9 @@ import { requestLogger } from './middleware/request-logger.middleware.js';
 import { logger } from './utils/logger.js';
 
 const app = express();
+
+// Trust the first proxy (nginx) so X-Forwarded-For is used for IP-based rate limiting
+app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet());
@@ -136,6 +140,7 @@ app.use('/api/v1/system', systemRoutes);
 app.use('/api/v1/runtime', runtimeRoutes);
 app.use('/api/v1/database', databaseRoutes);
 app.use('/api/v1/seo', seoRoutes);
+app.use('/api/v1/functions', functionsRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {

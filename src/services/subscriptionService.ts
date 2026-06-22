@@ -198,27 +198,66 @@ function normalizeOrgLimits(limits: OrgLimits): OrgLimits {
   };
 }
 
+// ── Request cache — dedup concurrent calls, 2-min TTL ────────────────────────
+// All components share this module-level cache, so mounting 10 components that
+// all call fetchOrgLimits() for the same org fires exactly ONE network request.
+
+const CACHE_TTL = 2 * 60 * 1000;
+
+type CacheEntry<T> = { data: T; ts: number };
+const limitsCache   = new Map<string, CacheEntry<OrgLimits | null>>();
+const projectsCache = new Map<string, CacheEntry<number>>();
+const inFlight      = new Map<string, Promise<unknown>>();
+
+function cached<T>(key: string, store: Map<string, CacheEntry<T>>, fetch: () => Promise<T>): Promise<T> {
+  const hit = store.get(key);
+  if (hit && Date.now() - hit.ts < CACHE_TTL) return Promise.resolve(hit.data);
+  if (inFlight.has(key)) return inFlight.get(key) as Promise<T>;
+  const p = fetch().then((data) => {
+    store.set(key, { data, ts: Date.now() });
+    inFlight.delete(key);
+    return data;
+  }).catch((err) => {
+    inFlight.delete(key);
+    throw err;
+  });
+  inFlight.set(key, p);
+  return p;
+}
+
+/** Invalidate cached limits for an org (call after plan changes). */
+export function invalidateOrgCache(orgId: string) {
+  limitsCache.delete(orgId);
+  projectsCache.delete(orgId);
+}
+
 // ── API ──────────────────────────────────────────────────────────────────────
 
 /**
  * Fetch the current limits for an org (via SECURITY DEFINER RPC).
+ * Results are cached for 2 minutes — concurrent callers share one in-flight request.
  */
 export async function fetchOrgLimits(orgId: string): Promise<OrgLimits | null> {
-  const { data, error } = await supabase.rpc('get_org_limits', { p_org_id: orgId });
-  if (error) {
-    console.warn('fetchOrgLimits error:', error.message);
-    return null;
-  }
-  return normalizeOrgLimits(data as OrgLimits);
+  return cached(`limits:${orgId}`, limitsCache, async () => {
+    const { data, error } = await supabase.rpc('get_org_limits', { p_org_id: orgId });
+    if (error) {
+      console.warn('fetchOrgLimits error:', error.message);
+      return null;
+    }
+    return normalizeOrgLimits(data as OrgLimits);
+  });
 }
 
 /**
  * Count projects for an org (bypasses RLS).
+ * Results are cached for 2 minutes — concurrent callers share one in-flight request.
  */
 export async function countOrgProjects(orgId: string): Promise<number> {
-  const { data, error } = await supabase.rpc('count_org_projects', { p_org_id: orgId });
-  if (error) return 0;
-  return (data as number) || 0;
+  return cached(`projects:${orgId}`, projectsCache, async () => {
+    const { data, error } = await supabase.rpc('count_org_projects', { p_org_id: orgId });
+    if (error) return 0;
+    return (data as number) || 0;
+  });
 }
 
 /**
