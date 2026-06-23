@@ -1,4 +1,5 @@
 import { supabase } from '../config/database.js';
+import { resetProviderCache } from '../knowledgebase/index.js';
 import {
   canonicalizeModelId,
   DEFAULT_PRIMARY_MODEL,
@@ -169,6 +170,8 @@ const applyRuntimeEnv = (state: LlmControlState): void => {
     process.env.GEMINI_API_KEY = state.apiKeys.gemini;
     // KB vector store uses GOOGLE_GENERATIVE_AI_API_KEY for 768-dim text-embedding-004
     process.env.GOOGLE_GENERATIVE_AI_API_KEY = state.apiKeys.gemini;
+    // Reset cached provider so embedder re-detects 'google' instead of staying on 'bm25'
+    resetProviderCache();
   }
 };
 

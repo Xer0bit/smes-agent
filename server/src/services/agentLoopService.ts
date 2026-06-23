@@ -1791,13 +1791,16 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
   // Efficiency instruction — scope it to the tier so micro/fix stay fast but edit
   // still verifies imports (skipping that check is the #1 source of build errors).
-  const tierInstruction = _tier === 'micro'
-    ? '\n\n# Efficiency Mode\nOne visual tweak. Call `think` once (≤40 words), read the file, make the change, done. No blueprint. No extra files.'
-    : _tier === 'fix'
-      ? '\n\n# Fix Mode\nDo NOT run the full blueprint protocol. Call `think` once — identify root cause, read the broken file, fix the exact broken lines, call `get_build_errors` once to verify. Zero narration.'
-      : _tier === 'edit'
-        ? '\n\n# Edit Mode\nTargeted change. Call `think` once — list the 1–3 files you will touch and verify each import resolves. Read files before editing. Do NOT rewrite unrelated components. Keep chat under 30 words.'
-        : '';
+  // In plan mode, tier instructions must be suppressed — they reference file-modification
+  // workflows (touch, read, write) that contradict plan-mode restrictions.
+  const tierInstruction = runtimeMode === 'plan' ? ''
+    : _tier === 'micro'
+      ? '\n\n# Efficiency Mode\nOne visual tweak. Call `think` once (≤40 words), read the file, make the change, done. No blueprint. No extra files.'
+      : _tier === 'fix'
+        ? '\n\n# Fix Mode\nDo NOT run the full blueprint protocol. Call `think` once — identify root cause, read the broken file, fix the exact broken lines, call `get_build_errors` once to verify. Zero narration.'
+        : _tier === 'edit'
+          ? '\n\n# Edit Mode\nTargeted change. Call `think` once — list the 1–3 files you will touch and verify each import resolves. Read files before editing. Do NOT rewrite unrelated components. Keep chat under 30 words.'
+          : '';
 
   const boundedFileTree = clampContextSection('Project file tree', liveFileTree, MAX_FILE_TREE_CHARS);
 
@@ -1815,23 +1818,27 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   //   edit   →  ~4K tokens    (changes to existing apps — strips registry/chunking/new-project)
   //   build  →  ~6-10K tokens (new projects / features — context-stripped build prompt)
   //   other  →  full prompt   (plan/confirm profiles)
-  const staticSystemPrompt = _tier === 'micro'
-    ? MICRO_SYSTEM_PROMPT
-    : _tier === 'fix'
-      ? getFixSystemPrompt()
-      : _tier === 'edit' && !isEmptyProject
-        ? getEditSystemPrompt()
-        : promptProfile === 'build'
-          ? getAppBuilderBuildSystemPrompt({
-              includeRequirementGathering: isEmptyProject,
-              includeStartingNewProject: isEmptyProject,
-              includeSeo: promptIntent?.isWebsiteBuild === true,
-              includeIntegration: promptIntent?.hasIntegrationRequest === true,
-              includeErrorPatterns: isEmptyProject,
-              includeCapabilities: isEmptyProject,
-              includePreviewEnvironment: isEmptyProject,
-            })
-          : getAppBuilderSystemPrompt(promptProfile);
+  // Plan mode must never receive tier-specific build/edit/fix prompts — they contain
+  // file-write instructions that directly conflict with plan-mode restrictions.
+  const staticSystemPrompt = runtimeMode === 'plan'
+    ? getAppBuilderSystemPrompt('plan')
+    : _tier === 'micro'
+      ? MICRO_SYSTEM_PROMPT
+      : _tier === 'fix'
+        ? getFixSystemPrompt()
+        : _tier === 'edit' && !isEmptyProject
+          ? getEditSystemPrompt()
+          : promptProfile === 'build'
+            ? getAppBuilderBuildSystemPrompt({
+                includeRequirementGathering: isEmptyProject,
+                includeStartingNewProject: isEmptyProject,
+                includeSeo: promptIntent?.isWebsiteBuild === true,
+                includeIntegration: promptIntent?.hasIntegrationRequest === true,
+                includeErrorPatterns: isEmptyProject,
+                includeCapabilities: isEmptyProject,
+                includePreviewEnvironment: isEmptyProject,
+              })
+            : getAppBuilderSystemPrompt(promptProfile);
 
   console.log(
     `[AgentLoop] Prompt profile=${promptProfile} tier=${_tier ?? 'unset'} maxSteps=${MAX_STEPS} staticChars=${staticSystemPrompt.length} ` +
@@ -1871,8 +1878,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
   // micro: no modeInstruction (MICRO_SYSTEM_PROMPT already embeds directives)
   // edit: compact instruction — no phased build, no verbose rules (saves ~1,500 tokens)
+  // plan mode always wins — tier instructions must never override plan-mode restrictions
   const EDIT_MODE_INSTRUCTION = '\n\n# Runtime Mode Instruction\nExecute immediately — make the requested change now. Do NOT ask for confirmation. Do NOT rewrite files that are not involved in the change. If intent is unclear, ask one short question before calling tools.';
-  const effectiveModeInstruction = _tier === 'micro' ? '' : _tier === 'edit' ? EDIT_MODE_INSTRUCTION : modeInstruction;
+  const effectiveModeInstruction = runtimeMode === 'plan' ? modeInstruction
+    : _tier === 'micro' ? ''
+    : _tier === 'edit' ? EDIT_MODE_INSTRUCTION
+    : modeInstruction;
 
   // micro tier: only send the directly-mentioned file, not up to 4 files.
   // A colour/text change only needs the one file that contains the element.
@@ -1882,7 +1893,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         : existingFilesContext.split('\n\n')[0] ?? '')  // just first file if none mentioned
     : existingFilesContext;
 
-  const systemPrompt = staticSystemPrompt +
+  const assemblePrompt = (base: string) =>
+    base +
     knowledgeBlock +
     secretsBlock +
     effectiveModeInstruction +
@@ -1897,21 +1909,21 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       ? `\n\n# Current Project File Contents\n\nFocused previews of the most relevant project files. Use these to get oriented quickly, then call \`read_file\` for any file you need in full before editing.\n\n${effectiveFilesContext}${_tier !== 'micro' ? truncatedFilesNote + excludedFilesNote : ''}`
       : '') +
     attachmentContext;
-  const dynamicContext =
-    knowledgeBlock +
-    secretsBlock +
-    effectiveModeInstruction +
-    tierInstruction +
-    (boundedOlderSummary
-      ? `\n\n# Earlier Conversation Summary\n\nThis is a summary of older messages in this conversation. Use it to maintain continuity:\n\n${boundedOlderSummary}`
-      : '') +
-    (boundedFileTree
-      ? `\n\n# Project File Tree\n\nThese are ALL the files currently on disk. This is authoritative — if a file is not listed here, it does NOT exist. Use this to verify imports and plan which files to create or edit.\n\n\`\`\`\n${boundedFileTree}\n\`\`\``
-      : '\n\n# Project File Tree\n\nThe project directory is empty — this is a fresh project. You must create all files from scratch.') +
-    (effectiveFilesContext
-      ? `\n\n# Current Project File Contents\n\nFocused previews of the most relevant project files. Use these to get oriented quickly, then call \`read_file\` for any file you need in full before editing.\n\n${effectiveFilesContext}${_tier !== 'micro' ? truncatedFilesNote + excludedFilesNote : ''}`
-      : '') +
-    attachmentContext;
+
+  // Defense-in-depth: strip any build-mode directives that should never appear in plan mode.
+  // This catches any future instruction block that forgets to check runtimeMode first.
+  const enforcePlanMode = (prompt: string): string => {
+    if (runtimeMode !== 'plan') return prompt;
+    return prompt
+      .replace(/Execute immediately[^.]*\./gi, '')
+      .replace(/Mode is locked to BUILD[^\n]*/gi, '')
+      .replace(/# Efficiency Mode[\s\S]*?(?=\n#|\n\n#|$)/g, '')
+      .replace(/# Edit Mode[\s\S]*?(?=\n#|\n\n#|$)/g, '')
+      .replace(/# Fix Mode[\s\S]*?(?=\n#|\n\n#|$)/g, '');
+  };
+
+  const systemPrompt = enforcePlanMode(assemblePrompt(staticSystemPrompt));
+  const dynamicContext = enforcePlanMode(assemblePrompt(''));
 
   // ── Gemini run-level system prompt cache ─────────────────────────────────
   // Only used in plan mode (no tools). Build mode always has tools, and Gemini

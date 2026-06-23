@@ -13,15 +13,16 @@ dist-ssr
 *.local
 
 # Environment files - NEVER commit these!
-# .env
-# .env.*
-# .env.local
-# .env.development
-# .env.production
-# *.env
-# supabase/functions/.env
-# server/.env
-# server/.llm-control.json
+.env
+.env.*
+.env.local
+.env.production
+*.env
+supabase/functions/.env
+server/.env
+server/.llm-control.json
+.deploy.env
+# .env.development is intentionally tracked (no secrets, only template)
 
 # Editor directories and files
 .vscode/*

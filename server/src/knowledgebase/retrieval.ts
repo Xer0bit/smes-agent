@@ -56,6 +56,10 @@ export async function indexFile(
   // Only index source files — skip binaries, lockfiles, generated output
   if (!isIndexableFile(filePath)) return;
 
+  // BM25 is pure in-memory — storing its vectors in Supabase adds no value
+  // (cosine sim on random-hash vectors is meaningless) and wastes 2 DB round-trips per file.
+  if (getProvider() === 'bm25') return;
+
   try {
     // Skip if content hasn't changed
     if (await isAlreadyIndexed(projectId, filePath, content)) return;
@@ -137,45 +141,50 @@ export async function retrieveRelevantFiles(
   // 1. Always include explicitly mentioned files first
   for (const p of mentionedPaths) add(p, 1.0, 'mentioned');
 
-  // If BM25 is active (no Google/OpenAI key), skip the DB vector search entirely —
-  // BM25 produces 256-dim vectors which are blocked by the 768-dim DB column.
-  // Use in-memory scoring directly instead of wasting a round-trip that returns [].
   const provider = getProvider();
-  const hasRealEmbeddings = provider !== 'bm25';
 
-  if (hasRealEmbeddings) {
-    try {
-      // 2. Vector search (only when real embeddings are available)
-      const queryEmbedding = await embedText(prompt);
-      const similar = await searchSimilarFiles(projectId, queryEmbedding, maxFiles + 2);
-
-      const vectorPaths: string[] = [];
-      for (const { file_path, similarity } of similar) {
-        if (similarity > 0.3) {
-          add(file_path, similarity, 'vector');
-          vectorPaths.push(file_path);
-        }
-      }
-
-      // 3. Graph expansion — add direct imports of vector-found files
-      if (graphExpansion && vectorPaths.length > 0) {
-        const [imports, dependents] = await Promise.all([
-          getDirectImports(projectId, vectorPaths),
-          getDirectDependents(projectId, vectorPaths),
-        ]);
-
-        // Imports are more useful than dependents — include up to 2
-        for (const p of resolveExtensions(imports, existingPaths).slice(0, 2)) {
-          add(p, 0.7, 'graph-import');
-        }
-        // Dependents (files that use the found files) — include 1
-        for (const p of dependents.slice(0, 1)) {
-          add(p, 0.6, 'graph-dependent');
-        }
-      }
-    } catch (err) {
-      console.warn('[kb/retrieval] vector/graph retrieval failed, falling back to BM25:', err);
+  // BM25 is pure in-memory — skip the Supabase round-trip entirely and score directly.
+  if (provider === 'bm25') {
+    const bm25Results = scoreFilesLocally(prompt, allFiles, maxFiles);
+    for (const r of bm25Results) if (r.score > 0) add(r.path, r.score, 'recency');
+    if (results.filter(r => r.reason !== 'mentioned').length === 0) {
+      const bySize = [...allFiles].sort((a, b) => b.content.length - a.content.length).slice(0, maxFiles);
+      for (const f of bySize) add(f.path, 0.05, 'recency');
     }
+    return results.sort((a, b) => b.score - a.score).slice(0, maxFiles + mentionedPaths.length);
+  }
+
+  try {
+    // 2. Vector search via DB (google/openai embeddings only)
+    const queryEmbedding = await embedText(prompt);
+    const similar = await searchSimilarFiles(projectId, queryEmbedding, maxFiles + 2);
+
+    const vectorPaths: string[] = [];
+    for (const { file_path, similarity } of similar) {
+      if (similarity > 0.3) {
+        add(file_path, similarity, 'vector');
+        vectorPaths.push(file_path);
+      }
+    }
+
+    // 3. Graph expansion — add direct imports of vector-found files
+    if (graphExpansion && vectorPaths.length > 0) {
+      const [imports, dependents] = await Promise.all([
+        getDirectImports(projectId, vectorPaths),
+        getDirectDependents(projectId, vectorPaths),
+      ]);
+
+      // Imports are more useful than dependents — include up to 2
+      for (const p of resolveExtensions(imports, existingPaths).slice(0, 2)) {
+        add(p, 0.7, 'graph-import');
+      }
+      // Dependents (files that use the found files) — include 1
+      for (const p of dependents.slice(0, 1)) {
+        add(p, 0.6, 'graph-dependent');
+      }
+    }
+  } catch (err) {
+    console.warn('[kb/retrieval] vector/graph retrieval failed, falling back to BM25:', err);
   }
 
   // 4. BM25 in-memory scoring — used when no real embedding provider is configured,

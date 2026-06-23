@@ -1,21 +1,36 @@
-import 'dotenv/config';
-// Also load .env.production (one level above server/) so TENANT_DB_* secrets
-// are always available regardless of how PM2 was started or restarted.
+import 'dotenv/config'; // loads server/.env first
 import { configDotenv } from 'dotenv';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-configDotenv({ path: path.resolve(__dirname, '..', '..', '.env.production'), override: false });
+const ROOT = path.resolve(__dirname, '..', '..');
+// Local dev: load .env.local (project root) — contains production service credentials.
+// Does NOT override server/.env so local overrides always win.
+configDotenv({ path: path.join(ROOT, '.env.local'), override: false });
+// Production / any environment: load .env.production so TENANT_DB_* and other
+// server secrets survive PM2 restarts without needing --update-env.
+configDotenv({ path: path.join(ROOT, '.env.production'), override: false });
 import app from './app.js';
 import { logger } from './utils/logger.js';
 import { ensureBaseTemplate } from './services/baseTemplateService.js';
 import { testAndAutoDisableProviders } from './services/llm-health.service.js';
+import { getLlmControlState } from './services/llm-control.service.js';
+import { probeEmbeddingProvider } from './knowledgebase/index.js';
 import type { Server } from 'node:http';
 
 const PORT = process.env.PORT || 5001;
 
 let server: Server;
 const activeConnections = new Set<import('node:net').Socket>();
+
+// Load LLM config from Supabase before accepting traffic so GOOGLE_GENERATIVE_AI_API_KEY
+// is set before the embedder's provider cache is first accessed. Without this, the
+// embedder caches 'bm25' (256-dim) at first use and KB indexing silently fails.
+getLlmControlState().catch((err) =>
+    logger.warn('[LlmControl] Pre-listen state load failed:', err?.message)
+);
+// Probe embedding provider once so the circuit trips before any user request.
+probeEmbeddingProvider();
 
 server = app.listen(PORT, () => {
     logger.info(`🚀 eComGear API Server running on port ${PORT}`);

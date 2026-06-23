@@ -13,6 +13,12 @@
 # =============================================================================
 set -euo pipefail
 
+# Auto-load credentials from .deploy.env if not already in env
+DEPLOY_ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/.deploy.env"
+if [ -f "$DEPLOY_ENV_FILE" ] && [ -z "${VPS3_PASS:-}" ] && [ -z "${VPS3_KEY_PATH:-}" ]; then
+    set -a && . "$DEPLOY_ENV_FILE" && set +a
+fi
+
 # ── Server config ──────────────────────────────────────────────────────────
 VPS1_IP="156.67.218.75";   VPS1_USER="root"
 VPS2_IP="72.62.126.99";    VPS2_USER="root"
@@ -47,6 +53,30 @@ case "$TARGET" in
         exit 1
         ;;
 esac
+
+# ── Pre-deploy checks ──────────────────────────────────────────────────────────
+preflight_checks() {
+    step "Pre-deploy checks..."
+
+    # Warn on uncommitted changes (don't block — developer may intend this)
+    if ! git -C "$PROJECT_DIR" diff --quiet 2>/dev/null || \
+       ! git -C "$PROJECT_DIR" diff --staged --quiet 2>/dev/null; then
+        echo -e "${YELLOW}  ⚠ Uncommitted changes detected. Deploy will use local files as-is.${NC}"
+        git -C "$PROJECT_DIR" status --short 2>/dev/null | head -10
+    fi
+
+    # Server TypeScript must compile cleanly (VPS3 only needs this, but catch early)
+    if [[ "$TARGET" == "vps3" || "$TARGET" == "all" ]]; then
+        if [ -f "$PROJECT_DIR/server/src/index.ts" ]; then
+            echo "  Checking server TypeScript..."
+            cd "$PROJECT_DIR/server" && npm run build --silent 2>&1 | tail -5
+            cd "$PROJECT_DIR"
+            success "Server TypeScript OK"
+        fi
+    fi
+
+    success "Pre-deploy checks passed"
+}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -312,7 +342,6 @@ deploy_vps3() {
         cd "$PROJECT_DIR/server"
         npm ci
         npm run build
-        npm ci --omit=dev
         cd "$PROJECT_DIR"
         success "Server built (server/dist/)"
     else
@@ -475,6 +504,11 @@ else
 fi
 pm2 save --force
 
+# Ensure PM2 auto-starts on reboot (idempotent — safe to run every deploy)
+STARTUP_CMD=\$(pm2 startup systemd -u root --hp /root 2>&1 | grep -E "^sudo " | head -1 || true)
+if [ -n "\$STARTUP_CMD" ]; then eval "\$STARTUP_CMD" 2>/dev/null || true; fi
+pm2 save --force
+
 # ── 7. Final cleanup: wait for graceful drain then force-kill survivors ────────
 # Old workers received SIGTERM and have server.close() + 15s force-exit timer.
 # Wait 18s (3s buffer over the 15s timeout) then SIGKILL any survivors that are
@@ -555,6 +589,8 @@ echo "  ║   EcomGear Multi-VPS Deploy          ║"
 echo "  ╚══════════════════════════════════════╝"
 echo "  Target: ${TARGET}"
 echo ""
+
+preflight_checks
 
 case "$TARGET" in
     vps1) deploy_vps1 ;;

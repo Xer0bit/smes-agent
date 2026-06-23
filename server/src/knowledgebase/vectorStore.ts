@@ -20,16 +20,12 @@ const supabaseKey =
 // BM25 fallback produces 256-dim — those cannot be stored here.
 const DB_VECTOR_DIMS = 768;
 
-let _dimsMismatchWarned = false;
 function checkDims(embedding: number[], context: string): boolean {
   if (embedding.length === DB_VECTOR_DIMS) return true;
-  if (!_dimsMismatchWarned) {
-    _dimsMismatchWarned = true;
-    console.warn(
-      `[kb/vectorStore] ${context}: embedding is ${embedding.length}-dim but DB expects ${DB_VECTOR_DIMS}-dim. ` +
-      'KB indexing disabled — set GOOGLE_GENERATIVE_AI_API_KEY or OPENAI_API_KEY to enable it.',
-    );
-  }
+  console.warn(
+    `[kb/vectorStore] ${context}: embedding is ${embedding.length}-dim but DB expects ${DB_VECTOR_DIMS}-dim. ` +
+    'KB indexing disabled — set GOOGLE_GENERATIVE_AI_API_KEY or OPENAI_API_KEY to enable it.',
+  );
   return false;
 }
 

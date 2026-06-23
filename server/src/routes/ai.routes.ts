@@ -1292,6 +1292,8 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
         // editor loads these files instead of the previous latest revision.
         try {
             if (supabase && restoredFiles.length > 0) {
+                // Postgres JSON rejects null bytes ( ) — strip them before insert.
+                const sanitize = (s: string) => s.replace(/ /g, '');
                 const textFiles = restoredFiles.filter((f: { path: string; content: string }) => !f.content.startsWith('__ECOMGEAR_BIN64__'));
                 const htmlFile = textFiles.find((f: { path: string; content: string }) => f.path === 'index.html' || f.path.endsWith('.html')) || textFiles[0];
 
@@ -1302,9 +1304,9 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
                         user_id: req.user!.id,
                         created_by: req.user!.id,
                         prompt: `Rolled back to snapshot ${snapshotId.slice(-8)}`,
-                        generated_code: htmlFile?.content || '',
+                        generated_code: sanitize(htmlFile?.content || ''),
                         generated_files: {
-                            files: textFiles.map((f: { path: string; content: string }) => ({ path: f.path, content: f.content })),
+                            files: textFiles.map((f: { path: string; content: string }) => ({ path: f.path, content: sanitize(f.content) })),
                         },
                     })
                     .select('id')
