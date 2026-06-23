@@ -112,10 +112,15 @@ export default {
             height: "0",
           },
         },
+        shimmer: {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(200%)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        shimmer: "shimmer 1.8s infinite",
         "fade-in": "fade-in 0.6s ease-out",
         "fade-in-up": "fade-in-up 0.8s ease-out forwards",
       },

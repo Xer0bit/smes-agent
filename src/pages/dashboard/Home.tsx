@@ -387,10 +387,6 @@ export default function DashboardHome() {
                   <Plus className="mr-2 h-4 w-4" />
                   New Project
                 </Button>
-                <Button variant="neutral" className="rounded-none" onClick={() => navigate('/dashboard/agents')}>
-                  <Bot className="mr-2 h-4 w-4" />
-                  Agents
-                </Button>
               </div>
             </div>
           </CardContent>
@@ -651,14 +647,6 @@ export default function DashboardHome() {
                   </div>
                   <p className="mt-2 text-sm text-muted-foreground">Build, edit, and operate without leaving the workspace.</p>
                 </div>
-                <Button
-                  variant="neutral"
-                  className="w-full justify-between rounded-none"
-                  onClick={() => navigate('/dashboard/agents')}
-                >
-                  Explore agents
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
               </div>
             </CardContent>
           </Card>

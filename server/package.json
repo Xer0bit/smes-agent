@@ -30,6 +30,7 @@
         "multer": "^2.1.1",
         "pdf-parse": "^1.1.4",
         "pg": "^8.21.0",
+        "puppeteer-core": "^25.2.0",
         "typescript": "^5.3.3",
         "uuid": "^9.0.1",
         "winston": "^3.11.0",

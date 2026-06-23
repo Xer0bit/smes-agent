@@ -13,7 +13,6 @@ import {
   Building2,
   Home,
   Settings,
-  Bot,
   PanelLeftClose,
   PanelLeftOpen,
   ShieldCheck,
@@ -53,7 +52,6 @@ const DashboardSidebar = ({
     { title: t('dashboard.organizations'), url: '/dashboard/organizations', icon: Building2 },
     { title: t('dashboard.projects'), url: '/dashboard/projects', icon: FolderKanban },
     { title: t('dashboard.profile'), url: '/dashboard/profile', icon: UserIcon },
-    { title: 'Agents', url: '/dashboard/agents', icon: Bot },
     { title: 'Team Access', url: '/dashboard/team', icon: ShieldCheck },
     { title: t('dashboard.settings'), url: '/dashboard/settings', icon: Settings },
   ];

@@ -20,7 +20,6 @@ import DashboardOrganizations from "./pages/dashboard/Organizations";
 import DashboardProjects from "./pages/dashboard/Projects";
 import DashboardProfile from "./pages/dashboard/Profile";
 import DashboardSettings from "./pages/dashboard/Settings";
-import DashboardAgents from "./pages/dashboard/Agents";
 import DashboardTeamAccess from "./pages/dashboard/TeamAccess";
 const AdminLogin = lazy(() => import("./pages/admin/Login"));
 const AdminApp = lazy(() => import("./pages/admin/AdminApp"));
@@ -114,7 +113,6 @@ const App = () => (
                   <Route path="organizations" element={<DashboardOrganizations />} />
                   <Route path="projects" element={<DashboardProjects />} />
                   <Route path="profile" element={<DashboardProfile />} />
-                  <Route path="agents" element={<DashboardAgents />} />
                   <Route path="team" element={<DashboardTeamAccess />} />
                   <Route path="settings" element={<DashboardSettings />} />
                 </Route>

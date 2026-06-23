@@ -50,6 +50,7 @@ interface Project {
   total_storage_bytes?: number;
   revision_count?: number;
   latest_revision_size?: number;
+  thumbnail_url?: string | null;
   organizations?: {
     name: string;
   } | null;
@@ -223,6 +224,7 @@ export default function DashboardProjects() {
           message_count,
           total_storage_bytes,
           latest_revision_size,
+          thumbnail_url,
           organizations(name)
         `)
         .in('status', ['active', 'deleted', 'suspended'])
@@ -277,6 +279,7 @@ export default function DashboardProjects() {
         total_storage_bytes: p.total_storage_bytes || 0,
         revision_count: p.revision_count || 0,
         latest_revision_size: p.latest_revision_size || 0,
+        thumbnail_url: p.thumbnail_url ?? null,
         organizations: Array.isArray(p.organizations) ? p.organizations[0] : p.organizations,
         user_org_role: p.organization_id ? userOrgRoles[p.organization_id] : null
       }));
@@ -303,6 +306,23 @@ export default function DashboardProjects() {
         })
       );
       setPreviewUrls(urls);
+
+      // Auto-trigger thumbnail capture for projects that have a preview URL but no thumbnail yet.
+      // Falls back to the predictable preview URL format when the RPC returns nothing.
+      // Fire-and-forget — the real-time projects subscription will reload when thumbnails land.
+      const session = (await supabase.auth.getSession()).data.session;
+      if (session?.access_token) {
+        const { getGenServerUrl, PREVIEW_CONFIG } = await import('@/config/external-api');
+        const needsCapture = allProjects.filter(p => !p.thumbnail_url);
+        for (const p of needsCapture) {
+          // Omit previewUrl — server will look it up from revisions table
+          fetch(getGenServerUrl(`/api/v1/projects/${p.id}/capture-thumbnail`), {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(urls[p.id] ? { previewUrl: urls[p.id] } : {}),
+          }).catch(() => { /* silent — thumbnail is best-effort */ });
+        }
+      }
     } catch (error) {
       console.error('Error loading projects:', error);
       toast.error('Failed to load projects');
@@ -885,6 +905,7 @@ export default function DashboardProjects() {
               {viewMode === 'grid' && (
                 <ProjectThumbnail
                   projectName={project.name}
+                  thumbnailUrl={project.thumbnail_url ?? null}
                   previewUrl={previewUrls[project.id] ?? null}
                   onRefresh={() => refreshPreviewUrl(project.id)}
                 />

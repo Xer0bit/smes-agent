@@ -40,6 +40,7 @@ import { PRE_INSTALLED_PACKAGES } from './baseTemplateService.js';
 import { RunStateLedger } from './runStateLedger.js';
 import { canonicalizeModelId, DEFAULT_FREE_MODEL, DEFAULT_PRIMARY_MODEL } from '../config/models.js';
 import { indexFile, indexFiles, retrieveRelevantFiles } from '../knowledgebase/index.js';
+import { captureThumbnail } from './thumbnailService.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -3310,6 +3311,9 @@ RULES:
             ({ error }) => { if (error) console.warn(`[AgentLoop] revision preview_url update failed: ${error.message}`); },
             (e: any) => console.warn('[AgentLoop] revision preview_url update rejected:', e?.message)
           );
+
+        // Capture a screenshot thumbnail — fire-and-forget, never blocks the response
+        captureThumbnail(projectId, revisionPreviewUrl, supabase);
       }
 
       // ── Prune old snapshots for this project (keep MAX_SNAPSHOTS_PER_PROJECT) ──
