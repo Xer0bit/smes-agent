@@ -10,6 +10,7 @@ import {
     removeLlmModel,
     updateLlmControlState,
 } from '../services/llm-control.service.js';
+import { getEmbeddingStatus, resetProviderCache, probeEmbeddingProvider } from '../knowledgebase/index.js';
 import { getTierConfig, saveTierConfig } from '../services/tier-config.service.js';
 
 const router = Router();
@@ -221,6 +222,46 @@ router.get('/server-status', authMiddleware, async (req: AuthenticatedRequest, r
     } catch (error) {
         logger.error('Failed to get server status', error);
         res.status(500).json({ success: false, error: 'Failed to get server status' });
+    }
+});
+
+// KB embedding diagnostics — admin only
+router.get('/kb/status', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+        if (!await requireAdmin(req, res)) return;
+        const status = getEmbeddingStatus();
+        const { data: countRow } = await supabase
+            .from('project_file_embeddings')
+            .select('project_id, updated_at', { count: 'exact', head: false })
+            .order('updated_at', { ascending: false })
+            .limit(1);
+        res.json({
+            success: true,
+            provider: status.provider,
+            googleCircuitOpen: status.googleCircuitOpen,
+            openaiCircuitOpen: status.openaiCircuitOpen,
+            googleCircuitResetsAt: status.googleCircuitResetsAt
+                ? new Date(status.googleCircuitResetsAt).toISOString() : null,
+            googleKeySet: !!process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+            openaiKeySet: !!process.env.OPENAI_API_KEY,
+            lastIndexed: (countRow as any)?.[0]?.updated_at ?? null,
+        });
+    } catch (error) {
+        logger.error('Failed to get KB status', error);
+        res.status(500).json({ success: false, error: (error as Error).message });
+    }
+});
+
+// Force re-probe embedding provider (useful after updating API keys)
+router.post('/kb/reprobe', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+        if (!await requireAdmin(req, res)) return;
+        resetProviderCache();
+        await probeEmbeddingProvider();
+        const status = getEmbeddingStatus();
+        res.json({ success: true, provider: status.provider, googleCircuitOpen: status.googleCircuitOpen });
+    } catch (error) {
+        res.status(500).json({ success: false, error: (error as Error).message });
     }
 });
 

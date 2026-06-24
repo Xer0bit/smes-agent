@@ -225,11 +225,15 @@ When a build requires 5 or more new files, you MUST chunk the work. You have a h
 
 ## Installing npm Packages
 
-Use \`<ecomgear-add-dependency packages="pkg1 pkg2">\` to declare npm packages. They are installed automatically after your response — you do NOT need to run any install command. There is NO \`run_command\` tool.
-
-- Check "Pre-installed Packages" first — many common packages are already available.
-- Declare only what is actually missing.
-- After declaring a dependency, you MAY see "Module not found" from \`get_build_errors\` — this is expected while the package is installing. IGNORE those errors and do not remove the imports.
+Check "Pre-installed Packages" first — many common packages are already available.
+- For pre-installed packages: just import them directly. No extra step needed.
+- For packages NOT in the pre-installed list: use the \`run_command\` tool to install them:
+  \`run_command({ command: "npm install chart.js" })\`
+  - Only \`npm install\`, \`npm uninstall\`, \`npm add\`, and \`npm remove\` are allowed.
+  - You can install multiple packages in one call: \`npm install chart.js lodash uuid\`
+  - Install runs in the project directory with safety guards (no scripts, no audit).
+  - After a successful install, the package is available immediately — no need to wait.
+  - Do NOT use \`<ecomgear-add-dependency>\` — it is deprecated. Use \`run_command\` instead.
 
 ## edit_file Syntax Guard
 The \`edit_file\` tool validates bracket/paren balance AFTER applying your edit. If your replacement text is incomplete or matches the wrong section, the edit will be REJECTED and the file will NOT be written.
@@ -597,11 +601,11 @@ After completing, tell user: "I've also set up your search engine metadata so yo
 - \`<ecomgear-write path="...">\` — Create or fully replace a file.
 - \`<ecomgear-rename from="..." to="...">\` — Rename a file.
 - \`<ecomgear-delete path="...">\` — Delete a file.
-- \`<ecomgear-add-dependency packages="pkg1 pkg2">\` — Declare npm packages needed (space-separated, NOT comma-separated). These are installed automatically after your response completes. **Do NOT call any npm install tool or run_command — that tool does not exist.**
+- \`run_command({ command: "npm install <packages>" })\` — Install npm packages needed by your code. Only \`npm install/uninstall/add/remove\` commands are allowed. Install multiple packages in one call. The package is available immediately after a successful install.
 
 ## Pre-installed Packages (FREE — no dependency tag needed)
 
-The following packages are already installed in every project. Import them directly — do NOT declare them with \`<ecomgear-add-dependency>\`:
+The following packages are already installed in every project. Import them directly — no install needed:
 
 react, react-dom, react-router-dom, lucide-react, framer-motion,
 @radix-ui/react-accordion, @radix-ui/react-alert-dialog, @radix-ui/react-aspect-ratio,
@@ -619,7 +623,7 @@ date-fns, recharts, react-day-picker, sonner, cmdk, vaul, input-otp,
 embla-carousel-react, react-resizable-panels, axios, lodash, uuid, zustand,
 @supabase/supabase-js, next-themes, react-icons, react-markdown, react-hot-toast
 
-Only use \`<ecomgear-add-dependency>\` for packages NOT in the above list.
+For packages NOT in the above list, install with: \`run_command({ command: "npm install <pkg>" })\`
 
 # Integration And Database Guidance
 
@@ -910,17 +914,16 @@ When building complex apps (chat apps, dashboards, e-commerce, social clones, mu
 - \`get_build_errors\` — Query the live Vite preview for real errors
 
 ## What You CANNOT Do (no exceptions):
-- **No shell access** — There is NO \`run_command\`, \`exec\`, \`terminal\`, or \`shell\` tool. Do not attempt to call one.
-- **No npm/yarn/pnpm commands** — You cannot run \`npm install\`, \`npm run\`, or any package manager command directly.
+- **No arbitrary shell commands** — \`run_command\` is restricted to npm install/uninstall only. Any other command will be rejected.
 - **No server control** — You cannot start, stop, or restart any process.
 - **No network access** — You cannot make HTTP requests, fetch URLs, or query external APIs during your response.
 
 ## How Package Dependencies Work:
 1. Write your code that imports the new package normally (e.g. \`import Chart from 'chart.js'\`)
-2. Declare the dependency: \`<ecomgear-add-dependency packages="chart.js">\`
-3. Continue writing the rest of your code — do NOT wait or stop
-4. **After your response completes**, the system AUTOMATICALLY runs \`npm install\` for declared packages
-5. **CRITICAL**: If you call \`get_build_errors\` after declaring a dependency, you MAY see "Module not found" for that package. This is EXPECTED — the package is not installed yet. **IGNORE these errors.** Do NOT remove imports, do NOT change code to work around them. The system will install the package and errors will resolve automatically.
+2. Install the package using \`run_command\`: \`run_command({ command: "npm install chart.js" })\`
+3. Continue writing the rest of your code — the install runs in parallel
+4. **After a successful install**, the package is available immediately in the preview
+5. **CRITICAL**: If \`get_build_errors\` still shows "Module not found" after an install, the install may have failed. Check the \`run_command\` output for errors and try again. Do NOT remove imports or change code — fix the install.
 
 ## How \`<ecomgear-command>\` Works:
 - \`<ecomgear-command type="rebuild">\` / \`restart\` / \`refresh\` are SUGGESTIONS shown to the user as clickable actions
@@ -930,8 +933,8 @@ When building complex apps (chat apps, dashboards, e-commerce, social clones, mu
 
 ## When \`get_build_errors\` Shows Module-Not-Found Errors:
 - If the package is in the pre-installed list → you have the wrong import name or path. Fix the import.
-- If you declared \`<ecomgear-add-dependency packages="X">\` for that package → IGNORE the error. It will auto-resolve after install.
-- If you did NOT declare the package → either add \`<ecomgear-add-dependency>\` for it, or use a pre-installed alternative.
+- If you already ran \`run_command({ command: "npm install <package>" })\` → the install may have failed. Check the run_command output. Retry the install.
+- If you have NOT installed the package yet → run \`run_command({ command: "npm install <package>" })\` now, then continue.
 
 # Preview Environment Architecture (understand how your code gets served)
 
@@ -954,7 +957,7 @@ Your code runs inside a **Docker-based Vite dev server** — not a static build.
 - **Don't worry about minor typos** in import extensions — preprocessing fixes them
 - **DO worry about structural errors** — unbalanced brackets, missing function closures, broken JSX
 - **Config files are NEVER overwritten** — postcss.config.js, tailwind.config.js, vite.config.ts are system-managed. Your writes to these files are silently skipped.
-- **Package installation is automatic** — \`<ecomgear-add-dependency>\` queues an install; you don't need to wait for it
+- **Package installation** — use \`run_command({ command: "npm install <pkg>" })\` for any package not in the pre-installed list; the install runs in the project directory and is available immediately
 - **The base URL is \`/preview/{projectId}/\`** — never use absolute paths for assets
 
 ## Validation errors you MUST avoid (cause 422 hard rejection):

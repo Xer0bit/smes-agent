@@ -2683,6 +2683,72 @@ async function startMainServer() {
         res.json({ packages: COMMON_DEPS });
     });
 
+    // ── Package install endpoint ──────────────────────────────────────────────
+    // Installs npm packages into the preview service's own node_modules so Vite
+    // can resolve them. Called by the agent's run_command tool after it installs
+    // locally, ensuring both directories stay in sync.
+    //
+    // Auth: same x-update-secret header used by /preview/:id/update.
+    // Body: { packages: ["chart.js", "lodash"] }
+    app.options('/packages/install', cors(corsOptions));
+    app.post('/packages/install', cors(corsOptions), async (req, res) => {
+        if (PREVIEW_UPDATE_SECRET) {
+            const provided = req.headers['x-update-secret'];
+            if (!provided || provided !== PREVIEW_UPDATE_SECRET) {
+                return res.status(401).json({ error: 'Unauthorized' });
+            }
+        }
+
+        const { packages } = req.body || {};
+        if (!Array.isArray(packages) || packages.length === 0) {
+            return res.status(400).json({ error: 'packages[] array required' });
+        }
+
+        // Validate: only plain package names — no shell metacharacters, no paths
+        const NAME_RE = /^(@[a-z0-9_.-]+\/)?[a-z0-9_.-]+(@[\w.^~>=<-]+)?$/i;
+        const invalid = packages.filter(p => typeof p !== 'string' || !NAME_RE.test(p.trim()));
+        if (invalid.length > 0) {
+            return res.status(400).json({ error: `Invalid package name(s): ${invalid.join(', ')}` });
+        }
+
+        const pkgList = packages.map(p => p.trim()).join(' ');
+        const installCmd = `npm install --ignore-scripts --no-audit --no-fund ${pkgList}`;
+
+        console.log(`[Packages] Installing into preview node_modules: ${pkgList}`);
+
+        const { exec: execPkg } = require('child_process');
+        execPkg(
+            installCmd,
+            {
+                cwd: __dirname,          // preview-service/ — its package.json and node_modules live here
+                timeout: 120_000,
+                env: { ...process.env, NODE_ENV: 'development' },
+            },
+            (err, stdout, stderr) => {
+                const out = [stdout, stderr].filter(Boolean).join('\n').slice(0, 3000);
+                if (err) {
+                    console.error(`[Packages] Install failed: ${out}`);
+                    return res.status(500).json({ error: 'Install failed', detail: out });
+                }
+
+                console.log(`[Packages] Installed ${pkgList} — invalidating Vite dep caches`);
+
+                // Invalidate the Vite dep optimizer cache for all active servers so
+                // the next module request picks up the newly installed package.
+                for (const [projectId, instance] of activeServers.entries()) {
+                    try {
+                        instance.vite.moduleGraph.invalidateAll();
+                        instance.vite.ws.send({ type: 'full-reload', path: '*' });
+                    } catch (e) {
+                        console.warn(`[Packages] Cache invalidation failed for ${projectId}:`, e?.message);
+                    }
+                }
+
+                res.json({ success: true, installed: packages, output: out });
+            }
+        );
+    });
+
     // Catch JSON parse errors from body-parser
     app.use((err, req, res, next) => {
         if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {

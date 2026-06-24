@@ -187,6 +187,15 @@ export default function DashboardOrganizations() {
 
       const mergedOrgs = Object.values(combined) as any[];
 
+      // Check if this user is a platform admin — they get admin rights in every org
+      const { data: platformRoleRow } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', user.id)
+        .in('role', ['super_admin', 'admin'])
+        .maybeSingle();
+      const isPlatformAdmin = !!platformRoleRow;
+
       // Enrich
       const enrichedOrgs: OrganizationWithRole[] = await Promise.all(
         mergedOrgs.map(async (org: any) => {
@@ -208,8 +217,10 @@ export default function DashboardOrganizations() {
             .eq('user_id', user.id)
             .maybeSingle();
 
-          // If user created the org, they're admin; otherwise use their member role or default to member
-          const userRole = org.created_by === user.id ? 'admin' : ((roleRow?.role as OrgRole) ?? 'member');
+          // Platform admins always get admin rights; org creators are always admin
+          const userRole: OrgRole = (isPlatformAdmin || org.created_by === user.id)
+            ? 'admin'
+            : ((roleRow?.role as OrgRole) ?? 'member');
 
           return {
             ...org,

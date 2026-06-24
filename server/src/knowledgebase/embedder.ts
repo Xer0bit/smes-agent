@@ -175,6 +175,23 @@ export async function probeEmbeddingProvider(): Promise<void> {
   }
 }
 
+/** Current circuit breaker / provider status for diagnostics. */
+export function getEmbeddingStatus(): {
+  provider: EmbeddingProvider;
+  googleCircuitOpen: boolean;
+  openaiCircuitOpen: boolean;
+  googleCircuitResetsAt: number | null;
+  openaiCircuitResetsAt: number | null;
+} {
+  return {
+    provider: getProvider(),
+    googleCircuitOpen: _googleCircuitOpen,
+    openaiCircuitOpen: _openaiCircuitOpen,
+    googleCircuitResetsAt: _googleCircuitOpen ? _googleCircuitResetAt : null,
+    openaiCircuitResetsAt: _openaiCircuitOpen ? _openaiCircuitResetAt : null,
+  };
+}
+
 /** Cosine similarity between two equal-length vectors. */
 export function cosineSim(a: number[], b: number[]): number {
   let dot = 0, na = 0, nb = 0;

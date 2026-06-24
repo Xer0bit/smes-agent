@@ -3219,8 +3219,10 @@ RULES:
     const unsupportedPreviewDependencies = doneDependencies.filter((pkg) => !PRE_INSTALLED_PACKAGES.includes(pkg));
 
     if (unsupportedPreviewDependencies.length > 0) {
+      // Legacy XML-declared packages not in the pre-installed set — these should now
+      // be installed via run_command by the agent. Show a mild warning for visibility.
       sseWrite(res, 'text-delta', {
-        text: `\n> *Warning: preview cannot auto-install ${unsupportedPreviewDependencies.join(', ')}. Only pre-installed packages are available in live preview.*\n\n`,
+        text: `\n> *Note: ${unsupportedPreviewDependencies.join(', ')} ${unsupportedPreviewDependencies.length === 1 ? 'was' : 'were'} declared via legacy <ecomgear-add-dependency>. In future runs, use \`run_command\` to install packages directly.*\n\n`,
       });
     }
 

@@ -146,7 +146,7 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
     }
 
     // Check if any "module not found" errors are for packages the agent declared
-    // with <ecomgear-add-dependency> in this run — those are expected false positives.
+    // with <ecomgear-add-dependency> (legacy) — tell the agent to install them.
     const declaredDeps = ctx.getDeclaredDependencies?.() ?? [];
     const pendingDepNote: string[] = [];
     if (declaredDeps.length > 0) {
@@ -158,8 +158,8 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
       );
       if (matchingDeps.length > 0) {
         pendingDepNote.push(
-          `\n\nIMPORTANT: The following packages are declared via <ecomgear-add-dependency> and will be installed AUTOMATICALLY after your response completes: ${matchingDeps.join(', ')}. ` +
-          `"Module not found" errors for these packages are EXPECTED and will resolve on their own. Do NOT remove imports or change code to "fix" these errors. IGNORE them and continue.`
+          `\n\nIMPORTANT: The following packages are declared via <ecomgear-add-dependency> but NOT yet installed: ${matchingDeps.join(', ')}. ` +
+          `Use run_command({ command: "npm install ${matchingDeps.join(' ')}" }) to install them now. Do NOT remove imports or change code.`
         );
       }
     }

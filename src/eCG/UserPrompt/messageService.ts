@@ -64,6 +64,63 @@ export const messageService = {
     }));
   },
 
+  /** Load the most recent `limit` messages. Returns messages in asc order plus a hasMore flag. */
+  async loadRecentMessages(projectId: string, limit = 30): Promise<{ messages: DbMessage[]; hasMore: boolean }> {
+    if (!isValidUUID(projectId)) return { messages: [], hasMore: false };
+
+    const { data, error } = await supabase
+      .from('messages')
+      .select('id, role, content, created_at')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false })
+      .limit(limit + 1);
+
+    if (error) {
+      console.error('[MessageService] Error loading recent messages:', error);
+      throw error;
+    }
+
+    const rows = data || [];
+    const hasMore = rows.length > limit;
+    const messages = rows.slice(0, limit).reverse().map(m => ({
+      id: m.id,
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+      created_at: m.created_at,
+    }));
+
+    return { messages, hasMore };
+  },
+
+  /** Load older messages before a given ISO timestamp cursor. Returns asc-ordered rows + hasMore. */
+  async loadMessagesBefore(projectId: string, beforeTimestamp: string, limit = 20): Promise<{ messages: DbMessage[]; hasMore: boolean }> {
+    if (!isValidUUID(projectId)) return { messages: [], hasMore: false };
+
+    const { data, error } = await supabase
+      .from('messages')
+      .select('id, role, content, created_at')
+      .eq('project_id', projectId)
+      .lt('created_at', beforeTimestamp)
+      .order('created_at', { ascending: false })
+      .limit(limit + 1);
+
+    if (error) {
+      console.error('[MessageService] Error loading older messages:', error);
+      throw error;
+    }
+
+    const rows = data || [];
+    const hasMore = rows.length > limit;
+    const messages = rows.slice(0, limit).reverse().map(m => ({
+      id: m.id,
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+      created_at: m.created_at,
+    }));
+
+    return { messages, hasMore };
+  },
+
   async clearMessages(projectId: string): Promise<void> {
     if (!isValidUUID(projectId)) return;
     await supabase.from('messages').delete().eq('project_id', projectId);

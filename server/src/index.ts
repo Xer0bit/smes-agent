@@ -23,14 +23,12 @@ const PORT = process.env.PORT || 5001;
 let server: Server;
 const activeConnections = new Set<import('node:net').Socket>();
 
-// Load LLM config from Supabase before accepting traffic so GOOGLE_GENERATIVE_AI_API_KEY
-// is set before the embedder's provider cache is first accessed. Without this, the
-// embedder caches 'bm25' (256-dim) at first use and KB indexing silently fails.
-getLlmControlState().catch((err) =>
-    logger.warn('[LlmControl] Pre-listen state load failed:', err?.message)
-);
-// Probe embedding provider once so the circuit trips before any user request.
-probeEmbeddingProvider();
+// Load LLM config first (sets GOOGLE_GENERATIVE_AI_API_KEY), then probe embeddings.
+// Must be sequential — probing before the key is loaded caches 'bm25' and silently
+// prevents all KB indexing until the next resetProviderCache() call.
+getLlmControlState()
+    .then(() => probeEmbeddingProvider())
+    .catch((err) => logger.warn('[LlmControl] Pre-listen state load failed:', err?.message));
 
 server = app.listen(PORT, () => {
     logger.info(`🚀 eComGear API Server running on port ${PORT}`);

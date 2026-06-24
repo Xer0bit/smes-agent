@@ -620,6 +620,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const abortRef = useRef<AbortController | null>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Pagination state for chat history
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const oldestTimestampRef = useRef<string | null>(null);
   // Tracks consecutive auto-repair escalations from the frontend (after server repair exhausted).
   // Resets to 0 on any successful build. Capped at 2 to prevent infinite repair loops.
   const autoRepairCountRef = useRef<number>(0);
@@ -697,12 +702,16 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           if (!cancelled) setMessages(prev => prev.length <= 1 ? [GREETING] : prev);
           return;
         }
-        const history = await messageService.loadMessages(projectId);
+        const { messages: history, hasMore } = await messageService.loadRecentMessages(projectId, 30);
         if (cancelled) return;
         if (history.length === 0) {
           setMessages([GREETING]);
           return;
         }
+        // Track oldest timestamp for "load more" cursor
+        if (history.length > 0) oldestTimestampRef.current = history[0].created_at;
+        setHasMoreMessages(hasMore);
+
         // Prepend GREETING once, then map DB rows using their real IDs.
         // Strip all ecomgear operational tags from stored content.
         const mapped: Message[] = [
@@ -732,6 +741,52 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, statusText]);
+
+  // ── Load older messages when scrolled to top ──────────────────────────────
+  const loadMoreMessages = async () => {
+    if (!hasMoreMessages || isLoadingMore || !oldestTimestampRef.current || isGuest) return;
+    setIsLoadingMore(true);
+    try {
+      const { messages: older, hasMore } = await messageService.loadMessagesBefore(
+        projectId, oldestTimestampRef.current, 20
+      );
+      if (older.length === 0) { setHasMoreMessages(false); return; }
+
+      oldestTimestampRef.current = older[0].created_at;
+      setHasMoreMessages(hasMore);
+
+      const mapped: Message[] = older.map((m) => {
+        if (m.role === 'assistant') {
+          const { body, summary } = extractSummary(stripEcomgearTags(m.content));
+          return { id: m.id, role: 'assistant' as const, content: body, status: 'complete' as const, summary };
+        }
+        return { id: m.id, role: 'user' as const, content: m.content, status: 'complete' as const };
+      });
+
+      // Preserve scroll position: save height before prepend, restore delta after
+      const el = scrollRef.current;
+      const prevHeight = el?.scrollHeight ?? 0;
+      setMessages(prev => [...mapped, ...prev]);
+      requestAnimationFrame(() => {
+        if (el) el.scrollTop = el.scrollHeight - prevHeight;
+      });
+    } catch (err) {
+      console.error('Failed to load older messages', err);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (el.scrollTop < 80 && hasMoreMessages && !isLoadingMore) loadMoreMessages();
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMoreMessages, isLoadingMore, projectId]);
 
   // ── Close model menu on outside click ────────────────────────────────────
   useEffect(() => {
@@ -1359,6 +1414,20 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       {/* ── Messages — plain div so scrollTop works directly ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
         <div className="px-3 py-3 space-y-3">
+          {/* Load-more indicator at top */}
+          {isLoadingMore && (
+            <div className="flex justify-center py-2">
+              <Loader2 className="h-4 w-4 animate-spin text-indigo-400/60" />
+            </div>
+          )}
+          {!isLoadingMore && hasMoreMessages && (
+            <button
+              onClick={loadMoreMessages}
+              className="w-full text-center text-[11px] text-indigo-400/50 hover:text-indigo-300/80 py-1 transition-colors"
+            >
+              ↑ Load older messages
+            </button>
+          )}
           {messages.map((msg) => (
             <div key={msg.id} className="group">
               {msg.id === 'greeting' ? (

@@ -6,6 +6,53 @@ import { exec } from 'node:child_process';
 import { z } from 'zod';
 import { ToolDefinition, AgentContext } from './types.js';
 
+/**
+ * Parse package names out of an npm install command.
+ * e.g. "npm install chart.js lodash@4" → ["chart.js", "lodash@4"]
+ */
+function parsePackageNames(cmd: string): string[] {
+  // Strip "npm install/i/add" prefix and any flags (starting with -)
+  const withoutCmd = cmd.replace(/^npm\s+\S+/, '').trim();
+  return withoutCmd
+    .split(/\s+/)
+    .filter(t => t && !t.startsWith('-'));
+}
+
+/**
+ * Notify the preview service to install the same packages into its own
+ * node_modules so Vite can resolve them. Fire-and-forget with a timeout —
+ * a failure here is non-fatal; the local install already succeeded.
+ */
+async function syncPackagesToPreviewService(
+  packages: string[],
+  previewServiceUrl: string,
+): Promise<void> {
+  if (!packages.length) return;
+  const url = `${previewServiceUrl}/packages/install`;
+  const secret = process.env.PREVIEW_UPDATE_SECRET || '';
+  try {
+    const res = await Promise.race([
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(secret ? { 'x-update-secret': secret } : {}),
+        },
+        body: JSON.stringify({ packages }),
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('preview-service install timeout')), 90_000)
+      ),
+    ]);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.warn(`[run_command] Preview-service install failed (${res.status}): ${body}`);
+    }
+  } catch (e: any) {
+    console.warn(`[run_command] Preview-service install error: ${e?.message}`);
+  }
+}
+
 const ALLOWED_PREFIXES = [
   'npm install ',
   'npm i ',
@@ -64,13 +111,22 @@ export const runCommandTool: ToolDefinition<z.infer<typeof schema>> = {
           timeout: 120_000, // 2 min max
           env: { ...process.env, NODE_ENV: 'development' },
         },
-        (err, stdout, stderr) => {
+        async (err, stdout, stderr) => {
           const out = [stdout, stderr].filter(Boolean).join('\n').slice(0, 2000);
           if (err) {
             resolve(`Command failed (${cmd}):\n${out}`);
-          } else {
-            resolve(`Command succeeded (${cmd}):\n${out}`);
+            return;
           }
+
+          // Local install succeeded — sync the same packages to the preview
+          // service so its Vite servers can resolve the new imports.
+          if (isInstall) {
+            const pkgs = parsePackageNames(cmd);
+            const previewUrl = ctx.previewServiceUrl || 'http://localhost:3001';
+            await syncPackagesToPreviewService(pkgs, previewUrl);
+          }
+
+          resolve(`Command succeeded (${cmd}):\n${out}`);
         }
       );
     });
