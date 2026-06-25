@@ -82,11 +82,12 @@ interface ChatMessageProps {
   content: string;
   status?: 'pending' | 'streaming' | 'complete' | 'error';
   attachments?: MessageAttachment[];
+  liveStatus?: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status, attachments }) => {
+export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status, attachments, liveStatus }) => {
 
   // ── User bubble ──────────────────────────────────────────────────────────────
   if (role === 'user') {
@@ -159,6 +160,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
 
   // ── Assistant streaming / complete ────────────────────────────────────────────
   const isStreaming = status === 'streaming';
+  // Show liveStatus inside the bubble when the agent is working but hasn't written text yet
+  const showLiveStatus = isStreaming && !content.trim() && liveStatus;
 
   return (
     <div className="flex items-start gap-2 animate-msg-appear">
@@ -177,7 +180,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
 
       <div className="flex-1 min-w-0 relative">
         <div className={isStreaming ? 'animate-fade-in-stream' : ''}>
-          <MarkdownBody content={content} />
+          {showLiveStatus ? (
+            <p className="m-0 text-[12px] text-white/30 italic leading-relaxed">{liveStatus}</p>
+          ) : (
+            <MarkdownBody content={content} />
+          )}
         </div>
 
         {/* Premium gradient cursor with glow */}

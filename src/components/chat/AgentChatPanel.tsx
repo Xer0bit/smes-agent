@@ -84,6 +84,26 @@ function parseToolActivities(raw: string): ToolActivity[] {
   return Array.from(seen.values());
 }
 
+/** Build a readable summary from tool activities when the agent produced no prose. */
+function buildFallbackSummary(activities: ToolActivity[]): string {
+  const fileActs = activities.filter(a => ['write', 'edit', 'delete', 'rename'].includes(a.type));
+  if (fileActs.length === 0) return 'Done.';
+
+  const writes = fileActs.filter(a => a.type === 'write').length;
+  const edits  = fileActs.filter(a => a.type === 'edit').length;
+  const verb   = writes > 0 && edits === 0 ? 'Created' : edits > 0 && writes === 0 ? 'Updated' : 'Changed';
+
+  const names = fileActs.map(a =>
+    (a.type === 'rename' ? a.label : (a.label.split('/').pop() ?? a.label))
+  );
+  const MAX = 4;
+  const shown = names.slice(0, MAX);
+  const extra = names.length - MAX;
+  const fileList = extra > 0 ? shown.join(', ') + ` and ${extra} more` : shown.join(', ');
+
+  return `${verb} ${fileActs.length} ${fileActs.length === 1 ? 'file' : 'files'}: ${fileList}.`;
+}
+
 // Return a human-readable live status for the tool currently being streamed.
 // Returns null when no tool is mid-flight.
 function detectLiveTool(raw: string): string | null {
@@ -594,6 +614,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusText, setStatusText] = useState('');
+  const [thinkingText, setThinkingText] = useState('');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [stepCount, setStepCount] = useState(0);
@@ -636,7 +657,8 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   };
 
   const startProgressFeedback = () => {
-    setStatusText('Preparing request...');
+    setStatusText('');
+    setThinkingText('');
     setStepCount(0);
     setLiveFiles([]);
     setFilesWritten(0);
@@ -702,7 +724,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           if (!cancelled) setMessages(prev => prev.length <= 1 ? [GREETING] : prev);
           return;
         }
-        const { messages: history, hasMore } = await messageService.loadRecentMessages(projectId, 30);
+        const { messages: history, hasMore } = await messageService.loadRecentMessages(projectId, 10);
         if (cancelled) return;
         if (history.length === 0) {
           setMessages([GREETING]);
@@ -859,13 +881,14 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                     generationDone = true;
                     setIsGenerating(false);
                     setStatusText('');
+                    setThinkingText('');
                     setStepCount(0);
                     setLiveFiles([]);
                     setFilesWritten(0);
                     const rawContent = currentContent || result.summary || '';
                     const { body: finalContent, summary } = extractSummary(stripEcomgearTags(rawContent));
                     const toolActivities = parseToolActivities(toolXmlAccum || rawContent);
-                    const displayContent = finalContent || (toolActivities.length > 0 ? '' : 'Something went wrong — please try again.');
+                    const displayContent = finalContent || buildFallbackSummary(toolActivities) || 'Something went wrong — please try again.';
                     setMessages(prev => prev.map(m => m.id === asstId
                       ? { ...m, status: 'complete', content: displayContent, summary, toolActivities, snapshotId: result.snapshotId }
                       : m));
@@ -1114,11 +1137,20 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             currentContent += chunk;
             const displayContent = stripEcomgearTags(currentContent);
 
-            // Only update statusText from text-delta if no tool is actively running.
-            // onToolOutput already sets a more precise label; don't overwrite it.
+            // Capture real streamed text for the thinking display.
+            // Strip XML tags and take the last meaningful line being typed.
             const liveTool = detectLiveTool(currentContent);
-            if (liveTool) pushStatus(liveTool);
-            else if (displayContent.trim().length > 0) pushStatus('Writing response...');
+            if (liveTool) {
+              pushStatus(liveTool);
+            } else {
+              const clean = displayContent.replace(/<[^>]+>/g, '').trim();
+              if (clean.length > 0) {
+                // Last non-empty line the LLM is currently writing
+                const lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
+                const last = lines[lines.length - 1] ?? '';
+                setThinkingText(last.slice(-80)); // cap at 80 chars
+              }
+            }
 
             setMessages(prev =>
               prev.map(m =>
@@ -1169,6 +1201,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             generationDone = true;             // block any further text-delta updates
             setIsGenerating(false);
             setStatusText('');
+            setThinkingText('');
             setStepCount(0);
             setLiveFiles([]);
             setFilesWritten(0);
@@ -1183,7 +1216,8 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             const toolActivities = isPlan ? [] : parseToolActivities(toolXmlAccum || rawContent);
             // Show actual output; if model returned nothing and no tool activity, show a retry hint.
             const finalContent = strippedContent.trim() || result.summary?.trim()
-              || (toolActivities.length > 0 ? '' : 'The model didn\'t respond. Please try rephrasing your request.');
+              || buildFallbackSummary(toolActivities)
+              || 'The model didn\'t respond. Please try rephrasing your request.';
 
             const suggestedCommands = isPlan ? [] : parseCommandSuggestions(toolXmlAccum || rawContent);
             const filePaths = (result.filesToWrite ?? []).map((f: { path: string }) => f.path);
@@ -1451,7 +1485,15 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   </p>
                 </div>
               ) : (<>
-              <ChatMessage role={msg.role} content={msg.content} status={msg.status} attachments={msg.attachments} />
+              <ChatMessage
+                role={msg.role}
+                content={msg.content}
+                status={msg.status}
+                attachments={msg.attachments}
+                liveStatus={isGenerating && msg.status === 'streaming' && !msg.content.trim()
+                  ? (statusText || 'Working on your request…')
+                  : undefined}
+              />
 
               {/* Retry button — shown on hover below user messages */}
               {msg.role === 'user' && (
@@ -1607,75 +1649,43 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             </div>
           ))}
 
-          {/* ── Live status + file activity feed ── */}
-          {isGenerating && (
-            <div className="ml-[28px] animate-status-in">
-              {/* Status pill */}
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full
-                bg-gradient-to-r from-indigo-600/[0.12] to-purple-600/[0.08]
-                border border-indigo-500/[0.18]
-                shadow-[0_0_16px_rgba(99,102,241,0.06)]">
-                {/* Live dot with ping */}
-                <span className="relative flex h-2 w-2 shrink-0">
-                  <span className="animate-ping-ring absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-60" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-400" />
-                </span>
-                {/* Status text re-animates on each change */}
+          {/* ── Live agent status — minimal inline text ── */}
+          {isGenerating && (() => {
+            const hasFile = liveFiles.length > 0;
+            const f = hasFile ? liveFiles[liveFiles.length - 1] : null;
+            const fileIcon: Record<string, string> = { write: '✦', edit: '✎', delete: '✕', rename: '↪', dependency: '⬡' };
+            const fileColor: Record<string, string> = {
+              write: 'text-indigo-300/50', edit: 'text-sky-300/50',
+              delete: 'text-red-400/50', rename: 'text-amber-300/50',
+              dependency: 'text-emerald-300/50',
+            };
+            // What to show: file > tool status > real thinking text > fallback
+            const toolStatus = statusText && !/writing response/i.test(statusText) ? statusText : '';
+            const displayLine = hasFile
+              ? `${fileIcon[f!.type] ?? '·'} ${f!.path.replace(/^src\//, '')}`
+              : toolStatus || thinkingText || '';
+
+            return (
+              <div className="ml-[28px] flex items-center gap-2 py-0.5">
+                {/* Blinking cursor — tiny, no ring */}
+                <span className="inline-block w-[3px] h-[13px] rounded-[1px] bg-indigo-400/40 animate-blink shrink-0" />
                 <span
-                  key={statusLabel}
-                  className={`text-[11px] font-medium animate-status-in ${
-                    /unavailable|failed|error/i.test(statusLabel)
-                      ? 'text-red-400/80'
-                      : /fallback|retry/i.test(statusLabel)
-                        ? 'text-amber-400/80'
-                        : 'text-indigo-200/80'
+                  key={displayLine.slice(0, 20)}
+                  className={`text-[11px] truncate max-w-[220px] animate-status-in ${
+                    hasFile ? (fileColor[f!.type] ?? 'text-white/30')
+                    : toolStatus ? 'text-white/30'
+                    : 'text-white/25 italic'
                   }`}
                 >
-                  {statusLabel}
+                  {displayLine || 'thinking…'}
                 </span>
-                {filesWritten > 0 && (
-                  <span key={filesWritten} className="text-[10px] text-white/30 font-mono animate-count-in">
-                    {filesWritten}f
-                  </span>
+                {filesWritten > 1 && (
+                  <span className="text-[10px] text-white/15 font-mono shrink-0">+{filesWritten - 1}</span>
                 )}
-                {stepCount > 0 && (
-                  <span className="text-[10px] text-white/20 font-mono">·{stepCount}</span>
-                )}
-                <span className="text-[10px] text-white/20 font-mono tabular-nums">{elapsedSeconds}s</span>
+                <span className="text-[10px] text-white/15 font-mono tabular-nums ml-auto shrink-0">{elapsedSeconds}s</span>
               </div>
-
-              {/* Live file activity feed */}
-              {liveFiles.length > 0 && (
-                <div className="flex flex-col mt-1.5 gap-0.5 pl-1">
-                  {liveFiles.slice(-5).map((f, i, arr) => {
-                    const isLatest = i === arr.length - 1;
-                    const typeIcon: Record<string, string> = { write: '✦', edit: '✎', delete: '✕', rename: '↪', dependency: '⬡' };
-                    const typeColor: Record<string, { active: string; dim: string }> = {
-                      write:      { active: 'text-indigo-400',  dim: 'text-white/15' },
-                      edit:       { active: 'text-blue-400',    dim: 'text-white/15' },
-                      delete:     { active: 'text-red-400',     dim: 'text-white/15' },
-                      rename:     { active: 'text-yellow-400',  dim: 'text-white/15' },
-                      dependency: { active: 'text-emerald-400', dim: 'text-white/15' },
-                    };
-                    const col = typeColor[f.type] ?? { active: 'text-white/40', dim: 'text-white/15' };
-                    const stagger = `stagger-${Math.min(i + 1, 5)}`;
-                    return (
-                      <div
-                        key={f.timestamp}
-                        className={`flex items-center gap-1.5 text-[10px] font-mono animate-chip-pop ${stagger} ${isLatest ? col.active : col.dim}`}
-                      >
-                        <span className="shrink-0 opacity-70">{typeIcon[f.type] ?? '·'}</span>
-                        <span className="truncate max-w-[180px]">{f.path.replace(/^src\//, '')}</span>
-                        {isLatest && (
-                          <span className="w-1 h-1 rounded-full bg-current animate-pulse shrink-0" />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+            );
+          })()}
 
           {/* Bottom anchor — keeps scroll pinned */}
           <div className="h-1" />

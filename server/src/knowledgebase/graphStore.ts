@@ -27,10 +27,17 @@ const IMPORT_RE = /^\s*import\s+(?:type\s+)?(?:[^'"]+?\s+from\s+)?['"]([^'"]+)['
 const REQUIRE_RE = /(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 const EXPORT_RE = /^\s*export\s+(?:default\s+)?(?:function|class|const|let|var|type|interface|enum)\s+(\w+)/gm;
 
-/** Resolve a relative import path to an absolute project path. */
+/** Resolve an import path to a project-relative path.
+ *  Handles: relative (./foo), path aliases (@/foo → src/foo), bare node_modules (skipped).
+ */
 function resolveImportPath(fromFile: string, importPath: string): string | null {
-  // Skip node_modules and absolute imports
-  if (!importPath.startsWith('.')) return null;
+  // Skip node_modules bare specifiers (e.g. 'react', 'lodash')
+  if (!importPath.startsWith('.') && !importPath.startsWith('@/')) return null;
+
+  // Path alias @/ → src/
+  if (importPath.startsWith('@/')) {
+    return 'src/' + importPath.slice(2);
+  }
 
   const dir = path.dirname(fromFile);
   let resolved = path.join(dir, importPath).replace(/\\/g, '/');
@@ -38,8 +45,6 @@ function resolveImportPath(fromFile: string, importPath: string): string | null 
   // Strip leading slash to get project-relative path
   if (resolved.startsWith('/')) resolved = resolved.slice(1);
 
-  // If no extension, we don't know exact ext — store without it
-  // (matching at retrieval time will handle .ts/.tsx/.js/.jsx)
   return resolved;
 }
 

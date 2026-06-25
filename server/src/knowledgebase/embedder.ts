@@ -8,7 +8,7 @@
  * Falls back gracefully — embedding failures never break the agent run.
  */
 
-import { embed, embedMany } from 'ai';
+import { embedMany } from 'ai';
 
 export const EMBEDDING_DIMS_GOOGLE = 768;
 export const EMBEDDING_DIMS_OPENAI = 1536;
@@ -23,6 +23,8 @@ function detectProvider(): EmbeddingProvider {
 }
 
 let _provider: EmbeddingProvider | null = null;
+let _googleEmbedModel: string | null = null;
+
 export function getProvider(): EmbeddingProvider {
   if (!_provider) _provider = detectProvider();
   return _provider;
@@ -31,30 +33,37 @@ export function getProvider(): EmbeddingProvider {
 /** Call after setting GOOGLE_GENERATIVE_AI_API_KEY or OPENAI_API_KEY at runtime. */
 export function resetProviderCache(): void {
   _provider = null;
+  _googleEmbedModel = null;
   _googleCircuitOpen = false;
   _openaiCircuitOpen = false;
 }
 
-// Circuit breaker — if an API embedding call fails, skip it for 5 minutes
+// Circuit breaker — if an API embedding call fails, skip it for 30 minutes
 // instead of retrying on every file write (wasted latency + log spam).
 let _googleCircuitOpen = false;
 let _openaiCircuitOpen = false;
 let _googleCircuitResetAt = 0;
 let _openaiCircuitResetAt = 0;
-const CIRCUIT_TTL_MS = 30 * 60 * 1000; // 30 min — avoid log spam from repeated 5-min retries
+const CIRCUIT_TTL_MS = 30 * 60 * 1000;
 
 function isGoogleCircuitOpen(): boolean {
-  if (_googleCircuitOpen && Date.now() > _googleCircuitResetAt) _googleCircuitOpen = false;
+  if (_googleCircuitOpen && Date.now() > _googleCircuitResetAt) {
+    _googleCircuitOpen = false;
+    _provider = null; // re-detect on reset
+  }
   return _googleCircuitOpen;
 }
 function isOpenAICircuitOpen(): boolean {
-  if (_openaiCircuitOpen && Date.now() > _openaiCircuitResetAt) _openaiCircuitOpen = false;
+  if (_openaiCircuitOpen && Date.now() > _openaiCircuitResetAt) {
+    _openaiCircuitOpen = false;
+    _provider = null;
+  }
   return _openaiCircuitOpen;
 }
 function tripGoogleCircuit() {
   _googleCircuitOpen = true;
   _googleCircuitResetAt = Date.now() + CIRCUIT_TTL_MS;
-  _provider = null; // re-detect on next call (may fall back to openai or bm25)
+  _provider = null;
 }
 function tripOpenAICircuit() {
   _openaiCircuitOpen = true;
@@ -70,28 +79,102 @@ export function getEmbeddingDims(): number {
   }
 }
 
-// ─── Google ─────────────────────────────────────────────────────────────────
+// ─── Google (direct REST) ────────────────────────────────────────────────────
+// Auto-discovers the best available embedding model for this API key.
+// Preferred: text-embedding-004; falls back to whatever embedContent model exists.
+const GOOGLE_API_BASE = 'https://generativelanguage.googleapis.com';
+const PREFERRED_EMBED_MODELS = ['text-embedding-004', 'embedding-001', 'text-multilingual-embedding-002'];
+
+async function discoverGoogleEmbedModel(apiKey: string): Promise<string> {
+  try {
+    const res = await fetch(
+      `${GOOGLE_API_BASE}/v1beta/models?key=${encodeURIComponent(apiKey)}&pageSize=100`,
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    if (res.ok) {
+      const data = await res.json() as { models?: { name: string; supportedGenerationMethods?: string[] }[] };
+      const embedModels = (data.models ?? [])
+        .filter(m => m.supportedGenerationMethods?.includes('embedContent'))
+        .map(m => m.name.replace('models/', ''));
+      // Pick in preference order
+      for (const preferred of PREFERRED_EMBED_MODELS) {
+        if (embedModels.includes(preferred)) return preferred;
+      }
+      if (embedModels.length > 0) return embedModels[0];
+    }
+  } catch { /* ignore — fall through to default */ }
+  return 'text-embedding-004'; // best guess if discovery fails
+}
+
+async function getGoogleEmbedModel(apiKey: string): Promise<string> {
+  if (!_googleEmbedModel) {
+    _googleEmbedModel = await discoverGoogleEmbedModel(apiKey);
+    console.info(`[kb/embedder] Google embedding model: ${_googleEmbedModel}`);
+  }
+  return _googleEmbedModel;
+}
+
+async function googleEmbedRequest(modelName: string, apiKey: string, texts: string[]): Promise<number[][]> {
+  const baseUrl = `${GOOGLE_API_BASE}/v1beta/models/${modelName}`;
+
+  if (texts.length === 1) {
+    const res = await fetch(
+      `${baseUrl}:embedContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: `models/${modelName}`,
+          content: { parts: [{ text: texts[0] }] },
+          outputDimensionality: EMBEDDING_DIMS_GOOGLE,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => String(res.status));
+      throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const data = await res.json() as { embedding: { values: number[] } };
+    return [data.embedding.values];
+  }
+
+  const res = await fetch(
+    `${baseUrl}:batchEmbedContents?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: texts.map(text => ({
+          model: `models/${modelName}`,
+          content: { parts: [{ text }] },
+          outputDimensionality: EMBEDDING_DIMS_GOOGLE,
+        })),
+      }),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => String(res.status));
+    throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await res.json() as { embeddings: { values: number[] }[] };
+  return data.embeddings.map((e: { values: number[] }) => e.values);
+}
 
 async function embedGoogle(texts: string[]): Promise<number[][]> {
-  const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
-  // text-embedding-004 on /v1 first, then v1beta fallback.
-  // embedding-001 was removed from v1beta — do NOT use it.
-  const candidates = [
-    { baseURL: 'https://generativelanguage.googleapis.com/v1',     model: 'text-embedding-004' },
-    { baseURL: 'https://generativelanguage.googleapis.com/v1beta', model: 'text-embedding-004' },
-  ];
-  let lastErr: unknown;
-  for (const { baseURL, model } of candidates) {
-    try {
-      const google = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY, baseURL });
-      const m = google.textEmbeddingModel(model);
-      const { embeddings } = await embedMany({ model: m, values: texts });
-      return embeddings;
-    } catch (err) {
-      lastErr = err;
-    }
+  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  if (!apiKey) throw new Error('GOOGLE_GENERATIVE_AI_API_KEY not set');
+
+  const model = await getGoogleEmbedModel(apiKey);
+  try {
+    return await googleEmbedRequest(model, apiKey, texts);
+  } catch (err) {
+    // If discovered model fails too (e.g. key has no embedding access), reset cache so next
+    // probe can re-discover after a key change.
+    _googleEmbedModel = null;
+    throw err;
   }
-  throw lastErr;
 }
 
 // ─── OpenAI ─────────────────────────────────────────────────────────────────
@@ -143,10 +226,10 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
     }
   } catch (err) {
     if (provider === 'google') {
-      console.warn('[kb/embedder] Google embedding failed — circuit open for 5 min, using BM25:', (err as Error)?.message?.slice(0, 120));
+      console.warn('[kb/embedder] Google embedding failed — circuit open 30 min, using BM25:', (err as Error)?.message?.slice(0, 200));
       tripGoogleCircuit();
     } else if (provider === 'openai') {
-      console.warn('[kb/embedder] OpenAI embedding failed — circuit open for 5 min, using BM25:', (err as Error)?.message?.slice(0, 120));
+      console.warn('[kb/embedder] OpenAI embedding failed — circuit open 30 min, using BM25:', (err as Error)?.message?.slice(0, 200));
       tripOpenAICircuit();
     }
   }
@@ -159,19 +242,22 @@ export async function embedText(text: string): Promise<number[]> {
 }
 
 /**
- * Probe the configured embedding provider once (called from server startup).
- * If it fails immediately, the circuit trips now so no user request ever
- * pays the latency of a doomed API call.
+ * Probe the configured embedding provider at startup.
+ * Trips the circuit now if it fails so no user request pays latency of a doomed call.
  */
 export async function probeEmbeddingProvider(): Promise<void> {
   const provider = getProvider();
-  if (provider === 'bm25') return; // already on fallback
-  try {
-    await embedTexts(['probe']);
-    console.info(`[kb/embedder] Startup probe: ${provider} embeddings OK`);
-  } catch {
-    // tripGoogleCircuit / tripOpenAICircuit already called inside embedTexts
+  if (provider === 'bm25') {
+    console.info('[kb/embedder] Startup probe: no API key — using BM25 in-memory (KB count stays at 0)');
+    return;
+  }
+  await embedTexts(['probe']);
+  // Re-check after the call: if the circuit tripped, provider flipped to bm25
+  const afterProvider = getProvider();
+  if (afterProvider !== provider) {
     console.info(`[kb/embedder] Startup probe: ${provider} unavailable — using BM25`);
+  } else {
+    console.info(`[kb/embedder] Startup probe: ${provider} embeddings OK`);
   }
 }
 

@@ -1180,14 +1180,15 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const { prompt, projectId, appPath, model, mode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, res, userId, abortSignal } = params;
 
   // Dynamic step budget: map request tier to a proportionate step ceiling.
+  // Values must match TIER_MAX_STEPS in intentClassifier.ts.
   const _tier = promptIntent?.requestTier;
   const MAX_STEPS = _tier === 'micro'   ?  6
-                  : _tier === 'fix'     ?  8
-                  : _tier === 'edit'    ? 12
-                  : _tier === 'feature' ? 18
-                  : _tier === 'build'   ? 25
+                  : _tier === 'fix'     ? 14
+                  : _tier === 'edit'    ? 18
+                  : _tier === 'feature' ? 22
+                  : _tier === 'build'   ? 30
                   // Legacy fallback when no tier provided (e.g. old clients)
-                  : ((promptIntent?.isWebsiteBuild ?? false) || prompt.length > 600) ? 25 : 12;
+                  : ((promptIntent?.isWebsiteBuild ?? false) || prompt.length > 600) ? 30 : 18;
 
   const boundedPrompt = clampContextSection('User prompt', prompt, MAX_PROMPT_CHARS);
   const boundedOlderSummary = olderSummary
@@ -1743,11 +1744,16 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   }
 
   // Detect if this is the first build on an empty/new project.
-  // Use the live file tree from disk (not existingFiles from frontend, which may be empty)
-  // to check if user-created pages/components exist.
-  const hasUserFiles = liveFileTree
-    ? /\b(src\/pages\/|src\/components\/(?!ui\/))[^\s]+\.(tsx|jsx)\b/.test(liveFileTree)
-    : false;
+  // Use fileSources (full relative paths like src/pages/Home.tsx) NOT liveFileTree —
+  // the tree is indent-formatted so full paths like "src/pages/Home.tsx" never appear in it.
+  const hasUserFiles = fileSources.some(f =>
+    /^src\/pages\//.test(f.path) ||
+    (/^src\/components\//.test(f.path) && !/^src\/components\/ui\//.test(f.path)) ||
+    (/^src\/views\//.test(f.path)) ||
+    (/^src\/screens\//.test(f.path))
+  ) || fileSources.filter(f =>
+    /^src\/.*\.(tsx|jsx)$/.test(f.path) && !/^src\/components\/ui\//.test(f.path)
+  ).length > 3;
   const isEmptyProject = !hasUserFiles;
   const isFirstMessage = !history || history.length === 0;
   const shouldConfirmFirst = isEmptyProject && isFirstMessage && runtimeMode === 'build';
@@ -1796,12 +1802,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // workflows (touch, read, write) that contradict plan-mode restrictions.
   const tierInstruction = runtimeMode === 'plan' ? ''
     : _tier === 'micro'
-      ? '\n\n# Efficiency Mode\nOne visual tweak. Call `think` once (≤40 words), read the file, make the change, done. No blueprint. No extra files.'
+      ? '\n\n# Efficiency Mode\nOne visual tweak. Call `think` once (≤40 words), read the file, make the change, done. No blueprint. No extra files.\n\nAfter making the change, write 1 short sentence confirming what you changed (e.g. "Updated the button color to indigo.").'
       : _tier === 'fix'
-        ? '\n\n# Fix Mode\nDo NOT run the full blueprint protocol. Call `think` once — identify root cause, read the broken file, fix the exact broken lines, call `get_build_errors` once to verify. Zero narration.'
+        ? '\n\n# Fix Mode\nDo NOT run the full blueprint protocol. Call `think` once — identify root cause, read the broken file, fix the exact broken lines, call `get_build_errors` once to verify.\n\nAfter fixing, write 2–3 sentences: what the error was, what you changed to fix it, and whether there is anything the user should know.'
         : _tier === 'edit'
-          ? '\n\n# Edit Mode\nTargeted change. Call `think` once — list the 1–3 files you will touch and verify each import resolves. Read files before editing. Do NOT rewrite unrelated components. Keep chat under 30 words.'
-          : '';
+          ? '\n\n# Edit Mode\nTargeted change. Call `think` once — list the 1–3 files you will touch and verify each import resolves. Read files before editing. Do NOT rewrite unrelated components.\n\nAfter making all changes, write 2–3 conversational sentences explaining what you implemented and any important decisions (e.g. "I\'ve added the play/pause animation button to DerivativePlot. It uses a CSS transition on the h and o values and stops automatically when the user adjusts them manually.").'
+          : '\n\nAfter completing all file changes, write 2–4 sentences summarising what you built — which components were created, what they do, and any key design decisions. Be specific and conversational.';
 
   const boundedFileTree = clampContextSection('Project file tree', liveFileTree, MAX_FILE_TREE_CHARS);
 
@@ -1880,7 +1886,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // micro: no modeInstruction (MICRO_SYSTEM_PROMPT already embeds directives)
   // edit: compact instruction — no phased build, no verbose rules (saves ~1,500 tokens)
   // plan mode always wins — tier instructions must never override plan-mode restrictions
-  const EDIT_MODE_INSTRUCTION = '\n\n# Runtime Mode Instruction\nExecute immediately — make the requested change now. Do NOT ask for confirmation. Do NOT rewrite files that are not involved in the change. If intent is unclear, ask one short question before calling tools.';
+  const EDIT_MODE_INSTRUCTION = '\n\n# Runtime Mode Instruction\nExecute immediately — make the requested change now. Do NOT ask for confirmation. Do NOT rewrite files that are not involved in the change. If intent is unclear, ask one short question before calling tools.\n\nOnce all file changes are complete, write 2–3 conversational sentences explaining what you changed and why. Start with an action verb: "I\'ve updated...", "I\'ve added...", "I\'ve fixed...". Be specific — name the component and what it now does differently.';
   const effectiveModeInstruction = runtimeMode === 'plan' ? modeInstruction
     : _tier === 'micro' ? ''
     : _tier === 'edit' ? EDIT_MODE_INSTRUCTION
