@@ -2128,8 +2128,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const journalBlock = runLedger.buildJournalBlock();
 
           // When running low on steps, inject a CRITICAL reminder to finish App.tsx and pages.
-          // Fires when 8 steps remain — proportional to the dynamic MAX_STEPS budget.
-          const LOW_STEPS_THRESHOLD = MAX_STEPS - 8;
+          // Fires when 5 steps remain (min 3 so it always fires even for small budgets).
+          const LOW_STEPS_THRESHOLD = Math.max(3, MAX_STEPS - 5);
           const shouldWarnLowSteps = stepNumber === LOW_STEPS_THRESHOLD;
           const stepsLeft = MAX_STEPS - stepNumber;
           const lowStepsWarning = shouldWarnLowSteps
@@ -2236,6 +2236,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             }
           } else if (part.type === 'finish') {
             lastFinishReason = (part as any).finishReason;
+            outerFinishReason = lastFinishReason;
             // Final overall finish — log cumulative run totals (onStepFinish already
             // captured per-step detail; this is the authoritative end-of-run summary).
             const u    = (part as any).usage;
@@ -2277,6 +2278,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     };
 
     let result: ReturnType<typeof streamText> | null = null;
+    let outerFinishReason: string | undefined;
 
     // Primary model: retry with exponential backoff (skip retries for network errors)
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -3207,6 +3209,11 @@ RULES:
       }
     } else if (runtimeMode === 'build' && !agentWroteFiles) {
       console.log(`[AgentLoop] No file operations — skipping preview push`);
+      if (outerFinishReason === 'tool-calls') {
+        sseWrite(res, 'text-delta', {
+          text: '\n\n> I ran out of steps before completing the changes. Please send your request again and I\'ll continue from where I left off.',
+        });
+      }
     }
 
     const doneFilesToWrite = (runtimeMode === 'plan' || !agentWroteFiles) ? [] : [...mergedWrites];
@@ -3235,7 +3242,7 @@ RULES:
       dependencies: doneDependencies,
       mode: runtimeMode,
       summary,
-      tokensUsed: 0,
+      tokensUsed: runTokens.total || 0,
       // Only expose snapshot to frontend when code actually changed
       snapshotId: doneFilesToWrite.length > 0 ? snapshotId : null,
       previewPushed: previewPushOk,

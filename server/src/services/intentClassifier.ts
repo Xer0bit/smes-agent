@@ -46,13 +46,16 @@ export function classifyRequest(prompt: string, isEmptyProject: boolean): Reques
   return prompt.trim().length > 400 ? 'feature' : 'edit';
 }
 
-/** Step budgets per tier */
+/** Step budgets per tier
+ *  fix needs 12+ — agent reads 3-4 files to understand code before writing
+ *  edit needs 15+ — read + write + build check + possible re-edit cycle
+ */
 export const TIER_MAX_STEPS: Record<RequestTier, number> = {
-  micro:   6,
-  fix:     8,
-  edit:    12,
-  feature: 18,
-  build:   25,
+  micro:    6,
+  fix:     14,
+  edit:    18,
+  feature: 22,
+  build:   30,
 };
 
 /**

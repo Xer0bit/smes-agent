@@ -41,7 +41,7 @@ let _googleCircuitOpen = false;
 let _openaiCircuitOpen = false;
 let _googleCircuitResetAt = 0;
 let _openaiCircuitResetAt = 0;
-const CIRCUIT_TTL_MS = 5 * 60 * 1000;
+const CIRCUIT_TTL_MS = 30 * 60 * 1000; // 30 min — avoid log spam from repeated 5-min retries
 
 function isGoogleCircuitOpen(): boolean {
   if (_googleCircuitOpen && Date.now() > _googleCircuitResetAt) _googleCircuitOpen = false;
@@ -74,11 +74,11 @@ export function getEmbeddingDims(): number {
 
 async function embedGoogle(texts: string[]): Promise<number[][]> {
   const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
-  // Try models in order — both produce 768-dim embeddings.
-  // text-embedding-004 needs /v1; embedding-001 works on /v1beta (the SDK default).
+  // text-embedding-004 on /v1 first, then v1beta fallback.
+  // embedding-001 was removed from v1beta — do NOT use it.
   const candidates = [
-    { baseURL: 'https://generativelanguage.googleapis.com/v1',      model: 'text-embedding-004' },
-    { baseURL: 'https://generativelanguage.googleapis.com/v1beta',  model: 'embedding-001' },
+    { baseURL: 'https://generativelanguage.googleapis.com/v1',     model: 'text-embedding-004' },
+    { baseURL: 'https://generativelanguage.googleapis.com/v1beta', model: 'text-embedding-004' },
   ];
   let lastErr: unknown;
   for (const { baseURL, model } of candidates) {
