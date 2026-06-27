@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, StopCircle, ChevronDown, Zap, Paperclip, X, FileText, Image as ImageIcon, RotateCcw, Sparkles, Bot, ClipboardList } from 'lucide-react';
+import ecgAgentLogo from '@/assets/ecgagent.png';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { streamAgentGeneration } from '@/eCG/UserPrompt/agentStreamService';
@@ -1009,6 +1010,14 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
     const effectivePrompt = raw || (messageAttachments.length > 0 ? 'Please review the attached files.' : '');
 
+    // When in plan mode and user types an execution confirmation ("execute", "apply",
+    // "do it", etc.), automatically switch to build mode so the agent actually makes
+    // the changes instead of producing another plan response.
+    const EXECUTE_RE = /^(execute|apply|do\s+it|go\s+ahead|proceed|yes|confirm|run|ship\s+it|make\s+(the\s+)?changes|ok\s+do\s+it|let'?s?\s+(do\s+it|go)|build\s+it)/i;
+    const isExecuteCmd = !forcedMode && agentMode === 'plan' && EXECUTE_RE.test(raw);
+    if (isExecuteCmd) setAgentMode('agent');
+    const resolvedMode: 'build' | 'plan' | undefined = forcedMode ?? (isExecuteCmd ? 'build' : agentMode === 'plan' ? 'plan' : undefined);
+
     const userMsg: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -1114,7 +1123,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         prompt: effectivePrompt,
         projectId,
         orgId: currentOrganizationId,
-        mode: forcedMode ?? (agentMode === 'plan' ? 'plan' : undefined),
+        mode: resolvedMode,
         history,
         olderSummary,
         fingerprint: guestFingerprint,
@@ -1474,7 +1483,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   <div className="absolute -top-6 -right-6 w-28 h-28 rounded-full opacity-20"
                     style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.8), transparent 70%)' }} />
                   <div className="relative z-10 flex items-center gap-3 mb-3">
-                    <img src="/src/assets/ecgagent.png" alt="EcomGear Agent" className="w-10 h-8 shrink-0" />
+                    <img src={ecgAgentLogo} alt="EcomGear Agent" className="w-10 h-8 shrink-0" />
                     <div>
                       <p className="text-[13px] font-semibold text-white/90 leading-tight">EcomGear Agent</p>
                       <p className="text-[10px] text-indigo-300/60 font-medium tracking-wide">App Builder · AI Powered</p>

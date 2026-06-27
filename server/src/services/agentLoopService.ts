@@ -915,8 +915,10 @@ function getProjectFileTree(appPath: string): string {
 
 /** Check if an error is retryable (rate limit, overloaded, server error). */
 function isRetryableError(err: any): boolean {
-  const status = err?.status ?? err?.statusCode ?? err?.data?.error?.status;
-  if (status === 429 || status === 529 || (status >= 500 && status < 600)) return true;
+  // Google errors use data.error.code (numeric) while err.status may be the string "UNAVAILABLE"
+  const status = err?.status ?? err?.statusCode ?? err?.data?.error?.code ?? err?.data?.error?.status;
+  const numericStatus = typeof status === 'number' ? status : parseInt(String(status), 10);
+  if (numericStatus === 429 || numericStatus === 529 || (numericStatus >= 500 && numericStatus < 600)) return true;
   const msg = [
     err?.message,
     err?.cause?.message,
@@ -932,6 +934,8 @@ function isRetryableError(err: any): boolean {
     msg.includes('capacity') ||
     msg.includes('temporarily unavailable') ||
     msg.includes('service unavailable') ||
+    msg.includes('currently unavailable') ||
+    msg.includes('unavailable') ||
     msg.includes('ai_nooutputgeneratederror') ||
     msg.includes('no output generated') ||
     msg.includes('stream terminated')
@@ -1189,6 +1193,19 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
                   : _tier === 'build'   ? 30
                   // Legacy fallback when no tier provided (e.g. old clients)
                   : ((promptIntent?.isWebsiteBuild ?? false) || prompt.length > 600) ? 30 : 18;
+
+  // Tier-based token cap. The USD cost cap ($1.50) is the ultimate backstop.
+  // These limits just prevent runaway loops — they must be high enough that
+  // the final response step is never cut off (agent does work then goes silent).
+  // Observed abort patterns: fix hits 124-130K, edit hits 239K → raised accordingly.
+  const TIER_TOKEN_CAP = _tier === 'micro'   ?  80_000
+                       : _tier === 'fix'     ? 220_000
+                       : _tier === 'edit'    ? 320_000
+                       : _tier === 'feature' ? 420_000
+                       : /* build / legacy */  600_000;
+  const RUN_TOKEN_CAP = process.env.AGENT_TOKEN_CAP
+    ? Math.min(parseInt(process.env.AGENT_TOKEN_CAP, 10), TIER_TOKEN_CAP)
+    : TIER_TOKEN_CAP;
 
   const boundedPrompt = clampContextSection('User prompt', prompt, MAX_PROMPT_CHARS);
   const boundedOlderSummary = olderSummary
@@ -1802,12 +1819,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // workflows (touch, read, write) that contradict plan-mode restrictions.
   const tierInstruction = runtimeMode === 'plan' ? ''
     : _tier === 'micro'
-      ? '\n\n# Efficiency Mode\nOne visual tweak. Call `think` once (≤40 words), read the file, make the change, done. No blueprint. No extra files.\n\nAfter making the change, write 1 short sentence confirming what you changed (e.g. "Updated the button color to indigo.").'
+      ? '\n\n# Efficiency Mode\nDo NOT write any text before your first tool call. No "I\'ll...", no "Let me...", no narration. Call `think` once (≤40 words), read the file, make the change, done. No blueprint. No extra files.\n\n**REQUIRED final message** — you MUST write exactly this format after the change:\n"I\'ve [verb] [what] in [filename]. [One sentence on what the user will now see.]"\nExample: "I\'ve changed the button color to indigo in Header.tsx. The nav bar buttons now match the brand palette."\nFORBIDDEN responses: "Done.", "OK.", "Done!", empty message, or any single-word reply.'
       : _tier === 'fix'
-        ? '\n\n# Fix Mode\nDo NOT run the full blueprint protocol. Call `think` once — identify root cause, read the broken file, fix the exact broken lines, call `get_build_errors` once to verify.\n\nAfter fixing, write 2–3 sentences: what the error was, what you changed to fix it, and whether there is anything the user should know.'
+        ? '\n\n# Fix Mode\nDo NOT write any text before your first tool call. No "I\'ll look into...", no acknowledgments — start with tools directly. Do NOT run the full blueprint protocol. Call `think` once — identify root cause, read the broken file, fix the exact broken lines, call `get_build_errors` once to verify.\n\n**REQUIRED final message** — after the fix you MUST write AT LEAST 2 sentences:\n1. What the error was and which file it was in.\n2. What you changed to fix it.\n3. (If relevant) anything the user needs to know.\nFORBIDDEN: "Done.", "Fixed.", "OK.", or any single-word/single-sentence reply.'
         : _tier === 'edit'
-          ? '\n\n# Edit Mode\nTargeted change. Call `think` once — list the 1–3 files you will touch and verify each import resolves. Read files before editing. Do NOT rewrite unrelated components.\n\nAfter making all changes, write 2–3 conversational sentences explaining what you implemented and any important decisions (e.g. "I\'ve added the play/pause animation button to DerivativePlot. It uses a CSS transition on the h and o values and stops automatically when the user adjusts them manually.").'
-          : '\n\nAfter completing all file changes, write 2–4 sentences summarising what you built — which components were created, what they do, and any key design decisions. Be specific and conversational.';
+          ? '\n\n# Edit Mode\nDo NOT write any text before your first tool call. No "I\'ll...", no "Let me...", no narration before tools. Start with tool calls directly. Call `think` once — list the 1–3 files you will touch and verify each import resolves. Read files before editing. Do NOT rewrite unrelated components.\n\n**HARD FILE LIMIT** — if you find yourself needing to write or edit MORE than 5 files, STOP immediately after the 5th file. Do not continue. Write a message telling the user: which files you changed, what still needs to be done, and that they should send a follow-up message to continue. Do NOT silently write 10-30 files in edit mode.\n\n**REQUIRED final message** — after all file changes you MUST write AT LEAST 2 sentences:\n1. Start with "I\'ve [verb]..." and name the specific file and change.\n2. Explain what the user will see or experience differently now.\nExample: "I\'ve added a play/pause button to DerivativePlot.tsx. It uses a CSS transition on the graph values and pauses automatically when the user drags the slider."\nFORBIDDEN: "Done.", "Updated.", "OK.", any single word, or any message under 15 words.'
+          : '\n\nDo NOT write any text before your first tool call. Start with tool calls directly — no narration, no "I\'ll build...", no acknowledgments.\n\n**REQUIRED final message** — after ALL file changes, write AT LEAST 3 sentences:\n1. What you built/changed and in which files.\n2. How the new feature works from the user\'s perspective.\n3. Any important technical decisions or things the user should know.\nFORBIDDEN: "Done.", "Complete.", or any response under 20 words.';
 
   const boundedFileTree = clampContextSection('Project file tree', liveFileTree, MAX_FILE_TREE_CHARS);
 
@@ -1886,7 +1903,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // micro: no modeInstruction (MICRO_SYSTEM_PROMPT already embeds directives)
   // edit: compact instruction — no phased build, no verbose rules (saves ~1,500 tokens)
   // plan mode always wins — tier instructions must never override plan-mode restrictions
-  const EDIT_MODE_INSTRUCTION = '\n\n# Runtime Mode Instruction\nExecute immediately — make the requested change now. Do NOT ask for confirmation. Do NOT rewrite files that are not involved in the change. If intent is unclear, ask one short question before calling tools.\n\nOnce all file changes are complete, write 2–3 conversational sentences explaining what you changed and why. Start with an action verb: "I\'ve updated...", "I\'ve added...", "I\'ve fixed...". Be specific — name the component and what it now does differently.';
+  const EDIT_MODE_INSTRUCTION = '\n\n# Runtime Mode Instruction\nExecute immediately — start with tool calls directly. Do NOT write any text before your first tool call. No "I\'ll...", no "Let me...", no acknowledgments, no narration before tools. Do NOT ask for confirmation. Do NOT rewrite files that are not involved in the change. If intent is unclear, ask one short question before calling tools.\n\n**REQUIRED final message** — once all file changes are done, you MUST write AT LEAST 2 full sentences. Start with "I\'ve [verb]..." and name the file and the exact change. Then explain what the user will see differently. FORBIDDEN: writing "Done.", "OK.", "Updated.", any single word, or any message shorter than 15 words. This is mandatory — not optional.';
   const effectiveModeInstruction = runtimeMode === 'plan' ? modeInstruction
     : _tier === 'micro' ? ''
     : _tier === 'edit' ? EDIT_MODE_INSTRUCTION
@@ -2211,15 +2228,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
           // ── Per-run hard caps ────────────────────────────────────────────
           // Two gates: token count + dollar cost. Whichever fires first aborts the run.
-          // Prevents runaway builds from costing $3+ per run.
-          // Defaults: 200K tokens (~$0.80 on Sonnet), $1.50 hard cost ceiling.
-          // Override via env: AGENT_TOKEN_CAP, AGENT_COST_CAP_USD.
-          const HARD_TOKEN_CAP = parseInt(process.env.AGENT_TOKEN_CAP || '200000', 10);
-          const HARD_COST_CAP  = parseFloat(process.env.AGENT_COST_CAP_USD || '1.50');
-          if (runTokens.total > HARD_TOKEN_CAP || runCost > HARD_COST_CAP) {
+          // Token cap is tier-based (RUN_TOKEN_CAP) so build gets more headroom than micro.
+          // Cost cap is a hard ceiling regardless of tier.
+          const HARD_COST_CAP = parseFloat(process.env.AGENT_COST_CAP_USD || '1.50');
+          if (runTokens.total > RUN_TOKEN_CAP || runCost > HARD_COST_CAP) {
             const reason = runCost > HARD_COST_CAP
               ? `cost cap $${HARD_COST_CAP} hit ($${runCost.toFixed(3)} spent)`
-              : `token cap ${HARD_TOKEN_CAP} hit (${runTokens.total} used)`;
+              : `token cap ${RUN_TOKEN_CAP} hit (${runTokens.total} used)`;
             console.warn(`[AgentLoop] Run aborted — ${reason} (user=${userId ?? 'unknown'})`);
             sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: 'Wrapping up — run budget reached.' });
             abortController.abort();
@@ -2518,7 +2533,7 @@ RULES:
 
         try {
           // Skip repair pass if we're already over the token budget
-          if (!abortController.signal.aborted && runTokens.total < parseInt(process.env.AGENT_TOKEN_CAP || '200000', 10)) {
+          if (!abortController.signal.aborted && runTokens.total < RUN_TOKEN_CAP) {
             await generateText({
               model: aiProvider,
               system: appFixSystemPrompt,
@@ -2862,7 +2877,7 @@ RULES:
           sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: repairStatusMsg });
         }
         // Skip all repair attempts if already over token budget
-        if (abortController.signal.aborted || runTokens.total >= parseInt(process.env.AGENT_TOKEN_CAP || '200000', 10)) {
+        if (abortController.signal.aborted || runTokens.total >= RUN_TOKEN_CAP) {
           console.warn('[AgentLoop] Skipping build repair — token budget already exhausted');
         } else {
         let repairFiles = [...mergedWrites];
