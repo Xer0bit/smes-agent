@@ -401,23 +401,15 @@ export default function AiAssistantPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(\`\${SERVER}/api/v1/ecg-proxy/ai-chat?projectId=\${PROJECT_ID}\`, {
+      const res = await fetch(\`\${SERVER}/api/v1/ecg-chat?projectId=\${PROJECT_ID}\`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: next.map(m => ({ role: m.role, content: m.content })),
-          systemPrompt: 'You are an AI assistant for an eCG Agents Portal dashboard. Help the user understand their agents, scheduled posts, and run history.',
-        }),
+        body: JSON.stringify({ messages: next.map(m => ({ role: m.role, content: m.content })) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Request failed');
-      const reply: string =
-        data.content?.[0]?.text ??                // Anthropic
-        data.candidates?.[0]?.content?.parts?.[0]?.text ?? // Gemini
-        data.choices?.[0]?.message?.content ??    // OpenAI
-        'No response.';
-      setMessages(p => [...p, { role: 'assistant', content: reply }]);
+      setMessages(p => [...p, { role: 'assistant', content: data.reply, ...(data.actions ? { actions: data.actions } : {}) }]);
     } catch (e: any) {
       setError(e.message ?? 'Failed to reach AI assistant');
     } finally {
@@ -434,7 +426,7 @@ export default function AiAssistantPage() {
             <p className="text-sm">Ask me about your agents, posts, or run history.</p>
           </div>
         )}
-        {messages.map((m, i) => (
+        {messages.map((m: any, i) => (
           <div key={i} className={\`flex \${m.role === 'user' ? 'justify-end' : 'justify-start'}\`}>
             <div className={\`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed \${m.role === 'user' ? 'text-white' : 'text-slate-800 border border-slate-200'}\`}
               style={m.role === 'user' ? { background: 'var(--accent)' } : { background: 'var(--card-bg)' }}>
@@ -475,16 +467,5 @@ export default function AiAssistantPage() {
 `;
 }
 
-export function emptyPage(name: string, icon: string) {
-  return `import { ${icon} } from 'lucide-react';
-
-export default function ${name.replace(/\s+/g, '')}Page() {
-  return (
-    <div className="flex flex-col items-center justify-center py-24 text-slate-400 gap-3">
-      <${icon} className="w-8 h-8" />
-      <p className="text-sm">${name} was not included in this dashboard.</p>
-    </div>
-  );
-}
-`;
-}
+// dashboardChatTsx and emptyPage live in ecg-template-chat.ts to keep this file under 500 lines.
+export { dashboardChatTsx, emptyPage } from './ecg-template-chat.js';

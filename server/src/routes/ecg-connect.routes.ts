@@ -78,12 +78,28 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response
     fs.writeFileSync(path.join(serverPath, '.env.local'), envContent, 'utf8');
   } catch { /* non-fatal in dev */ }
 
-  seedEcgTemplate(serverPath, {
+  const templateFiles = seedEcgTemplate(serverPath, {
     orgName:  portalData.orgName,
     modules:  portalData.modules,
     agentIds: portalData.agentIds,
     config:   portalData.config ?? {},
   });
+
+  // Push template files to the preview service (VPS2) so they are immediately available.
+  const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
+  const previewSecret = process.env.PREVIEW_UPDATE_SECRET || '';
+  const updateUrl = `${previewServiceUrl}/preview/${project.id}/update`;
+  const filesArray = Object.entries(templateFiles).map(([path, content]) => ({ path, content }));
+  try {
+    await fetch(updateUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-update-secret': previewSecret,
+      },
+      body: JSON.stringify({ files: filesArray, fullSync: true }),
+    });
+  } catch { /* preview service push is non-fatal */ }
 
   res.json({ projectId: project.id });
 });

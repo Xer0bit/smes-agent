@@ -17,6 +17,7 @@ import seoRoutes from './routes/seo.routes.js';
 import functionsRoutes from './routes/functions.routes.js';
 import ecgConnectRoutes from './routes/ecg-connect.routes.js';
 import ecgProxyRoutes from './routes/ecg-proxy.routes.js';
+import ecgChatRoutes from './routes/ecg-chat.routes.js';
 
 // Import middleware
 import { errorHandler } from './middleware/error.middleware.js';
@@ -147,6 +148,7 @@ app.use('/api/v1/seo', seoRoutes);
 app.use('/api/v1/functions', functionsRoutes);
 app.use('/api/v1/ecg-connect', ecgConnectRoutes);
 app.use('/api/v1/ecg-proxy', ecgProxyRoutes);
+app.use('/api/v1/ecg-chat', ecgChatRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {
