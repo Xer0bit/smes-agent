@@ -1,7 +1,7 @@
 import { getGenServerUrl } from '@/config/external-api';
 import { supabase } from '@/integrations/supabase/client';
 
-export type LlmProvider = 'anthropic' | 'deepseek' | 'gemini';
+export type LlmProvider = 'anthropic' | 'deepseek' | 'gemini' | 'zai';
 
 export interface LlmModelEntry {
   id: string;
@@ -13,6 +13,7 @@ export interface LlmStatus {
     anthropic: { enabled: boolean; keyConfigured?: boolean };
     deepseek: { enabled: boolean; fallbackEnabled: boolean; keyConfigured?: boolean };
     gemini: { enabled: boolean; fallbackEnabled: boolean; keyConfigured?: boolean };
+    zai?: { enabled: boolean; keyConfigured?: boolean };
   };
   models: {
     primary: string;
@@ -25,6 +26,7 @@ export interface LlmStatus {
     anthropic?: string;
     deepseek?: string;
     gemini?: string;
+    zai?: string;
   };
   updatedAt: string;
 }

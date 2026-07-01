@@ -2712,29 +2712,29 @@ async function startMainServer() {
         }
 
         const pkgList = packages.map(p => p.trim()).join(' ');
-        const installCmd = `npm install --ignore-scripts --no-audit --no-fund ${pkgList}`;
+        const baseFlags = '--ignore-scripts --no-audit --no-fund';
+        const installCmd = `npm install ${baseFlags} ${pkgList}`;
+        const legacyCmd  = `npm install ${baseFlags} --legacy-peer-deps ${pkgList}`;
 
         console.log(`[Packages] Installing into preview node_modules: ${pkgList}`);
 
         const { exec: execPkg } = require('child_process');
-        execPkg(
-            installCmd,
-            {
-                cwd: __dirname,          // preview-service/ — its package.json and node_modules live here
-                timeout: 120_000,
-                env: { ...process.env, NODE_ENV: 'development' },
-            },
-            (err, stdout, stderr) => {
-                const out = [stdout, stderr].filter(Boolean).join('\n').slice(0, 3000);
-                if (err) {
-                    console.error(`[Packages] Install failed: ${out}`);
-                    return res.status(500).json({ error: 'Install failed', detail: out });
+        const runInstall = (cmd, cb) => execPkg(cmd, {
+            cwd: __dirname,
+            timeout: 120_000,
+            env: { ...process.env, NODE_ENV: 'development' },
+        }, cb);
+
+        runInstall(installCmd, (err, stdout, stderr) => {
+            let out = [stdout, stderr].filter(Boolean).join('\n');
+
+            const doFinish = (finalErr, finalOut) => {
+                if (finalErr) {
+                    console.error(`[Packages] Install failed: ${finalOut.slice(0, 500)}`);
+                    return res.status(500).json({ error: 'Install failed', detail: finalOut.slice(0, 1000) });
                 }
 
                 console.log(`[Packages] Installed ${pkgList} — invalidating Vite dep caches`);
-
-                // Invalidate the Vite dep optimizer cache for all active servers so
-                // the next module request picks up the newly installed package.
                 for (const [projectId, instance] of activeServers.entries()) {
                     try {
                         instance.vite.moduleGraph.invalidateAll();
@@ -2743,10 +2743,19 @@ async function startMainServer() {
                         console.warn(`[Packages] Cache invalidation failed for ${projectId}:`, e?.message);
                     }
                 }
+                res.json({ success: true, installed: packages, output: finalOut.slice(0, 500) });
+            };
 
-                res.json({ success: true, installed: packages, output: out });
+            // Auto-retry with --legacy-peer-deps on peer dependency conflicts
+            if (err && out.includes('ERESOLVE')) {
+                console.log(`[Packages] Peer dep conflict — retrying with --legacy-peer-deps: ${pkgList}`);
+                runInstall(legacyCmd, (err2, stdout2, stderr2) => {
+                    doFinish(err2, [stdout2, stderr2].filter(Boolean).join('\n'));
+                });
+            } else {
+                doFinish(err, out);
             }
-        );
+        });
     });
 
     // Catch JSON parse errors from body-parser

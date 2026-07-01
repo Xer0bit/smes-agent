@@ -15,6 +15,8 @@ import runtimeRoutes from './routes/runtime.routes.js';
 import databaseRoutes from './routes/database.routes.js';
 import seoRoutes from './routes/seo.routes.js';
 import functionsRoutes from './routes/functions.routes.js';
+import ecgConnectRoutes from './routes/ecg-connect.routes.js';
+import ecgProxyRoutes from './routes/ecg-proxy.routes.js';
 
 // Import middleware
 import { errorHandler } from './middleware/error.middleware.js';
@@ -97,6 +99,8 @@ app.use(cors({
         'X-Requested-With',
         'Last-Event-ID',               // SSE resume support
         'x-update-secret',             // internal preview service auth
+        'x-project-id',                // ECG proxy project header
+        'x-service-key',               // ECG service-to-service auth
     ],
     exposedHeaders: ['Content-Type', 'Cache-Control', 'X-Request-Id', 'Last-Event-ID'],
     maxAge: 86400,
@@ -141,6 +145,8 @@ app.use('/api/v1/runtime', runtimeRoutes);
 app.use('/api/v1/database', databaseRoutes);
 app.use('/api/v1/seo', seoRoutes);
 app.use('/api/v1/functions', functionsRoutes);
+app.use('/api/v1/ecg-connect', ecgConnectRoutes);
+app.use('/api/v1/ecg-proxy', ecgProxyRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {

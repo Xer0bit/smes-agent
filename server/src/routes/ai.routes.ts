@@ -395,12 +395,14 @@ router.get('/models', optionalAuthMiddleware, async (req: AuthenticatedRequest, 
             anthropic: Boolean(control.apiKeys.anthropic),
             deepseek: Boolean(control.apiKeys.deepseek),
             gemini: Boolean(control.apiKeys.gemini),
+            zai: Boolean(control.apiKeys.zai),
         };
 
         const providerEnabled = {
             anthropic: control.providers.anthropic.enabled,
             deepseek: control.providers.deepseek.enabled,
             gemini: control.providers.gemini.enabled,
+            zai: control.providers.zai.enabled,
         };
 
         const allAllowed = control.models.allowed.filter((entry) => {
@@ -717,17 +719,17 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             const tier = await getUserPlanTier(req.user!.id);
    
                if (tier === 'free') {
-                   // Free users: DeepSeek (everyday) + Gemini Flash (fast, free)
-                   const allowedFreeModels = ['deepseek-chat', 'gemini-2.5-flash'];
-                   effectiveModel = (model && allowedFreeModels.some(m => model.toLowerCase().includes(m.toLowerCase())))
+                   // Free users: GLM models only (fast, cost-effective).
+                   const allowedFreeModels = ['glm-4.5-flash', 'glm-4.7-flash', 'glm-4.5'];
+                   effectiveModel = (model && allowedFreeModels.some(m => model.toLowerCase() === m.toLowerCase()))
                        ? model
                        : (control.models.freeModel || DEFAULT_FREE_MODEL);
                } else {
-                   // Paid users: all enabled models (Claude primary + DeepSeek + Gemini)
+                   // Paid users: Gemini / Sonnet via admin-configured primary, or user's picker choice.
                    effectiveModel = model || control.models.primary;
                }
 
-               if (tier === 'free' && model && !['deepseek', 'gemini-2.5-flash'].some(m => model.toLowerCase().includes(m.toLowerCase()))) {
+               if (tier === 'free' && model && !['glm'].some(m => model.toLowerCase().includes(m))) {
                    logger.info(`[agent-stream] Free user ${req.user!.id} requested restricted model "${model}" — overriding to "${effectiveModel}"`);
                }
         }
@@ -840,17 +842,18 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
 
         // Tier-based model routing:
         //   micro → Gemini Flash  (visual tweaks, $0.075/MTok — 40× cheaper than Sonnet)
-        //   fix   → Gemini Pro    (error diagnosis, $1.25/MTok — 2.4× cheaper than Sonnet)
-        //   edit/feature/build → user's selected model (needs full reasoning + library knowledge)
+        //   micro → free model (glm-4.7-flash by default — visual tweaks)
+        //   fix   → fallback model (glm-5 by default — error diagnosis)
+        //   edit/feature/build → user's selected model / admin primary
         // Guests always stay on GUEST_MODEL regardless.
         if (!isGuest) {
             if (isCheapTier(requestTier)) {
-                const cheapModel = process.env.CHEAP_TASK_MODEL || DEFAULT_FREE_MODEL;
+                const cheapModel = process.env.CHEAP_TASK_MODEL || control.models.freeModel || DEFAULT_FREE_MODEL;
                 logger.info(`[agent-stream] Tier=${requestTier} → cheap model: ${cheapModel} (was ${effectiveModel})`);
                 effectiveModel = cheapModel;
             } else if (requestTier === 'fix') {
-                const fixModel = process.env.FIX_TIER_MODEL || 'gemini-3.1-pro-preview';
-                logger.info(`[agent-stream] Tier=fix → mid model: ${fixModel} (was ${effectiveModel})`);
+                const fixModel = process.env.FIX_TIER_MODEL || control.models.fallback || DEFAULT_FREE_MODEL;
+                logger.info(`[agent-stream] Tier=fix → fix model: ${fixModel} (was ${effectiveModel})`);
                 effectiveModel = fixModel;
             }
         }

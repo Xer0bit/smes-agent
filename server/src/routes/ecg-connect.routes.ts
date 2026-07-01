@@ -1,0 +1,91 @@
+import { Router, Response } from 'express';
+import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
+import { supabase } from '../config/database.js';
+import { projectService } from '../services/project.service.js';
+import { initProjectFromTemplate } from '../services/baseTemplateService.js';
+import { seedEcgTemplate } from '../services/ecg-template.js';
+import path from 'node:path';
+import fs from 'node:fs';
+
+const router = Router();
+
+const PORTAL_API_URL = process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai';
+const ECG_SERVICE_KEY = process.env.ECG_SERVICE_KEY || '';
+const ECOMGEAR_SERVER_URL = process.env.ECOMGEAR_SERVER_URL || 'https://ecomgear.dev';
+
+// POST /api/v1/ecg-connect
+// One-time handoff from agent-portal: creates an eComGear project seeded with the
+// pre-built eCG dashboard template and stores portal credentials as project secrets.
+router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { token } = req.body as { token?: string };
+  if (!token) {
+    res.status(400).json({ error: 'token is required' });
+    return;
+  }
+
+  // Exchange token with the portal (server-to-server)
+  let portalData: {
+    portalToken: string;
+    portalApiUrl: string;
+    orgId: string;
+    orgName: string;
+    agentIds: string[];
+    modules: string[];
+    config: Record<string, unknown>;
+  };
+
+  try {
+    const verifyUrl = `${PORTAL_API_URL}/api/app-builder/verify/${token}`;
+    const verifyRes = await fetch(verifyUrl, {
+      headers: { 'x-service-key': ECG_SERVICE_KEY },
+    });
+    if (!verifyRes.ok) {
+      const body = await verifyRes.json().catch(() => ({ error: 'Token exchange failed' }));
+      res.status(verifyRes.status).json(body);
+      return;
+    }
+    portalData = await verifyRes.json() as typeof portalData;
+  } catch {
+    res.status(502).json({ error: 'Could not reach eCG Agents Portal' });
+    return;
+  }
+
+  // Create the eComGear project record
+  const projectName = (portalData.config?.appName as string) || `${portalData.orgName || 'eCG'} Dashboard`;
+  const project = await projectService.createProject(req.user!.id, {
+    name: projectName,
+    description: 'Custom eCG Agents Portal UI — built with App Builder',
+    template: 'ecg-dashboard',
+  });
+
+  const serverPath = `/var/ecomgear/projects/user_${req.user!.id.substring(0, 8)}_project_${project.id.substring(0, 8)}`;
+
+  try { await initProjectFromTemplate(serverPath); } catch { /* non-fatal in dev */ }
+
+  const llm = (portalData.config?.llm ?? {}) as { provider?: string; model?: string; apiKey?: string };
+  const secrets: { project_id: string; key_name: string; key_value: string }[] = [
+    { project_id: project.id, key_name: 'ECG_PORTAL_TOKEN', key_value: portalData.portalToken },
+    { project_id: project.id, key_name: 'ECG_ORG_ID',       key_value: portalData.orgId },
+  ];
+  if (llm.apiKey)  secrets.push({ project_id: project.id, key_name: 'ECG_LLM_API_KEY',  key_value: llm.apiKey });
+  if (llm.model)   secrets.push({ project_id: project.id, key_name: 'ECG_LLM_MODEL',    key_value: llm.model });
+  if (llm.provider) secrets.push({ project_id: project.id, key_name: 'ECG_LLM_PROVIDER', key_value: llm.provider });
+  await supabase.from('project_secrets').insert(secrets);
+
+  const envContent = `VITE_PROJECT_ID=${project.id}\nVITE_ECG_PROXY_URL=${ECOMGEAR_SERVER_URL}\n`;
+  try {
+    fs.mkdirSync(serverPath, { recursive: true });
+    fs.writeFileSync(path.join(serverPath, '.env.local'), envContent, 'utf8');
+  } catch { /* non-fatal in dev */ }
+
+  seedEcgTemplate(serverPath, {
+    orgName:  portalData.orgName,
+    modules:  portalData.modules,
+    agentIds: portalData.agentIds,
+    config:   portalData.config ?? {},
+  });
+
+  res.json({ projectId: project.id });
+});
+
+export default router;

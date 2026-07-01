@@ -103,32 +103,41 @@ export const runCommandTool: ToolDefinition<z.infer<typeof schema>> = {
       ? cmd.replace(/^(npm\s+\S+)/, '$1 --ignore-scripts --no-audit --no-fund')
       : cmd;
 
-    return new Promise<string>((resolve) => {
-      exec(
-        safeCmd,
-        {
-          cwd: ctx.appPath,
-          timeout: 120_000, // 2 min max
-          env: { ...process.env, NODE_ENV: 'development' },
-        },
-        async (err, stdout, stderr) => {
-          const out = [stdout, stderr].filter(Boolean).join('\n').slice(0, 2000);
-          if (err) {
-            resolve(`Command failed (${cmd}):\n${out}`);
-            return;
+    const runCmd = (cmdToRun: string): Promise<{ ok: boolean; out: string }> =>
+      new Promise((resolve) => {
+        exec(
+          cmdToRun,
+          { cwd: ctx.appPath, timeout: 120_000, env: { ...process.env, NODE_ENV: 'development' } },
+          (err, stdout, stderr) => {
+            const out = [stdout, stderr].filter(Boolean).join('\n').slice(0, 1500);
+            resolve({ ok: !err, out });
           }
+        );
+      });
 
-          // Local install succeeded — sync the same packages to the preview
-          // service so its Vite servers can resolve the new imports.
-          if (isInstall) {
-            const pkgs = parsePackageNames(cmd);
-            const previewUrl = ctx.previewServiceUrl || 'http://localhost:3001';
-            await syncPackagesToPreviewService(pkgs, previewUrl);
-          }
+    let { ok, out } = await runCmd(safeCmd);
 
-          resolve(`Command succeeded (${cmd}):\n${out}`);
-        }
-      );
-    });
+    // Auto-retry with --legacy-peer-deps on peer dependency conflicts (ERESOLVE)
+    if (!ok && isInstall && out.includes('ERESOLVE')) {
+      const legacyCmd = safeCmd.replace(/^(npm\s+\S+)/, '$1 --legacy-peer-deps');
+      const retry = await runCmd(legacyCmd);
+      if (retry.ok) {
+        ok = true;
+        out = retry.out;
+      } else {
+        out = `Peer dep conflict. Tried --legacy-peer-deps too.\n${retry.out.slice(0, 800)}`;
+      }
+    }
+
+    if (!ok) return `Command failed (${cmd}):\n${out}`;
+
+    // Local install succeeded — sync packages to preview service
+    if (isInstall) {
+      const pkgs = parsePackageNames(cmd);
+      const previewUrl = ctx.previewServiceUrl || 'http://localhost:3001';
+      await syncPackagesToPreviewService(pkgs, previewUrl);
+    }
+
+    return `Command succeeded (${cmd}):\n${out}`;
   },
 };

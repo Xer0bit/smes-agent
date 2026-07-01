@@ -8,6 +8,14 @@ export interface FunctionContext {
   serviceKey: string;
 }
 
+export interface EcgContext {
+  portalToken: string;
+  portalApiUrl: string;
+  llmApiKey?: string;
+  llmModel?: string;
+  llmProvider?: string;
+}
+
 export interface InvokeResult {
   result: unknown;
   logs: string[];
@@ -87,10 +95,54 @@ async function safeFetch(url: string | URL, init?: RequestInit): Promise<Respons
   return fetch(url, init);
 }
 
+// ECG portal helper injected as `ecg` in edge functions.
+// Uses real fetch (server-side) with the stored portal token — user code never sees the token.
+function buildEcgHelper(ctx: EcgContext) {
+  const base = `${ctx.portalApiUrl}/v1/ecg`;
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.portalToken}` };
+
+  const call = (method: string, path: string, body?: unknown) =>
+    fetch(`${base}${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined })
+      .then(r => r.json());
+
+  const ecg: Record<string, unknown> = {
+    get:    (path: string)                  => call('GET',    path),
+    post:   (path: string, body: unknown)   => call('POST',   path, body),
+    patch:  (path: string, body: unknown)   => call('PATCH',  path, body),
+    delete: (path: string)                  => call('DELETE', path),
+  };
+
+  // LLM helper — server-side call, API key never exposed to edge function code
+  if (ctx.llmApiKey) {
+    ecg.llm = async (messages: unknown[], systemPrompt?: string) => {
+      const provider = ctx.llmProvider || 'openai';
+      const model = ctx.llmModel || 'gpt-4o';
+      if (provider === 'anthropic') {
+        return fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': ctx.llmApiKey!, 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({ model, max_tokens: 1024, system: systemPrompt, messages }),
+        }).then(r => r.json());
+      }
+      const base2 = provider === 'google'
+        ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${ctx.llmApiKey}`
+        : 'https://api.openai.com/v1/chat/completions';
+      return fetch(base2, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.llmApiKey}` },
+        body: JSON.stringify({ model, messages: systemPrompt ? [{ role: 'system', content: systemPrompt }, ...messages] : messages }),
+      }).then(r => r.json());
+    };
+  }
+
+  return ecg;
+}
+
 export async function runEdgeFunction(
   code: string,
   params: unknown,
   dbCtx: FunctionContext,
+  ecgCtx?: EcgContext,
 ): Promise<InvokeResult> {
   const logs: string[] = [];
   const start = Date.now();
@@ -104,7 +156,8 @@ export async function runEdgeFunction(
   const context = vm.createContext({
     // user-facing API
     params,
-    db: buildDbHelper(dbCtx),
+    db:  buildDbHelper(dbCtx),
+    ecg: ecgCtx ? buildEcgHelper(ecgCtx) : null,
     fetch: safeFetch,
     console: consoleMock,
     // safe globals only
@@ -132,9 +185,9 @@ export async function runEdgeFunction(
 
   // Wrap the user code so they can write top-level await
   const wrapped = `
-(async function __fn__(params, db, fetch, console) {
+(async function __fn__(params, db, ecg, fetch, console) {
 ${code}
-})(params, db, fetch, console)
+})(params, db, ecg, fetch, console)
 `;
 
   try {

@@ -7,7 +7,7 @@ import {
   DEFAULT_FREE_MODEL,
 } from '../config/models.js';
 
-export type LlmProvider = 'anthropic' | 'deepseek' | 'gemini';
+export type LlmProvider = 'anthropic' | 'deepseek' | 'gemini' | 'zai';
 
 export type LlmModelEntry = {
   id: string;
@@ -20,6 +20,7 @@ export type LlmControlState = {
     anthropic: { enabled: boolean; };
     deepseek: { enabled: boolean; fallbackEnabled: boolean; };
     gemini: { enabled: boolean; fallbackEnabled: boolean; };
+    zai: { enabled: boolean; };
   };
   models: {
     primary: string;
@@ -32,6 +33,7 @@ export type LlmControlState = {
     anthropic: string;
     deepseek: string;
     gemini: string;
+    zai: string;
   };
   updatedAt: string;
 };
@@ -41,10 +43,17 @@ type PersistedLlmControl = Partial<Omit<LlmControlState, 'updatedAt'>> & {
 };
 
 const DEFAULT_MODELS: LlmModelEntry[] = [
-  { id: 'gemini-2.5-pro',          provider: 'gemini', label: 'Gemini 2.5 Pro (Advanced)' },
-  { id: 'gemini-2.5-flash',         provider: 'gemini', label: 'Gemini 2.5 Flash (Fast)' },
-  { id: 'deepseek-chat',            provider: 'deepseek', label: 'DeepSeek (Everyday)' },
-  { id: 'claude-sonnet-4-6',        provider: 'anthropic', label: 'Claude (EcomSmart)' },
+  { id: 'gemini-3.1-pro-preview', provider: 'gemini', label: 'Gemini 3.1 Pro (Advanced)' },
+  { id: 'gemini-2.5-pro',   provider: 'gemini',   label: 'Gemini 2.5 Pro' },
+  { id: 'gemini-2.5-flash', provider: 'gemini',   label: 'Gemini 2.5 Flash (Fast)' },
+  { id: 'claude-sonnet-4-6', provider: 'anthropic', label: 'Claude Sonnet 4.6' },
+  { id: 'glm-4.5-flash',    provider: 'zai',      label: 'GLM-4.5 Flash (Free tier)' },
+  { id: 'glm-5.2',          provider: 'zai',      label: 'GLM-5.2' },
+  { id: 'glm-5',            provider: 'zai',      label: 'GLM-5' },
+  { id: 'glm-5-turbo',      provider: 'zai',      label: 'GLM-5 Turbo' },
+  { id: 'glm-4.7',          provider: 'zai',      label: 'GLM-4.7' },
+  { id: 'glm-4.7-flash',    provider: 'zai',      label: 'GLM-4.7 Flash' },
+  { id: 'deepseek-chat',    provider: 'deepseek', label: 'DeepSeek (Everyday)' },
 ];
 
 const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
@@ -65,8 +74,10 @@ function isValidModelId(id: string): boolean {
 
 const isDeepSeekModel = (model: string): boolean => model.toLowerCase().includes('deepseek');
 const isGeminiModel = (model: string): boolean => model.toLowerCase().includes('gemini');
+const isZaiModel = (model: string): boolean => model.toLowerCase().startsWith('glm');
 
 const inferProvider = (model: string): LlmProvider => {
+  if (isZaiModel(model)) return 'zai';
   if (isDeepSeekModel(model)) return 'deepseek';
   if (isGeminiModel(model)) return 'gemini';
   return 'anthropic';
@@ -95,6 +106,7 @@ const getDefaults = (): LlmControlState => {
       anthropic: { enabled: true },
       deepseek: { enabled: true, fallbackEnabled: true },
       gemini: { enabled: true, fallbackEnabled: true },
+      zai: { enabled: true },
     },
     models: {
       primary,
@@ -106,6 +118,7 @@ const getDefaults = (): LlmControlState => {
       anthropic: process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '',
       deepseek: process.env.DEEPSEEK_API_KEY || '',
       gemini: process.env.GEMINI_API_KEY || '',
+      zai: process.env.ZAI_API_KEY || '',
     },
     updatedAt: new Date().toISOString(),
   };
@@ -134,6 +147,9 @@ const mergeWithDefaults = (persisted?: PersistedLlmControl | null): LlmControlSt
         enabled: persisted.providers?.gemini?.enabled ?? defaults.providers.gemini.enabled,
         fallbackEnabled: persisted.providers?.gemini?.fallbackEnabled ?? defaults.providers.gemini.fallbackEnabled,
       },
+      zai: {
+        enabled: (persisted.providers as any)?.zai?.enabled ?? defaults.providers.zai.enabled,
+      },
     },
     models: {
       primary,
@@ -145,6 +161,7 @@ const mergeWithDefaults = (persisted?: PersistedLlmControl | null): LlmControlSt
       anthropic: persisted.apiKeys?.anthropic || defaults.apiKeys.anthropic || '',
       deepseek: persisted.apiKeys?.deepseek || defaults.apiKeys.deepseek || '',
       gemini: persisted.apiKeys?.gemini || defaults.apiKeys.gemini || '',
+      zai: (persisted.apiKeys as any)?.zai || defaults.apiKeys.zai || '',
     },
     updatedAt: persisted.updatedAt || defaults.updatedAt,
   };
@@ -166,6 +183,7 @@ const applyRuntimeEnv = (state: LlmControlState): void => {
   
   if (state.apiKeys.anthropic) process.env.AI_ANTHROPIC_API_KEY = state.apiKeys.anthropic;
   if (state.apiKeys.deepseek) process.env.DEEPSEEK_API_KEY = state.apiKeys.deepseek;
+  if (state.apiKeys.zai) process.env.ZAI_API_KEY = state.apiKeys.zai;
   if (state.apiKeys.gemini) {
     process.env.GEMINI_API_KEY = state.apiKeys.gemini;
     // KB vector store uses GOOGLE_GENERATIVE_AI_API_KEY for 768-dim text-embedding-004
@@ -242,6 +260,9 @@ export async function updateLlmControlState(input: Partial<LlmControlState>): Pr
         enabled: input.providers?.gemini?.enabled ?? current.providers.gemini.enabled,
         fallbackEnabled: input.providers?.gemini?.fallbackEnabled ?? current.providers.gemini.fallbackEnabled,
       },
+      zai: {
+        enabled: (input.providers as any)?.zai?.enabled ?? current.providers.zai.enabled,
+      },
     },
     models: {
       primary,
@@ -253,6 +274,7 @@ export async function updateLlmControlState(input: Partial<LlmControlState>): Pr
       anthropic: input.apiKeys?.anthropic ?? current.apiKeys.anthropic,
       deepseek: input.apiKeys?.deepseek ?? current.apiKeys.deepseek,
       gemini: input.apiKeys?.gemini ?? current.apiKeys.gemini,
+      zai: (input.apiKeys as any)?.zai ?? current.apiKeys.zai,
     },
     updatedAt: new Date().toISOString(),
   };
@@ -309,6 +331,10 @@ export async function getLlmStatusPayload(): Promise<Record<string, unknown>> {
       gemini: {
         ...state.providers.gemini,
         keyConfigured: Boolean(state.apiKeys.gemini),
+      },
+      zai: {
+        ...state.providers.zai,
+        keyConfigured: Boolean(state.apiKeys.zai),
       },
     },
   };

@@ -416,6 +416,10 @@ TENANT_DB_API_URL=${TDB_API_URL}
 TENANT_DB_SSL=${TDB_SSL}
 TENANT_DB_RELOAD_URL=${TDB_RELOAD_URL}
 TENANT_DB_RELOAD_SECRET=${TDB_RELOAD_SECRET}
+ZAI_API_KEY=${ZAI_API_KEY}
+GEMINI_API_KEY=${GEMINI_API_KEY}
+AI_MODEL=gemini-3.1-pro-preview
+AI_FALLBACK_MODEL=gemini-2.5-flash
 # LLM API keys are managed via the Admin panel — stored in Supabase, not here.
 ENV
 

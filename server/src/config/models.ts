@@ -11,7 +11,7 @@
  * Never pass thinkingBudget: 0 to it; it requires maxOutputTokens >= 8000.
  */
 
-export type LlmProvider = 'anthropic' | 'deepseek' | 'gemini';
+export type LlmProvider = 'anthropic' | 'deepseek' | 'gemini' | 'zai';
 
 export interface ModelDef {
   id: string;
@@ -21,16 +21,27 @@ export interface ModelDef {
 
 /** Models surfaced to users (admin settings, model picker). */
 export const CANONICAL_MODELS: ModelDef[] = [
+  // ── Gemini ────────────────────────────────────────────────────────────────
   { id: 'gemini-3.1-pro-preview',   provider: 'gemini',    label: 'Gemini 3.1 Pro (Advanced)' },
   { id: 'gemini-2.5-pro',           provider: 'gemini',    label: 'Gemini 2.5 Pro' },
   { id: 'gemini-2.5-flash',         provider: 'gemini',    label: 'Gemini 2.5 Flash (Fast)' },
+  // ── Anthropic ─────────────────────────────────────────────────────────────
+  { id: 'claude-sonnet-4-6',        provider: 'anthropic', label: 'Claude Sonnet 4.6' },
+  // ── GLM / z.ai (free tier) ────────────────────────────────────────────────
+  { id: 'glm-4.5-flash',    provider: 'zai', label: 'GLM-4.5 Flash (Free tier)' },
+  // ── GLM / z.ai (paid resource packages required) ──────────────────────────
+  { id: 'glm-5.2',          provider: 'zai', label: 'GLM-5.2' },
+  { id: 'glm-5',            provider: 'zai', label: 'GLM-5' },
+  { id: 'glm-5-turbo',      provider: 'zai', label: 'GLM-5 Turbo' },
+  { id: 'glm-4.7',          provider: 'zai', label: 'GLM-4.7' },
+  { id: 'glm-4.7-flash',    provider: 'zai', label: 'GLM-4.7 Flash' },
+  // ── Other ─────────────────────────────────────────────────────────────────
   { id: 'deepseek-chat',            provider: 'deepseek',  label: 'DeepSeek (Everyday)' },
-  { id: 'claude-sonnet-4-6',        provider: 'anthropic', label: 'Claude (EcomSmart)' },
 ];
 
 export const DEFAULT_PRIMARY_MODEL = 'gemini-3.1-pro-preview';
-export const DEFAULT_FREE_MODEL = 'gemini-2.5-flash';
-export const DEFAULT_FALLBACK_MODEL = 'deepseek-chat';
+export const DEFAULT_FREE_MODEL = 'glm-4.5-flash';
+export const DEFAULT_FALLBACK_MODEL = 'gemini-2.5-flash';
 
 /**
  * IDs that are valid but not shown in the picker.
@@ -60,6 +71,7 @@ const STALE_ID_MAP: Record<string, string> = {
 
 export function inferProvider(model: string): LlmProvider {
   const lower = model.toLowerCase();
+  if (lower.startsWith('glm')) return 'zai';
   if (lower.includes('deepseek')) return 'deepseek';
   if (lower.includes('gemini')) return 'gemini';
   return 'anthropic';
@@ -85,8 +97,9 @@ export function canonicalizeModelId(input: unknown, fallback: string = DEFAULT_P
 
   // Unknown ID — map by provider family to a safe default.
   const lower = id.toLowerCase();
+  if (lower.startsWith('glm')) return lower.includes('flash') ? DEFAULT_FREE_MODEL : DEFAULT_PRIMARY_MODEL;
   if (lower.includes('gemini')) {
-    return lower.includes('flash') ? DEFAULT_FREE_MODEL : DEFAULT_PRIMARY_MODEL;
+    return lower.includes('flash') ? 'gemini-2.5-flash' : 'gemini-3.1-pro-preview';
   }
   if (lower.includes('deepseek')) return 'deepseek-chat';
   if (lower.includes('claude') || lower.includes('sonnet') || lower.includes('haiku') || lower.includes('opus')) {

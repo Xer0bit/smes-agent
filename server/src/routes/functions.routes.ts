@@ -3,7 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
 import { databaseService } from '../services/database.service.js';
-import { runEdgeFunction } from '../services/functionRunner.service.js';
+import { runEdgeFunction, EcgContext } from '../services/functionRunner.service.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
@@ -158,12 +158,33 @@ router.post('/:name/invoke', invokeLimiter, async (req: AuthenticatedRequest, re
     if (!fn.is_active) { res.status(400).json({ error: 'Function is disabled.' }); return; }
 
     const params = req.body?.params ?? {};
+
+    // Load ECG secrets for this project (if it has ECG integration)
+    let ecgCtx: EcgContext | undefined;
+    const projectId = getProjectId(req);
+    if (projectId) {
+      const { data: ecgRows } = await supabase
+        .from('project_secrets').select('key_name, key_value')
+        .eq('project_id', projectId)
+        .in('key_name', ['ECG_PORTAL_TOKEN', 'ECG_LLM_API_KEY', 'ECG_LLM_MODEL', 'ECG_LLM_PROVIDER']);
+      const ecgMap = Object.fromEntries((ecgRows ?? []).map((r: { key_name: string; key_value: string }) => [r.key_name, r.key_value]));
+      if (ecgMap['ECG_PORTAL_TOKEN']) {
+        ecgCtx = {
+          portalToken:  ecgMap['ECG_PORTAL_TOKEN'],
+          portalApiUrl: process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai',
+          llmApiKey:    ecgMap['ECG_LLM_API_KEY'],
+          llmModel:     ecgMap['ECG_LLM_MODEL'],
+          llmProvider:  ecgMap['ECG_LLM_PROVIDER'],
+        };
+      }
+    }
+
     const result = await runEdgeFunction(fn.code, params, {
       apiUrl:     creds.api_url,
       schema:     creds.schema,
       anonKey:    creds.anon_key,
       serviceKey: creds.service_key,
-    });
+    }, ecgCtx);
 
     // persist log (fire-and-forget)
     supabase.from('edge_function_logs').insert({

@@ -7,7 +7,7 @@
  *
  * Tier → MAX_STEPS → default model
  *   micro   →  6  → Gemini Flash  (color, text, spacing, icon tweaks — only tier that uses cheap model)
- *   fix     → 14  → user choice   (error fixes, broken previews)
+ *   fix     → 28  → user choice   (error fixes, broken previews)
  *   edit    → 18  → user choice   (update/modify/remove one thing)
  *   feature → 22  → user choice   (add a page/section/component)
  *   build   → 30  → user choice   (new project or full rebuild)
@@ -56,15 +56,15 @@ export function classifyRequest(prompt: string, isEmptyProject: boolean): Reques
 }
 
 /** Step budgets per tier
- *  fix needs 14+ — agent reads 3-4 files to understand code before writing
- *  edit needs 18+ — read + write + build check + possible re-edit cycle
+ *  fix needs 28+ — agent reads 3-4 files, diagnoses, writes, verifies, may re-edit
+ *  edit needs 25+ — read + write + build check + possible re-edit cycle
  */
 export const TIER_MAX_STEPS: Record<RequestTier, number> = {
-  micro:    6,
-  fix:     14,
-  edit:    18,
-  feature: 22,
-  build:   30,
+  micro:    8,
+  fix:     28,
+  edit:    25,
+  feature: 35,
+  build:   45,
 };
 
 /**

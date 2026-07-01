@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Plus, Trash2, KeyRound, RefreshCw, CheckCircle2, FlaskConical, XCircle, Server, Cpu } from 'lucide-react';
+import { Loader2, Plus, Trash2, KeyRound, RefreshCw, CheckCircle2, FlaskConical, XCircle, Server, Cpu, Beaker } from 'lucide-react';
 import { toast } from 'sonner';
 import { adminLlmService, type LlmProvider, type LlmStatus } from '@/services/adminLlmService';
 
@@ -43,10 +43,11 @@ export default function Settings() {
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [newModelId, setNewModelId] = useState('');
   const [newModelProvider, setNewModelProvider] = useState<LlmProvider>('anthropic');
-  const [apiKeys, setApiKeys] = useState<{ anthropic: string; deepseek: string; gemini: string }>({
+  const [apiKeys, setApiKeys] = useState<{ anthropic: string; deepseek: string; gemini: string; zai: string }>({
     anthropic: '',
     deepseek: '',
     gemini: '',
+    zai: '',
   });
   const [testing, setTesting] = useState(false);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; reason: string; testedAt: string }> | null>(null);
@@ -109,11 +110,36 @@ export default function Settings() {
         anthropic: apiKeys.anthropic || undefined,
         deepseek: apiKeys.deepseek || undefined,
         gemini: apiKeys.gemini || undefined,
+        zai: apiKeys.zai || undefined,
       }
     };
     await persistStatus({ ...status, ...updates }, 'API Keys updated securely');
-    // Clear inputs after sending
-    setApiKeys({ anthropic: '', deepseek: '', gemini: '' });
+    setApiKeys({ anthropic: '', deepseek: '', gemini: '', zai: '' });
+  };
+
+  const isGlmExperiment = status?.models.primary?.toLowerCase().startsWith('glm') ?? false;
+
+  const toggleGlmExperiment = async (enable: boolean) => {
+    if (!status) return;
+    if (enable) {
+      await persistStatus({
+        ...status,
+        models: { ...status.models, primary: 'glm-5.2', fallback: 'glm-5', freeModel: 'glm-4.7-flash' },
+      }, 'Switched to GLM experiment (z.ai)');
+    } else {
+      await persistStatus({
+        ...status,
+        models: { ...status.models, primary: 'gemini-3.1-pro-preview', fallback: 'deepseek-chat', freeModel: 'gemini-2.5-flash' },
+      }, 'Reverted to Gemini primary model');
+    }
+  };
+
+  const setZaiEnabled = async (enabled: boolean) => {
+    if (!status) return;
+    await persistStatus({
+      ...status,
+      providers: { ...status.providers, zai: { ...(status.providers.zai ?? {}), enabled } },
+    }, `z.ai (GLM) ${enabled ? 'enabled' : 'disabled'}`);
   };
 
   const availableModelIds = useMemo(
@@ -250,6 +276,30 @@ export default function Settings() {
         </Button>
       </div>
 
+      {/* ── Experiments ────────────────────────────────────────────────────── */}
+      <div className="rounded-xl border p-6" style={{ background: 'rgba(99,102,241,0.04)', borderColor: 'rgba(99,102,241,0.25)' }}>
+        <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
+          <Beaker className="h-4 w-4 text-indigo-400" />
+          Experiments
+        </h3>
+        <p className="text-xs text-gray-500 mb-5">Toggle experimental model families on or off. Switching off reverts all three model slots to the previous Gemini defaults.</p>
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <Label className="text-gray-300 text-xs font-medium">GLM / z.ai Experiment</Label>
+            <p className="text-[11px] text-gray-500 mt-0.5">
+              {isGlmExperiment
+                ? <>Active — primary: <span className="font-mono text-indigo-300">{status?.models.primary}</span>, fallback: <span className="font-mono text-indigo-300">{status?.models.fallback}</span></>
+                : 'Off — using Gemini primary (gemini-3.1-pro-preview)'}
+            </p>
+          </div>
+          <Switch
+            checked={isGlmExperiment}
+            onCheckedChange={(v) => void toggleGlmExperiment(v)}
+            disabled={syncing}
+          />
+        </div>
+      </div>
+
       <div className="rounded-xl border p-6" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
         <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
           <Server className="h-4 w-4 text-purple-400" />
@@ -335,6 +385,17 @@ export default function Settings() {
             <Switch checked={Boolean(status?.providers.gemini?.enabled)} onCheckedChange={(v) => void setProviderEnabled('gemini', v)} disabled={syncing} />
           </div>
 
+          <div className="flex items-center justify-between py-1">
+            <div>
+              <Label className="text-gray-300 text-xs">z.ai (GLM)</Label>
+              <p className="text-[11px] text-gray-500 mt-0.5 flex items-center gap-2">
+                <KeyRound className="h-3 w-3" />
+                API Key: {status?.providers.zai?.keyConfigured ? 'Configured' : 'Missing'}
+              </p>
+            </div>
+            <Switch checked={Boolean(status?.providers.zai?.enabled)} onCheckedChange={(v) => void setZaiEnabled(v)} disabled={syncing} />
+          </div>
+
           <div className="flex items-center justify-between py-1 border-t border-white/5 pt-4">
             <div>
               <Label className="text-gray-300 text-xs">Allow Anthropic → DeepSeek Fallback</Label>
@@ -371,7 +432,7 @@ export default function Settings() {
           </div>
           <div className="space-y-1.5">
             <Label className="text-gray-300 text-xs text-white">Gemini API Key</Label>
-            <Input 
+            <Input
               type="password"
               placeholder={status?.providers.gemini?.keyConfigured ? "⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤" : "AIza..."}
               value={apiKeys.gemini}
@@ -379,7 +440,17 @@ export default function Settings() {
               className="bg-white/5 border-white/10 text-white h-9 text-sm"
             />
           </div>
-          <Button onClick={saveApiKeys} disabled={syncing || (!apiKeys.anthropic && !apiKeys.deepseek && !apiKeys.gemini)} className="w-full h-9 bg-purple-600 hover:bg-purple-700 text-white text-xs mt-2">
+          <div className="space-y-1.5">
+            <Label className="text-gray-300 text-xs text-white">z.ai API Key <span className="text-indigo-400 ml-1">(GLM models)</span></Label>
+            <Input
+              type="password"
+              placeholder={status?.providers.zai?.keyConfigured ? "⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤" : "your-zai-key..."}
+              value={apiKeys.zai}
+              onChange={(e) => setApiKeys(prev => ({ ...prev, zai: e.target.value }))}
+              className="bg-white/5 border-white/10 text-white h-9 text-sm"
+            />
+          </div>
+          <Button onClick={saveApiKeys} disabled={syncing || (!apiKeys.anthropic && !apiKeys.deepseek && !apiKeys.gemini && !apiKeys.zai)} className="w-full h-9 bg-purple-600 hover:bg-purple-700 text-white text-xs mt-2">
             Save API Keys
           </Button>
         </div>
@@ -449,6 +520,7 @@ export default function Settings() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="zai">z.ai (GLM)</SelectItem>
               <SelectItem value="anthropic">anthropic</SelectItem>
               <SelectItem value="deepseek">deepseek</SelectItem>
               <SelectItem value="gemini">gemini</SelectItem>

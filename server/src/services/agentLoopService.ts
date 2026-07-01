@@ -971,16 +971,23 @@ function isAuthOrBillingError(err: any): boolean {
   if (status === 401 || status === 403) return true;
   const msg = [err?.message, err?.cause?.message, err?.error?.message].filter(Boolean).join(' ').toLowerCase();
   let bodyMsg = '';
+  let parsedBody: any = null;
   if (err?.data?.error?.message) {
     bodyMsg = err.data.error.message.toLowerCase();
   } else if (err?.responseBody) {
-    try { bodyMsg = JSON.parse(err.responseBody)?.error?.message?.toLowerCase() ?? ''; } catch {}
+    try { parsedBody = JSON.parse(err.responseBody); bodyMsg = parsedBody?.error?.message?.toLowerCase() ?? ''; } catch {}
   }
+  // z.ai error code 1113 = insufficient balance / no resource package
+  const zaiCode = String(parsedBody?.error?.code ?? err?.data?.error?.code ?? '');
+  if (zaiCode === '1113') return true;
   const combined = `${msg} ${bodyMsg}`;
   return (
     combined.includes('organization') && combined.includes('disabled') ||
     combined.includes('balance too low') ||
     combined.includes('balance is too low') ||
+    combined.includes('insufficient balance') ||
+    combined.includes('no resource package') ||
+    combined.includes('please recharge') ||
     combined.includes('credit balance') ||
     combined.includes('insufficient') && combined.includes('credit') ||
     combined.includes('billing') && (combined.includes('inactive') || combined.includes('error')) ||
@@ -1068,6 +1075,8 @@ function buildFallbackCandidates(primaryProviderName: string, primaryModelId?: s
   const candidates = Array.from(new Set([
     configuredFallback,
     DEFAULT_FREE_MODEL,
+    'glm-4.5',
+    'glm-4.5-air',
     'gemini-2.5-pro',
     'deepseek-chat',
     'claude-sonnet-4-6',
@@ -1075,6 +1084,12 @@ function buildFallbackCandidates(primaryProviderName: string, primaryModelId?: s
   return candidates.filter((mid) => {
     // Never retry the exact same model that just failed
     if (mid === primaryModelId) return false;
+    if (mid.toLowerCase().startsWith('glm')) {
+      // Allow GLM-to-GLM fallback for transient errors — but not if ZAI is billing-failed
+      return Boolean(process.env.ZAI_API_KEY)
+        && process.env.AI_DISABLE_ZAI !== '1'
+        && !billingFailedProviders.has('zai');
+    }
     if (mid.includes('deepseek')) {
       return Boolean(process.env.DEEPSEEK_API_KEY)
         && process.env.AI_DISABLE_DEEPSEEK !== '1'
@@ -1094,7 +1109,12 @@ function buildFallbackCandidates(primaryProviderName: string, primaryModelId?: s
 
 /** Create an AI SDK provider from a model ID. Returns null if API key is missing. */
 function createProviderForModel(mid: string): { provider: any; providerName: string } | null {
-  if (mid.includes('deepseek')) {
+  if (mid.toLowerCase().startsWith('glm')) {
+    if (process.env.AI_DISABLE_ZAI === '1') return null;
+    const key = process.env.ZAI_API_KEY;
+    if (!key) return null;
+    return { provider: createOpenAI({ apiKey: key, baseURL: 'https://api.z.ai/api/paas/v4' }).chat(mid), providerName: 'zai' };
+  } else if (mid.includes('deepseek')) {
     if (process.env.AI_DISABLE_DEEPSEEK === '1') return null;
     const key = process.env.DEEPSEEK_API_KEY;
     if (!key) return null;
@@ -1120,13 +1140,15 @@ function resolveProviderWithFallback(requestedModelId: string): { provider: any;
     process.env.AI_MODEL || DEFAULT_FREE_MODEL,
     fallbackModel,
     DEFAULT_FREE_MODEL,
+    DEFAULT_PRIMARY_MODEL,
     'deepseek-chat',
   ].filter(Boolean);
 
   const uniqueCandidates = Array.from(new Set(candidates));
   const triedProviders: string[] = [];
   for (const candidate of uniqueCandidates) {
-    const providerGuess = candidate.includes('deepseek') ? 'deepseek'
+    const providerGuess = candidate.toLowerCase().startsWith('glm') ? 'zai'
+      : candidate.includes('deepseek') ? 'deepseek'
       : candidate.includes('gemini') ? 'gemini' : 'anthropic';
     // Skip providers circuit-broken by a billing/credit error this session
     if (billingFailedProviders.has(providerGuess)) {
@@ -1141,7 +1163,8 @@ function resolveProviderWithFallback(requestedModelId: string): { provider: any;
       return { ...resolved, modelId: candidate };
     }
     // Track why this candidate was skipped
-    const provider = candidate.includes('deepseek') ? 'deepseek'
+    const provider = candidate.toLowerCase().startsWith('glm') ? 'zai'
+      : candidate.includes('deepseek') ? 'deepseek'
       : candidate.includes('gemini') ? 'gemini' : 'anthropic';
     if (!triedProviders.includes(provider)) triedProviders.push(provider);
   }
@@ -1186,23 +1209,23 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // Dynamic step budget: map request tier to a proportionate step ceiling.
   // Values must match TIER_MAX_STEPS in intentClassifier.ts.
   const _tier = promptIntent?.requestTier;
-  const MAX_STEPS = _tier === 'micro'   ?  6
-                  : _tier === 'fix'     ? 14
-                  : _tier === 'edit'    ? 18
-                  : _tier === 'feature' ? 22
-                  : _tier === 'build'   ? 30
+  const MAX_STEPS = _tier === 'micro'   ?  8
+                  : _tier === 'fix'     ? 28
+                  : _tier === 'edit'    ? 25
+                  : _tier === 'feature' ? 35
+                  : _tier === 'build'   ? 45
                   // Legacy fallback when no tier provided (e.g. old clients)
-                  : ((promptIntent?.isWebsiteBuild ?? false) || prompt.length > 600) ? 30 : 18;
+                  : ((promptIntent?.isWebsiteBuild ?? false) || prompt.length > 600) ? 45 : 25;
 
   // Tier-based token cap. The USD cost cap ($1.50) is the ultimate backstop.
   // These limits just prevent runaway loops — they must be high enough that
   // the final response step is never cut off (agent does work then goes silent).
   // Observed abort patterns: fix hits 124-130K, edit hits 239K → raised accordingly.
   const TIER_TOKEN_CAP = _tier === 'micro'   ?  80_000
-                       : _tier === 'fix'     ? 220_000
-                       : _tier === 'edit'    ? 320_000
-                       : _tier === 'feature' ? 420_000
-                       : /* build / legacy */  600_000;
+                       : _tier === 'fix'     ? 350_000
+                       : _tier === 'edit'    ? 450_000
+                       : _tier === 'feature' ? 600_000
+                       : /* build / legacy */  800_000;
   const RUN_TOKEN_CAP = process.env.AGENT_TOKEN_CAP
     ? Math.min(parseInt(process.env.AGENT_TOKEN_CAP, 10), TIER_TOKEN_CAP)
     : TIER_TOKEN_CAP;
@@ -1819,12 +1842,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // workflows (touch, read, write) that contradict plan-mode restrictions.
   const tierInstruction = runtimeMode === 'plan' ? ''
     : _tier === 'micro'
-      ? '\n\n# Efficiency Mode\nDo NOT write any text before your first tool call. No "I\'ll...", no "Let me...", no narration. Call `think` once (≤40 words), read the file, make the change, done. No blueprint. No extra files.\n\n**REQUIRED final message** — you MUST write exactly this format after the change:\n"I\'ve [verb] [what] in [filename]. [One sentence on what the user will now see.]"\nExample: "I\'ve changed the button color to indigo in Header.tsx. The nav bar buttons now match the brand palette."\nFORBIDDEN responses: "Done.", "OK.", "Done!", empty message, or any single-word reply.'
+      ? '\n\n# Efficiency Mode\nDo NOT write any text before your first tool call. Call `think` once (≤40 words), read the file, make the change, done.\n\n**REQUIRED final message** — write exactly this format:\n"I\'ve [verb] [what] in [filename]. [One sentence on what the user will now see.]"\nExample: "I\'ve changed the button color to indigo in Header.tsx. The nav bar buttons now match the brand palette."\nFORBIDDEN: "Done.", "OK.", empty message, or any single-word reply.'
       : _tier === 'fix'
-        ? '\n\n# Fix Mode\nDo NOT write any text before your first tool call. No "I\'ll look into...", no acknowledgments — start with tools directly. Do NOT run the full blueprint protocol. Call `think` once — identify root cause, read the broken file, fix the exact broken lines, call `get_build_errors` once to verify.\n\n**REQUIRED final message** — after the fix you MUST write AT LEAST 2 sentences:\n1. What the error was and which file it was in.\n2. What you changed to fix it.\n3. (If relevant) anything the user needs to know.\nFORBIDDEN: "Done.", "Fixed.", "OK.", or any single-word/single-sentence reply.'
+        ? '\n\n# Fix Mode\nDo NOT write any text before your first tool call. Start with tools directly. Call `think` once — identify root cause, read the broken file, fix it, verify with `get_build_errors`.\n\n**Progress narration** — after each file you fix, write one short sentence like "Fixed the import error in Navbar.tsx — now checking the build." before moving to the next file.\n\n**REQUIRED final message** — AT LEAST 2 sentences:\n1. What the error was and which file it was in.\n2. What you changed to fix it.\nFORBIDDEN: "Done.", "Fixed.", "OK.", or any single-word reply.'
         : _tier === 'edit'
-          ? '\n\n# Edit Mode\nDo NOT write any text before your first tool call. No "I\'ll...", no "Let me...", no narration before tools. Start with tool calls directly. Call `think` once — list the 1–3 files you will touch and verify each import resolves. Read files before editing. Do NOT rewrite unrelated components.\n\n**HARD FILE LIMIT** — if you find yourself needing to write or edit MORE than 5 files, STOP immediately after the 5th file. Do not continue. Write a message telling the user: which files you changed, what still needs to be done, and that they should send a follow-up message to continue. Do NOT silently write 10-30 files in edit mode.\n\n**REQUIRED final message** — after all file changes you MUST write AT LEAST 2 sentences:\n1. Start with "I\'ve [verb]..." and name the specific file and change.\n2. Explain what the user will see or experience differently now.\nExample: "I\'ve added a play/pause button to DerivativePlot.tsx. It uses a CSS transition on the graph values and pauses automatically when the user drags the slider."\nFORBIDDEN: "Done.", "Updated.", "OK.", any single word, or any message under 15 words.'
-          : '\n\nDo NOT write any text before your first tool call. Start with tool calls directly — no narration, no "I\'ll build...", no acknowledgments.\n\n**REQUIRED final message** — after ALL file changes, write AT LEAST 3 sentences:\n1. What you built/changed and in which files.\n2. How the new feature works from the user\'s perspective.\n3. Any important technical decisions or things the user should know.\nFORBIDDEN: "Done.", "Complete.", or any response under 20 words.';
+          ? '\n\n# Edit Mode\nDo NOT write any text before your first tool call. Start with tool calls directly. Call `think` once — list the 1–3 files you will touch.\n\n**Progress narration (REQUIRED)** — after each file you write or edit, output one short sentence telling the user what you just did and what you\'re doing next. Examples:\n- "Updated the Navbar — now working on the hero section."\n- "Added the cart drawer to CartDrawer.tsx — updating the context next."\nThis keeps the user informed while you work.\n\n**HARD FILE LIMIT** — more than 5 files? STOP after the 5th, tell the user what changed and what remains.\n\n**REQUIRED final message** — AT LEAST 2 sentences: what changed and what the user will see differently.\nFORBIDDEN: "Done.", "OK.", any single word, or any message under 15 words.'
+          : '\n\nDo NOT write any text before your first tool call. Start with tool calls directly.\n\n**Progress narration (REQUIRED)** — after each file you write or create, output one short sentence telling the user what you just did and what comes next. Keep it brief and specific. Examples:\n- "Built the Navbar with sticky positioning and a cart icon — now creating the hero banner."\n- "Added HeroBanner.tsx with a full-width gradient — moving on to the categories section."\n- "Categories grid done — now wiring up the product cards."\nThis narration shows the user the build is progressing in real time.\n\n**REQUIRED final message** — AT LEAST 3 sentences after ALL changes:\n1. What you built and in which files.\n2. How the feature works from the user\'s perspective.\n3. Any important decisions the user should know.\nFORBIDDEN: "Done.", "Complete.", or any response under 20 words.';
 
   const boundedFileTree = clampContextSection('Project file tree', liveFileTree, MAX_FILE_TREE_CHARS);
 
@@ -1889,21 +1912,27 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   const secretsBlock = (() => {
     if (!projectSecrets || projectSecrets.length === 0) return '';
     const lines = projectSecrets.map(s => `${s.key_name}=${s.key_value}`).join('\n');
-    const hasSb = projectSecrets.some(s => s.key_name === 'VITE_SUPABASE_URL');
-    const hasDb = projectSecrets.some(s => s.key_name === 'VITE_DB_API_URL');
+    const hasSb  = projectSecrets.some(s => s.key_name === 'VITE_SUPABASE_URL');
+    const hasDb  = projectSecrets.some(s => s.key_name === 'VITE_DB_API_URL');
+    const hasEcg = projectSecrets.some(s => s.key_name === 'ECG_PORTAL_TOKEN');
+
     const sbNote = hasSb
       ? '\n\nFor Supabase auth/data in generated code ALWAYS use `import.meta.env.VITE_SUPABASE_URL` and `import.meta.env.VITE_SUPABASE_ANON_KEY`. NEVER hardcode any `*.supabase.co` URL — it will cause CORS errors in the preview.'
       : '';
     const dbNote = hasDb
       ? '\n\nFor the hosted database use PostgREST calls to `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` with headers `{ "Authorization": "Bearer <VITE_DB_ANON_KEY>", "apikey": "<VITE_DB_ANON_KEY>" }`. Call `get_database_schema` to inspect tables, `query_database` to run SQL.'
       : '';
-    return `\n\n# Project Environment Variables\n\nThe following secrets are available as \`import.meta.env.VITE_XXX\` (frontend) or \`process.env.XXX\` (backend). NEVER echo, print, log, or reveal their values in chat responses — treat them as confidential.${sbNote}${dbNote}\n\n\`\`\`\n${lines}\n\`\`\``;
+    const ecgNote = hasEcg
+      ? '\n\n## eCG Agents Portal Integration\n\nThis project is linked to the eCG Agents Portal. Follow these rules strictly:\n\n**Frontend (React) code** — NEVER call the portal API directly from the browser. All portal data goes through the eComGear server proxy:\n```ts\n// In src/lib/ecgClient.ts — already configured\nconst url = `${import.meta.env.VITE_ECG_PROXY_URL}/api/v1/ecg-proxy${path}?projectId=${import.meta.env.VITE_PROJECT_ID}`;\n```\nUse `ecgApi` from `src/lib/ecgClient.ts` for all data fetching. Do not use `ECG_PORTAL_TOKEN` — it is server-side only.\n\n**Edge functions** — use the pre-injected `ecg` helper (not `fetch`). ECG credentials are injected server-side:\n```js\n// Agents\nconst agents = await ecg.get(\'/agents\');\n// Approve a post\nawait ecg.patch(\'/planned-posts/\' + params.postId, { status: \'approved\' });\n// Run history\nconst runs = await ecg.get(\'/runs\');\n// LLM call (uses the configured AI model, key stays server-side)\nconst reply = await ecg.llm([\n  { role: \'user\', content: \'Summarize agent performance\' }\n], \'You are an eCG assistant.\');\n```\n`ecg` is `null` for projects without portal integration — check before using.\n\n**AI chat** — the dashboard has a built-in `AiAssistantPage.tsx` that calls `/api/v1/ecg-proxy/ai-chat`. Extend it, do not duplicate it.\n\n**Security rule** — NEVER expose `ECG_PORTAL_TOKEN`, `ECG_LLM_API_KEY`, or any `ECG_*` secret in frontend code, logs, or responses.'
+      : '';
+
+    return `\n\n# Project Environment Variables\n\nThe following secrets are available as \`import.meta.env.VITE_XXX\` (frontend) or \`process.env.XXX\` (backend). NEVER echo, print, log, or reveal their values in chat responses — treat them as confidential.${sbNote}${dbNote}${ecgNote}\n\n\`\`\`\n${lines}\n\`\`\``;
   })();
 
   // micro: no modeInstruction (MICRO_SYSTEM_PROMPT already embeds directives)
   // edit: compact instruction — no phased build, no verbose rules (saves ~1,500 tokens)
   // plan mode always wins — tier instructions must never override plan-mode restrictions
-  const EDIT_MODE_INSTRUCTION = '\n\n# Runtime Mode Instruction\nExecute immediately — start with tool calls directly. Do NOT write any text before your first tool call. No "I\'ll...", no "Let me...", no acknowledgments, no narration before tools. Do NOT ask for confirmation. Do NOT rewrite files that are not involved in the change. If intent is unclear, ask one short question before calling tools.\n\n**REQUIRED final message** — once all file changes are done, you MUST write AT LEAST 2 full sentences. Start with "I\'ve [verb]..." and name the file and the exact change. Then explain what the user will see differently. FORBIDDEN: writing "Done.", "OK.", "Updated.", any single word, or any message shorter than 15 words. This is mandatory — not optional.';
+  const EDIT_MODE_INSTRUCTION = '\n\n# Runtime Mode Instruction\nExecute immediately — start with tool calls directly. Do NOT write any text before your first tool call. No "I\'ll...", no "Let me...", no acknowledgments before tools. Do NOT ask for confirmation. Do NOT rewrite files not involved in the change. If intent is unclear, ask one short question before calling tools.\n\n**Progress narration (REQUIRED)** — after each file you edit or create, write one short sentence telling the user what you just changed and what you\'re doing next. Example: "Updated the header in Navbar.tsx — now fixing the color in HeroBanner.tsx." This keeps the user informed while you work.\n\n**REQUIRED final message** — once all changes are done, write AT LEAST 2 full sentences. Start with "I\'ve [verb]..." and name the files and exact changes. Then explain what the user will see differently. FORBIDDEN: "Done.", "OK.", "Updated.", any single word, or any message shorter than 15 words.';
   const effectiveModeInstruction = runtimeMode === 'plan' ? modeInstruction
     : _tier === 'micro' ? ''
     : _tier === 'edit' ? EDIT_MODE_INSTRUCTION

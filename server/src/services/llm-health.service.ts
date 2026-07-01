@@ -112,6 +112,32 @@ async function testGemini(apiKey: string): Promise<{ ok: boolean; reason: string
   }
 }
 
+async function testZai(apiKey: string): Promise<{ ok: boolean; reason: string }> {
+  try {
+    const res = await fetch('https://api.z.ai/api/paas/v4/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'glm-4.7-flash',
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (res.status === 200) return { ok: true, reason: 'OK' };
+    if (res.status === 401) return { ok: false, reason: 'Invalid API key (401)' };
+    if (res.status === 402) return { ok: false, reason: 'Insufficient balance (402)' };
+    if (res.status === 403) return { ok: false, reason: 'Forbidden (403)' };
+    return { ok: true, reason: `HTTP ${res.status} — key accepted` };
+  } catch (err: any) {
+    return { ok: true, reason: `Network check skipped: ${err?.message ?? 'timeout'}` };
+  }
+}
+
 // ─── Public types ─────────────────────────────────────────────────────────────
 
 export type ProviderTestResult = {
@@ -124,6 +150,7 @@ export type AllProviderResults = {
   anthropic: ProviderTestResult;
   deepseek: ProviderTestResult;
   gemini: ProviderTestResult;
+  zai?: ProviderTestResult;
 };
 
 // ─── Core: test all providers ─────────────────────────────────────────────────
@@ -135,16 +162,19 @@ export async function testAllProviders(): Promise<AllProviderResults> {
   const noKey = (provider: string) =>
     Promise.resolve({ ok: false, reason: `No ${provider} API key configured` });
 
-  const [anthropic, deepseek, gemini] = await Promise.all([
+  const zaiKey = state.apiKeys.zai || process.env.ZAI_API_KEY || '';
+  const [anthropic, deepseek, gemini, zai] = await Promise.all([
     state.apiKeys.anthropic ? testAnthropic(state.apiKeys.anthropic) : noKey('Anthropic'),
     state.apiKeys.deepseek  ? testDeepSeek(state.apiKeys.deepseek)   : noKey('DeepSeek'),
     state.apiKeys.gemini    ? testGemini(state.apiKeys.gemini)        : noKey('Gemini'),
+    zaiKey                  ? testZai(zaiKey)                         : noKey('z.ai'),
   ]);
 
   return {
     anthropic: { ...anthropic, testedAt: now },
     deepseek:  { ...deepseek,  testedAt: now },
     gemini:    { ...gemini,    testedAt: now },
+    zai:       { ...zai,       testedAt: now },
   };
 }
 
@@ -180,6 +210,9 @@ export async function testAndAutoDisableProviders(): Promise<AllProviderResults>
         enabled:         results.gemini.ok,
         fallbackEnabled: results.gemini.ok,
       },
+      zai: {
+        enabled: results.zai?.ok ?? true,
+      } as any,
     },
   });
 
