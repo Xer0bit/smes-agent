@@ -83,6 +83,8 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response
     modules:  portalData.modules,
     agentIds: portalData.agentIds,
     config:   portalData.config ?? {},
+    projectId: project.id,
+    proxyUrl:  ECOMGEAR_SERVER_URL,
   });
 
   const filesArray = Object.entries(templateFiles).map(([filePath, content]) => ({ path: filePath, content }));

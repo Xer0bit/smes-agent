@@ -1,5 +1,6 @@
-const SERVER = (import.meta.env.VITE_ECG_PROXY_URL || '').replace(/\/$/, '');
-const PROJECT_ID = import.meta.env.VITE_PROJECT_ID || '';
+import { ECG } from '../ecg-config';
+const SERVER = ECG.proxyUrl.replace(/\/$/, '');
+const PROJECT_ID = ECG.projectId;
 
 async function req(method: string, path: string, body?: unknown) {
   const sep = path.includes('?') ? '&' : '?';
