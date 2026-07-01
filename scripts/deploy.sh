@@ -422,6 +422,7 @@ AI_MODEL=gemini-3.1-pro-preview
 AI_FALLBACK_MODEL=gemini-2.5-flash
 ECG_PORTAL_URL=${ECG_PORTAL_URL}
 ECG_SERVICE_KEY=${ECG_SERVICE_KEY}
+ECOMGEAR_SERVER_URL=${ECOMGEAR_SERVER_URL}
 # LLM API keys are managed via the Admin panel — stored in Supabase, not here.
 ENV
 
