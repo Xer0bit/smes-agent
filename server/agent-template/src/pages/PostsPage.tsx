@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle, XCircle, FileText } from 'lucide-react';
+import { CheckCircle, XCircle, FileText, Plus, Trash2, Pencil, X } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import StatusBadge from '../components/StatusBadge';
 
@@ -17,10 +17,15 @@ export default function PostsPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('pending');
   const [acting, setActing] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [deletingPost, setDeletingPost] = useState<any>(null);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     ecgApi.posts.list()
       .then(d => setPosts(Array.isArray(d) ? d : (d.posts ?? d.plannedPosts ?? [])))
+      .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 
@@ -33,12 +38,53 @@ export default function PostsPage() {
       if (action === 'approve') await ecgApi.posts.approve(id);
       else await ecgApi.posts.reject(id);
       setPosts(prev => prev.map(p => p.id === id ? { ...p, status: action === 'approve' ? 'approved' : 'rejected' } : p));
+    } catch (e: any) {
+      setError(e.message);
     } finally { setActing(null); }
   }
 
+  const handleDelete = async () => {
+    if (!deletingPost?.id) return;
+    setModalLoading(true);
+    try {
+      await ecgApi.posts.delete(deletingPost.id);
+      setPosts(posts.filter(p => p.id !== deletingPost.id));
+      setDeletingPost(null);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const handleCreate = async (postData: any) => {
+    setModalLoading(true);
+    try {
+      const created = await ecgApi.posts.create(postData);
+      setPosts([...posts, created]);
+      setShowCreate(false);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
-      <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Planned Posts</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Planned Posts</h1>
+        <button
+          onClick={() => setShowCreate(true)}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white"
+          style={{ background: 'var(--accent)' }}
+        >
+          <Plus className="w-4 h-4" /> New Post
+        </button>
+      </div>
+
+      {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</div>}
+
       <div className="flex gap-1 p-1 rounded-xl w-fit" style={{ background: 'var(--border)' }}>
         {TABS.map(t => (
           <button key={t} onClick={() => setTab(t)}
@@ -62,7 +108,16 @@ export default function PostsPage() {
                     <FileText className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--muted)' }} />
                     <p className="text-sm leading-relaxed" style={{ color: 'var(--text)' }}>{p.content ?? p.body ?? '(no content)'}</p>
                   </div>
-                  <StatusBadge status={p.status} />
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={p.status} />
+                    <button
+                      onClick={() => setDeletingPost(p)}
+                      className="p-1 rounded hover:bg-red-50"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-600" />
+                    </button>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -88,8 +143,138 @@ export default function PostsPage() {
           })}
         </div>
       )}
+
+      {showCreate && (
+        <PostModal
+          onClose={() => setShowCreate(false)}
+          onSave={handleCreate}
+          loading={modalLoading}
+        />
+      )}
+
+      {deletingPost && (
+        <DeleteConfirmModal
+          itemName="this post"
+          onClose={() => setDeletingPost(null)}
+          onConfirm={handleDelete}
+          loading={modalLoading}
+        />
+      )}
     </div>
   );
 }
 
 function Spinner() { return <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div>; }
+
+function PostModal({ onClose, onSave, loading }: {
+  onClose: () => void;
+  onSave: (data: any) => void;
+  loading: boolean;
+}) {
+  const [content, setContent] = useState('');
+  const [platform, setPlatform] = useState('linkedin');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!content.trim()) return;
+    onSave({ content: content.trim(), platform });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="rounded-xl shadow-xl w-full max-w-lg p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>New Post</h2>
+          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
+            <X className="w-5 h-5" style={{ color: 'var(--muted)' }} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Content</label>
+            <textarea
+              value={content}
+              onChange={e => setContent(e.target.value)}
+              rows={6}
+              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 resize-none"
+              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+              placeholder="Write your post content here..."
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Platform</label>
+            <select
+              value={platform}
+              onChange={e => setPlatform(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
+              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+            >
+              <option value="linkedin">LinkedIn</option>
+              <option value="twitter">Twitter</option>
+              <option value="x">X</option>
+              <option value="instagram">Instagram</option>
+              <option value="facebook">Facebook</option>
+            </select>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2 rounded-lg border"
+              style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !content.trim()}
+              className="flex-1 px-4 py-2 rounded-lg text-white disabled:opacity-50"
+              style={{ background: 'var(--accent)' }}
+            >
+              {loading ? 'Creating...' : 'Create Post'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function DeleteConfirmModal({ itemName, onClose, onConfirm, loading }: {
+  itemName: string;
+  onClose: () => void;
+  onConfirm: () => void;
+  loading: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
+        <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Delete Post</h2>
+        <p className="text-sm" style={{ color: 'var(--muted)' }}>
+          Are you sure you want to delete {itemName}? This action cannot be undone.
+        </p>
+        <div className="flex gap-3 pt-2">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="flex-1 px-4 py-2 rounded-lg border"
+            style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 disabled:opacity-50"
+          >
+            {loading ? 'Deleting...' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

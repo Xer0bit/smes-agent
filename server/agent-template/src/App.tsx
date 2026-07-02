@@ -8,6 +8,7 @@ import PostsPage from './pages/PostsPage';
 import ConnectorsPage from './pages/ConnectorsPage';
 import RunsPage from './pages/RunsPage';
 import KnowledgePage from './pages/KnowledgePage';
+import SettingsPage from './pages/SettingsPage';
 
 const has = (m: string) => ECG.modules.includes(m);
 
@@ -23,6 +24,7 @@ export default function App() {
           {has('connectors') && <Route path="/connectors" element={<ConnectorsPage />} />}
           {has('runs')       && <Route path="/runs"       element={<RunsPage />} />}
           {has('knowledge')  && <Route path="/knowledge"  element={<KnowledgePage />} />}
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

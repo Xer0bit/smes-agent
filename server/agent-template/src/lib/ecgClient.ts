@@ -23,6 +23,22 @@ async function req(method: string, path: string, body?: unknown) {
   return res.json();
 }
 
+async function reqMultipart(path: string, formData: FormData) {
+  const sep = path.includes('?') ? '&' : '?';
+  const url = `${SERVER}/api/v1/ecg-proxy${path}${sep}projectId=${PROJECT_ID}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { ...accessHeaders() },
+    body: formData,
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error((e as any).error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function chat(messages: { role: string; content: string }[]) {
   const url = `${SERVER}/api/v1/ecg-chat?projectId=${PROJECT_ID}`;
   const res = await fetch(url, {
@@ -39,15 +55,87 @@ export async function chat(messages: { role: string; content: string }[]) {
 }
 
 export const ecgApi = {
-  agents:     { list: () => req('GET', '/agents') },
-  schedulers: { list: () => req('GET', '/schedulers') },
+  // Agent templates
+  templates:  { list: () => req('GET', '/agent-templates') },
+
+  // Agents
+  agents: {
+    list:    () => req('GET', '/agents'),
+    create:  (data: any) => req('POST', '/agents', data),
+    update:  (id: string, data: any) => req('PATCH', `/agents/${id}`, data),
+    delete:  (id: string) => req('DELETE', `/agents/${id}`),
+    run:     (id: string) => req('POST', `/agents/${id}/run`),
+  },
+
+  // Schedulers
+  schedulers: {
+    list:    () => req('GET', '/schedulers'),
+    create:  (data: any) => req('POST', '/schedulers', data),
+    update:  (id: string, data: any) => req('PATCH', `/schedulers/${id}`, data),
+    delete:  (id: string) => req('DELETE', `/schedulers/${id}`),
+    trigger: (id: string) => req('POST', `/schedulers/${id}/trigger`),
+  },
+
+  // Planned posts
   posts: {
     list:    () => req('GET', '/planned-posts'),
+    create:  (data: any) => req('POST', '/planned-posts', data),
+    delete:  (id: string) => req('DELETE', `/planned-posts/${id}`),
     approve: (id: string) => req('PATCH', `/planned-posts/${id}`, { status: 'approved' }),
     reject:  (id: string) => req('PATCH', `/planned-posts/${id}`, { status: 'rejected' }),
   },
-  connectors: { list: () => req('GET', '/connectors') },
-  runs:       { list: () => req('GET', '/runs') },
-  knowledge:  { list: () => req('GET', '/knowledge') },
-  summary:    { get:  () => req('GET', '/summary') },
+
+  // Connectors
+  connectors: {
+    list:    () => req('GET', '/connectors'),
+    create:  (data: any) => req('POST', '/connectors', data),
+    update:  (id: string, data: any) => req('PATCH', `/connectors/${id}`, data),
+    delete:  (id: string) => req('DELETE', `/connectors/${id}`),
+  },
+
+  // Runs
+  runs: { list: () => req('GET', '/runs') },
+
+  // Knowledge
+  knowledge: {
+    list:   () => req('GET', '/knowledge'),
+    upload: (formData: FormData) => reqMultipart('/knowledge/upload', formData),
+    delete: (id: string) => req('DELETE', `/knowledge/${id}`),
+  },
+
+  // Knowledge bases
+  knowledgeBases: {
+    list:    () => req('GET', '/knowledge-bases'),
+    create:  (data: any) => req('POST', '/knowledge-bases', data),
+    update:  (id: string, data: any) => req('PATCH', `/knowledge-bases/${id}`, data),
+    delete:  (id: string) => req('DELETE', `/knowledge-bases/${id}`),
+  },
+
+  // Org settings
+  org: {
+    get:    () => req('GET', '/org'),
+    update: (data: any) => req('PATCH', '/org', data),
+  },
+
+  // Team
+  team: {
+    list:    () => req('GET', '/team'),
+    create:  (data: any) => req('POST', '/team', data),
+    delete:  (id: string) => req('DELETE', `/team/${id}`),
+  },
+
+  // API keys
+  apiKeys: {
+    list:   () => req('GET', '/api-keys'),
+    create: (data: any) => req('POST', '/api-keys', data),
+    revoke: (id: string) => req('PATCH', `/api-keys/${id}/revoke`),
+  },
+
+  // Billing
+  billing: {
+    invoices: () => req('GET', '/billing/invoices'),
+  },
+
+  // Summary
+  summary: { get: () => req('GET', '/summary') },
 };

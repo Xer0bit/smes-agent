@@ -1,10 +1,10 @@
 import { ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, LucideIcon } from 'lucide-react';
+import { Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings, LucideIcon } from 'lucide-react';
 import { ECG } from '../ecg-config';
 
 const ALL_ICONS: Record<string, LucideIcon> = {
-  Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare,
+  Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings,
 };
 
 const ALL_NAV = [
@@ -15,6 +15,7 @@ const ALL_NAV = [
   { id: 'connectors', label: 'Connectors',    path: '/connectors', icon: 'Plug' },
   { id: 'runs',       label: 'Run History',   path: '/runs',       icon: 'History' },
   { id: 'knowledge',  label: 'Knowledge',     path: '/knowledge',  icon: 'BookOpen' },
+  { id: 'settings',   label: 'Settings',      path: '/settings',   icon: 'Settings', always: true },
 ];
 
 // Order follows ECG.modules (set by drag-and-drop reordering in Dashboard

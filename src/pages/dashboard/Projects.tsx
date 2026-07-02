@@ -227,13 +227,13 @@ export default function DashboardProjects() {
           thumbnail_url,
           organizations(name)
         `)
-        .in('status', ['active', 'deleted', 'suspended'])
+        .eq('status', 'active')
         .order('created_at', { ascending: false });
 
       if (userOrgIds.length > 0) {
-        projectQuery = projectQuery.or(`user_id.eq.${user.id},organization_id.in.(${userOrgIds.join(',')})`);
+        projectQuery = projectQuery.or(`user_id.eq.${user.id},created_by.eq.${user.id},organization_id.in.(${userOrgIds.join(',')})`);
       } else {
-        projectQuery = projectQuery.eq('user_id', user.id);
+        projectQuery = projectQuery.or(`user_id.eq.${user.id},created_by.eq.${user.id}`);
       }
 
       const { data, error } = await projectQuery;
