@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../integrations/supabase/client';
 import { getGenServerUrl } from '../config/external-api';
+import ecgLogo from '../assets/ecg-logo.png';
 
 type Phase = 'loading' | 'needs-auth' | 'creating' | 'done' | 'error';
 type StepStatus = 'pending' | 'active' | 'done' | 'error';
@@ -66,6 +67,18 @@ export default function EcgConnectPage() {
         body: JSON.stringify({ token }),
       });
 
+      // Backward/forward compatible: only stream-parse if the server actually
+      // sent SSE. A plain JSON response (older server, or an error response
+      // sent before SSE headers were set) falls back to the old shape.
+      const isStream = (res.headers.get('content-type') ?? '').includes('text/event-stream');
+      if (!isStream) {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+        setPhase('done');
+        navigate(`/project/${data.projectId}`);
+        return;
+      }
+
       if (!res.body) throw new Error('No response stream');
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -118,10 +131,8 @@ export default function EcgConnectPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 max-w-sm w-full text-center space-y-4">
-        <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center mx-auto">
-          <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
+        <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center mx-auto overflow-hidden">
+          <img src={ecgLogo} alt="eCG Agents Portal" className="w-8 h-8 object-contain" />
         </div>
         <div>
           <h1 className="text-lg font-semibold text-gray-900">eCG Agents Portal</h1>
