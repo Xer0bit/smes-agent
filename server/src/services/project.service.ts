@@ -19,6 +19,7 @@ export interface CreateProjectParams {
     name: string;
     description?: string;
     template?: string;
+    organizationId?: string;
 }
 
 export class ProjectService {
@@ -40,7 +41,8 @@ export class ProjectService {
                 docker_path: dockerPath,
                 server_path: serverPath,
                 template_type: params.template || 'vite-react-ts',
-                status: 'active'
+                status: 'active',
+                organization_id: params.organizationId ?? null
             })
             .select()
             .single();

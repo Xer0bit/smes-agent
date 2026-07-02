@@ -33,11 +33,23 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response
   const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': heartbeat\n\n'); }, 15_000);
 
   try {
-    const { token } = req.body as { token?: string };
+    const { token, organizationId } = req.body as { token?: string; organizationId?: string };
     if (!token) {
       sseWrite(res, 'error', { message: 'token is required' });
       res.end();
       return;
+    }
+
+    // If an eComGear organization was selected, verify the caller actually
+    // belongs to it before letting the new project be filed under it.
+    if (organizationId) {
+      const { data: owned } = await supabase.from('organizations').select('id').eq('id', organizationId).eq('created_by', req.user!.id).maybeSingle();
+      const { data: membership } = owned ? { data: null } : await supabase.from('org_members').select('org_id').eq('org_id', organizationId).eq('user_id', req.user!.id).maybeSingle();
+      if (!owned && !membership) {
+        sseWrite(res, 'error', { message: 'You do not have access to that organization' });
+        res.end();
+        return;
+      }
     }
 
     // Exchange token with the portal (server-to-server)
@@ -76,6 +88,7 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response
       name: projectName,
       description: 'Custom eCG Agents Portal UI — built with App Builder',
       template: 'ecg-dashboard',
+      organizationId,
     });
     sseWrite(res, 'step', { id: 'project_created', status: 'done' });
 

@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../integrations/supabase/client';
 import { getGenServerUrl } from '../config/external-api';
+import { useOrganization } from '../contexts/OrganizationContext';
 import ecgLogo from '../assets/ecg-logo.png';
 
-type Phase = 'loading' | 'needs-auth' | 'creating' | 'done' | 'error';
+type Phase = 'loading' | 'needs-auth' | 'select-org' | 'creating' | 'done' | 'error';
 type StepStatus = 'pending' | 'active' | 'done' | 'error';
 
 const STEPS: { id: string; label: string }[] = [
@@ -21,9 +22,12 @@ export default function EcgConnectPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const token = params.get('token');
+  const { organizations, loadingOrganizations, refreshOrganization } = useOrganization();
 
   const [phase, setPhase] = useState<Phase>('loading');
   const [error, setError] = useState('');
+  const [accessToken, setAccessToken] = useState('');
+  const [selectedOrgId, setSelectedOrgId] = useState('');
   const [stepStatus, setStepStatus] = useState<Record<string, StepStatus>>(
     Object.fromEntries(STEPS.map(s => [s.id, 'pending'])),
   );
@@ -39,8 +43,19 @@ export default function EcgConnectPage() {
       setPhase('needs-auth');
       return;
     }
-    await createProject(session.access_token);
+    setAccessToken(session.access_token);
+    await refreshOrganization(session.user);
+    setPhase('select-org');
   }
+
+  // Zero or one accessible organization → nothing to choose, proceed straight
+  // through. More than one → wait on the select-org screen for the user's pick.
+  useEffect(() => {
+    if (phase !== 'select-org' || loadingOrganizations) return;
+    if (organizations.length <= 1) {
+      createProject(accessToken, organizations[0]?.id);
+    }
+  }, [phase, loadingOrganizations, organizations, accessToken]);
 
   function markStep(id: string, status: StepStatus) {
     setStepStatus(prev => {
@@ -54,7 +69,7 @@ export default function EcgConnectPage() {
     });
   }
 
-  async function createProject(accessToken: string) {
+  async function createProject(sessionToken: string, organizationId?: string) {
     setPhase('creating');
     setStepStatus(prev => ({ ...prev, [STEPS[0].id]: 'active' }));
     try {
@@ -62,9 +77,9 @@ export default function EcgConnectPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${sessionToken}`,
         },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({ token, organizationId }),
       });
 
       // Backward/forward compatible: only stream-parse if the server actually
@@ -156,6 +171,40 @@ export default function EcgConnectPage() {
               Sign in to eComGear
             </button>
           </div>
+        )}
+
+        {phase === 'select-org' && (
+          loadingOrganizations ? (
+            <div className="flex items-center justify-center gap-2 text-gray-500 text-sm">
+              <span className="w-4 h-4 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin inline-block" />
+              Loading organizations…
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600 text-left">Choose the eComGear organization to create this dashboard under:</p>
+              <ul className="text-left space-y-1.5 max-h-64 overflow-y-auto">
+                {organizations.map(org => (
+                  <li key={org.id}>
+                    <button
+                      onClick={() => setSelectedOrgId(org.id)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border text-left text-sm transition-colors ${
+                        selectedOrgId === org.id ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                      }`}
+                    >
+                      {org.name}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button
+                onClick={() => createProject(accessToken, selectedOrgId)}
+                disabled={!selectedOrgId}
+                className="w-full py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+              </button>
+            </div>
+          )
         )}
 
         {(phase === 'creating' || phase === 'done') && (
