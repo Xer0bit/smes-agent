@@ -6,6 +6,7 @@ import { initProjectFromTemplate } from '../services/baseTemplateService.js';
 import { seedEcgTemplate } from '../services/ecg-template.js';
 import path from 'node:path';
 import fs from 'node:fs';
+import { scryptSync, randomBytes } from 'node:crypto';
 
 const router = Router();
 
@@ -13,122 +14,169 @@ const PORTAL_API_URL = process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai';
 const ECG_SERVICE_KEY = process.env.ECG_SERVICE_KEY || '';
 const ECOMGEAR_SERVER_URL = process.env.ECOMGEAR_SERVER_URL || 'https://gen.ecomgear.dev';
 
+function sseWrite(res: Response, event: string, data: unknown): void {
+  if (res.writableEnded) return;
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
 // POST /api/v1/ecg-connect
 // One-time handoff from agent-portal: creates an eComGear project seeded with the
 // pre-built eCG dashboard template and stores portal credentials as project secrets.
+// Streams SSE 'step' events as each stage below actually completes, so the caller
+// can render real progress instead of a single spinner.
 router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { token } = req.body as { token?: string };
-  if (!token) {
-    res.status(400).json({ error: 'token is required' });
-    return;
-  }
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
 
-  // Exchange token with the portal (server-to-server)
-  let portalData: {
-    portalToken: string;
-    portalApiUrl: string;
-    orgId: string;
-    orgName: string;
-    agentIds: string[];
-    modules: string[];
-    config: Record<string, unknown>;
-  };
+  const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': heartbeat\n\n'); }, 15_000);
 
   try {
-    const verifyUrl = `${PORTAL_API_URL}/api/app-builder/verify/${token}`;
-    const verifyRes = await fetch(verifyUrl, {
-      headers: { 'x-service-key': ECG_SERVICE_KEY },
-    });
-    if (!verifyRes.ok) {
-      const body = await verifyRes.json().catch(() => ({ error: 'Token exchange failed' }));
-      res.status(verifyRes.status).json(body);
+    const { token } = req.body as { token?: string };
+    if (!token) {
+      sseWrite(res, 'error', { message: 'token is required' });
+      res.end();
       return;
     }
-    portalData = await verifyRes.json() as typeof portalData;
-  } catch {
-    res.status(502).json({ error: 'Could not reach eCG Agents Portal' });
-    return;
-  }
 
-  // Create the eComGear project record
-  const projectName = (portalData.config?.appName as string) || `${portalData.orgName || 'eCG'} Dashboard`;
-  const project = await projectService.createProject(req.user!.id, {
-    name: projectName,
-    description: 'Custom eCG Agents Portal UI — built with App Builder',
-    template: 'ecg-dashboard',
-  });
+    // Exchange token with the portal (server-to-server)
+    let portalData: {
+      portalToken: string;
+      portalApiUrl: string;
+      orgId: string;
+      orgName: string;
+      agentIds: string[];
+      modules: string[];
+      config: Record<string, unknown>;
+    };
 
-  const serverPath = `/var/ecomgear/projects/user_${req.user!.id.substring(0, 8)}_project_${project.id.substring(0, 8)}`;
+    try {
+      const verifyUrl = `${PORTAL_API_URL}/api/app-builder/verify/${token}`;
+      const verifyRes = await fetch(verifyUrl, {
+        headers: { 'x-service-key': ECG_SERVICE_KEY },
+      });
+      if (!verifyRes.ok) {
+        const body = await verifyRes.json().catch(() => ({ error: 'Token exchange failed' })) as { error?: string };
+        sseWrite(res, 'error', { message: body.error ?? 'Token exchange failed' });
+        res.end();
+        return;
+      }
+      portalData = await verifyRes.json() as typeof portalData;
+    } catch {
+      sseWrite(res, 'error', { message: 'Could not reach eCG Agents Portal' });
+      res.end();
+      return;
+    }
+    sseWrite(res, 'step', { id: 'token_exchange', status: 'done' });
 
-  try { await initProjectFromTemplate(serverPath); } catch { /* non-fatal in dev */ }
-
-  const llm = (portalData.config?.llm ?? {}) as { provider?: string; model?: string; apiKey?: string };
-  const secrets: { project_id: string; key_name: string; key_value: string }[] = [
-    { project_id: project.id, key_name: 'ECG_PORTAL_TOKEN', key_value: portalData.portalToken },
-    { project_id: project.id, key_name: 'ECG_ORG_ID',       key_value: portalData.orgId },
-  ];
-  if (llm.apiKey)  secrets.push({ project_id: project.id, key_name: 'ECG_LLM_API_KEY',  key_value: llm.apiKey });
-  if (llm.model)   secrets.push({ project_id: project.id, key_name: 'ECG_LLM_MODEL',    key_value: llm.model });
-  if (llm.provider) secrets.push({ project_id: project.id, key_name: 'ECG_LLM_PROVIDER', key_value: llm.provider });
-  await supabase.from('project_secrets').insert(secrets);
-
-  const envContent = `VITE_PROJECT_ID=${project.id}\nVITE_ECG_PROXY_URL=${ECOMGEAR_SERVER_URL}\n`;
-  try {
-    fs.mkdirSync(serverPath, { recursive: true });
-    fs.writeFileSync(path.join(serverPath, '.env.local'), envContent, 'utf8');
-  } catch { /* non-fatal in dev */ }
-
-  const templateFiles = seedEcgTemplate(serverPath, {
-    orgName:  portalData.orgName,
-    modules:  portalData.modules,
-    agentIds: portalData.agentIds,
-    config:   portalData.config ?? {},
-    projectId: project.id,
-    proxyUrl:  ECOMGEAR_SERVER_URL,
-  });
-
-  const filesArray = Object.entries(templateFiles).map(([filePath, content]) => ({ path: filePath, content }));
-
-  // Store files in Supabase revisions so the eComGear editor can read them.
-  const { data: existingRev } = await supabase
-    .from('revisions')
-    .select('id')
-    .eq('project_id', project.id)
-    .order('revision_number', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const revisionPayload = {
-    generated_files: { files: filesArray, summary: `eCG dashboard for ${portalData.orgName}` },
-    preview_status: 'pending' as const,
-  };
-
-  if (existingRev) {
-    await supabase.from('revisions').update(revisionPayload).eq('id', existingRev.id);
-  } else {
-    await supabase.from('revisions').insert({
-      project_id: project.id,
-      user_id: req.user!.id,
-      revision_number: 1,
-      prompt: 'eCG dashboard — generated by App Builder',
-      generated_code: filesArray.map(f => `// ${f.path}\n${f.content}`).join('\n\n---\n\n'),
-      ...revisionPayload,
-      is_published: false,
+    // Create the eComGear project record
+    const projectName = (portalData.config?.appName as string) || `${portalData.orgName || 'eCG'} Dashboard`;
+    const project = await projectService.createProject(req.user!.id, {
+      name: projectName,
+      description: 'Custom eCG Agents Portal UI — built with App Builder',
+      template: 'ecg-dashboard',
     });
-  }
+    sseWrite(res, 'step', { id: 'project_created', status: 'done' });
 
-  // Push template files to the preview service (VPS2) so the live preview works.
-  const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
-  const previewSecret = process.env.PREVIEW_UPDATE_SECRET || '';
-  try {
-    await fetch(`${previewServiceUrl}/preview/${project.id}/update`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-update-secret': previewSecret },
-      body: JSON.stringify({ files: filesArray, fullSync: true }),
+    const serverPath = `/var/ecomgear/projects/user_${req.user!.id.substring(0, 8)}_project_${project.id.substring(0, 8)}`;
+
+    try { await initProjectFromTemplate(serverPath); } catch { /* non-fatal in dev */ }
+    sseWrite(res, 'step', { id: 'template_import', status: 'done' });
+
+    const llm = (portalData.config?.llm ?? {}) as { provider?: string; model?: string; apiKey?: string };
+    const secrets: { project_id: string; key_name: string; key_value: string }[] = [
+      { project_id: project.id, key_name: 'ECG_PORTAL_TOKEN', key_value: portalData.portalToken },
+      { project_id: project.id, key_name: 'ECG_ORG_ID',       key_value: portalData.orgId },
+    ];
+    if (llm.apiKey)  secrets.push({ project_id: project.id, key_name: 'ECG_LLM_API_KEY',  key_value: llm.apiKey });
+    if (llm.model)   secrets.push({ project_id: project.id, key_name: 'ECG_LLM_MODEL',    key_value: llm.model });
+    if (llm.provider) secrets.push({ project_id: project.id, key_name: 'ECG_LLM_PROVIDER', key_value: llm.provider });
+
+    const accessPassword = portalData.config?.accessPassword as string | undefined;
+    if (accessPassword) {
+      const salt = randomBytes(16).toString('hex');
+      const hash = scryptSync(accessPassword, salt, 64).toString('hex');
+      secrets.push({ project_id: project.id, key_name: 'ECG_ACCESS_PASSWORD_HASH', key_value: hash });
+      secrets.push({ project_id: project.id, key_name: 'ECG_ACCESS_PASSWORD_SALT', key_value: salt });
+    }
+
+    const mcp = (portalData.config?.mcp ?? {}) as { enabled?: boolean; url?: string; authToken?: string };
+    if (mcp.enabled && mcp.url) {
+      secrets.push({ project_id: project.id, key_name: 'ECG_MCP_URL', key_value: mcp.url });
+      if (mcp.authToken) secrets.push({ project_id: project.id, key_name: 'ECG_MCP_TOKEN', key_value: mcp.authToken });
+    }
+
+    const envContent = `VITE_PROJECT_ID=${project.id}\nVITE_ECG_PROXY_URL=${ECOMGEAR_SERVER_URL}\n`;
+    try {
+      fs.mkdirSync(serverPath, { recursive: true });
+      fs.writeFileSync(path.join(serverPath, '.env.local'), envContent, 'utf8');
+    } catch { /* non-fatal in dev */ }
+
+    const templateFiles = seedEcgTemplate(serverPath, {
+      orgName:  portalData.orgName,
+      modules:  portalData.modules,
+      agentIds: portalData.agentIds,
+      config:   portalData.config ?? {},
+      projectId: project.id,
+      proxyUrl:  ECOMGEAR_SERVER_URL,
     });
-  } catch { /* preview push is non-fatal */ }
+    sseWrite(res, 'step', { id: 'modules_configured', status: 'done' });
 
-  res.json({ projectId: project.id });
+    const filesArray = Object.entries(templateFiles).map(([filePath, content]) => ({ path: filePath, content }));
+
+    await supabase.from('project_secrets').insert(secrets);
+    sseWrite(res, 'step', { id: 'secrets_stored', status: 'done' });
+
+    // Store files in Supabase revisions so the eComGear editor can read them.
+    const { data: existingRev } = await supabase
+      .from('revisions')
+      .select('id')
+      .eq('project_id', project.id)
+      .order('revision_number', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const revisionPayload = {
+      generated_files: { files: filesArray, summary: `eCG dashboard for ${portalData.orgName}` },
+      preview_status: 'pending' as const,
+    };
+
+    if (existingRev) {
+      await supabase.from('revisions').update(revisionPayload).eq('id', existingRev.id);
+    } else {
+      await supabase.from('revisions').insert({
+        project_id: project.id,
+        user_id: req.user!.id,
+        revision_number: 1,
+        prompt: 'eCG dashboard — generated by App Builder',
+        generated_code: filesArray.map(f => `// ${f.path}\n${f.content}`).join('\n\n---\n\n'),
+        ...revisionPayload,
+        is_published: false,
+      });
+    }
+    sseWrite(res, 'step', { id: 'revision_saved', status: 'done' });
+
+    // Push template files to the preview service (VPS2) so the live preview works.
+    const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
+    const previewSecret = process.env.PREVIEW_UPDATE_SECRET || '';
+    try {
+      await fetch(`${previewServiceUrl}/preview/${project.id}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-update-secret': previewSecret },
+        body: JSON.stringify({ files: filesArray, fullSync: true }),
+      });
+    } catch { /* preview push is non-fatal */ }
+    sseWrite(res, 'step', { id: 'preview_synced', status: 'done' });
+
+    sseWrite(res, 'done', { projectId: project.id });
+    res.end();
+  } catch (err) {
+    sseWrite(res, 'error', { message: err instanceof Error ? err.message : 'Unexpected error' });
+    res.end();
+  } finally {
+    clearInterval(heartbeat);
+  }
 });
 
 export default router;

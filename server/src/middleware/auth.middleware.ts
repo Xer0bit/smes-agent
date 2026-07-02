@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { supabaseAuth } from '../config/database.js';
 import { logger } from '../utils/logger.js';
+import { verifyDashboardAccessToken } from '../utils/dashboardAccessToken.js';
 
 export interface AuthenticatedRequest extends Request {
     user?: {
@@ -8,6 +9,7 @@ export interface AuthenticatedRequest extends Request {
         email: string;
         role?: string;
     };
+    dashboardAccessProjectId?: string;
 }
 
 export async function authMiddleware(
@@ -91,6 +93,22 @@ export async function optionalAuthMiddleware(
         // Continue without authentication
         next();
     }
+}
+
+// Lets a deployed eCG dashboard call ecg-proxy/ecg-chat without an eComGear
+// account, via the token issued by POST /api/v1/ecg-access. Never rejects —
+// route handlers decide what to do when dashboardAccessProjectId is unset.
+export function dashboardAccessMiddleware(
+    req: AuthenticatedRequest,
+    _res: Response,
+    next: NextFunction
+): void {
+    const token = req.headers['x-dashboard-access'];
+    if (typeof token === 'string') {
+        const projectId = verifyDashboardAccessToken(token);
+        if (projectId) req.dashboardAccessProjectId = projectId;
+    }
+    next();
 }
 
 export default authMiddleware;

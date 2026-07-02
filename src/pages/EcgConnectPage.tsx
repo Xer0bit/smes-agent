@@ -4,6 +4,17 @@ import { supabase } from '../integrations/supabase/client';
 import { getGenServerUrl } from '../config/external-api';
 
 type Phase = 'loading' | 'needs-auth' | 'creating' | 'done' | 'error';
+type StepStatus = 'pending' | 'active' | 'done' | 'error';
+
+const STEPS: { id: string; label: string }[] = [
+  { id: 'token_exchange', label: 'Verifying launch token' },
+  { id: 'project_created', label: 'Creating project' },
+  { id: 'template_import', label: 'Importing base dashboard' },
+  { id: 'modules_configured', label: 'Configuring modules' },
+  { id: 'secrets_stored', label: 'Storing credentials' },
+  { id: 'revision_saved', label: 'Saving dashboard files' },
+  { id: 'preview_synced', label: 'Syncing live preview' },
+];
 
 export default function EcgConnectPage() {
   const [params] = useSearchParams();
@@ -12,6 +23,9 @@ export default function EcgConnectPage() {
 
   const [phase, setPhase] = useState<Phase>('loading');
   const [error, setError] = useState('');
+  const [stepStatus, setStepStatus] = useState<Record<string, StepStatus>>(
+    Object.fromEntries(STEPS.map(s => [s.id, 'pending'])),
+  );
 
   useEffect(() => {
     if (!token) { setError('Missing launch token'); setPhase('error'); return; }
@@ -27,8 +41,21 @@ export default function EcgConnectPage() {
     await createProject(session.access_token);
   }
 
+  function markStep(id: string, status: StepStatus) {
+    setStepStatus(prev => {
+      const next = { ...prev, [id]: status };
+      if (status === 'done') {
+        const idx = STEPS.findIndex(s => s.id === id);
+        const nextStep = STEPS[idx + 1];
+        if (nextStep && next[nextStep.id] === 'pending') next[nextStep.id] = 'active';
+      }
+      return next;
+    });
+  }
+
   async function createProject(accessToken: string) {
     setPhase('creating');
+    setStepStatus(prev => ({ ...prev, [STEPS[0].id]: 'active' }));
     try {
       const res = await fetch(getGenServerUrl('/api/v1/ecg-connect'), {
         method: 'POST',
@@ -38,10 +65,45 @@ export default function EcgConnectPage() {
         },
         body: JSON.stringify({ token }),
       });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error ?? 'Failed to create project'); setPhase('error'); return; }
-      setPhase('done');
-      navigate(`/project/${data.projectId}`);
+
+      if (!res.body) throw new Error('No response stream');
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() ?? '';
+
+        for (const frame of frames) {
+          if (!frame.trim() || frame.startsWith(':')) continue;
+          const eventLine = frame.split('\n').find(l => l.startsWith('event:'));
+          const dataLine = frame.split('\n').find(l => l.startsWith('data:'));
+          if (!eventLine || !dataLine) continue;
+          const event = eventLine.slice(6).trim();
+          const data = JSON.parse(dataLine.slice(5).trim());
+
+          if (event === 'step') {
+            markStep(data.id, 'done');
+          } else if (event === 'done') {
+            setPhase('done');
+            navigate(`/project/${data.projectId}`);
+            return;
+          } else if (event === 'error') {
+            setStepStatus(prev => {
+              const active = STEPS.find(s => prev[s.id] === 'active');
+              return active ? { ...prev, [active.id]: 'error' } : prev;
+            });
+            setError(data.message ?? 'Failed to create project');
+            setPhase('error');
+            return;
+          }
+        }
+      }
     } catch (e: any) {
       setError(e.message ?? 'Unexpected error');
       setPhase('error');
@@ -85,11 +147,32 @@ export default function EcgConnectPage() {
           </div>
         )}
 
-        {phase === 'creating' && (
-          <div className="flex items-center justify-center gap-2 text-gray-500 text-sm">
-            <span className="w-4 h-4 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin inline-block" />
-            Building your dashboard…
-          </div>
+        {(phase === 'creating' || phase === 'done') && (
+          <ul className="text-left space-y-2.5">
+            {STEPS.map(step => {
+              const status = stepStatus[step.id];
+              return (
+                <li key={step.id} className="flex items-center gap-2.5 text-sm">
+                  {status === 'done' ? (
+                    <span className="w-4 h-4 rounded-full bg-green-500 flex items-center justify-center shrink-0">
+                      <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                  ) : status === 'active' ? (
+                    <span className="w-4 h-4 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin shrink-0" />
+                  ) : status === 'error' ? (
+                    <span className="w-4 h-4 rounded-full bg-red-500 shrink-0" />
+                  ) : (
+                    <span className="w-4 h-4 rounded-full border-2 border-gray-200 shrink-0" />
+                  )}
+                  <span className={status === 'pending' ? 'text-gray-400' : status === 'error' ? 'text-red-600' : 'text-gray-700'}>
+                    {step.label}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         )}
 
         {phase === 'done' && (

@@ -15,6 +15,7 @@
         "@ai-sdk/google": "^3.0.53",
         "@ai-sdk/openai": "^3.0.48",
         "@anthropic-ai/sdk": "^0.30.0",
+        "@modelcontextprotocol/sdk": "^1.29.0",
         "@supabase/supabase-js": "^2.39.0",
         "@types/multer": "^2.1.0",
         "@types/pg": "^8.20.0",

@@ -2,13 +2,18 @@ import { ECG } from '../ecg-config';
 const SERVER = ECG.proxyUrl.replace(/\/$/, '');
 const PROJECT_ID = ECG.projectId;
 
+function accessHeaders(): Record<string, string> {
+  const token = localStorage.getItem(`ecg_access_${PROJECT_ID}`);
+  return token ? { 'x-dashboard-access': token } : {};
+}
+
 async function req(method: string, path: string, body?: unknown) {
   const sep = path.includes('?') ? '&' : '?';
   const url = `${SERVER}/api/v1/ecg-proxy${path}${sep}projectId=${PROJECT_ID}`;
   const res = await fetch(url, {
     method,
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...accessHeaders() },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -23,7 +28,7 @@ export async function chat(messages: { role: string; content: string }[]) {
   const res = await fetch(url, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...accessHeaders() },
     body: JSON.stringify({ messages }),
   });
   if (!res.ok) {

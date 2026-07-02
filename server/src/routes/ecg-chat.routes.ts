@@ -2,24 +2,37 @@
 // Wraps LLM tool-calling: AI can read portal data and take actions (approve/reject posts, etc.)
 // All portal calls are server-side using ECG_PORTAL_TOKEN — never exposed to the browser.
 
-import { Router, Response as ExpressResponse } from 'express';
-import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
+import { Router, Response as ExpressResponse, NextFunction } from 'express';
+import { authMiddleware, dashboardAccessMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
+import { getMcpTools, McpToolset } from '../services/mcpClient.js';
 
 const router = Router();
 
 const PORTAL_API_URL = process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai';
 
-async function getSecrets(projectId: string, userId: string) {
-  const { data: project } = await supabase
-    .from('projects').select('id, user_id')
-    .eq('id', projectId).eq('user_id', userId).maybeSingle();
+async function getSecrets(projectId: string, userId: string | null) {
+  const query = supabase.from('projects').select('id, user_id').eq('id', projectId);
+  const { data: project } = await (userId ? query.eq('user_id', userId) : query).maybeSingle();
   if (!project) return null;
   const { data: rows } = await supabase
     .from('project_secrets').select('key_name, key_value')
     .eq('project_id', projectId)
-    .in('key_name', ['ECG_PORTAL_TOKEN', 'ECG_LLM_PROVIDER', 'ECG_LLM_MODEL', 'ECG_LLM_API_KEY']);
+    .in('key_name', ['ECG_PORTAL_TOKEN', 'ECG_LLM_PROVIDER', 'ECG_LLM_MODEL', 'ECG_LLM_API_KEY', 'ECG_MCP_URL', 'ECG_MCP_TOKEN']);
   return Object.fromEntries((rows ?? []).map(r => [r.key_name, r.key_value]));
+}
+
+// Tries the dashboard-access token first (anonymous visitor to a deployed
+// dashboard); falls back to the eComGear owner Supabase session otherwise.
+function resolveAuth(req: AuthenticatedRequest, res: ExpressResponse, next: NextFunction): void {
+  const projectId = (req.query.projectId ?? req.headers['x-project-id']) as string | undefined;
+  dashboardAccessMiddleware(req, res, () => {
+    if (req.dashboardAccessProjectId && req.dashboardAccessProjectId === projectId) {
+      next();
+      return;
+    }
+    authMiddleware(req, res, next);
+  });
 }
 
 async function portalCall(token: string, method: string, path: string, body?: unknown) {
@@ -43,8 +56,8 @@ const TOOLS = [
   { name: 'list_knowledge', desc: 'List knowledge base entries' },
 ];
 
-function openaiTools() {
-  return TOOLS.map(t => ({
+function openaiTools(mcp: McpToolset | null) {
+  const builtin = TOOLS.map(t => ({
     type: 'function',
     function: {
       name: t.name,
@@ -52,17 +65,32 @@ function openaiTools() {
       parameters: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'string' } }, required: [] },
     },
   }));
+  const mcpTools = (mcp?.tools ?? []).map(t => ({
+    type: 'function',
+    function: { name: `mcp_${t.name}`, description: t.description ?? t.name, parameters: t.inputSchema },
+  }));
+  return [...builtin, ...mcpTools];
 }
 
-function anthropicTools() {
-  return TOOLS.map(t => ({
+function anthropicTools(mcp: McpToolset | null) {
+  const builtin = TOOLS.map(t => ({
     name: t.name,
     description: t.desc,
     input_schema: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'string' } } },
   }));
+  const mcpTools = (mcp?.tools ?? []).map(t => ({
+    name: `mcp_${t.name}`,
+    description: t.description ?? t.name,
+    input_schema: t.inputSchema,
+  }));
+  return [...builtin, ...mcpTools];
 }
 
-async function executeTool(name: string, args: Record<string, string>, token: string) {
+async function executeTool(name: string, args: Record<string, string>, token: string, mcp: McpToolset | null) {
+  if (name.startsWith('mcp_')) {
+    if (!mcp) return { error: 'MCP server unavailable' };
+    return mcp.callTool(name.slice(4), args);
+  }
   switch (name) {
     case 'list_agents':     return portalCall(token, 'GET', '/agents');
     case 'list_posts':      return portalCall(token, 'GET', args.status ? `/planned-posts?status=${args.status}` : '/planned-posts');
@@ -79,11 +107,11 @@ async function executeTool(name: string, args: Record<string, string>, token: st
 const SYSTEM = `You are an AI assistant embedded in a custom eCG Agents Portal dashboard. You have access to portal data and can take actions on behalf of the user. Be concise and helpful. When you take an action, briefly confirm what you did.`;
 
 // POST /api/v1/ecg-chat?projectId=
-router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: ExpressResponse): Promise<void> => {
+router.post('/', resolveAuth, async (req: AuthenticatedRequest, res: ExpressResponse): Promise<void> => {
   const projectId = (req.query.projectId ?? req.headers['x-project-id']) as string | undefined;
   if (!projectId) { res.status(400).json({ error: 'projectId required' }); return; }
 
-  const secrets = await getSecrets(projectId, req.user!.id);
+  const secrets = await getSecrets(projectId, req.dashboardAccessProjectId ? null : req.user!.id);
   if (!secrets) { res.status(403).json({ error: 'Project not found or access denied' }); return; }
 
   const apiKey   = secrets['ECG_LLM_API_KEY'];
@@ -93,6 +121,10 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: ExpressR
 
   if (!apiKey)  { res.status(400).json({ error: 'No LLM API key configured. Set one in App Builder → AI Model.' }); return; }
   if (!token)   { res.status(400).json({ error: 'No portal token. Re-launch from App Builder.' }); return; }
+
+  const mcp: McpToolset | null = secrets['ECG_MCP_URL']
+    ? await getMcpTools(secrets['ECG_MCP_URL'], secrets['ECG_MCP_TOKEN'])
+    : null;
 
   const { messages = [] } = req.body as { messages: { role: string; content: string }[] };
   const actions: { tool: string; result: unknown }[] = [];
@@ -108,12 +140,12 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: ExpressR
       llmRes = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model, max_tokens: 1024, system: SYSTEM, messages: loopMessages, tools: anthropicTools() }),
+        body: JSON.stringify({ model, max_tokens: 1024, system: SYSTEM, messages: loopMessages, tools: anthropicTools(mcp) }),
       });
       const data = await llmRes.json() as any;
       const toolUse = (data.content ?? []).find((b: any) => b.type === 'tool_use');
       if (toolUse) {
-        const result = await executeTool(toolUse.name, toolUse.input ?? {}, token);
+        const result = await executeTool(toolUse.name, toolUse.input ?? {}, token, mcp);
         actions.push({ tool: toolUse.name, result });
         loopMessages = [
           ...loopMessages,
@@ -142,7 +174,7 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: ExpressR
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model, tools: openaiTools(), tool_choice: 'auto',
+          model, tools: openaiTools(mcp), tool_choice: 'auto',
           messages: [{ role: 'system', content: SYSTEM }, ...loopMessages],
         }),
       });
@@ -153,7 +185,7 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: ExpressR
         loopMessages = [...loopMessages, choice.message];
         for (const tc of toolCalls) {
           const args = JSON.parse(tc.function.arguments || '{}');
-          const result = await executeTool(tc.function.name, args, token);
+          const result = await executeTool(tc.function.name, args, token, mcp);
           actions.push({ tool: tc.function.name, result });
           loopMessages.push({ role: 'tool', content: JSON.stringify(result), tool_call_id: tc.id } as any);
         }
