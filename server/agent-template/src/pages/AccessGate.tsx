@@ -25,7 +25,9 @@ export default function AccessGate({ children }: { children: React.ReactNode }) 
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    requestToken().then(r => setStatus(r.ok ? 'granted' : r.needsPassword ? 'needs-password' : 'granted'));
+    requestToken()
+      .then(r => setStatus(r.ok ? 'granted' : 'needs-password'))
+      .catch(() => setStatus('needs-password'));
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
