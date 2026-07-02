@@ -12,7 +12,10 @@ const router = Router();
 
 const PORTAL_API_URL = process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai';
 const ECG_SERVICE_KEY = process.env.ECG_SERVICE_KEY || '';
-const ECOMGEAR_SERVER_URL = process.env.ECOMGEAR_SERVER_URL || 'https://gen.ecomgear.dev';
+// Baked into generated dashboards as the proxy/chat/access endpoint. Defaults
+// to api.ecomgear.ai — agent-portal's nginx reverse-proxies the ecg-* routes
+// through to this server, so the browser only ever sees one origin.
+const ECOMGEAR_SERVER_URL = process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.ai';
 
 function sseWrite(res: Response, event: string, data: unknown): void {
   if (res.writableEnded) return;
