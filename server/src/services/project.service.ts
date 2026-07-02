@@ -36,6 +36,7 @@ export class ProjectService {
             .insert({
                 id: projectId,
                 user_id: userId,
+                created_by: userId,
                 name: params.name,
                 description: params.description,
                 docker_path: dockerPath,
