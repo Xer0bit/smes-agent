@@ -11,7 +11,7 @@ const router = Router();
 
 const PORTAL_API_URL = process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai';
 const ECG_SERVICE_KEY = process.env.ECG_SERVICE_KEY || '';
-const ECOMGEAR_SERVER_URL = process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.ai';
+const ECOMGEAR_SERVER_URL = process.env.ECOMGEAR_SERVER_URL || 'https://gen.ecomgear.dev';
 
 // POST /api/v1/ecg-connect
 // One-time handoff from agent-portal: creates an eComGear project seeded with the
