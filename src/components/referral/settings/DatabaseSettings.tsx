@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Database, Copy, Trash2, Zap, Lock, Table, Terminal, Key, ChevronRight, RefreshCw, Play, AlertCircle, Download, Wifi, WifiOff, FunctionSquare, Plus, Clock } from "lucide-react";
+import { Database, Trash2, Zap, Lock, Table, Terminal, ChevronRight, RefreshCw, Play, AlertCircle, Download, Wifi, WifiOff, FunctionSquare, Clock, Bot } from "lucide-react";
 import { useSubscription } from "@/contexts/SubscriptionContext";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { cn } from "@/lib/utils";
@@ -16,7 +16,6 @@ import { getGenServerUrl } from "@/config/external-api";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface TenantDb { id: string; schema_name: string; status: string; error_message: string | null; created_at: string; }
-interface Credentials { api_url: string; schema: string; anon_key: string; service_key: string; db_url: string; }
 interface Column { name: string; type: string; nullable: boolean; default: string | null; }
 interface TableInfo { name: string; columns: Column[]; row_count: number | null; }
 interface QueryResult { rows: object[]; fields: string[]; }
@@ -42,19 +41,6 @@ async function apiFetch(path: string, opts: RequestInit = {}, timeoutMs = 10_000
   } finally {
     clearTimeout(timer);
   }
-}
-
-function CopyButton({ value, label }: { value: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      className="inline-flex items-center gap-1 text-xs text-white/45 hover:text-white/85 transition-colors"
-      onClick={() => { navigator.clipboard.writeText(value); setCopied(true); toast.success("Copied!"); setTimeout(() => setCopied(false), 2000); }}
-    >
-      <Copy className="h-3 w-3" />
-      {copied ? "Copied" : (label || "Copy")}
-    </button>
-  );
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -88,48 +74,21 @@ function ConnectionBadge({ ping, checking }: { ping: PingResult | null; checking
   );
 }
 
-// ── Credentials Panel ────────────────────────────────────────────────────────
-function CredentialsPanel({ creds }: { creds: Credentials }) {
-  const rows = [
-    { label: "API URL",      value: creds.api_url,     mono: true },
-    { label: "Schema",       value: creds.schema,      mono: true },
-    { label: "Anon Key",     value: creds.anon_key,    mono: true },
-    { label: "Service Key",  value: creds.service_key, mono: true },
-    { label: "Postgres URL", value: creds.db_url,      mono: true },
-  ];
+// ── DB Info Panel (name + status only — no keys exposed) ─────────────────────
+function DbInfoPanel({ schemaName }: { schemaName: string }) {
   return (
-    <div className="space-y-3 w-full max-w-full overflow-hidden">
-      <p className="text-xs text-white/45">
-        Use the <strong>Anon Key</strong> in your app frontend (read-only). Use the <strong>Service Key</strong> for server-side or agent operations (full access).
-      </p>
-      {rows.map(r => (
-        // break-all (not truncate): truncate relies on white-space:nowrap, which gives the
-        // text a huge intrinsic min-content width — exactly the kind of content that defeats
-        // flex/grid ancestors expecting to shrink. break-all's intrinsic width is tiny, so this
-        // row can never force an ancestor wider, regardless of any flex/grid quirk upstream.
-        <div key={r.label} className="rounded-lg border border-white/[0.07] bg-white/[0.03] p-3 w-full max-w-full min-w-0 overflow-hidden">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-medium text-white/45">{r.label}</span>
-            <CopyButton value={r.value} />
-          </div>
-          <p className={cn("text-xs break-all", r.mono && "font-mono")}>
-            {r.value}
-          </p>
-        </div>
-      ))}
-      <div className="mt-4 rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 min-w-0 overflow-hidden">
-        <p className="text-xs text-blue-300 font-medium mb-1">Using in your app</p>
-        <pre className="text-xs text-blue-200/70 whitespace-pre-wrap break-all">{
-`import { createClient } from '@supabase/supabase-js'
-
-const db = createClient('${creds.api_url}', '${creds.anon_key}', {
-  db: { schema: '${creds.schema}' }
-})`
-        }</pre>
-        <div className="mt-1 flex justify-end">
-          <CopyButton value={`import { createClient } from '@supabase/supabase-js'\n\nconst db = createClient('${creds.api_url}', '${creds.anon_key}', {\n  db: { schema: '${creds.schema}' }\n})`} label="Copy snippet" />
-        </div>
+    <div className="rounded-lg border border-white/[0.07] bg-white/[0.03] p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Database className="h-4 w-4 text-primary shrink-0" />
+        <span className="text-sm font-medium">Database connected</span>
       </div>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-white/45">Name</span>
+        <code className="text-xs font-mono bg-white/[0.06] px-2 py-0.5 rounded text-white/85">{schemaName}</code>
+      </div>
+      <p className="text-xs text-white/40">
+        Your database is active and accessible to the AI agent. Connection details are managed securely by the agent and are not displayed here.
+      </p>
     </div>
   );
 }
@@ -330,23 +289,18 @@ function SqlEditor({ projectId }: { projectId?: string | null }) {
   );
 }
 
-// ── Edge Functions Panel ─────────────────────────────────────────────────────
-interface EdgeFn { id: string; name: string; description: string | null; is_active: boolean; created_at: string; code?: string; }
+// ── Edge Functions Panel (read + invoke only — writes are agent-only) ─────────
+interface EdgeFn { id: string; name: string; description: string | null; is_active: boolean; created_at: string; }
 interface InvokeResult { result: unknown; logs: string[]; durationMs: number; error?: string; }
 
 function EdgeFunctionsPanel({ apiFetch: apiFetchProp }: { apiFetch: (p: string, o?: RequestInit, t?: number) => Promise<any> }) {
-  const [fns, setFns]             = useState<EdgeFn[]>([]);
-  const [selected, setSelected]   = useState<EdgeFn | null>(null);
-  const [code, setCode]           = useState('// Return a value with `return`\nreturn { message: "Hello from edge function!", params }');
-  const [desc, setDesc]           = useState('');
-  const [name, setName]           = useState('');
-  const [params, setParams]       = useState('{}');
-  const [result, setResult]       = useState<InvokeResult | null>(null);
-  const [loading, setLoading]     = useState(true);
-  const [saving, setSaving]       = useState(false);
-  const [invoking, setInvoking]   = useState(false);
-  const [creating, setCreating]   = useState(false);
-  const [newName, setNewName]     = useState('');
+  const [fns, setFns]           = useState<EdgeFn[]>([]);
+  const [selected, setSelected] = useState<EdgeFn | null>(null);
+  const [params, setParams]     = useState('{}');
+  const [result, setResult]     = useState<InvokeResult | null>(null);
+  const [loading, setLoading]   = useState(true);
+  const [invoking, setInvoking] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -358,25 +312,6 @@ function EdgeFunctionsPanel({ apiFetch: apiFetchProp }: { apiFetch: (p: string, 
   }, [apiFetchProp]);
 
   useEffect(() => { load(); }, [load]);
-
-  const openFn = async (fn: EdgeFn) => {
-    const full = await apiFetchProp(`/functions/${fn.name}`);
-    setSelected(full);
-    setCode(full.code || '');
-    setDesc(full.description || '');
-    setResult(null);
-  };
-
-  const save = async () => {
-    if (!selected) return;
-    setSaving(true);
-    try {
-      await apiFetchProp(`/functions/${selected.name}`, { method: 'PATCH', body: JSON.stringify({ code, description: desc }) });
-      toast.success('Function saved.');
-      load();
-    } catch (e) { toast.error((e as Error).message); }
-    finally { setSaving(false); }
-  };
 
   const invoke = async () => {
     if (!selected) return;
@@ -395,152 +330,106 @@ function EdgeFunctionsPanel({ apiFetch: apiFetchProp }: { apiFetch: (p: string, 
   const deleteFn = async () => {
     if (!selected) return;
     if (!confirm(`Delete function "${selected.name}"?`)) return;
+    setDeleting(true);
     try {
       await apiFetchProp(`/functions/${selected.name}`, { method: 'DELETE' });
       toast.success('Deleted.');
-      setSelected(null); setCode(''); setDesc('');
+      setSelected(null); setResult(null);
       load();
     } catch (e) { toast.error((e as Error).message); }
-  };
-
-  const createFn = async () => {
-    if (!newName.trim()) return;
-    setSaving(true);
-    try {
-      await apiFetchProp('/functions', {
-        method: 'POST',
-        body: JSON.stringify({ name: newName.trim(), code: '// Write your function here\nreturn { ok: true };', description: '' }),
-      });
-      setCreating(false); setNewName('');
-      await load();
-    } catch (e) { toast.error((e as Error).message); }
-    finally { setSaving(false); }
+    finally { setDeleting(false); }
   };
 
   if (loading) return <div className="py-8 text-center text-sm text-white/45">Loading functions…</div>;
 
   return (
-    <div className="flex gap-4 h-[520px] min-h-0 overflow-hidden">
-      {/* Sidebar */}
-      <div className="w-48 shrink-0 flex flex-col gap-1 border-r border-white/[0.07] pr-3 overflow-y-auto">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-white/45 font-medium">Functions</span>
-          <button onClick={() => setCreating(true)} className="text-white/45 hover:text-white/85 transition-colors">
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </div>
-        {fns.length === 0 && !creating && (
-          <p className="text-xs text-white/30 py-4 text-center">No functions yet.<br/>Click + to create one.</p>
-        )}
-        {fns.map(fn => (
-          <button
-            key={fn.id}
-            onClick={() => openFn(fn)}
-            className={cn(
-              "text-left text-xs px-2 py-1.5 rounded-md transition-colors flex items-center gap-1.5 truncate",
-              selected?.id === fn.id ? "bg-primary/15 text-primary" : "text-white/60 hover:text-white/85 hover:bg-white/[0.04]"
-            )}
-          >
-            <FunctionSquare className="h-3 w-3 shrink-0" />
-            <span className="truncate font-mono">{fn.name}</span>
-          </button>
-        ))}
-        {creating && (
-          <div className="flex flex-col gap-1 mt-1">
-            <Input
-              autoFocus
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              placeholder="function-name"
-              className="text-xs h-7 font-mono bg-white/[0.04] border-white/[0.10]"
-              onKeyDown={e => { if (e.key === 'Enter') createFn(); if (e.key === 'Escape') { setCreating(false); setNewName(''); } }}
-            />
-            <div className="flex gap-1">
-              <Button size="sm" className="h-6 text-xs flex-1" onClick={createFn} disabled={saving}>Create</Button>
-              <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => { setCreating(false); setNewName(''); }}>✕</Button>
-            </div>
-          </div>
-        )}
+    <div className="space-y-4">
+      {/* Agent-only notice */}
+      <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+        <Bot className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+        <p className="text-xs text-white/60">
+          Edge functions are managed by the AI agent. To create or modify a function, ask the agent in the project editor.
+        </p>
       </div>
 
-      {/* Editor */}
-      {!selected ? (
-        <div className="flex-1 flex items-center justify-center text-sm text-white/30">
-          Select a function or create a new one
-        </div>
+      {fns.length === 0 ? (
+        <p className="py-6 text-center text-sm text-white/30">No functions yet. Ask the agent to create one.</p>
       ) : (
-        <div className="flex-1 flex flex-col gap-3 min-w-0 overflow-hidden">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <FunctionSquare className="h-4 w-4 text-primary shrink-0" />
-              <span className="font-mono text-sm font-medium truncate">{selected.name}</span>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <Button size="sm" variant="ghost" className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10" onClick={deleteFn}>
-                <Trash2 className="h-3 w-3 mr-1" />Delete
-              </Button>
-              <Button size="sm" className="h-7 text-xs" onClick={save} disabled={saving}>
-                {saving ? 'Saving…' : 'Save'}
-              </Button>
-            </div>
-          </div>
-
-          <Input
-            value={desc}
-            onChange={e => setDesc(e.target.value)}
-            placeholder="Description (optional)"
-            className="text-xs h-7 bg-white/[0.04] border-white/[0.10]"
-          />
-
-          <Textarea
-            value={code}
-            onChange={e => setCode(e.target.value)}
-            className="flex-1 font-mono text-xs resize-none bg-white/[0.03] border-white/[0.07] min-h-[180px]"
-            placeholder="// Write JavaScript. Use `db`, `params`, `fetch`, `console`."
-            spellCheck={false}
-          />
-
-          <p className="text-xs text-white/30">
-            Available: <code className="text-white/50">params</code> · <code className="text-white/50">db.select/insert/update/delete/rpc</code> · <code className="text-white/50">fetch</code> (HTTPS only) · <code className="text-white/50">console.log</code>
-          </p>
-
-          {/* Invoke section */}
-          <div className="border-t border-white/[0.07] pt-3 flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <Input
-                value={params}
-                onChange={e => setParams(e.target.value)}
-                placeholder='{"key": "value"}'
-                className="text-xs h-7 font-mono bg-white/[0.04] border-white/[0.10] flex-1"
-              />
-              <Button size="sm" className="h-7 text-xs shrink-0 gap-1" onClick={invoke} disabled={invoking}>
-                <Play className="h-3 w-3" />{invoking ? 'Running…' : 'Run'}
-              </Button>
-            </div>
-
-            {result && (
-              <div className={cn(
-                "rounded-lg border p-2 text-xs space-y-1 max-h-28 overflow-y-auto",
-                result.error ? "border-red-500/30 bg-red-500/5" : "border-green-500/20 bg-green-500/5"
-              )}>
-                <div className="flex items-center gap-1.5 text-white/45 mb-1">
-                  <Clock className="h-3 w-3" /><span>{result.durationMs}ms</span>
-                  {result.error
-                    ? <span className="text-red-400 ml-auto">Error</span>
-                    : <span className="text-green-400 ml-auto">OK</span>}
-                </div>
-                {result.error && <p className="text-red-400 font-mono break-all">{result.error}</p>}
-                {result.logs.length > 0 && result.logs.map((l, i) => (
-                  <p key={i} className="text-white/45 font-mono break-all">{l}</p>
-                ))}
-                {!result.error && (
-                  <pre className="text-green-300/80 font-mono break-all whitespace-pre-wrap">
-                    {JSON.stringify(result.result, null, 2)}
-                  </pre>
+        <div className="flex gap-4 min-h-0">
+          {/* List */}
+          <div className="w-44 shrink-0 flex flex-col gap-1 border-r border-white/[0.07] pr-3">
+            <span className="text-xs text-white/45 font-medium mb-2">{fns.length} function{fns.length !== 1 ? 's' : ''}</span>
+            {fns.map(fn => (
+              <button
+                key={fn.id}
+                onClick={() => { setSelected(fn); setResult(null); }}
+                className={cn(
+                  "text-left text-xs px-2 py-1.5 rounded-md transition-colors flex items-center gap-1.5 truncate",
+                  selected?.id === fn.id ? "bg-primary/15 text-primary" : "text-white/60 hover:text-white/85 hover:bg-white/[0.04]"
                 )}
-              </div>
-            )}
+              >
+                <FunctionSquare className="h-3 w-3 shrink-0" />
+                <span className="truncate font-mono">{fn.name}</span>
+              </button>
+            ))}
           </div>
+
+          {/* Invoke panel */}
+          {selected ? (
+            <div className="flex-1 flex flex-col gap-3 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <FunctionSquare className="h-4 w-4 text-primary shrink-0" />
+                  <span className="font-mono text-sm font-medium truncate">{selected.name}</span>
+                  {selected.description && (
+                    <span className="text-xs text-white/40 truncate">{selected.description}</span>
+                  )}
+                </div>
+                <Button size="sm" variant="ghost" className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 shrink-0" onClick={deleteFn} disabled={deleting}>
+                  <Trash2 className="h-3 w-3 mr-1" />{deleting ? 'Deleting…' : 'Delete'}
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Textarea
+                  value={params}
+                  onChange={e => setParams(e.target.value)}
+                  placeholder='{"key": "value"}'
+                  className="text-xs font-mono bg-white/[0.04] border-white/[0.10] flex-1 min-h-[60px] resize-none"
+                />
+                <Button size="sm" className="h-9 text-xs shrink-0 gap-1" onClick={invoke} disabled={invoking}>
+                  <Play className="h-3 w-3" />{invoking ? 'Running…' : 'Run'}
+                </Button>
+              </div>
+
+              {result && (
+                <div className={cn(
+                  "rounded-lg border p-2 text-xs space-y-1 max-h-40 overflow-y-auto",
+                  result.error ? "border-red-500/30 bg-red-500/5" : "border-green-500/20 bg-green-500/5"
+                )}>
+                  <div className="flex items-center gap-1.5 text-white/45 mb-1">
+                    <Clock className="h-3 w-3" /><span>{result.durationMs}ms</span>
+                    {result.error
+                      ? <span className="text-red-400 ml-auto">Error</span>
+                      : <span className="text-green-400 ml-auto">OK</span>}
+                  </div>
+                  {result.error && <p className="text-red-400 font-mono break-all">{result.error}</p>}
+                  {result.logs.map((l, i) => (
+                    <p key={i} className="text-white/45 font-mono break-all">{l}</p>
+                  ))}
+                  {!result.error && (
+                    <pre className="text-green-300/80 font-mono break-all whitespace-pre-wrap">
+                      {JSON.stringify(result.result, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-sm text-white/30">
+              Select a function to run it
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -578,7 +467,6 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
   }, [projectId]);
 
   const [db, setDb]         = useState<TenantDb | null>(null);
-  const [creds, setCreds]   = useState<Credentials | null>(null);
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [tablesLoading, setTablesLoading] = useState(false);
@@ -609,11 +497,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
       const res = await apiFetch('/status', {}, 10_000, projectId);
       setDb(res.database);
       if (res.database?.status === 'active') {
-        const [c, t] = await Promise.all([
-          apiFetch('/credentials', {}, 10_000, projectId).catch(() => null),
-          apiFetch('/tables', {}, 10_000, projectId).catch(() => ({ tables: [] })),
-        ]);
-        setCreds(c);
+        const t = await apiFetch('/tables', {}, 10_000, projectId).catch(() => ({ tables: [] }));
         setTables(t.tables || []);
         checkConnection();
       }
@@ -671,7 +555,6 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
         method: 'POST', body: JSON.stringify({ organization_id: currentOrganizationId || null }),
       }, 30_000, projectId);
       setDb(res.database);
-      setCreds(res.credentials);
       toast.success("Database provisioned!");
     } catch (err) { toast.error((err as Error).message); }
     finally { setProvisioning(false); }
@@ -681,7 +564,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
     setDeprovisioning(true);
     try {
       await apiFetch('/deprovision', { method: 'DELETE' }, 60_000, projectId);
-      setDb(null); setCreds(null); setTables([]); setSelectedTable(null);
+      setDb(null); setTables([]); setSelectedTable(null);
       toast.success("Database removed.");
     } catch (err) { toast.error((err as Error).message); }
     finally { setDeprovisioning(false); }
@@ -887,12 +770,12 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
         </div>
       </div>
 
+      {/* DB Info */}
+      <DbInfoPanel schemaName={db.schema_name} />
+
       {/* Tabs */}
-      <Tabs defaultValue="credentials">
-        <TabsList className="w-full grid grid-cols-4">
-          <TabsTrigger value="credentials" className="flex items-center gap-1.5">
-            <Key className="h-3.5 w-3.5" />Keys
-          </TabsTrigger>
+      <Tabs defaultValue="tables">
+        <TabsList className="w-full grid grid-cols-3">
           <TabsTrigger value="tables" className="flex items-center gap-1.5">
             <Table className="h-3.5 w-3.5" />Tables
           </TabsTrigger>
@@ -903,13 +786,6 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
             <FunctionSquare className="h-3.5 w-3.5" />Functions
           </TabsTrigger>
         </TabsList>
-
-        <TabsContent value="credentials" className="mt-4">
-          {creds
-            ? <CredentialsPanel creds={creds} />
-            : <div className="py-8 text-center text-sm text-white/45">Loading credentials…</div>
-          }
-        </TabsContent>
 
         <TabsContent value="tables" className="mt-4">
           {activeTable ? (

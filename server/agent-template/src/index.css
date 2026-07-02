@@ -5,7 +5,7 @@
 {{CSS_VARS}}
 
 body {
-  font-family: Inter, system-ui, sans-serif;
+  font-family: '{{FONT_FAMILY}}', system-ui, sans-serif;
   background: var(--body-bg);
   color: var(--text);
   margin: 0;

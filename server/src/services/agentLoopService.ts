@@ -33,6 +33,7 @@ import { thinkTool } from '../agent-tools/think.js';
 import { getDatabaseSchemaTool } from '../agent-tools/get_database_schema.js';
 import { queryDatabaseTool } from '../agent-tools/query_database.js';
 import { provisionDatabaseTool } from '../agent-tools/provision_database.js';
+import { writeEdgeFunctionTool } from '../agent-tools/write_edge_function.js';
 import { sanitizeFileContent, sanitizeConfigFile } from '../agent-tools/sanitize.js';
 import ts from 'typescript';
 import { getAppBuilderBuildSystemPrompt, getAppBuilderSystemPrompt, MICRO_SYSTEM_PROMPT, getFixSystemPrompt, getEditSystemPrompt } from '../prompts/app-builder.prompt.js';
@@ -683,6 +684,7 @@ function buildToolSet(ctx: AgentContext, brainMemory: string[]): ToolSet {
     getDatabaseSchemaTool,
     queryDatabaseTool,
     provisionDatabaseTool,
+    writeEdgeFunctionTool,
   ];
 
   const toolSet: ToolSet = {};

@@ -75,53 +75,20 @@ router.get('/:name', async (req: AuthenticatedRequest, res: Response) => {
 });
 
 // ── POST /api/v1/functions ───────────────────────────────────────────────────
-router.post('/', async (req: AuthenticatedRequest, res: Response) => {
-  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
-  const { name, description, code } = req.body;
-  if (!name || typeof name !== 'string') {
-    res.status(400).json({ error: 'name is required.' }); return;
-  }
-  if (!code || typeof code !== 'string') {
-    res.status(400).json({ error: 'code is required.' }); return;
-  }
-  try {
-    const { data, error } = await supabase
-      .from('edge_functions')
-      .upsert({
-        user_id: req.user!.id,
-        name: name.trim(),
-        description: description || null,
-        code,
-      }, { onConflict: 'user_id,name' })
-      .select()
-      .single();
-    if (error) throw new Error(error.message);
-    res.status(201).json(data);
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+// Locked: edge functions can only be created or modified by the AI agent.
+// Ask the agent in the project editor to create or update an edge function.
+router.post('/', (_req: AuthenticatedRequest, res: Response) => {
+  res.status(403).json({
+    error: 'Edge functions can only be created by the AI agent. Ask the agent to write or update your edge function.',
+  });
 });
 
 // ── PATCH /api/v1/functions/:name ────────────────────────────────────────────
-router.patch('/:name', async (req: AuthenticatedRequest, res: Response) => {
-  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
-  const updates: Record<string, unknown> = {};
-  if (req.body.code        !== undefined) updates.code        = req.body.code;
-  if (req.body.description !== undefined) updates.description = req.body.description;
-  if (req.body.is_active   !== undefined) updates.is_active   = req.body.is_active;
-  try {
-    const { data, error } = await supabase
-      .from('edge_functions')
-      .update(updates)
-      .eq('user_id', req.user!.id)
-      .eq('name', req.params.name)
-      .select()
-      .single();
-    if (error) throw new Error(error.message);
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+// Locked: edge functions can only be modified by the AI agent.
+router.patch('/:name', (_req: AuthenticatedRequest, res: Response) => {
+  res.status(403).json({
+    error: 'Edge functions can only be modified by the AI agent. Ask the agent to update your edge function.',
+  });
 });
 
 // ── DELETE /api/v1/functions/:name ──────────────────────────────────────────

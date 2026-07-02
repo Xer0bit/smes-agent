@@ -17,7 +17,24 @@ const ALL_NAV = [
   { id: 'knowledge',  label: 'Knowledge',     path: '/knowledge',  icon: 'BookOpen' },
 ];
 
-const NAV = ALL_NAV.filter(n => n.always || ECG.modules.includes(n.id));
+// Order follows ECG.modules (set by drag-and-drop reordering in Dashboard
+// Creator), not ALL_NAV's fixed declaration order — the always-shown
+// Assistant tab stays pinned first regardless of module order.
+const NAV = [
+  ALL_NAV.find(n => n.always)!,
+  ...ECG.modules.map(id => ALL_NAV.find(n => n.id === id)).filter((n): n is typeof ALL_NAV[number] => Boolean(n)),
+];
+
+function BrandLogo({ className }: { className: string }) {
+  if (ECG.logoUrl) {
+    return <img src={ECG.logoUrl} alt="" className={`${className} object-contain rounded-lg`} />;
+  }
+  return (
+    <div className={`${className} rounded-lg flex items-center justify-center`} style={{ background: 'var(--accent)' }}>
+      <Zap className="w-1/2 h-1/2 text-white" />
+    </div>
+  );
+}
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
@@ -34,9 +51,7 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
         style={{ background: 'var(--sidebar-bg)', borderColor: 'var(--border)' }}>
         <div className="px-4 py-5 border-b" style={{ borderColor: 'var(--border)' }}>
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'var(--accent)' }}>
-              <Zap className="w-4 h-4 text-white" />
-            </div>
+            <BrandLogo className="w-8 h-8" />
             <div>
               <p className="text-xs font-bold uppercase tracking-widest leading-none" style={{ color: 'var(--accent)' }}>eCG</p>
               <p className="text-sm font-semibold truncate max-w-[120px]" style={{ color: 'var(--sidebar-text)' }}>{ECG.appName}</p>
@@ -76,9 +91,7 @@ function TopNav({ children }: { children: ReactNode }) {
       <header className="border-b shrink-0" style={{ background: 'var(--sidebar-bg)', borderColor: 'var(--border)' }}>
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center gap-6">
           <div className="flex items-center gap-2 shrink-0">
-            <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'var(--accent)' }}>
-              <Zap className="w-3.5 h-3.5 text-white" />
-            </div>
+            <BrandLogo className="w-7 h-7" />
             <span className="text-sm font-bold" style={{ color: 'var(--sidebar-text)' }}>{ECG.appName}</span>
           </div>
           <nav className="flex items-center gap-1">
@@ -107,9 +120,7 @@ function Minimal({ children }: { children: ReactNode }) {
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: 'var(--body-bg)' }}>
       <div className="max-w-4xl mx-auto w-full px-6 pt-6 pb-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded flex items-center justify-center" style={{ background: 'var(--accent)' }}>
-            <Zap className="w-3 h-3 text-white" />
-          </div>
+          <BrandLogo className="w-6 h-6" />
           <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{ECG.appName}</span>
         </div>
         <nav className="flex gap-3">
