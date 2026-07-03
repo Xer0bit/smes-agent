@@ -2172,7 +2172,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       if (runtimeMode === 'plan') {
         geminiRunCacheName = await createGeminiRunCache(systemPrompt, modelId, geminiKey);
       } else if (toolSet) {
-        geminiToolCacheName = await createGeminiToolCache(systemPrompt, toolSet, modelId, geminiKey);
+        // BUG FIX: cache ONLY staticSystemPrompt (the tier prompt — identical
+        // across every user/project) never the fully-assembled systemPrompt,
+        // which bakes in this project's file tree + file contents. Caching the
+        // dynamic version meant a brand-new cache was created on every single
+        // request (confirmed in prod logs — 3 distinct cache IDs in 4 minutes),
+        // so nothing was ever reused: pure added cost (cache-write tokens) with
+        // zero cache-read benefit, PLUS the dynamic context was being dropped
+        // from the actual request entirely (see systemMessages below), forcing
+        // the model into extra read_file/list_files round-trips it didn't
+        // previously need. Only the truly static part goes in the cache.
+        geminiToolCacheName = await createGeminiToolCache(staticSystemPrompt, toolSet, modelId, geminiKey);
       }
     }
   }
@@ -2196,9 +2206,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // Also cached: it's stable across all steps of this run, so subsequent steps are cache hits.
         ...(dynamicContext.trim() ? [{ role: 'system' as const, content: dynamicContext, providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } }] : []),
       ]
-    : (geminiRunCacheName || geminiToolCacheName)
-      ? [] // system prompt lives in the Gemini cache — sending it again would conflict
-      : [{ role: 'system' as const, content: systemPrompt }];
+    : geminiRunCacheName
+      ? [] // plan mode: the FULL system prompt lives in the cache — sending it again would conflict
+      : geminiToolCacheName
+        // build/edit/fix/feature: only the STATIC part lives in the cache.
+        // dynamicContext (file tree, project files — unique per request) is
+        // NOT in the cache and MUST still be sent every time, or the model
+        // silently loses all project context.
+        ? (dynamicContext.trim() ? [{ role: 'system' as const, content: dynamicContext }] : [])
+        : [{ role: 'system' as const, content: systemPrompt }];
 
   // Signal SSE stream start
   sseWrite(res, 'start', { projectId, model: modelId, mode: runtimeMode });
