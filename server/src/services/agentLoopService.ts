@@ -43,7 +43,7 @@ import { RunStateLedger } from './runStateLedger.js';
 import { canonicalizeModelId, DEFAULT_FREE_MODEL, DEFAULT_PRIMARY_MODEL } from '../config/models.js';
 import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols } from '../knowledgebase/index.js';
 import { captureThumbnail } from './thumbnailService.js';
-import { createGeminiToolCache, createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
+import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
 import { lookupFailureFix, storeFailureFix } from './failureMemory.service.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
@@ -2165,25 +2165,21 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // leaving local tool-call execution (via the `tools` object passed to
   // streamText) completely unaffected.
   let geminiRunCacheName: string | null = null;
-  let geminiToolCacheName: string | null = null;
-  if (providerName === 'gemini') {
+  // DISABLED (production incident): Gemini's cachedContent API rejects ANY
+  // generateContent request that also sets system_instruction, tools, OR
+  // tool_config. The AI SDK's `system` param always becomes system_instruction
+  // when non-empty — so there is no way to send per-request dynamic context
+  // (file tree, project files) through `system` while a tool-cache is active.
+  // Sending dynamicContext via `system` (as the previous fix attempted) hit
+  // this exact 400 in production. Reusing a cache correctly requires routing
+  // dynamic content through `messages` instead of `system`, which is a real
+  // rework, not a hotfix — disabling the tool-cache path entirely until that
+  // lands. Plan mode is unaffected (never sends tools, so no conflict there).
+  const geminiToolCacheName: string | null = null;
+  if (providerName === 'gemini' && runtimeMode === 'plan') {
     const geminiKey = process.env.GEMINI_API_KEY;
     if (geminiKey) {
-      if (runtimeMode === 'plan') {
-        geminiRunCacheName = await createGeminiRunCache(systemPrompt, modelId, geminiKey);
-      } else if (toolSet) {
-        // BUG FIX: cache ONLY staticSystemPrompt (the tier prompt — identical
-        // across every user/project) never the fully-assembled systemPrompt,
-        // which bakes in this project's file tree + file contents. Caching the
-        // dynamic version meant a brand-new cache was created on every single
-        // request (confirmed in prod logs — 3 distinct cache IDs in 4 minutes),
-        // so nothing was ever reused: pure added cost (cache-write tokens) with
-        // zero cache-read benefit, PLUS the dynamic context was being dropped
-        // from the actual request entirely (see systemMessages below), forcing
-        // the model into extra read_file/list_files round-trips it didn't
-        // previously need. Only the truly static part goes in the cache.
-        geminiToolCacheName = await createGeminiToolCache(staticSystemPrompt, toolSet, modelId, geminiKey);
-      }
+      geminiRunCacheName = await createGeminiRunCache(systemPrompt, modelId, geminiKey);
     }
   }
   // Wrap the provider so the outbound request omits `tools`/`toolConfig`
@@ -2208,13 +2204,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       ]
     : geminiRunCacheName
       ? [] // plan mode: the FULL system prompt lives in the cache — sending it again would conflict
-      : geminiToolCacheName
-        // build/edit/fix/feature: only the STATIC part lives in the cache.
-        // dynamicContext (file tree, project files — unique per request) is
-        // NOT in the cache and MUST still be sent every time, or the model
-        // silently loses all project context.
-        ? (dynamicContext.trim() ? [{ role: 'system' as const, content: dynamicContext }] : [])
-        : [{ role: 'system' as const, content: systemPrompt }];
+      : [{ role: 'system' as const, content: systemPrompt }];
 
   // Signal SSE stream start
   sseWrite(res, 'start', { projectId, model: modelId, mode: runtimeMode });
