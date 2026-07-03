@@ -1,15 +1,21 @@
 #!/bin/bash
 # =============================================================================
 # EcomGear — Multi-VPS Manual Deploy Script
-# Usage: ./scripts/deploy.sh [vps1|vps2|vps3|all]
+# Usage: ./scripts/deploy.sh [vps1|vps2|vps3|vps4|vps5|all]
 #
 # Infrastructure:
 #   VPS1  156.67.218.75  (Singapore)  — Frontend + Supabase Edge
 #   VPS2  72.62.126.99   (Indonesia)  — Preview Service
 #   VPS3  3.148.126.20   (USA)        — LLM / Agent Runner
+#   VPS4  187.77.157.231 (—)          — Enterprise Hosting Service (published apps)
+#   VPS5  187.127.108.19 (—)          — Tenant Postgres (paid-user hosted DBs).
+#         No application code is deployed here from this repo — VPS5 is a
+#         passive DB endpoint that VPS3's server connects to via TENANT_DB_*.
+#         `vps5` target only health-checks reachability; it uploads nothing.
 #
 # Credentials are read from environment variables (never hardcoded):
 #   VPS1_PASS/VPS1_KEY_PATH  VPS2_PASS/VPS2_KEY_PATH  VPS3_PASS/VPS3_KEY_PATH
+#   VPS4_PASS/VPS4_KEY_PATH  VPS5_PASS/VPS5_KEY_PATH
 # =============================================================================
 set -euo pipefail
 
@@ -23,6 +29,8 @@ fi
 VPS1_IP="156.67.218.75";   VPS1_USER="root"
 VPS2_IP="72.62.126.99";    VPS2_USER="root"
 VPS3_IP="3.148.126.20";    VPS3_USER="root"
+VPS4_IP="${VPS4_HOST:-187.77.157.231}"; VPS4_USER="root"
+VPS5_IP="${VPS5_HOST:-187.127.108.19}"; VPS5_USER="root"
 
 DEPLOY_PATH="/var/www/ecomgear"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,6 +40,25 @@ TARGET="${1:-all}"
 VPS1_KEY_PATH="${VPS1_KEY_PATH:-}"
 VPS2_KEY_PATH="${VPS2_KEY_PATH:-}"
 VPS3_KEY_PATH="${VPS3_KEY_PATH:-}"
+VPS4_KEY_PATH="${VPS4_KEY_PATH:-}"
+VPS5_KEY_PATH="${VPS5_KEY_PATH:-}"
+
+# ── Deployed-branch guard ────────────────────────────────────────────────────
+# Deploying whatever branch happens to be checked out locally is how a stale
+# branch silently overwrites newer code already running on a server (this bit
+# us once: VPS3 was running origin/stage-change while main's agentLoopService.ts
+# was ~1300 lines behind it — a plain deploy would have regressed it with no
+# warning). DEPLOY_EXPECTED_BRANCH lets you pin what SHOULD be deployed; unset
+# it (or pass ALLOW_ANY_BRANCH=1) to bypass for an intentional cross-branch deploy.
+CURRENT_BRANCH="$(git -C "$PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+if [ -n "${DEPLOY_EXPECTED_BRANCH:-}" ] && [ "${ALLOW_ANY_BRANCH:-0}" != "1" ]; then
+    if [ "$CURRENT_BRANCH" != "$DEPLOY_EXPECTED_BRANCH" ]; then
+        echo "✗ Refusing to deploy: local branch is '$CURRENT_BRANCH', expected '$DEPLOY_EXPECTED_BRANCH'."
+        echo "  git checkout $DEPLOY_EXPECTED_BRANCH   # to deploy the expected branch"
+        echo "  ALLOW_ANY_BRANCH=1 $0 $TARGET          # to deploy '$CURRENT_BRANCH' anyway"
+        exit 1
+    fi
+fi
 
 case "$TARGET" in
     vps1)
@@ -43,13 +70,21 @@ case "$TARGET" in
     vps3)
         if [[ -z "${VPS3_PASS:-}" && -z "$VPS3_KEY_PATH" ]]; then echo "✗ Set VPS3_PASS or VPS3_KEY_PATH"; exit 1; fi
         ;;
+    vps4)
+        if [[ -z "${VPS4_PASS:-}" && -z "$VPS4_KEY_PATH" ]]; then echo "✗ Set VPS4_PASS or VPS4_KEY_PATH"; exit 1; fi
+        ;;
+    vps5)
+        if [[ -z "${VPS5_PASS:-}" && -z "$VPS5_KEY_PATH" ]]; then echo "✗ Set VPS5_PASS or VPS5_KEY_PATH"; exit 1; fi
+        ;;
     all)
         if [[ -z "${VPS1_PASS:-}" && -z "$VPS1_KEY_PATH" ]]; then echo "✗ Set VPS1_PASS or VPS1_KEY_PATH"; exit 1; fi
         if [[ -z "${VPS2_PASS:-}" && -z "$VPS2_KEY_PATH" ]]; then echo "✗ Set VPS2_PASS or VPS2_KEY_PATH"; exit 1; fi
         if [[ -z "${VPS3_PASS:-}" && -z "$VPS3_KEY_PATH" ]]; then echo "✗ Set VPS3_PASS or VPS3_KEY_PATH"; exit 1; fi
+        if [[ -z "${VPS4_PASS:-}" && -z "$VPS4_KEY_PATH" ]]; then echo "✗ Set VPS4_PASS or VPS4_KEY_PATH"; exit 1; fi
+        if [[ -z "${VPS5_PASS:-}" && -z "$VPS5_KEY_PATH" ]]; then echo "✗ Set VPS5_PASS or VPS5_KEY_PATH"; exit 1; fi
         ;;
     *)
-        echo "Usage: $0 [vps1|vps2|vps3|all]"
+        echo "Usage: $0 [vps1|vps2|vps3|vps4|vps5|all]"
         exit 1
         ;;
 esac
@@ -114,10 +149,13 @@ rsync_exec() {
 ssh_vps1() { ssh_exec "$VPS1_USER" "$VPS1_IP" "$VPS1_KEY_PATH" "${VPS1_PASS:-}" "$@"; }
 ssh_vps2() { ssh_exec "$VPS2_USER" "$VPS2_IP" "$VPS2_KEY_PATH" "${VPS2_PASS:-}" "$@"; }
 ssh_vps3() { ssh_exec "$VPS3_USER" "$VPS3_IP" "$VPS3_KEY_PATH" "${VPS3_PASS:-}" "$@"; }
+ssh_vps4() { ssh_exec "$VPS4_USER" "$VPS4_IP" "$VPS4_KEY_PATH" "${VPS4_PASS:-}" "$@"; }
+ssh_vps5() { ssh_exec "$VPS5_USER" "$VPS5_IP" "$VPS5_KEY_PATH" "${VPS5_PASS:-}" "$@"; }
 
 scp_vps1() { rsync_exec "$VPS1_USER" "$VPS1_IP" "$VPS1_KEY_PATH" "${VPS1_PASS:-}" "$@"; }
 scp_vps2() { rsync_exec "$VPS2_USER" "$VPS2_IP" "$VPS2_KEY_PATH" "${VPS2_PASS:-}" "$@"; }
 scp_vps3() { rsync_exec "$VPS3_USER" "$VPS3_IP" "$VPS3_KEY_PATH" "${VPS3_PASS:-}" "$@"; }
+scp_vps4() { rsync_exec "$VPS4_USER" "$VPS4_IP" "$VPS4_KEY_PATH" "${VPS4_PASS:-}" "$@"; }
 
 # =========================================================================
 # VPS1 — Deploy React SPA + nginx
@@ -227,7 +265,21 @@ REMOTE
         echo ""
         [[ $AUTH_OK -eq 0 ]] && echo "  ✗ Auth did not become healthy"
         [[ $REST_OK -eq 0 ]] && echo "  ✗ REST did not become healthy (schema cache timeout?)"
-        err "Health gate failed — check VPS1 containers: ssh root@$VPS1_IP 'docker ps'"
+        echo "  Rolling back dist/ → previous version (dist.old)..."
+        ssh_vps1 "bash -s" << 'REMOTE' || echo "  ⚠ Rollback command itself failed — manual intervention needed on VPS1"
+set -e
+cd /var/www/ecomgear
+if [ -d dist.old ]; then
+    rm -rf dist.failed
+    mv dist dist.failed
+    mv dist.old dist
+    nginx -t && systemctl reload nginx
+    echo "  ROLLED BACK — previous dist/ restored, broken build kept at dist.failed"
+else
+    echo "  No dist.old to roll back to — this may have been the first-ever deploy"
+fi
+REMOTE
+        err "Health gate failed (Supabase Auth/REST, not the frontend itself — check VPS1 containers: ssh root@$VPS1_IP 'docker ps')"
     fi
 
     success "VPS1 deploy complete → https://ecomgear.dev"
@@ -324,13 +376,18 @@ REMOTE
 }
 
 # =========================================================================
-# VPS3 — Deploy Server / Agent (zero-downtime)
+# VPS3 — Deploy Server / Agent
 # Strategy:
 #   1. Upload to server.staging/
 #   2. Atomic mv swap: server → server.old backup, staging → server
-#   3. pm2 reload (cluster mode: rolling restart — 1 worker always serving)
-#      PM2 starts new workers, waits for process.send('ready'), then kills old
-#      ones — zero downtime throughout.
+#   3. Hard PM2 restart: `pm2 delete` then `pm2 start` (NOT a rolling reload —
+#      see step 6 below in the code). This is a deliberate choice, not an
+#      oversight: avoids PM2 cluster socket-inheritance issues that caused
+#      problems with `pm2 reload` on this app in the past. There IS a real
+#      downtime window between delete and the new workers passing their
+#      health check (up to ~36s, per the retry loop in step 8) — this is
+#      NOT zero-downtime. If that gap matters, this needs an actual `pm2
+#      reload`-based rewrite, not just a comment fix.
 # =========================================================================
 deploy_vps3() {
     echo ""
@@ -589,6 +646,166 @@ REMOTE
 }
 
 # =========================================================================
+# VPS4 — Deploy Enterprise Hosting Service
+# Strategy: same shape as VPS2/VPS3 — rsync to a staging path, bootstrap
+# deps if missing, restart via PM2, verify health, roll back on failure.
+# NOT zero-downtime: single PM2 instance, hard delete+start — there is a real
+# gap between the old process stopping and the new one passing its health
+# check. Fine for an internal hosting-control-plane service; would need a
+# second instance + reload strategy if that gap becomes a problem.
+# Caddy (not nginx) fronts this service — it auto-provisions HTTPS per
+# published-app subdomain.
+# =========================================================================
+deploy_vps4() {
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  VPS4 — Enterprise Hosting Service → $VPS4_IP"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    if [ ! -d "$PROJECT_DIR/hosting-service" ]; then
+        err "hosting-service/ directory not found in repo — nothing to deploy"
+    fi
+
+    step "Bootstrapping VPS4 (Node 20 + Caddy + PM2 if missing)..."
+    ssh_vps4 "bash -s" << 'REMOTE'
+set -e
+export DEBIAN_FRONTEND=noninteractive
+command -v rsync &>/dev/null || apt-get install -y -qq rsync
+if ! node --version 2>/dev/null | grep -q 'v20'; then
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y -qq nodejs
+fi
+command -v pm2 &>/dev/null || npm install -g pm2
+if ! command -v caddy &>/dev/null; then
+    apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+    apt-get update -qq
+    apt-get install -y caddy
+fi
+mkdir -p /opt/ecomgear/hosting-service.staging /var/www/ecomgear/sites /etc/caddy/sites
+ufw allow 80/tcp 2>/dev/null || true
+ufw allow 443/tcp 2>/dev/null || true
+REMOTE
+
+    step "Uploading hosting-service/ to VPS4 (staging dir)..."
+    scp_vps4 --delete --exclude='node_modules' --exclude='.git' --exclude='*.log' \
+        "$PROJECT_DIR/hosting-service/" "$VPS4_USER@$VPS4_IP:/opt/ecomgear/hosting-service.staging/"
+
+    step "Remote: install deps, atomic swap, Caddy + PM2 restart..."
+    HOSTING_SECRET="${HOSTING_DEPLOY_SECRET:-}"
+    ssh_vps4 "bash -s" << REMOTE
+set -e
+cd /opt/ecomgear/hosting-service.staging
+npm ci --omit=dev
+
+cat > /opt/ecomgear/hosting-service.staging/ecosystem.config.cjs << 'PMEOF'
+module.exports = {
+  apps: [{
+    name: 'ecomgear-hosting',
+    script: 'server.js',
+    cwd: '/opt/ecomgear/hosting-service',
+    env: {
+      HOSTING_PUBLIC_IP: '$VPS4_IP',
+      HOSTING_NODE_NAME: 'vps4-hosting-1',
+      DEFAULT_DOMAIN: 'apps.ecomgear.app',
+      HOSTING_PORT: '4000',
+      NODE_ENV: 'production',
+      HOSTING_DEPLOY_SECRET: '${HOSTING_SECRET}'
+    }
+  }]
+};
+PMEOF
+
+# Atomic swap — same pattern as VPS2/VPS3, keeps the old version until the
+# new one is confirmed healthy below.
+rm -rf /opt/ecomgear/hosting-service.old
+[ -d /opt/ecomgear/hosting-service ] && mv /opt/ecomgear/hosting-service /opt/ecomgear/hosting-service.old
+mv /opt/ecomgear/hosting-service.staging /opt/ecomgear/hosting-service
+
+cp /opt/ecomgear/hosting-service/Caddyfile /etc/caddy/Caddyfile 2>/dev/null || true
+systemctl stop nginx 2>/dev/null || true
+systemctl disable nginx 2>/dev/null || true
+systemctl enable caddy 2>/dev/null || true
+systemctl start caddy 2>/dev/null || caddy start --config /etc/caddy/Caddyfile --adapter caddyfile
+caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>/dev/null || true
+
+cd /opt/ecomgear/hosting-service
+pm2 delete ecomgear-hosting 2>/dev/null || true
+pm2 start ecosystem.config.cjs
+pm2 save --force
+
+sleep 4
+if ! curl -sf http://127.0.0.1:4000/health >/dev/null 2>&1; then
+    echo "ERROR: hosting service failed health check — rolling back"
+    pm2 delete ecomgear-hosting 2>/dev/null || true
+    rm -rf /opt/ecomgear/hosting-service.failed
+    mv /opt/ecomgear/hosting-service /opt/ecomgear/hosting-service.failed
+    [ -d /opt/ecomgear/hosting-service.old ] && mv /opt/ecomgear/hosting-service.old /opt/ecomgear/hosting-service
+    cd /opt/ecomgear/hosting-service
+    pm2 start ecosystem.config.cjs 2>/dev/null || true
+    pm2 save --force
+    echo "ROLLED BACK — check hosting-service.failed for the broken build"
+    exit 1
+fi
+echo "  hosting service healthy"
+echo "Backup preserved at hosting-service.old for manual rollback"
+REMOTE
+    success "VPS4 deploy complete → https://apps.ecomgear.app"
+}
+
+# =========================================================================
+# VPS5 — Tenant Postgres (paid-user hosted DBs) — health check only
+# No application code from this repo is deployed here. VPS5 is a passive DB
+# endpoint (TENANT_DB_HOST) that VPS3's server.env points at for the hosted-
+# database feature. This target verifies the DB and its reload sidecar are
+# reachable — useful to run before/after a VPS3 deploy so a DB-side outage
+# isn't mistaken for a VPS3 regression.
+# =========================================================================
+deploy_vps5() {
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  VPS5 — Tenant Postgres (health check only) → $VPS5_IP"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    info "No code is deployed to VPS5 from this repo — this only checks reachability."
+
+    step "Checking Postgres port (${TENANT_DB_PORT:-5432})..."
+    # Run the whole check as a heredoc script on the remote side rather than a
+    # one-line inline command — avoids fragile nested-quoting across the
+    # local shell → ssh → remote shell hops for $? and /dev/tcp redirection.
+    TDB_PORT_CHECK="${TENANT_DB_PORT:-5432}"
+    if ssh_vps5 "bash -s" << REMOTE
+if command -v pg_isready >/dev/null 2>&1; then
+    pg_isready -h 127.0.0.1 -p ${TDB_PORT_CHECK} -q && exit 0 || exit 1
+fi
+timeout 3 bash -c "</dev/tcp/127.0.0.1/${TDB_PORT_CHECK}" 2>/dev/null && exit 0
+exit 1
+REMOTE
+    then
+        success "Postgres (or its port) is reachable on VPS5"
+    else
+        err "Postgres port ${TDB_PORT_CHECK} is NOT reachable on VPS5"
+    fi
+
+    if [ -n "${TENANT_DB_RELOAD_URL:-}" ]; then
+        step "Checking tenant-db reload sidecar ($TENANT_DB_RELOAD_URL)..."
+        CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$TENANT_DB_RELOAD_URL" 2>/dev/null || echo "000")
+        if [[ "$CODE" =~ ^(200|401|403|404)$ ]]; then
+            # Any of these means the sidecar process is up and answering HTTP —
+            # 401/403/404 are fine here since we're not authenticating, we just
+            # want proof something is listening.
+            success "Reload sidecar responding (HTTP $CODE)"
+        else
+            echo "  ⚠ Reload sidecar did not respond as expected (HTTP $CODE) — may be down or misconfigured"
+        fi
+    else
+        info "TENANT_DB_RELOAD_URL not set — skipping sidecar check"
+    fi
+
+    success "VPS5 health check complete"
+}
+
+# =========================================================================
 # Entrypoint
 # =========================================================================
 echo ""
@@ -604,8 +821,10 @@ case "$TARGET" in
     vps1) deploy_vps1 ;;
     vps2) deploy_vps2 ;;
     vps3) deploy_vps3 ;;
-    all)  deploy_vps1; deploy_vps2; deploy_vps3 ;;
-    *)    echo "Usage: $0 [vps1|vps2|vps3|all]"; exit 1 ;;
+    vps4) deploy_vps4 ;;
+    vps5) deploy_vps5 ;;
+    all)  deploy_vps1; deploy_vps2; deploy_vps3; deploy_vps4; deploy_vps5 ;;
+    *)    echo "Usage: $0 [vps1|vps2|vps3|vps4|vps5|all]"; exit 1 ;;
 esac
 
 echo ""
@@ -615,4 +834,6 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 [[ "$TARGET" == "all" || "$TARGET" == "vps1" ]] && echo "  Frontend  → https://ecomgear.dev"
 [[ "$TARGET" == "all" || "$TARGET" == "vps2" ]] && echo "  Preview   → https://preview.ecomgear.app"
 [[ "$TARGET" == "all" || "$TARGET" == "vps3" ]] && echo "  Gen API   → https://gen.ecomgear.dev"
+[[ "$TARGET" == "all" || "$TARGET" == "vps4" ]] && echo "  Hosting   → https://apps.ecomgear.app"
+[[ "$TARGET" == "all" || "$TARGET" == "vps5" ]] && echo "  Tenant DB → checked (no deploy)"
 echo ""

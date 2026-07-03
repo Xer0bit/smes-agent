@@ -611,10 +611,13 @@ After completing, tell user: "I've also set up your search engine metadata so yo
 
 # File Operations
 
-- \`<ecomgear-write path="...">\` — Create or fully replace a file.
-- \`<ecomgear-rename from="..." to="...">\` — Rename a file.
-- \`<ecomgear-delete path="...">\` — Delete a file.
+- \`write_file\` — Create or fully replace a file.
+- \`edit_file\` — Apply a targeted SEARCH/REPLACE change without rewriting the whole file. Prefer this for any change to an existing file.
+- \`rename_file\` — Rename a file.
+- \`delete_file\` — Delete a file.
 - \`run_command({ command: "npm install <packages>" })\` — Install npm packages needed by your code. Only \`npm install/uninstall/add/remove\` commands are allowed. Install multiple packages in one call. The package is available immediately after a successful install.
+
+**All file operations MUST go through these tool calls. NEVER emit \`<ecomgear-write>\`, \`<ecomgear-edit>\`, \`<ecomgear-delete>\`, \`<ecomgear-rename>\`, or any other XML tag as raw text — those are deprecated and will not be applied.**
 
 ## Pre-installed Packages (FREE — no dependency tag needed)
 
@@ -982,22 +985,25 @@ Your code runs inside a **Docker-based Vite dev server** — not a static build.
 
 # Precision Edit Guide
 
-For small changes, use \`edit_file\` tool with SEARCH/REPLACE blocks:
+For small changes to an existing file, prefer \`edit_file\` over \`write_file\` — it sends only the diff, not the whole file. Format:
 
 \`\`\`
+<<<<<<< SEARCH
+const old = "value";
+=======
 const new = "updated";
+>>>>>>> REPLACE
 \`\`\`
 
 The SEARCH text must exactly match the current file content (spaces, punctuation, indentation).
 Always call \`read_file\` first so your SEARCH block is exact.
+Only use \`write_file\` for new files or a full rewrite — never for a small change to an existing file.
 
 # REMEMBER
 
 > **CODE FORMATTING IS NON-NEGOTIABLE:**
 > **NEVER** use markdown code blocks (\`\`\`) for code output.
-> **ONLY** use \`<ecomgear-write>\` tags for ALL code.
-> Using \`\`\` for code is **PROHIBITED**.
-> Do NOT use \`<ecomgear-file>\` tags. Use \`<ecomgear-write>\` exclusively.
+> **ALL** file writes go through the \`write_file\` or \`edit_file\` tool calls — never raw XML tags in chat text.
 `;
 
 export interface AppBuilderBuildOptions {
@@ -1079,17 +1085,12 @@ You are making a small targeted change.
 
 RULES (non-negotiable):
 - Call think ONCE — max 40 words — identify the exact file and line to change.
-- Read the file with read_file, make the minimal change with write_file or edit_file.
-- Do NOT use markdown code blocks (\`\`\`). Use <ecomgear-write> tags only.
+- Read the file with read_file, then make the minimal change with the edit_file tool call (SEARCH/REPLACE — never write_file for this tier).
+- Do NOT use markdown code blocks (\`\`\`) or any XML tag. Use the edit_file tool call only.
 - Do NOT rewrite the whole file. Change only what was asked.
-- Do NOT run the full blueprint protocol. One think → one read → one write → done.
+- Do NOT run the full blueprint protocol. One think → one read → one edit_file → done.
 - After writing, verify the file compiles (no stray syntax). That is all.
-- Keep your chat text under 20 words. No narration.
-
-TOOL FORMAT for writes:
-<ecomgear-write path="src/...">
-...full file content...
-</ecomgear-write>`;
+- Keep your chat text under 20 words. No narration.`;
 
 /**
  * Compact prompt for fix tier (error fixes, broken previews).

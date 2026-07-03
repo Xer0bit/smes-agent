@@ -31,13 +31,15 @@ interface DesignCfg {
   moduleSettings: Record<string, Record<string, boolean | string>>;
 }
 
+// Sidebar kept subtly distinct from body (not flat white-on-white) — reads
+// as a considered surface hierarchy rather than a bland flat panel.
 const THEME_DEFAULTS: Record<string, Pick<DesignCfg, 'accentColor' | 'sidebarColor' | 'bodyColor'>> = {
-  light:  { accentColor: '#2563eb', sidebarColor: '#ffffff', bodyColor: '#f8fafc' },
-  dark:   { accentColor: '#60a5fa', sidebarColor: '#0f172a', bodyColor: '#020617' },
-  ocean:  { accentColor: '#00b4d8', sidebarColor: '#0f4c75', bodyColor: '#f0f9ff' },
-  forest: { accentColor: '#22c55e', sidebarColor: '#1a3a2a', bodyColor: '#f0fdf4' },
-  sunset: { accentColor: '#f97316', sidebarColor: '#7c2d12', bodyColor: '#fff7ed' },
-  slate:  { accentColor: '#8b5cf6', sidebarColor: '#334155', bodyColor: '#f8fafc' },
+  light:  { accentColor: '#2563eb', sidebarColor: '#fbfbfd', bodyColor: '#f4f5f7' },
+  dark:   { accentColor: '#60a5fa', sidebarColor: '#111827', bodyColor: '#030712' },
+  ocean:  { accentColor: '#0ea5c9', sidebarColor: '#0c3d5e', bodyColor: '#eef8fc' },
+  forest: { accentColor: '#16a34a', sidebarColor: '#16301f', bodyColor: '#eef8f0' },
+  sunset: { accentColor: '#ea580c', sidebarColor: '#6b2810', bodyColor: '#fef3ea' },
+  slate:  { accentColor: '#7c3aed', sidebarColor: '#293548', bodyColor: '#f4f5f7' },
 };
 
 function resolveDesign(raw: Record<string, unknown>, orgName: string): DesignCfg {
@@ -65,10 +67,22 @@ function isDark(hex: string): boolean {
   return (r * 299 + g * 587 + b * 114) / 1000 < 128;
 }
 
+// Shifts a hex color darker (positive amount) or lighter (negative), clamped to 0-255.
+function shade(hex: string, amount: number): string {
+  const c = hex.replace('#', '');
+  const clamp = (n: number) => Math.max(0, Math.min(255, n));
+  const r = clamp(parseInt(c.slice(0, 2), 16) - amount);
+  const g = clamp(parseInt(c.slice(2, 4), 16) - amount);
+  const b = clamp(parseInt(c.slice(4, 6), 16) - amount);
+  return `#${[r, g, b].map(n => n.toString(16).padStart(2, '0')).join('')}`;
+}
+
 function cssVars(d: DesignCfg): string {
   const sidebarText  = isDark(d.sidebarColor) ? '#f1f5f9' : '#1e293b';
   const sidebarMuted = isDark(d.sidebarColor) ? '#94a3b8' : '#64748b';
   const accentBg     = `${d.accentColor}1a`;
+  const accentHover  = shade(d.accentColor, isDark(d.bodyColor) ? -20 : 20);
+  const sidebarHover = shade(d.sidebarColor, isDark(d.sidebarColor) ? -12 : 12);
   const cardBg       = isDark(d.bodyColor) ? '#1e293b' : '#ffffff';
   const border       = isDark(d.bodyColor) ? '#334155' : '#e2e8f0';
   const text         = isDark(d.bodyColor) ? '#f1f5f9' : '#1e293b';
@@ -76,14 +90,21 @@ function cssVars(d: DesignCfg): string {
   return `:root {
   --accent: ${d.accentColor};
   --accent-bg: ${accentBg};
+  --accent-hover: ${accentHover};
   --sidebar-bg: ${d.sidebarColor};
   --sidebar-text: ${sidebarText};
   --sidebar-muted: ${sidebarMuted};
+  --sidebar-hover: ${sidebarHover};
   --body-bg: ${d.bodyColor};
   --card-bg: ${cardBg};
   --border: ${border};
   --text: ${text};
   --muted: ${muted};
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 24px -12px rgba(15, 23, 42, 0.16);
+  --font-weight-heading: 600;
 }`;
 }
 

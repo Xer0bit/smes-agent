@@ -44,26 +44,70 @@ async function portalCall(token: string, method: string, path: string, body?: un
   return r.json().catch(() => ({}));
 }
 
-// Tool definitions (OpenAI-style, adapted per provider)
-const TOOLS = [
-  { name: 'list_agents',    desc: 'List all agents with their current status' },
-  { name: 'list_posts',     desc: 'List planned posts. Pass status="pending"|"approved"|"rejected" to filter' },
-  { name: 'approve_post',   desc: 'Approve a planned post. Requires: id (post ID)' },
-  { name: 'reject_post',    desc: 'Reject a planned post. Requires: id (post ID)' },
-  { name: 'list_runs',      desc: 'List recent agent run history' },
-  { name: 'list_schedulers',desc: 'List agent schedulers and their next run times' },
-  { name: 'list_connectors',desc: 'List available connectors and their status' },
-  { name: 'list_knowledge', desc: 'List knowledge base entries' },
+// Tool definitions — one declarative table drives both the LLM-facing schema
+// and the actual /v1/ecg/* call, so every capability the portal exposes is
+// reachable from chat with an accurate parameter schema (not a one-size-fits-all
+// {id,status} shape that silently couldn't carry richer args).
+type ToolProp = { type: string; description?: string };
+interface ToolDef {
+  name: string;
+  desc: string;
+  props: Record<string, ToolProp>;
+  required?: string[];
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  path: (a: Record<string, string>) => string;
+  body?: (a: Record<string, string>) => unknown;
+}
+
+const str = (description: string): ToolProp => ({ type: 'string', description });
+
+const TOOLS: ToolDef[] = [
+  // Agents
+  { name: 'list_agents', desc: 'List all agents with their current status', props: {}, method: 'GET', path: () => '/agents' },
+  { name: 'create_agent', desc: 'Create a new agent', props: { name: str('Agent name'), templateId: str('Template ID (see list_agent_templates)') }, required: ['name'], method: 'POST', path: () => '/agents', body: a => ({ name: a.name, templateId: a.templateId }) },
+  { name: 'update_agent', desc: 'Update an agent\'s name, prompt overlay, or connectors', props: { id: str('Agent ID'), name: str('New name'), prompt_overlay: str('New prompt overlay') }, required: ['id'], method: 'PATCH', path: a => `/agents/${a.id}`, body: a => ({ name: a.name, prompt_overlay: a.prompt_overlay }) },
+  { name: 'run_agent', desc: 'Trigger an immediate run of an agent', props: { id: str('Agent ID') }, required: ['id'], method: 'POST', path: a => `/agents/${a.id}/run` },
+  { name: 'delete_agent', desc: 'Permanently delete an archived agent', props: { id: str('Agent ID') }, required: ['id'], method: 'DELETE', path: a => `/agents/${a.id}` },
+  { name: 'list_agent_templates', desc: 'List available agent templates this org can use', props: {}, method: 'GET', path: () => '/agent-templates' },
+  // Schedulers
+  { name: 'list_schedulers', desc: 'List agent schedulers and their next run times', props: {}, method: 'GET', path: () => '/schedulers' },
+  { name: 'create_scheduler', desc: 'Create a schedule for an agent', props: { agentId: str('Agent ID'), cron: str('Cron expression, e.g. "0 9 * * *"'), connector: str('Connector type, e.g. "linkedin"') }, required: ['agentId', 'cron', 'connector'], method: 'POST', path: () => '/schedulers', body: a => ({ agentId: a.agentId, cron: a.cron, connector: a.connector }) },
+  { name: 'update_scheduler', desc: 'Pause, resume, or update a scheduler', props: { id: str('Scheduler ID'), status: str('active | paused') }, required: ['id', 'status'], method: 'PATCH', path: a => `/schedulers/${a.id}`, body: a => ({ status: a.status }) },
+  { name: 'delete_scheduler', desc: 'Delete a scheduler', props: { id: str('Scheduler ID') }, required: ['id'], method: 'DELETE', path: a => `/schedulers/${a.id}` },
+  { name: 'trigger_scheduler', desc: 'Run a scheduler immediately', props: { id: str('Scheduler ID') }, required: ['id'], method: 'POST', path: a => `/schedulers/${a.id}/replan` },
+  // Planned posts
+  { name: 'list_posts', desc: 'List planned posts. Pass status="pending"|"approved"|"rejected" to filter', props: { status: str('Filter by status') }, method: 'GET', path: a => a.status ? `/planned-posts?status=${a.status}` : '/planned-posts' },
+  { name: 'create_post', desc: 'Draft a new planned post', props: { agent_id: str('Agent ID'), content: str('Post content'), platform: str('Platform, e.g. "linkedin"') }, required: ['agent_id', 'content'], method: 'POST', path: () => '/planned-posts', body: a => ({ agent_id: a.agent_id, content: a.content, platform: a.platform }) },
+  { name: 'approve_post', desc: 'Approve a planned post. Requires: id (post ID)', props: { id: str('Post ID') }, required: ['id'], method: 'PATCH', path: a => `/planned-posts/${a.id}`, body: () => ({ status: 'approved' }) },
+  { name: 'reject_post', desc: 'Reject a planned post. Requires: id (post ID)', props: { id: str('Post ID') }, required: ['id'], method: 'PATCH', path: a => `/planned-posts/${a.id}`, body: () => ({ status: 'rejected' }) },
+  { name: 'delete_post', desc: 'Delete a planned post', props: { id: str('Post ID') }, required: ['id'], method: 'DELETE', path: a => `/planned-posts/${a.id}` },
+  // Connectors
+  { name: 'list_connectors', desc: 'List available connectors and their status', props: {}, method: 'GET', path: () => '/connectors' },
+  { name: 'create_connector', desc: 'Connect a new integration', props: { type: str('Connector type'), name: str('Display name') }, required: ['type', 'name'], method: 'POST', path: () => '/connectors/org', body: a => ({ type: a.type, name: a.name }) },
+  { name: 'delete_connector', desc: 'Remove a connector', props: { id: str('Connector ID') }, required: ['id'], method: 'DELETE', path: a => `/connectors/org/${a.id}` },
+  // Knowledge
+  { name: 'list_knowledge', desc: 'List knowledge base entries', props: {}, method: 'GET', path: () => '/knowledge' },
+  { name: 'delete_knowledge', desc: 'Delete a knowledge base entry', props: { id: str('Knowledge asset ID') }, required: ['id'], method: 'DELETE', path: a => `/knowledge/${a.id}` },
+  { name: 'list_knowledge_bases', desc: 'List knowledge bases', props: {}, method: 'GET', path: () => '/knowledge-bases' },
+  { name: 'create_knowledge_base', desc: 'Create a new knowledge base', props: { name: str('Name'), description: str('Description') }, required: ['name'], method: 'POST', path: () => '/knowledge-bases', body: a => ({ name: a.name, description: a.description }) },
+  // Runs
+  { name: 'list_runs', desc: 'List recent agent run history', props: {}, method: 'GET', path: () => '/runs' },
+  // Org settings
+  { name: 'get_org', desc: 'Get organization profile', props: {}, method: 'GET', path: () => '/org' },
+  { name: 'update_org', desc: 'Update organization profile (name, timezone, billing contact)', props: { name: str('Org name'), timezone: str('Timezone') }, method: 'PATCH', path: () => '/org', body: a => ({ name: a.name, timezone: a.timezone }) },
+  { name: 'list_team', desc: 'List team members', props: {}, method: 'GET', path: () => '/team' },
+  { name: 'invite_team_member', desc: 'Invite a new team member', props: { email: str('Email'), name: str('Name') }, required: ['email', 'name'], method: 'POST', path: () => '/team', body: a => ({ email: a.email, name: a.name }) },
+  { name: 'remove_team_member', desc: 'Remove a team member', props: { id: str('User ID') }, required: ['id'], method: 'DELETE', path: a => `/team/${a.id}` },
+  { name: 'list_api_keys', desc: 'List API keys', props: {}, method: 'GET', path: () => '/api-keys' },
+  { name: 'create_api_key', desc: 'Create a new API key', props: { name: str('Key name') }, required: ['name'], method: 'POST', path: () => '/api-keys', body: a => ({ name: a.name }) },
+  { name: 'revoke_api_key', desc: 'Revoke an API key', props: { id: str('API key ID') }, required: ['id'], method: 'PATCH', path: a => `/api-keys/${a.id}/revoke` },
+  { name: 'list_invoices', desc: 'List billing invoices', props: {}, method: 'GET', path: () => '/billing/invoices' },
 ];
 
 function openaiTools(mcp: McpToolset | null) {
   const builtin = TOOLS.map(t => ({
     type: 'function',
-    function: {
-      name: t.name,
-      description: t.desc,
-      parameters: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'string' } }, required: [] },
-    },
+    function: { name: t.name, description: t.desc, parameters: { type: 'object', properties: t.props, required: t.required ?? [] } },
   }));
   const mcpTools = (mcp?.tools ?? []).map(t => ({
     type: 'function',
@@ -76,7 +120,7 @@ function anthropicTools(mcp: McpToolset | null) {
   const builtin = TOOLS.map(t => ({
     name: t.name,
     description: t.desc,
-    input_schema: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'string' } } },
+    input_schema: { type: 'object', properties: t.props, required: t.required ?? [] },
   }));
   const mcpTools = (mcp?.tools ?? []).map(t => ({
     name: `mcp_${t.name}`,
@@ -91,17 +135,9 @@ async function executeTool(name: string, args: Record<string, string>, token: st
     if (!mcp) return { error: 'MCP server unavailable' };
     return mcp.callTool(name.slice(4), args);
   }
-  switch (name) {
-    case 'list_agents':     return portalCall(token, 'GET', '/agents');
-    case 'list_posts':      return portalCall(token, 'GET', args.status ? `/planned-posts?status=${args.status}` : '/planned-posts');
-    case 'approve_post':    return portalCall(token, 'PATCH', `/planned-posts/${args.id}`, { status: 'approved' });
-    case 'reject_post':     return portalCall(token, 'PATCH', `/planned-posts/${args.id}`, { status: 'rejected' });
-    case 'list_runs':       return portalCall(token, 'GET', '/runs');
-    case 'list_schedulers': return portalCall(token, 'GET', '/schedulers');
-    case 'list_connectors': return portalCall(token, 'GET', '/connectors');
-    case 'list_knowledge':  return portalCall(token, 'GET', '/knowledge');
-    default:                return { error: 'Unknown tool' };
-  }
+  const tool = TOOLS.find(t => t.name === name);
+  if (!tool) return { error: 'Unknown tool' };
+  return portalCall(token, tool.method, tool.path(args), tool.body?.(args));
 }
 
 const SYSTEM = `You are an AI assistant embedded in a custom eCG Agents Portal dashboard. You have access to portal data and can take actions on behalf of the user. Be concise and helpful. When you take an action, briefly confirm what you did.`;

@@ -25,6 +25,7 @@ import {
   getDirectDependents,
   deleteFileGraph,
 } from './graphStore.js';
+import { extractSymbols, upsertSymbolGraph, deleteSymbolGraph } from './symbolGraph.js';
 
 export interface WorkspaceFile {
   path: string;
@@ -55,6 +56,12 @@ export async function indexFile(
 ): Promise<void> {
   // Only index source files — skip binaries, lockfiles, generated output
   if (!isIndexableFile(filePath)) return;
+
+  // Symbol graph is pure static analysis — no embedding provider required,
+  // so it runs even on the bm25 (no-embedding) path below.
+  try {
+    upsertSymbolGraph(projectId, filePath, extractSymbols(content)).catch(() => {});
+  } catch { /* non-fatal — regex extraction should never throw, but never risk indexFile on it */ }
 
   // BM25 is pure in-memory — storing its vectors in Supabase adds no value
   // (cosine sim on random-hash vectors is meaningless) and wastes 2 DB round-trips per file.
@@ -100,6 +107,7 @@ export async function removeFileIndex(
   await Promise.allSettled([
     deleteFileEmbedding(projectId, filePath),
     deleteFileGraph(projectId, filePath),
+    deleteSymbolGraph(projectId, filePath),
   ]);
 }
 

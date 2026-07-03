@@ -6,6 +6,7 @@
  */
 import { z } from 'zod';
 import { ToolDefinition, AgentContext } from './types.js';
+import { getBlastRadius } from '../knowledgebase/symbolGraph.js';
 
 // ─── Circuit breaker: detect repeated identical error signatures per project ──
 // Entries expire after MAX_ERROR_HISTORY_AGE_MS to avoid cross-run leakage.
@@ -145,6 +146,29 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
       }
     }
 
+    // ─── Blast-radius note ────────────────────────────────────────────────────
+    // Extract a likely component/symbol name from the error text (PascalCase
+    // identifier is the strongest signal — React error messages name the
+    // component, e.g. "Element type is invalid ... in Navbar"). Look it up in
+    // the symbol graph and tell the agent what else calls/renders it, so it
+    // doesn't fix the named file only to break every caller silently.
+    let blastRadiusNote = '';
+    try {
+      const projectId = args.projectId || ctx.projectId;
+      const candidateNames = new Set<string>();
+      for (const e of condensed) {
+        const matches = e.match(/\b[A-Z][A-Za-z0-9]{2,}\b/g) ?? [];
+        for (const m of matches) candidateNames.add(m);
+      }
+      for (const name of [...candidateNames].slice(0, 3)) {
+        const { callers } = await getBlastRadius(projectId, name);
+        if (callers.length > 0) {
+          const callerList = callers.slice(0, 5).map(c => `${c.symbol_name} (${c.file_path})`).join(', ');
+          blastRadiusNote += `\n\n⚠️ BLAST RADIUS: "${name}" is used by: ${callerList}. If you change its props/signature, check these too.`;
+        }
+      }
+    } catch { /* non-fatal — symbol graph is best-effort */ }
+
     // Check if any "module not found" errors are for packages the agent declared
     // with <ecomgear-add-dependency> (legacy) — tell the agent to install them.
     const declaredDeps = ctx.getDeclaredDependencies?.() ?? [];
@@ -188,6 +212,6 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
       errorHistory.set(projectId, { signature: errorSignature, count: 1, ts: now });
     }
 
-    return `${diagnosticPrefix} (${condensed.length} unique):\n\n${condensed.map((e, i) => `[${i + 1}] ${e}`).join('\n\n')}${pendingDepNote.join('')}`;
+    return `${diagnosticPrefix} (${condensed.length} unique):\n\n${condensed.map((e, i) => `[${i + 1}] ${e}`).join('\n\n')}${pendingDepNote.join('')}${blastRadiusNote}`;
   },
 };

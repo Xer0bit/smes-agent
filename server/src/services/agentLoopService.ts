@@ -1,5 +1,5 @@
 
-import { streamText, generateText, ToolSet, stepCountIs, jsonSchema } from 'ai';
+import { streamText, generateText, ToolSet, stepCountIs, jsonSchema, wrapLanguageModel } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -41,8 +41,10 @@ import { getAppBuilderBuildSystemPrompt, getAppBuilderSystemPrompt, MICRO_SYSTEM
 import { PRE_INSTALLED_PACKAGES } from './baseTemplateService.js';
 import { RunStateLedger } from './runStateLedger.js';
 import { canonicalizeModelId, DEFAULT_FREE_MODEL, DEFAULT_PRIMARY_MODEL } from '../config/models.js';
-import { indexFile, indexFiles, retrieveRelevantFiles } from '../knowledgebase/index.js';
+import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols } from '../knowledgebase/index.js';
 import { captureThumbnail } from './thumbnailService.js';
+import { createGeminiToolCache, createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
+import { lookupFailureFix, storeFailureFix } from './failureMemory.service.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -668,6 +670,125 @@ function compactStepMessages(
 
 // ──────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Fast syntax-only TS/JSX check for a single file's content — NOT a full
+ * type-checked `tsc --noEmit` project build (that needs a persistent
+ * ts.LanguageService per project; out of scope here). This only catches
+ * structural breakage (unclosed brackets, malformed JSX, stray tokens) —
+ * exactly the failure mode that used to only surface in the cold, expensive
+ * post-run repair pass. Runs in milliseconds since it's a single-file parse.
+ * Returns a short diagnostic string, or null if the file parses clean.
+ */
+function checkTsSyntaxInLoop(relPath: string, content: string): string | null {
+  const normalizedPath = relPath.replace(/\\/g, '/');
+  if (!/(^|\/)src\/.*\.(tsx|jsx)$/i.test(normalizedPath)) return null;
+  try {
+    const result = ts.transpileModule(content, {
+      compilerOptions: {
+        jsx: ts.JsxEmit.ReactJSX,
+        module: ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ES2020,
+      },
+      reportDiagnostics: true,
+      fileName: relPath,
+    });
+    if (result.diagnostics && result.diagnostics.length > 0) {
+      const errors = result.diagnostics
+        .slice(0, 3)
+        .map(d => ts.flattenDiagnosticMessageText(d.messageText, ' '))
+        .join('; ');
+      return errors;
+    }
+    return null;
+  } catch {
+    return null; // never block the tool result on a transpiler crash
+  }
+}
+
+/**
+ * Deterministically derive a route path from a page component name, matching
+ * the naming convention already documented in app-builder.prompt.ts:
+ *   HomePage       → "/"        (home is ALWAYS "/" per prompt rule)
+ *   AboutPage      → "/about"
+ *   ContactUsPage  → "/contact-us"
+ *   PricingPage    → "/pricing"
+ */
+function deriveRoutePath(componentName: string): string {
+  const base = componentName.replace(/Page$/, '');
+  if (/^(home|index|landing)$/i.test(base) || base === '') return '/';
+  // PascalCase / camelCase → kebab-case
+  const kebab = base
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2')
+    .toLowerCase();
+  return `/${kebab}`;
+}
+
+/**
+ * Deterministic codegen replacement for the LLM-based "App.tsx fix pass".
+ * Given the list of page files on disk, generates a complete src/App.tsx
+ * with HashRouter + a Route per page — zero LLM calls, zero wiring failures.
+ * Mirrors exactly the rules the old LLM prompt enforced (HashRouter only,
+ * home page at "/", default export name === file basename).
+ */
+function generateAppTsxFromPages(pagePaths: string[]): string {
+  const pages = pagePaths.map(p => {
+    const componentName = path.basename(p, path.extname(p));
+    return { componentName, importPath: `./pages/${componentName}`, route: deriveRoutePath(componentName) };
+  });
+
+  // Home page ("/") must be listed first for readability; stable sort keeps
+  // the rest in their original (disk-read) order.
+  pages.sort((a, b) => (a.route === '/' ? -1 : b.route === '/' ? 1 : 0));
+
+  const imports = pages.map(p => `import ${p.componentName} from "${p.importPath}";`).join('\n');
+  const routes = pages.map(p => `        <Route path="${p.route}" element={<${p.componentName} />} />`).join('\n');
+
+  return `import { HashRouter, Routes, Route } from "react-router-dom";
+${imports}
+
+export default function App() {
+  return (
+    <HashRouter>
+      <Routes>
+${routes}
+      </Routes>
+    </HashRouter>
+  );
+}
+`;
+}
+
+/**
+ * Given a file's content before and after a successful repair, extract the
+ * minimal changed region as a SEARCH/REPLACE block for failure-memory storage.
+ * Returns null when the change is too large/sprawling to be a useful template
+ * for a DIFFERENT file's content (e.g. a full-file rewrite) — only tight,
+ * localized fixes are worth remembering as a reusable diff.
+ */
+function buildMinimalSearchReplace(before: string, after: string): string | null {
+  const beforeLines = before.split('\n');
+  const afterLines = after.split('\n');
+
+  let start = 0;
+  while (start < beforeLines.length && start < afterLines.length && beforeLines[start] === afterLines[start]) start++;
+
+  let endB = beforeLines.length - 1;
+  let endA = afterLines.length - 1;
+  while (endB >= start && endA >= start && beforeLines[endB] === afterLines[endA]) { endB--; endA--; }
+
+  const searchLines = beforeLines.slice(start, endB + 1);
+  const replaceLines = afterLines.slice(start, endA + 1);
+
+  // Reject sprawling changes — not a reusable template, and too large to be
+  // worth matching verbatim against a different file's content later.
+  if (searchLines.length === 0 || searchLines.length > 15 || replaceLines.length > 15) return null;
+
+  const searchText = searchLines.join('\n');
+  const replaceText = replaceLines.join('\n');
+  return `<<<<<<< SEARCH\n${searchText}\n=======\n${replaceText}\n>>>>>>> REPLACE`;
+}
+
 function buildToolSet(ctx: AgentContext, brainMemory: string[]): ToolSet {
   const defs = [
     thinkTool,
@@ -763,6 +884,27 @@ function buildToolSet(ctx: AgentContext, brainMemory: string[]): ToolSet {
           // Mark file as read so subsequent write_file/edit_file calls are allowed.
           if (def.name === 'read_file' && typeof args.path === 'string' && ctx.readFiles) {
             ctx.readFiles.add(args.path);
+          }
+          // ── In-loop TS syntax feedback ───────────────────────────────────────
+          // Check the file the model JUST wrote/edited, with hot context still
+          // in the conversation. Cheaper and more reliable than the cold post-run
+          // repair pass, which re-reads context from scratch after the run ends.
+          // Only fires on success (an ERROR: result already told the model what's wrong).
+          if (
+            (def.name === 'write_file' || def.name === 'edit_file') &&
+            typeof args.path === 'string' &&
+            typeof result === 'string' &&
+            !result.startsWith('ERROR') &&
+            !result.startsWith('BLOCKED')
+          ) {
+            try {
+              const fullPath = safeJoin(ctx.appPath, args.path);
+              const finalContent = fs.readFileSync(fullPath, 'utf8');
+              const diagnostic = checkTsSyntaxInLoop(args.path, finalContent);
+              if (diagnostic) {
+                return `${result}\n\n⚠️ SYNTAX CHECK FAILED for ${args.path}: ${diagnostic}\nFix this now with edit_file before moving to the next file — this file will not compile as-is.`;
+              }
+            } catch { /* file may not exist yet or be unreadable — don't block the tool result */ }
           }
           return result;
         } catch (err: any) {
@@ -1572,17 +1714,37 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
 
   // Build excluded/truncated file notes so agent knows to read_file before importing.
   const cappedPaths = new Set(cappedFiles.map(f => f.path));
-  const excludedFiles = fileSources
-    .filter(f => !cappedPaths.has(f.path))
-    .map(f => f.path);
+  const excludedFileEntries = fileSources.filter(f => !cappedPaths.has(f.path));
+  const excludedFiles = excludedFileEntries.map(f => f.path);
   const truncatedFiles = cappedFiles
     .filter(f => f.truncated)
     .map(f => f.path);
+
+  // Signature-only preview for excluded files: symbol names + kind, no bodies.
+  // Cheap (regex, already-in-memory content, no DB round-trip) and gives the
+  // model enough to judge relevance without loading full text it may not need —
+  // it still MUST call read_file before importing/editing, per the warning below.
+  const MAX_SIGNATURE_FILES = 40;
+  const signatureLines: string[] = [];
+  for (const f of excludedFileEntries.slice(0, MAX_SIGNATURE_FILES)) {
+    if (!/\.(tsx?|jsx?)$/.test(f.path)) { signatureLines.push(f.path); continue; }
+    try {
+      const symbols = extractSymbols(f.content);
+      if (symbols.length === 0) { signatureLines.push(f.path); continue; }
+      const sig = symbols.map(s => `${s.name}:${s.kind}`).join(', ');
+      signatureLines.push(`${f.path} — ${sig}`);
+    } catch {
+      signatureLines.push(f.path);
+    }
+  }
+  const remainingCount = excludedFiles.length - signatureLines.length;
+
   const excludedFilesNote = excludedFiles.length > 0
-    ? `\n\n**WARNING: ${excludedFiles.length} file(s) exist in the project but their contents are NOT shown above.** ` +
+    ? `\n\n**WARNING: ${excludedFiles.length} file(s) exist in the project but their FULL contents are NOT shown above — only symbol signatures.** ` +
       `If you need to import from or edit any of these files, call \`read_file\` FIRST to see their actual content. ` +
-      `NEVER guess the exports or structure of a file you haven't read.\n` +
-      `Files not in context: ${excludedFiles.slice(0, 30).join(', ')}${excludedFiles.length > 30 ? ` (and ${excludedFiles.length - 30} more)` : ''}`
+      `NEVER guess implementation details of a file you haven't read — the signatures below only tell you WHAT exists, not HOW it works.\n` +
+      `Files not in context (path — exported symbols:kind):\n${signatureLines.join('\n')}` +
+      (remainingCount > 0 ? `\n(and ${remainingCount} more file(s) not shown)` : '')
     : '';
   const truncatedFilesNote = truncatedFiles.length > 0
     ? `\n\n**NOTE: ${truncatedFiles.length} file(s) are only partially shown above to save tokens.** ` +
@@ -1989,17 +2151,37 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   const systemPrompt = enforcePlanMode(assemblePrompt(staticSystemPrompt));
   const dynamicContext = enforcePlanMode(assemblePrompt(''));
 
-  // ── Gemini run-level system prompt cache ─────────────────────────────────
-  // Only used in plan mode (no tools). Build mode always has tools, and Gemini
-  // forbids passing tools alongside cachedContent in the same request — they
-  // would need to be baked into the cache itself (not yet implemented).
+  // Per-run brain memory — survives context compaction across steps.
+  // Hoisted above the Gemini cache block because buildToolSet needs it.
+  const brainMemory: string[] = [];
+  const toolSet = runtimeMode === 'plan' ? undefined : buildToolSet(ctx, brainMemory);
+
+  // ── Gemini run-level context cache ───────────────────────────────────────
+  // Plan mode has no tools — cache just the system prompt (createGeminiRunCache).
+  // Build/edit/fix/feature modes have tools — Gemini rejects generateContent
+  // requests that pass tools alongside cachedContent, so those must be baked
+  // into the cache itself (createGeminiToolCache). The stripToolsForCache
+  // middleware then removes `tools` from the outbound wire request while
+  // leaving local tool-call execution (via the `tools` object passed to
+  // streamText) completely unaffected.
   let geminiRunCacheName: string | null = null;
-  if (providerName === 'gemini' && runtimeMode === 'plan') {
+  let geminiToolCacheName: string | null = null;
+  if (providerName === 'gemini') {
     const geminiKey = process.env.GEMINI_API_KEY;
     if (geminiKey) {
-      geminiRunCacheName = await createGeminiRunCache(systemPrompt, modelId, geminiKey);
+      if (runtimeMode === 'plan') {
+        geminiRunCacheName = await createGeminiRunCache(systemPrompt, modelId, geminiKey);
+      } else if (toolSet) {
+        geminiToolCacheName = await createGeminiToolCache(systemPrompt, toolSet, modelId, geminiKey);
+      }
     }
   }
+  // Wrap the provider so the outbound request omits `tools`/`toolConfig`
+  // whenever a tool cache is active — only affects the wire request, not
+  // local tool-call dispatch (streamText still receives `tools: toolSet` below).
+  const streamingProvider = geminiToolCacheName
+    ? wrapLanguageModel({ model: aiProvider, middleware: createStripToolsForCacheMiddleware() })
+    : aiProvider;
 
   const isAnthropicModel = providerName === 'anthropic';
   const systemMessages: Array<{ role: 'system'; content: string; providerOptions?: Record<string, any> }> = isAnthropicModel
@@ -2014,14 +2196,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // Also cached: it's stable across all steps of this run, so subsequent steps are cache hits.
         ...(dynamicContext.trim() ? [{ role: 'system' as const, content: dynamicContext, providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } }] : []),
       ]
-    : geminiRunCacheName
+    : (geminiRunCacheName || geminiToolCacheName)
       ? [] // system prompt lives in the Gemini cache — sending it again would conflict
       : [{ role: 'system' as const, content: systemPrompt }];
-
-  // Per-run brain memory — survives context compaction across steps
-  const brainMemory: string[] = [];
-
-  const toolSet = runtimeMode === 'plan' ? undefined : buildToolSet(ctx, brainMemory);
 
   // Signal SSE stream start
   sseWrite(res, 'start', { projectId, model: modelId, mode: runtimeMode });
@@ -2174,8 +2351,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         system: systemMessages,
         messages: conversationMessages,
         ...(toolSet ? { tools: toolSet } : {}),
-        ...(geminiRunCacheName && pName === 'gemini'
-          ? { providerOptions: { google: { cachedContent: geminiRunCacheName } } }
+        ...((geminiRunCacheName || geminiToolCacheName) && pName === 'gemini'
+          ? { providerOptions: { google: { cachedContent: (geminiRunCacheName || geminiToolCacheName) as string } } }
           : {}),
         maxOutputTokens: outputLimit,
         maxRetries: 0, // We handle retries + fallback ourselves
@@ -2201,12 +2378,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
           if (journalBlock || lowStepsWarning) {
             const base = compacted !== messages ? compacted : [...messages];
-            const insertAt = Math.max(0, base.length - KEEP_RECENT_STEPS * 2);
+            // Append at the very end rather than splicing into the middle of the
+            // conversation. The journal changes every step (it embeds the step
+            // counter), so splicing it mid-history broke the Anthropic/Gemini
+            // prompt-cache prefix on every step — the model re-paid full price
+            // for the entire conversation instead of getting a cache hit on
+            // everything before this step. Appending keeps that whole prefix
+            // byte-identical across steps; only this trailing message is new.
             const injectedContent = [journalBlock, lowStepsWarning].filter(Boolean).join('\n\n');
             const withInjected = [
-              ...base.slice(0, insertAt),
+              ...base,
               { role: 'user' as const, content: injectedContent },
-              ...base.slice(insertAt),
             ];
             return { messages: withInjected };
           }
@@ -2344,7 +2526,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // Primary model: retry with exponential backoff (skip retries for network errors)
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        result = await attemptStream(aiProvider, attempt);
+        result = await attemptStream(streamingProvider, attempt);
         // Test the stream by consuming the first chunk — if it throws, we catch it here
         lastStreamError = null;
         break;
@@ -2515,13 +2697,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         );
 
       if (newPageFiles.length > 0 && !appTsxWasUpdated) {
-        console.log(`[AgentLoop] Post-gen validation: ${newPageFiles.length} page(s) written but App.tsx not updated — running App.tsx fix pass`);
+        console.log(`[AgentLoop] Post-gen validation: ${newPageFiles.length} page(s) written but App.tsx not updated — codegenerating App.tsx`);
         sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: 'Wiring new pages into App.tsx...' });
-
-        let currentAppTsxContent = '';
-        try {
-          currentAppTsxContent = fs.readFileSync(safeJoin(appPath, 'src/App.tsx'), 'utf8');
-        } catch { /* not found — will be created */ }
 
         let allPagesOnDisk: string[] = [];
         try {
@@ -2533,59 +2710,22 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           }
         } catch { /* ignore */ }
 
-        const pagesForPrompt = allPagesOnDisk.length > 0 ? allPagesOnDisk : newPageFiles;
-        const pageListText = pagesForPrompt
-          .map(p => `- ${p} → export default ${path.basename(p, path.extname(p))}`)
-          .join('\n');
+        const pagesForRouter = allPagesOnDisk.length > 0 ? allPagesOnDisk : newPageFiles;
 
-        const appFixCtx: AgentContext = {
-          appPath,
-          projectId,
-          pendingPreviewFiles: ctx.pendingPreviewFiles,
-          previewServiceUrl: ctx.previewServiceUrl,
-          onXmlComplete: (xml: string) => {
-            parseXmlOperation(xml, { filesToWrite, filesEdited, filesToDelete: [], renames: [], dependencies: [] });
-            sseWrite(res, 'tool-output', { xml });
-          },
-          onXmlStream: (xml: string) => { sseWrite(res, 'tool-streaming', { xml }); },
-        };
-
-        const appFixSystemPrompt =
-`You are an App.tsx routing specialist. Tool calls ONLY — zero chat text.
-
-TASK: Rewrite src/App.tsx to import and route every page listed below.
-
-CURRENT src/App.tsx:
-\`\`\`tsx
-${currentAppTsxContent || '(not found or empty)'}
-\`\`\`
-
-ALL pages that must be routed:
-${pageListText}
-
-RULES:
-- Use HashRouter + Routes + Route from react-router-dom
-- Import every page component at the top of the file
-- Route "/" to the first/home page; derive other paths from component names (e.g. AboutPage → /about)
-- Write a COMPLETE file — no placeholders, no "// rest of code here"
-- One write_file call with the full updated src/App.tsx
-- Budget: 3 tool calls max (read_file if needed, write_file, done)`;
-
+        // Deterministic codegen — zero LLM calls, zero wiring failures. Replaces
+        // the old generateText-based "App.tsx fix pass", which could hallucinate
+        // routes, forget imports, or truncate mid-file like any other LLM write.
         try {
-          // Skip repair pass if we're already over the token budget
-          if (!abortController.signal.aborted && runTokens.total < RUN_TOKEN_CAP) {
-            await generateText({
-              model: aiProvider,
-              system: appFixSystemPrompt,
-              messages: [{ role: 'user', content: 'Update src/App.tsx now.' }],
-              tools: buildToolSet(appFixCtx, []),
-              stopWhen: stepCountIs(4),
-              abortSignal: abortController.signal,
-            });
-            console.log('[AgentLoop] App.tsx fix pass completed');
-          }
+          const generatedAppTsx = generateAppTsxFromPages(pagesForRouter);
+          const fullPath = safeJoin(appPath, 'src/App.tsx');
+          fs.writeFileSync(fullPath, generatedAppTsx, 'utf8');
+          const existing = filesToWrite.findIndex(f => f.path === 'src/App.tsx');
+          if (existing >= 0) filesToWrite[existing].content = generatedAppTsx;
+          else filesToWrite.push({ path: 'src/App.tsx', content: generatedAppTsx });
+          if (ctx.pendingPreviewFiles) ctx.pendingPreviewFiles.set('src/App.tsx', generatedAppTsx);
+          console.log(`[AgentLoop] App.tsx codegen completed — ${pagesForRouter.length} route(s) wired`);
         } catch (appFixErr) {
-          console.warn('[AgentLoop] App.tsx fix pass failed (non-fatal):', appFixErr);
+          console.warn('[AgentLoop] App.tsx codegen failed (non-fatal):', appFixErr);
         }
       }
     }
@@ -3005,6 +3145,46 @@ RULES:
             sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: `Auto-repairing ${currentKind} errors (attempt ${repairAttempt + 1})...` });
           }
 
+          // ── PASS -1: Failure memory (zero LLM tokens, cheaper than mechanical) ──
+          // Check whether this exact error signature has a previously-VERIFIED
+          // fix from any prior run (any project). Only applies llm_diff fixes here —
+          // mechanical fixes are already covered by PASS 0's sanitizeFileContent,
+          // which runs unconditionally and for free, so re-applying a remembered
+          // mechanical fix would be redundant.
+          if (currentKind === 'build' && brokenFileLocations.size > 0) {
+            for (const [relPath] of brokenFileLocations) {
+              if (!/\.(tsx?|jsx?)$/.test(relPath)) continue;
+              const matchingError = errors.find(e => e.includes(relPath));
+              if (!matchingError) continue;
+              const remembered = await lookupFailureFix(matchingError);
+              if (!remembered || remembered.fixKind !== 'llm_diff') continue;
+              try {
+                const fullFilePath = safeJoin(appPath, relPath);
+                const original = fs.readFileSync(fullFilePath, 'utf8');
+                const diffMatch = /<<<<<<< SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE/.exec(remembered.fixContent);
+                if (!diffMatch) continue;
+                const [, searchText, replaceText] = diffMatch;
+                if (!original.includes(searchText)) continue; // signature matched but file content differs too much — skip, let normal passes handle it
+                const patched = original.replace(searchText, replaceText);
+                fs.writeFileSync(fullFilePath, patched, 'utf8');
+                const memPush = await httpPost(updateUrl, JSON.stringify({ files: [{ path: relPath, content: patched }], fullSync: false }));
+                if (memPush.status === 200) {
+                  await new Promise<void>(r => setTimeout(r, 400));
+                  const memHealth = await getPreviewStatus();
+                  if (memHealth.healthy) {
+                    console.log(`[AgentLoop] Failure-memory fix applied for ${relPath} (hit #${remembered.hitCount + 1}) — LLM repair skipped`);
+                    const idx = mergedWrites.findIndex(f => f.path === relPath);
+                    if (idx >= 0) mergedWrites[idx].content = patched;
+                    else mergedWrites.push({ path: relPath, content: patched });
+                    previewPushOk = true;
+                  }
+                }
+              } catch { /* remembered fix didn't apply cleanly — fall through to normal repair passes */ }
+              if (previewPushOk) break;
+            }
+          }
+          if (previewPushOk) break; // failure-memory pass already succeeded
+
           // ── PASS 0: Mechanical repair (zero LLM tokens) ────────────────────
           // Run sanitizeFileContent on broken .tsx/.ts files BEFORE invoking LLM.
           // Fixes: orphan closers, duplicate React imports, truncated JSX — for free.
@@ -3132,6 +3312,13 @@ RULES:
 'Budget: 12 tool calls max.'
             );
 
+          // Snapshot broken files BEFORE the repair call so a successful outcome
+          // can be diffed and stored in failure memory for future occurrences.
+          const preRepairContent = new Map<string, string>();
+          for (const [relPath] of brokenFileLocations) {
+            try { preRepairContent.set(relPath, fs.readFileSync(safeJoin(appPath, relPath), 'utf8')); } catch { /* file may not exist yet */ }
+          }
+
           try {
             await generateText({
               model: aiProvider,
@@ -3188,6 +3375,21 @@ RULES:
               console.log(`[AgentLoop] Auto-repair ${repairAttempt + 1} succeeded and preview confirmed healthy`);
               previewPushOk = true;
               console.log(`[AgentLoop] Auto-repair ${repairAttempt + 1} resolved all errors (silent).`);
+
+              // ── Store verified fix in failure memory for next occurrence ──────
+              // Only store when the diff is small and clean — a full-file rewrite
+              // makes a poor SEARCH/REPLACE template for a different file's content.
+              for (const [relPath, errorLine] of brokenFileLocations) {
+                const before = preRepairContent.get(relPath);
+                const after = repairedDiskMap.get(relPath);
+                if (!before || !after || before === after) continue;
+                const matchingError = errors.find(e => e.includes(relPath));
+                if (!matchingError) continue;
+                const diff = buildMinimalSearchReplace(before, after);
+                if (diff) {
+                  storeFailureFix(matchingError, 'llm_diff', diff).catch(() => {});
+                }
+              }
               break;
             } else {
               // Update kind for the next repair pass
