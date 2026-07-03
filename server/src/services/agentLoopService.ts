@@ -34,6 +34,7 @@ import { getDatabaseSchemaTool } from '../agent-tools/get_database_schema.js';
 import { queryDatabaseTool } from '../agent-tools/query_database.js';
 import { provisionDatabaseTool } from '../agent-tools/provision_database.js';
 import { writeEdgeFunctionTool } from '../agent-tools/write_edge_function.js';
+import { searchOrgKnowledgeTool } from '../agent-tools/search_org_knowledge.js';
 import { sanitizeFileContent, sanitizeConfigFile } from '../agent-tools/sanitize.js';
 import ts from 'typescript';
 import { getAppBuilderBuildSystemPrompt, getAppBuilderSystemPrompt, MICRO_SYSTEM_PROMPT, getFixSystemPrompt, getEditSystemPrompt } from '../prompts/app-builder.prompt.js';
@@ -685,6 +686,7 @@ function buildToolSet(ctx: AgentContext, brainMemory: string[]): ToolSet {
     queryDatabaseTool,
     provisionDatabaseTool,
     writeEdgeFunctionTool,
+    ...(ctx.ecgMcp ? [searchOrgKnowledgeTool] : []),
   ];
 
   const toolSet: ToolSet = {};
@@ -1317,6 +1319,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     dbQueryCallCount: 0,
     previewServiceUrl: process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001',
     ledger: runLedger,
+    ecgMcp: (() => {
+      const url = projectSecrets?.find(s => s.key_name === 'ECG_MCP_URL')?.key_value;
+      const token = projectSecrets?.find(s => s.key_name === 'ECG_MCP_TOKEN')?.key_value;
+      return url ? { url, token } : undefined;
+    })(),
     // reverseGraph is injected below after the import graph is built
     onXmlComplete: (xml: string) => {
       // Parse completed XML tags and record operations
@@ -1917,6 +1924,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const hasSb  = projectSecrets.some(s => s.key_name === 'VITE_SUPABASE_URL');
     const hasDb  = projectSecrets.some(s => s.key_name === 'VITE_DB_API_URL');
     const hasEcg = projectSecrets.some(s => s.key_name === 'ECG_PORTAL_TOKEN');
+    const hasEcgMcp = projectSecrets.some(s => s.key_name === 'ECG_MCP_URL');
 
     const sbNote = hasSb
       ? '\n\nFor Supabase auth/data in generated code ALWAYS use `import.meta.env.VITE_SUPABASE_URL` and `import.meta.env.VITE_SUPABASE_ANON_KEY`. NEVER hardcode any `*.supabase.co` URL — it will cause CORS errors in the preview.'
@@ -1925,7 +1933,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       ? '\n\nFor the hosted database use PostgREST calls to `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` with headers `{ "Authorization": "Bearer <VITE_DB_ANON_KEY>", "apikey": "<VITE_DB_ANON_KEY>" }`. Call `get_database_schema` to inspect tables, `query_database` to run SQL.'
       : '';
     const ecgNote = hasEcg
-      ? '\n\n## eCG Agents Portal Integration\n\nThis project is linked to the eCG Agents Portal. Follow these rules strictly:\n\n**Frontend (React) code** — NEVER call the portal API directly from the browser. All portal data goes through the eComGear server proxy:\n```ts\n// In src/lib/ecgClient.ts — already configured\nconst url = `${import.meta.env.VITE_ECG_PROXY_URL}/api/v1/ecg-proxy${path}?projectId=${import.meta.env.VITE_PROJECT_ID}`;\n```\nUse `ecgApi` from `src/lib/ecgClient.ts` for all data fetching. Do not use `ECG_PORTAL_TOKEN` — it is server-side only.\n\n**Edge functions** — use the pre-injected `ecg` helper (not `fetch`). ECG credentials are injected server-side:\n```js\n// Agents\nconst agents = await ecg.get(\'/agents\');\n// Approve a post\nawait ecg.patch(\'/planned-posts/\' + params.postId, { status: \'approved\' });\n// Run history\nconst runs = await ecg.get(\'/runs\');\n// LLM call (uses the configured AI model, key stays server-side)\nconst reply = await ecg.llm([\n  { role: \'user\', content: \'Summarize agent performance\' }\n], \'You are an eCG assistant.\');\n```\n`ecg` is `null` for projects without portal integration — check before using.\n\n**AI chat** — the dashboard has a built-in `AiAssistantPage.tsx` that calls `/api/v1/ecg-proxy/ai-chat`. Extend it, do not duplicate it.\n\n**Security rule** — NEVER expose `ECG_PORTAL_TOKEN`, `ECG_LLM_API_KEY`, or any `ECG_*` secret in frontend code, logs, or responses.'
+      ? '\n\n## eCG Agents Portal Integration\n\nThis project is linked to the eCG Agents Portal. Follow these rules strictly:\n\n**Frontend (React) code** — NEVER call the portal API directly from the browser. All portal data goes through the eComGear server proxy:\n```ts\n// In src/lib/ecgClient.ts — already configured\nconst url = `${import.meta.env.VITE_ECG_PROXY_URL}/api/v1/ecg-proxy${path}?projectId=${import.meta.env.VITE_PROJECT_ID}`;\n```\nUse `ecgApi` from `src/lib/ecgClient.ts` for all data fetching. Do not use `ECG_PORTAL_TOKEN` — it is server-side only.\n\n**Edge functions** — use the pre-injected `ecg` helper (not `fetch`). ECG credentials are injected server-side:\n```js\n// Agents\nconst agents = await ecg.get(\'/agents\');\n// Approve a post\nawait ecg.patch(\'/planned-posts/\' + params.postId, { status: \'approved\' });\n// Run history\nconst runs = await ecg.get(\'/runs\');\n// LLM call (uses the configured AI model, key stays server-side)\nconst reply = await ecg.llm([\n  { role: \'user\', content: \'Summarize agent performance\' }\n], \'You are an eCG assistant.\');\n```\n`ecg` is `null` for projects without portal integration — check before using.\n\n**AI chat** — the dashboard has a built-in `AiAssistantPage.tsx` that calls `/api/v1/ecg-proxy/ai-chat`. Extend it, do not duplicate it.\n\n**Security rule** — NEVER expose `ECG_PORTAL_TOKEN`, `ECG_LLM_API_KEY`, or any `ECG_*` secret in frontend code, logs, or responses.' +
+        (hasEcgMcp ? '\n\n**Knowledge base** — you have a `search_org_knowledge` tool. Use it to ground generated UI copy and content (brand voice, product descriptions, business context) in the organization\'s real knowledge instead of inventing generic placeholder text.' : '')
       : '';
 
     return `\n\n# Project Environment Variables\n\nThe following secrets are available as \`import.meta.env.VITE_XXX\` (frontend) or \`process.env.XXX\` (backend). NEVER echo, print, log, or reveal their values in chat responses — treat them as confidential.${sbNote}${dbNote}${ecgNote}\n\n\`\`\`\n${lines}\n\`\`\``;

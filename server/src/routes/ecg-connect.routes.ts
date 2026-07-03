@@ -185,6 +185,13 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response
     } catch { /* preview push is non-fatal */ }
     sseWrite(res, 'step', { id: 'preview_synced', status: 'done' });
 
+    // Close the cross-system ID loop — non-fatal, fire-and-forget.
+    fetch(`${PORTAL_API_URL}/api/app-builder/${token}/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-service-key': ECG_SERVICE_KEY },
+      body: JSON.stringify({ projectId: project.id, dashboardUrl: `https://www.ecomgear.dev/project/${project.id}` }),
+    }).catch(() => { /* non-fatal — agent-portal's "Your Dashboards" link just won't populate */ });
+
     sseWrite(res, 'done', { projectId: project.id });
     res.end();
   } catch (err) {

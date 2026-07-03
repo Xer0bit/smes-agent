@@ -60,6 +60,8 @@ export interface AgentContext {
   userId?: string;
   /** Tracks how many times query_database has been called in this run, to cap runaway query loops. */
   dbQueryCallCount?: number;
+  /** eCG Agents Portal MCP endpoint, present only for projects with MCP enabled at launch. */
+  ecgMcp?: { url: string; token?: string };
 }
 
 // ─── Tool abstraction ────────────────────────────────────────────────────────
