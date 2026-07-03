@@ -466,7 +466,7 @@ function deriveStepStatus(toolCalls: any[], toolResults: any[]): string | null {
         return capped.charAt(0).toUpperCase() + capped.slice(1);
       }
     }
-    return 'Planning next steps...';
+    return 'Thinking...';
   }
 
   // 2. save_memory
