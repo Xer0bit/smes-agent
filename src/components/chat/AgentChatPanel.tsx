@@ -32,6 +32,8 @@ interface Message {
   content: string;
   status?: 'pending' | 'streaming' | 'complete' | 'error';
   isPlan?: boolean;
+  /** True when the agent replied without writing/deleting any files (ghostRun) and it wasn't a confirm-first ask */
+  noChanges?: boolean;
   summary?: string;
   toolActivities?: ToolActivity[];
   attachments?: ChatAttachment[];
@@ -1242,10 +1244,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               : !isPlan && filePaths.length > 0 ? null   // null = Gemini loading
               : [];
 
+            const noChanges = !isPlan && !isConfirmRequest && result.ghostRun === true;
             setMessages(prev =>
               prev.map(m =>
                 m.id === asstId
-                  ? { ...m, status: 'complete', content: finalContent, isPlan, summary, toolActivities, snapshotId: result.snapshotId, suggestedCommands, followUpSuggestions: initialSuggestions }
+                  ? { ...m, status: 'complete', content: finalContent, isPlan, noChanges, summary, toolActivities, snapshotId: result.snapshotId, suggestedCommands, followUpSuggestions: initialSuggestions }
                   : m
               )
             );
@@ -1288,11 +1291,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             }
 
             if (!isPlan) {
-              if (result.ghostRun) {
-                // Agent produced text but wrote no files — this is a normal conversational
-                // response (question, clarification, limitation). Never auto-retry here.
-                // Auto-fix only happens via onRepairFailed when there are real syntax/build errors.
-              }
               if (onFilesGenerated && (result.filesToWrite?.length > 0 || result.filesToDelete?.length > 0)) {
                 onFilesGenerated(
                   (result.filesToWrite ?? []).map((f: { path: string; content: string | Buffer }) => ({
@@ -1306,8 +1304,16 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               onGenerationComplete?.(result.tokensUsed ?? 0);
               // Refresh eco usage display after generation
               if (!isGuest) refreshUsage().catch(() => {});
-              autoRepairCountRef.current = 0; // successful build — reset repair counter
-              toast.success('App updated.');
+              if (result.ghostRun) {
+                // Agent produced text but wrote no files — this is a normal conversational
+                // response (question, clarification, limitation) OR a run that fumbled tool
+                // calls and only narrated. Either way, nothing changed: never claim otherwise
+                // with a success toast, and never auto-retry here (repair auto-fix only fires
+                // via onRepairFailed on real build errors).
+              } else {
+                autoRepairCountRef.current = 0; // successful build — reset repair counter
+                toast.success('App updated.');
+              }
             }
           },
           onRepairFailed: (errors) => {
@@ -1553,6 +1559,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 </div>
               )}
 
+              {/* No-changes chip — agent replied but wrote no files; never implied by the text alone */}
+              {msg.noChanges && msg.status === 'complete' && (
+                <div className="mt-1 ml-[30px] inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[9px] text-amber-500">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500/70 shrink-0" />
+                  No changes were made
+                </div>
+              )}
 
               {/* Undo button — only on completed non-plan assistant messages that have a snapshot (hidden for guests) */}
               {!isGuest && msg.role === 'assistant' && msg.status === 'complete' && !msg.isPlan && msg.snapshotId && (
