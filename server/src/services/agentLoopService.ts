@@ -2671,6 +2671,49 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       throw streamError;
     }
 
+    // ─── Hallucinated-completion guard ──────────────────────────────────────
+    // Some runs end with the model narrating a file change in prose ("I've
+    // updated X to do Y") without ever calling write_file/edit_file, and
+    // without the legacy <ecomgear-write> tag protocol either — i.e. nothing
+    // was actually saved, but the text reads exactly like a real completion.
+    // Detect that specific pattern and force one corrective continuation
+    // (spending steps we already have budget for) instead of silently
+    // finalizing on a claim that isn't backed by any tool call.
+    const wroteAnythingSoFar = filesToWrite.length > 0 || filesEdited.length > 0 || filesToDelete.length > 0 || renames.length > 0;
+    const hasLegacyWriteTags = /<ecomgear-(write|edit|delete|rename)\b/i.test(accumulatedText);
+    const claimsCompletedEdit = /\b(i'?ve|i have)\s+(updated|changed|fixed|edited|modified|created|added|rewritten|refactored|implemented)\b/i.test(accumulatedText)
+      || /\b(updated|changed|fixed|edited|modified)\s+(the\s+)?`?[\w./-]+\.(tsx?|jsx?|css|html|json)`?/i.test(accumulatedText);
+    const stepsRemaining = MAX_STEPS - stepCount;
+
+    if (runtimeMode !== 'plan' && !wroteAnythingSoFar && !hasLegacyWriteTags && claimsCompletedEdit
+        && stepsRemaining >= 3 && !abortController.signal.aborted) {
+      console.warn(`[AgentLoop] Hallucinated completion claim detected (zero writes, text claims a change) — forcing corrective continuation. user=${userId ?? 'unknown'}`);
+      sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: 'Double-checking — applying the described change...' });
+
+      conversationMessages = [
+        ...conversationMessages,
+        { role: 'assistant' as const, content: accumulatedText },
+        {
+          role: 'user' as const,
+          content: 'You just described a code change but never called write_file or edit_file — nothing was actually saved. ' +
+            'If you intended to make that change, call the appropriate tool now to actually apply it. ' +
+            'If you cannot or should not make the change, say so plainly instead of describing it as already done.',
+        },
+      ];
+
+      try {
+        const correctiveStream = await attemptStream(streamingProvider, 0, providerName);
+        const correctiveConsume = await consumeResultStream(correctiveStream);
+        if (!correctiveConsume.err && correctiveConsume.text) {
+          accumulatedText = correctiveConsume.text;
+        } else if (correctiveConsume.err) {
+          console.warn('[AgentLoop] Corrective continuation stream errored (non-fatal):', correctiveConsume.err?.message ?? correctiveConsume.err);
+        }
+      } catch (correctiveErr: any) {
+        console.warn('[AgentLoop] Corrective continuation failed (non-fatal):', correctiveErr?.message ?? correctiveErr);
+      }
+    }
+
     const finalText = accumulatedText;
 
     // Extract summary from <ecomgear-chat-summary> if present
