@@ -38,8 +38,11 @@ jobs:
             exit 0
           fi
 
+          # github.event.before only exists for push events — workflow_dispatch
+          # (manual run with no target input) has no "before" SHA, so fall back
+          # to diffing the last commit instead of silently finding nothing.
           BEFORE="${{ github.event.before }}"
-          if [[ "$BEFORE" =~ ^0+$ ]]; then
+          if [[ -z "$BEFORE" || "$BEFORE" =~ ^0+$ ]]; then
             BEFORE="HEAD~1"
           fi
 
