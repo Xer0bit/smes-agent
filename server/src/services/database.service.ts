@@ -151,13 +151,30 @@ export const databaseService = {
     if (!record || record.status !== 'active') return null;
     const c = cfg();
     const { anon_key, service_key } = tenantJwts(record.schema_name);
-    return {
+    const creds: TenantCredentials = {
       api_url:     c.apiUrl,
       schema:      record.schema_name,
       anon_key,
       service_key,
       db_url: `postgresql://${record.schema_name}_owner@${c.host}:${c.port}/${c.database}?search_path=${record.schema_name}`,
     };
+
+    // Keep VITE_DB_API_URL/VITE_DB_ANON_KEY in sync so generated frontend code
+    // (import.meta.env.VITE_DB_API_URL) always resolves to this one hosted DB
+    // instead of the agent falling back to inventing a separate one.
+    if (projectId) {
+      supabase.from('project_secrets').upsert(
+        [
+          { project_id: projectId, key_name: 'VITE_DB_API_URL', key_value: creds.api_url },
+          { project_id: projectId, key_name: 'VITE_DB_ANON_KEY', key_value: creds.anon_key },
+        ],
+        { onConflict: 'project_id,key_name' }
+      ).then(({ error }) => {
+        if (error) logger.warn('[databaseService] failed to sync VITE_DB_* project secrets', error);
+      });
+    }
+
+    return creds;
   },
 
   // ── Provision ────────────────────────────────────────────────────────────
@@ -306,6 +323,11 @@ export const databaseService = {
 
       await this._reloadPostgREST();
       await supabase.from('tenant_databases').update({ status: 'deprovisioned' }).eq('id', record.id);
+      if (projectId) {
+        await supabase.from('project_secrets').delete()
+          .eq('project_id', projectId)
+          .in('key_name', ['VITE_DB_API_URL', 'VITE_DB_ANON_KEY']);
+      }
       logger.info('Tenant DB deprovisioned', { userId, projectId, schema });
 
     } catch (err) {

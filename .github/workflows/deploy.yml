@@ -1,0 +1,177 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Force a target: vps1|vps2|vps3|vps4|vps5|all (overrides auto-detect)'
+        required: false
+        default: ''
+
+concurrency:
+  group: deploy-ecomgear-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.changes.outputs.targets }}
+      skip: ${{ steps.changes.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect which VPS targets need a redeploy
+        id: changes
+        run: |
+          if [ -n "${{ github.event.inputs.target }}" ]; then
+            echo "targets=${{ github.event.inputs.target }}" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Manual override — target: ${{ github.event.inputs.target }}"
+            exit 0
+          fi
+
+          BEFORE="${{ github.event.before }}"
+          if [[ "$BEFORE" =~ ^0+$ ]]; then
+            BEFORE="HEAD~1"
+          fi
+
+          CHANGED=$(git diff --name-only "$BEFORE" HEAD 2>/dev/null)
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          TARGETS=""
+          add() { [[ ",$TARGETS," != *",$1,"* ]] && TARGETS="$TARGETS,$1"; }
+
+          # VPS1 — frontend + Supabase edge (React SPA, migrations also applied here)
+          echo "$CHANGED" | grep -qE '^(src/|index\.html|public/|vite\.config|tsconfig[^/]*\.json$|package[^/]*\.json$|infrastructure/nginx/vps1-)' \
+            && add vps1
+          echo "$CHANGED" | grep -qE '^supabase/(migrations|functions)/' \
+            && add vps1
+
+          # VPS2 — preview service
+          echo "$CHANGED" | grep -qE '^(preview-service/|infrastructure/nginx/vps2-)' \
+            && add vps2
+
+          # VPS3 — gen/agent server (also gets supabase functions + migrations)
+          echo "$CHANGED" | grep -qE '^(server/|infrastructure/nginx/vps3-)' \
+            && add vps3
+          echo "$CHANGED" | grep -qE '^supabase/(migrations|functions)/' \
+            && add vps3
+
+          # VPS4 — enterprise hosting service
+          echo "$CHANGED" | grep -qE '^(hosting-service/|infrastructure/nginx/vps4-)' \
+            && add vps4
+
+          # Shared ecosystem file touches VPS2+VPS3+VPS4 (all PM2-managed)
+          echo "$CHANGED" | grep -qE '^ecosystem\.config\.cjs$' \
+            && { add vps2; add vps3; add vps4; }
+
+          # VPS5 is a passive DB endpoint — never auto-deployed, dispatch only.
+
+          TARGETS="${TARGETS#,}"
+
+          if [ -z "$TARGETS" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "targets=" >> "$GITHUB_OUTPUT"
+            echo "No deploy-relevant files changed — skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "targets=$TARGETS" >> "$GITHUB_OUTPUT"
+            echo "Targets to deploy: $TARGETS"
+          fi
+
+  gate:
+    needs: detect
+    if: needs.detect.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Root — install, lint, test
+        run: |
+          npm ci
+          npm run lint
+          npm run test
+
+      - name: Server — install, typecheck, lint
+        run: |
+          cd server
+          npm ci
+          npx tsc --noEmit
+          npm run lint
+
+  deploy:
+    needs: [detect, gate]
+    if: needs.detect.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VPS1_PASS: ${{ secrets.VPS1_PASS }}
+      VPS2_PASS: ${{ secrets.VPS2_PASS }}
+      VPS3_PASS: ${{ secrets.VPS3_PASS }}
+      VPS4_PASS: ${{ secrets.VPS4_PASS }}
+      VPS5_PASS: ${{ secrets.VPS5_PASS }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      TENANT_DB_HOST: ${{ secrets.TENANT_DB_HOST }}
+      TENANT_DB_PORT: ${{ secrets.TENANT_DB_PORT }}
+      TENANT_DB_SUPERUSER: ${{ secrets.TENANT_DB_SUPERUSER }}
+      TENANT_DB_SUPERUSER_PASSWORD: ${{ secrets.TENANT_DB_SUPERUSER_PASSWORD }}
+      TENANT_DB_NAME: ${{ secrets.TENANT_DB_NAME }}
+      TENANT_DB_JWT_SECRET: ${{ secrets.TENANT_DB_JWT_SECRET }}
+      TENANT_DB_API_URL: ${{ secrets.TENANT_DB_API_URL }}
+      TENANT_DB_SSL: ${{ secrets.TENANT_DB_SSL }}
+      TENANT_DB_RELOAD_URL: ${{ secrets.TENANT_DB_RELOAD_URL }}
+      TENANT_DB_RELOAD_SECRET: ${{ secrets.TENANT_DB_RELOAD_SECRET }}
+      ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ECG_PORTAL_URL: ${{ secrets.ECG_PORTAL_URL }}
+      ECG_SERVICE_KEY: ${{ secrets.ECG_SERVICE_KEY }}
+      ECOMGEAR_SERVER_URL: ${{ secrets.ECOMGEAR_SERVER_URL }}
+      DASHBOARD_ACCESS_SECRET: ${{ secrets.DASHBOARD_ACCESS_SECRET }}
+      HOSTING_DEPLOY_SECRET: ${{ secrets.HOSTING_DEPLOY_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install sshpass (password-based SSH auth to each VPS)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+
+      - name: Install deps needed by scripts/deploy.sh preflight/build steps
+        run: |
+          TARGETS="${{ needs.detect.outputs.targets }}"
+          if [[ ",$TARGETS," == *",vps1,"* || ",$TARGETS," == *",all,"* ]]; then
+            npm ci
+          fi
+          if [[ ",$TARGETS," == *",vps3,"* || ",$TARGETS," == *",all,"* ]]; then
+            (cd server && npm ci)
+          fi
+
+      - name: Deploy detected targets
+        run: |
+          IFS=',' read -ra TARGETS <<< "${{ needs.detect.outputs.targets }}"
+          for t in "${TARGETS[@]}"; do
+            echo "::group::Deploying $t"
+            bash scripts/deploy.sh "$t"
+            echo "::endgroup::"
+          done
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Deployment failed for targets: ${{ needs.detect.outputs.targets }}. Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
