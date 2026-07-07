@@ -101,7 +101,7 @@ jobs:
 
       - name: Root — install, lint, test
         run: |
-          npm ci
+          npm ci --legacy-peer-deps
           npm run lint
           npm run test
 
@@ -156,7 +156,7 @@ jobs:
         run: |
           TARGETS="${{ needs.detect.outputs.targets }}"
           if [[ ",$TARGETS," == *",vps1,"* || ",$TARGETS," == *",all,"* ]]; then
-            npm ci
+            npm ci --legacy-peer-deps
           fi
           if [[ ",$TARGETS," == *",vps3,"* || ",$TARGETS," == *",all,"* ]]; then
             (cd server && npm ci)
