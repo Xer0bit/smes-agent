@@ -130,11 +130,18 @@ export const databaseService = {
       if (data) return data as TenantDb;
     }
 
-    // Fallback: legacy rows (project_id IS NULL) or no projectId provided
+    // Fallback: legacy rows only (project_id IS NULL) — provisioned before the
+    // project_id migration. Must NOT match on user_id alone: a user with
+    // multiple projects each provisioned under their own project_id would
+    // otherwise get a DIFFERENT project's schema/credentials returned here
+    // whenever the projectId given has no row of its own yet.
+    if (projectId) return null;
+
     const { data, error } = await supabase
       .from('tenant_databases')
       .select('*')
       .eq('user_id', userId)
+      .is('project_id', null)
       .not('status', 'eq', 'deprovisioned')
       .order('created_at', { ascending: false })
       .limit(1)

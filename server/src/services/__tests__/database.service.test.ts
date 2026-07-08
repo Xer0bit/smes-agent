@@ -13,40 +13,52 @@ process.env.TENANT_DB_JWT_SECRET = 'test-secret';
 const upsertCalls: any[] = [];
 const deleteCalls: any[] = [];
 
-function makeQueryBuilder(table: string, resolvedData: any = null) {
-  const calls: Record<string, any[]> = {};
-  const record = (name: string, args: any[]) => { (calls[name] ||= []).push(args); };
+// tenant_databases fixture: user-1 has TWO projects, each with its own row —
+// simulates the exact scenario that exposed the cross-tenant leak.
+const tenantDbRows = [
+  { id: 'row-1', user_id: 'user-1', project_id: 'project-1', organization_id: null, schema_name: 'tenant_project1', status: 'active', error_message: null, created_at: new Date().toISOString() },
+  { id: 'row-2', user_id: 'user-1', project_id: 'project-2', organization_id: null, schema_name: 'tenant_project2', status: 'active', error_message: null, created_at: new Date().toISOString() },
+];
+
+function makeQueryBuilder(table: string) {
+  const filters: { field: string; op: string; value: unknown }[] = [];
 
   const builder: any = {
-    select: (...a: any[]) => { record('select', a); return builder; },
-    eq: (...a: any[]) => { record('eq', a); return builder; },
-    not: (...a: any[]) => { record('not', a); return builder; },
-    in: (...a: any[]) => { record('in', a); return builder; },
-    order: (...a: any[]) => { record('order', a); return builder; },
-    limit: (...a: any[]) => { record('limit', a); return builder; },
-    maybeSingle: () => Promise.resolve({ data: resolvedData, error: null }),
-    single: () => Promise.resolve({ data: resolvedData, error: null }),
-    update: (...a: any[]) => { record('update', a); return builder; },
+    select: () => builder,
+    eq: (field: string, value: unknown) => { filters.push({ field, op: 'eq', value }); return builder; },
+    is: (field: string, value: unknown) => { filters.push({ field, op: 'is', value }); return builder; },
+    not: (field: string, _op: string, value: unknown) => { filters.push({ field, op: 'not', value }); return builder; },
+    in: () => builder,
+    order: () => builder,
+    limit: () => builder,
+    update: () => builder,
     upsert: (rows: any[], opts: any) => { upsertCalls.push({ table, rows, opts }); return Promise.resolve({ data: rows, error: null }); },
     delete: (...a: any[]) => { deleteCalls.push({ table, args: a }); return builder; },
-    then: (resolve: any) => resolve({ data: resolvedData, error: null }),
   };
+
+  const resolve = () => {
+    if (table !== 'tenant_databases') return { data: null, error: null };
+    const matches = tenantDbRows.filter((row) =>
+      filters.every((f) => {
+        const rowVal = (row as any)[f.field];
+        if (f.op === 'eq') return rowVal === f.value;
+        if (f.op === 'is') return rowVal === f.value; // null-check emulation
+        if (f.op === 'not') return rowVal !== f.value;
+        return true;
+      })
+    );
+    return { data: matches[0] ?? null, error: null };
+  };
+
+  builder.maybeSingle = () => Promise.resolve(resolve());
+  builder.single = () => Promise.resolve(resolve());
+  builder.then = (fulfill: any) => fulfill(resolve());
+
   return builder;
 }
 
 vi.mock('../../config/database.js', () => ({
-  supabase: {
-    from: (table: string) => makeQueryBuilder(table, {
-      id: 'row-1',
-      user_id: 'user-1',
-      project_id: 'project-1',
-      organization_id: null,
-      schema_name: 'tenant_project1',
-      status: 'active',
-      error_message: null,
-      created_at: new Date().toISOString(),
-    }),
-  },
+  supabase: { from: (table: string) => makeQueryBuilder(table) },
 }));
 
 vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
@@ -99,6 +111,25 @@ describe('databaseService.getCredentials — VITE_DB_* secret sync', () => {
     await databaseService.getCredentials('user-1');
     await new Promise((r) => setImmediate(r));
     expect(upsertCalls.find((c) => c.table === 'project_secrets')).toBeUndefined();
+  });
+});
+
+describe('databaseService.getCredentials — cross-tenant leak fix', () => {
+  it('returns null for a project with no dedicated row, never another project\'s credentials', async () => {
+    // user-1 owns project-1 (row-1) and project-2 (row-2). Requesting a THIRD
+    // project with no row of its own must not fall back to a sibling
+    // project's schema/anon-key — that would leak project-1/2's DB into
+    // project-3's generated frontend code.
+    const creds = await databaseService.getCredentials('user-1', 'project-3-has-no-db');
+    expect(creds).toBeNull();
+  });
+
+  it('project-1 and project-2 each resolve to their own distinct schema', async () => {
+    const creds1 = await databaseService.getCredentials('user-1', 'project-1');
+    const creds2 = await databaseService.getCredentials('user-1', 'project-2');
+    expect(creds1!.schema).toBe('tenant_project1');
+    expect(creds2!.schema).toBe('tenant_project2');
+    expect(creds1!.schema).not.toBe(creds2!.schema);
   });
 });
 
