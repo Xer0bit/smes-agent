@@ -40,8 +40,8 @@ export const readFilesTool: ToolDefinition<z.infer<typeof schema>> = {
         ctx.ledger?.recordRead(relPath, lines);
         if (ctx.readFiles) ctx.readFiles.add(relPath);
         results.push(`=== ${relPath} ===\n${content}`);
-      } catch (err: any) {
-        results.push(`=== ${relPath} ===\nError: ${err?.message ?? String(err)}`);
+      } catch (err: unknown) {
+        results.push(`=== ${relPath} ===\nError: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 

@@ -53,8 +53,8 @@ function validateImage(filePath: string): { valid: boolean; format?: string; rea
       }
     }
     return { valid: false, reason: 'File does not match any known image format (JPEG, PNG, GIF, WebP, SVG)' };
-  } catch (err: any) {
-    return { valid: false, reason: err.message };
+  } catch (err: unknown) {
+    return { valid: false, reason: err instanceof Error ? err.message : String(err) };
   }
 }
 

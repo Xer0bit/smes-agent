@@ -49,8 +49,8 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
       const preview = result.rows.slice(0, 20);
       const moreNote = result.rows.length > 20 ? ' (showing first 20)' : '';
       return `Query returned ${result.rows.length} row(s)${stmtNote}${moreNote}:\n${JSON.stringify(preview, null, 2)}`;
-    } catch (err: any) {
-      const msg = err?.message ?? String(err);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('No active database')) {
         return 'No hosted database is provisioned for this project. Tell the user to provision one from Settings → Hosted Database before running queries.';
       }

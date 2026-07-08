@@ -42,7 +42,7 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
         .not('organizations.plan_tier', 'eq', 'free')
         .limit(1)
         .maybeSingle();
-      if (data) orgId = (data as any).organization_id;
+      if (data) orgId = (data as { organization_id: string }).organization_id;
     }
 
     if (!orgId) {
@@ -60,8 +60,8 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
         `Status: ${record.status}\n\n` +
         `Now call get_database_schema to confirm, then use query_database to create your tables.`
       );
-    } catch (err: any) {
-      const msg = err?.message ?? String(err);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('already_provisioned')) {
         return 'Database already provisioned. Call get_database_schema to see the current schema.';
       }

@@ -3,13 +3,30 @@ import { Zap, Clock, Plus, Pencil, Trash2, X } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import StatusBadge from '../components/StatusBadge';
 
+interface Agent {
+  id: string;
+  name: string;
+  status: string;
+  templateName?: string;
+  template_name?: string;
+  templateId?: string;
+  template_id?: string;
+  lastRun?: string;
+  last_run?: string;
+}
+
+interface AgentTemplate {
+  id: string;
+  name: string;
+}
+
 export default function AgentsPage() {
-  const [agents, setAgents] = useState<any[]>([]);
-  const [templates, setTemplates] = useState<any[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [editingAgent, setEditingAgent] = useState<any>(null);
-  const [deletingAgent, setDeletingAgent] = useState<any>(null);
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [deletingAgent, setDeletingAgent] = useState<Agent | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
 
@@ -26,7 +43,7 @@ export default function AgentsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleSave = async (agentData: any) => {
+  const handleSave = async (agentData: Partial<Agent>) => {
     setModalLoading(true);
     try {
       if (editingAgent?.id) {
@@ -38,8 +55,8 @@ export default function AgentsPage() {
       }
       setEditingAgent(null);
       setShowCreate(false);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setModalLoading(false);
     }
@@ -52,8 +69,8 @@ export default function AgentsPage() {
       await ecgApi.agents.delete(deletingAgent.id);
       setAgents(agents.filter(a => a.id !== deletingAgent.id));
       setDeletingAgent(null);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setModalLoading(false);
     }
@@ -63,8 +80,8 @@ export default function AgentsPage() {
     try {
       await ecgApi.agents.run(agentId);
       setAgents(agents.map(a => a.id === agentId ? { ...a, lastRun: new Date().toISOString() } : a));
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -86,7 +103,7 @@ export default function AgentsPage() {
       {!loading && !error && !agents.length && <Empty label="No agents found" />}
       {!loading && !error && agents.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {agents.map((a: any) => (
+          {agents.map((a: Agent) => (
             <div key={a.id} className="rounded-xl border p-5"
               style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
               <div className="flex items-start justify-between gap-3">
@@ -164,10 +181,10 @@ function Spinner() { return <div className="flex justify-center py-16"><span cla
 function Empty({ label }: { label: string }) { return <div className="text-center py-16 text-sm" style={{ color: 'var(--muted)' }}>{label}</div>; }
 
 function AgentModal({ agent, templates, onClose, onSave, loading }: {
-  agent: any;
-  templates: any[];
+  agent: Agent | null;
+  templates: AgentTemplate[];
   onClose: () => void;
-  onSave: (data: any) => void;
+  onSave: (data: Partial<Agent>) => void;
   loading: boolean;
 }) {
   const [name, setName] = useState(agent?.name ?? '');

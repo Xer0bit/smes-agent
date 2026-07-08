@@ -48,8 +48,8 @@ async function syncPackagesToPreviewService(
       const body = await res.text().catch(() => '');
       console.warn(`[run_command] Preview-service install failed (${res.status}): ${body}`);
     }
-  } catch (e: any) {
-    console.warn(`[run_command] Preview-service install error: ${e?.message}`);
+  } catch (e: unknown) {
+    console.warn(`[run_command] Preview-service install error: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

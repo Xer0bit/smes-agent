@@ -314,7 +314,7 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
 
     // Check for orphan closer lines after the component end
     if (componentEndLine >= 0 && componentEndLine < lines.length - 1) {
-      const closerPattern = /^\s*[\)\}\]\;,]+\s*$/;
+      const closerPattern = /^\s*[)}\];,]+\s*$/;
       let orphanStart = -1;
       let foundOrphans = false;
 
@@ -355,7 +355,7 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
 
     // Case (b): surplus closers still remaining after Phase A
     } else if (braceCount < 0 || parenCount < 0 || bracketCount < 0) {
-      const orphanLine = /^\s*[\)\}\];,]+\s*$/;
+      const orphanLine = /^\s*[)}\];,]+\s*$/;
       const lns = content.split('\n');
       let current = lns.slice();
       let currentScore = Math.abs(braceCount) + Math.abs(parenCount);

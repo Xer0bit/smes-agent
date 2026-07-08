@@ -69,9 +69,9 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
     let res: Response;
     try {
       res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
-    } catch (err: any) {
+    } catch (err: unknown) {
       return (
-        `Preview service unreachable at ${PREVIEW_SERVICE_URL}: ${err.message}. ` +
+        `Preview service unreachable at ${PREVIEW_SERVICE_URL}: ${err instanceof Error ? err.message : String(err)}. ` +
         'The preview server may still be starting or is down. ' +
         'Do NOT keep calling get_build_errors — it will keep failing. ' +
         'Finish writing ALL your files first and stop. The system will handle the preview.'
