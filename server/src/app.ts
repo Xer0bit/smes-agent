@@ -23,6 +23,7 @@ import ecgAccessRoutes from './routes/ecg-access.routes.js';
 // Import middleware
 import { errorHandler } from './middleware/error.middleware.js';
 import { requestLogger } from './middleware/request-logger.middleware.js';
+import { AuthenticatedRequest } from './middleware/auth.middleware.js';
 
 // Import logger
 import { logger } from './utils/logger.js';
@@ -130,7 +131,7 @@ app.get('/health', (req: Request, res: Response) => {
 const aiRateLimiter = rateLimit({
     windowMs: 60_000,
     max: 20,
-    keyGenerator: (req) => (req as any).user?.id || req.ip || 'unknown',
+    keyGenerator: (req) => (req as AuthenticatedRequest).user?.id || req.ip || 'unknown',
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many AI requests — please wait a moment' },

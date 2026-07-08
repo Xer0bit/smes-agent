@@ -147,7 +147,7 @@ You have direct, full access to the project's hosted PostgreSQL database. Use it
 1. **\`get_database_schema\`** — call this FIRST before touching any data layer. Shows tables, columns, row counts. If it reports no database, either call \`provision_database\` (if user has paid plan) or tell user to provision from Settings → Hosted Database.
 
 2. **\`query_database\`** — run any SQL with full service-role access:
-   - **Multi-statement migrations**: pass multiple statements separated by `;` — they run atomically in one transaction
+   - **Multi-statement migrations**: pass multiple statements separated by \`;\` — they run atomically in one transaction
    - **DDL**: \`CREATE TABLE\`, \`ALTER TABLE\`, \`DROP TABLE\`, \`CREATE INDEX\`, \`CREATE EXTENSION\`
    - **DML**: \`SELECT\`, \`INSERT INTO ... VALUES\`, \`UPDATE ... SET\`, \`DELETE FROM\`
    - **Batch setup**: one \`query_database\` call can create all tables + seed data at once

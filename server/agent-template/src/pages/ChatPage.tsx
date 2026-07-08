@@ -56,8 +56,8 @@ export default function ChatPage() {
     try {
       const { reply, actions } = await chat(next.map(m => ({ role: m.role, content: m.content })));
       setMessages(p => [...p, { role: 'assistant', content: reply, actions: actions?.length ? actions : undefined }]);
-    } catch (e: any) {
-      setError(e.message ?? 'Something went wrong. Try again.');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Something went wrong. Try again.');
     } finally {
       setLoading(false);
     }

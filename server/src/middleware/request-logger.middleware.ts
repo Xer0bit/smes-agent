@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger.js';
+import { AuthenticatedRequest } from './auth.middleware.js';
 
 export function requestLogger(
     req: Request,
@@ -10,7 +11,7 @@ export function requestLogger(
 
     res.on('finish', () => {
         const duration = Date.now() - start;
-        const user = (req as any).user;
+        const user = (req as AuthenticatedRequest).user;
 
         logger.info('HTTP Request', {
             method: req.method,

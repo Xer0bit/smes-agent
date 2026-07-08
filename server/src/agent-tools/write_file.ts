@@ -96,8 +96,8 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
     if (/\.json$/i.test(args.path)) {
       try {
         JSON.parse(args.content);
-      } catch (e: any) {
-        return `ERROR: Cannot write ${args.path} — content is not valid JSON: ${e.message}. Please provide valid JSON content.`;
+      } catch (e: unknown) {
+        return `ERROR: Cannot write ${args.path} — content is not valid JSON: ${e instanceof Error ? e.message : String(e)}. Please provide valid JSON content.`;
       }
     }
 

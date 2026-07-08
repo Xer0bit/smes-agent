@@ -68,8 +68,8 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
 
       const verb = data.created_at === data.updated_at ? 'Created' : 'Updated';
       return `${verb} edge function "${name}" (id: ${data.id}). It is active and invocable via POST /api/v1/functions/${name}/invoke.`;
-    } catch (err: any) {
-      return `ERROR writing edge function: ${err?.message ?? String(err)}`;
+    } catch (err: unknown) {
+      return `ERROR writing edge function: ${err instanceof Error ? err.message : String(err)}`;
     }
   },
 };

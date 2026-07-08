@@ -131,7 +131,7 @@ export async function getDirectImports(
 
   if (error || !data) return [];
 
-  const all = data.flatMap((row: any) => row.imports as string[]);
+  const all = data.flatMap((row: { imports: string[] }) => row.imports);
   return [...new Set(all)].filter(p => !filePaths.includes(p));
 }
 
@@ -152,8 +152,8 @@ export async function getDirectDependents(
 
   if (error || !data) return [];
 
-  return (data as any[])
-    .map(row => row.file_path as string)
+  return (data as { file_path: string }[])
+    .map(row => row.file_path)
     .filter(p => !filePaths.includes(p));
 }
 

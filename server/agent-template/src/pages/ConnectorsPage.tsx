@@ -3,12 +3,20 @@ import { Plug, Plus, Pencil, Trash2, X } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import StatusBadge from '../components/StatusBadge';
 
+interface Connector {
+  id: string;
+  name: string;
+  type: string;
+  status?: string;
+  secrets?: Record<string, string>;
+}
+
 export default function ConnectorsPage() {
-  const [rows, setRows] = useState<any[]>([]);
+  const [rows, setRows] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [editingConnector, setEditingConnector] = useState<any>(null);
-  const [deletingConnector, setDeletingConnector] = useState<any>(null);
+  const [editingConnector, setEditingConnector] = useState<Connector | null>(null);
+  const [deletingConnector, setDeletingConnector] = useState<Connector | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
 
@@ -19,7 +27,7 @@ export default function ConnectorsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleSave = async (connectorData: any) => {
+  const handleSave = async (connectorData: Partial<Connector>) => {
     setModalLoading(true);
     try {
       if (editingConnector?.id) {
@@ -31,8 +39,8 @@ export default function ConnectorsPage() {
       }
       setEditingConnector(null);
       setShowCreate(false);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setModalLoading(false);
     }
@@ -45,8 +53,8 @@ export default function ConnectorsPage() {
       await ecgApi.connectors.delete(deletingConnector.id);
       setRows(rows.filter(c => c.id !== deletingConnector.id));
       setDeletingConnector(null);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setModalLoading(false);
     }
@@ -70,7 +78,7 @@ export default function ConnectorsPage() {
       {!loading && !rows.length && <div className="text-center py-16 text-sm" style={{ color: 'var(--muted)' }}>No connectors configured</div>}
       {!loading && rows.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {rows.map((c: any) => (
+          {rows.map((c: Connector) => (
             <div key={c.id} className="rounded-xl border p-5" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3 flex-1 min-w-0">
@@ -134,9 +142,9 @@ export default function ConnectorsPage() {
 function Spinner() { return <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div>; }
 
 function ConnectorModal({ connector, onClose, onSave, loading }: {
-  connector: any;
+  connector: Connector | null;
   onClose: () => void;
-  onSave: (data: any) => void;
+  onSave: (data: Partial<Connector>) => void;
   loading: boolean;
 }) {
   const [name, setName] = useState(connector?.name ?? '');

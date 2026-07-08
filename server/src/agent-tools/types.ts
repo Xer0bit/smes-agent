@@ -68,7 +68,7 @@ export interface AgentContext {
 
 export type ToolResult = string;
 
-export interface ToolDefinition<T = any> {
+export interface ToolDefinition<T = unknown> {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: z.ZodType<T>;

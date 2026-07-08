@@ -124,9 +124,9 @@ export async function searchSimilarFiles(
     return [];
   }
 
-  return (data ?? []).map((row: any) => ({
-    file_path:  row.file_path as string,
-    similarity: row.similarity as number,
+  return (data ?? []).map((row: { file_path: string; similarity: number }) => ({
+    file_path:  row.file_path,
+    similarity: row.similarity,
   }));
 }
 

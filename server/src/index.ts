@@ -20,7 +20,6 @@ import type { Server } from 'node:http';
 
 const PORT = process.env.PORT || 5001;
 
-let server: Server;
 const activeConnections = new Set<import('node:net').Socket>();
 
 // Load LLM config first (sets GOOGLE_GENERATIVE_AI_API_KEY), then probe embeddings.
@@ -30,7 +29,7 @@ getLlmControlState()
     .then(() => probeEmbeddingProvider())
     .catch((err) => logger.warn('[LlmControl] Pre-listen state load failed:', err?.message));
 
-server = app.listen(PORT, () => {
+const server: Server = app.listen(PORT, () => {
     logger.info(`🚀 eComGear API Server running on port ${PORT}`);
     logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
 
