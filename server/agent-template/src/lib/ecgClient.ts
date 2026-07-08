@@ -18,7 +18,7 @@ async function req(method: string, path: string, body?: unknown) {
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
-    throw new Error((e as any).error || `API error ${res.status}`);
+    throw new Error((e as { error?: string }).error || `API error ${res.status}`);
   }
   return res.json();
 }
@@ -34,7 +34,7 @@ async function reqMultipart(path: string, formData: FormData) {
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
-    throw new Error((e as any).error || `API error ${res.status}`);
+    throw new Error((e as { error?: string }).error || `API error ${res.status}`);
   }
   return res.json();
 }
@@ -49,7 +49,7 @@ export async function chat(messages: { role: string; content: string }[]) {
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
-    throw new Error((e as any).error || `Chat error ${res.status}`);
+    throw new Error((e as { error?: string }).error || `Chat error ${res.status}`);
   }
   return res.json() as Promise<{ reply: string; actions: { tool: string; result: unknown }[] }>;
 }
@@ -61,8 +61,8 @@ export const ecgApi = {
   // Agents
   agents: {
     list:    () => req('GET', '/agents'),
-    create:  (data: any) => req('POST', '/agents', data),
-    update:  (id: string, data: any) => req('PATCH', `/agents/${id}`, data),
+    create:  (data: unknown) => req('POST', '/agents', data),
+    update:  (id: string, data: unknown) => req('PATCH', `/agents/${id}`, data),
     delete:  (id: string) => req('DELETE', `/agents/${id}`),
     run:     (id: string) => req('POST', `/agents/${id}/run`),
   },
@@ -70,8 +70,8 @@ export const ecgApi = {
   // Schedulers
   schedulers: {
     list:    () => req('GET', '/schedulers'),
-    create:  (data: any) => req('POST', '/schedulers', data),
-    update:  (id: string, data: any) => req('PATCH', `/schedulers/${id}`, data),
+    create:  (data: unknown) => req('POST', '/schedulers', data),
+    update:  (id: string, data: unknown) => req('PATCH', `/schedulers/${id}`, data),
     delete:  (id: string) => req('DELETE', `/schedulers/${id}`),
     trigger: (id: string) => req('POST', `/schedulers/${id}/trigger`),
   },
@@ -79,7 +79,7 @@ export const ecgApi = {
   // Planned posts
   posts: {
     list:    () => req('GET', '/planned-posts'),
-    create:  (data: any) => req('POST', '/planned-posts', data),
+    create:  (data: unknown) => req('POST', '/planned-posts', data),
     delete:  (id: string) => req('DELETE', `/planned-posts/${id}`),
     approve: (id: string) => req('PATCH', `/planned-posts/${id}`, { status: 'approved' }),
     reject:  (id: string) => req('PATCH', `/planned-posts/${id}`, { status: 'rejected' }),
@@ -88,8 +88,8 @@ export const ecgApi = {
   // Connectors
   connectors: {
     list:    () => req('GET', '/connectors'),
-    create:  (data: any) => req('POST', '/connectors', data),
-    update:  (id: string, data: any) => req('PATCH', `/connectors/${id}`, data),
+    create:  (data: unknown) => req('POST', '/connectors', data),
+    update:  (id: string, data: unknown) => req('PATCH', `/connectors/${id}`, data),
     delete:  (id: string) => req('DELETE', `/connectors/${id}`),
   },
 
@@ -106,28 +106,28 @@ export const ecgApi = {
   // Knowledge bases
   knowledgeBases: {
     list:    () => req('GET', '/knowledge-bases'),
-    create:  (data: any) => req('POST', '/knowledge-bases', data),
-    update:  (id: string, data: any) => req('PATCH', `/knowledge-bases/${id}`, data),
+    create:  (data: unknown) => req('POST', '/knowledge-bases', data),
+    update:  (id: string, data: unknown) => req('PATCH', `/knowledge-bases/${id}`, data),
     delete:  (id: string) => req('DELETE', `/knowledge-bases/${id}`),
   },
 
   // Org settings
   org: {
     get:    () => req('GET', '/org'),
-    update: (data: any) => req('PATCH', '/org', data),
+    update: (data: unknown) => req('PATCH', '/org', data),
   },
 
   // Team
   team: {
     list:    () => req('GET', '/team'),
-    create:  (data: any) => req('POST', '/team', data),
+    create:  (data: unknown) => req('POST', '/team', data),
     delete:  (id: string) => req('DELETE', `/team/${id}`),
   },
 
   // API keys
   apiKeys: {
     list:   () => req('GET', '/api-keys'),
-    create: (data: any) => req('POST', '/api-keys', data),
+    create: (data: unknown) => req('POST', '/api-keys', data),
     revoke: (id: string) => req('PATCH', `/api-keys/${id}/revoke`),
   },
 

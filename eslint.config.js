@@ -5,7 +5,10 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist"] },
+  // emails/ and supabase/functions/ are Deno Edge Function source (remote
+  // deno.land imports, Deno.env global) — a different runtime from this
+  // Node/Vite project, not something this Node-oriented TS config understands.
+  { ignores: ["dist", "emails", "supabase/functions"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
