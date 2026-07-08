@@ -26,6 +26,17 @@ function getClient() {
 
 const MAX_ENTRIES = 2000; // LRU cap — evict oldest by last_used_at beyond this
 
+// Fix content is replayed verbatim into OTHER projects, so it must never contain
+// anything that looks like a real credential (JWT, tenant schema name, API key).
+// A fix that legitimately needed one of these should reference the env var, not
+// a literal value — so rejecting on sight is safe and catches the leak class
+// where an LLM diff hardcodes a working secret instead of an env reference.
+const SECRET_SHAPE_RE = /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|tenant_[a-f0-9]{10,}/i;
+
+function containsSecretShape(text: string): boolean {
+  return SECRET_SHAPE_RE.test(text);
+}
+
 export type FixKind = 'mechanical' | 'llm_diff';
 
 export interface FailureMemoryEntry {
@@ -69,6 +80,13 @@ export async function lookupFailureFix(rawError: string): Promise<FailureMemoryE
 
     if (error || !data) return null;
 
+    // Defense in depth: never replay a fix into another project if it somehow
+    // contains a secret-shaped value (should already be blocked at store time).
+    if (containsSecretShape(data.fix_content)) {
+      logger.warn(`[FailureMemory] Refusing to replay fix for signature (contains secret-shaped content): ${signature.slice(0, 80)}`);
+      return null;
+    }
+
     // Fire-and-forget: bump hit_count + last_used_at (LRU freshness)
     db.from('agent_failure_memory')
       .update({ hit_count: data.hit_count + 1, last_used_at: new Date().toISOString() })
@@ -92,6 +110,11 @@ export async function storeFailureFix(rawError: string, fixKind: FixKind, fixCon
 
   const signature = normalizeErrorSignature(rawError);
   if (!signature || !fixContent) return;
+
+  if (containsSecretShape(fixContent)) {
+    logger.warn(`[FailureMemory] Refusing to store fix (contains secret-shaped content) for signature: ${signature.slice(0, 80)}`);
+    return;
+  }
 
   try {
     await db.from('agent_failure_memory').upsert(
