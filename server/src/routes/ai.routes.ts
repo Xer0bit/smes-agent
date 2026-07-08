@@ -776,11 +776,15 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             const { databaseService } = await import('../services/database.service.js');
             const dbCreds = await databaseService.getCredentials(userId, projectId);
             if (dbCreds) {
+                // Edge functions require a hosted DB, so this URL is only meaningful
+                // (and only injected) alongside DB credentials.
+                const functionsApiUrl = process.env.GEN_SERVER_PUBLIC_URL || 'https://gen.ecomgear.dev';
                 const dbSecrets = [
-                    { key_name: 'VITE_DB_API_URL',     key_value: dbCreds.api_url },
-                    { key_name: 'VITE_DB_ANON_KEY',    key_value: dbCreds.anon_key },
-                    { key_name: 'VITE_DB_SERVICE_KEY', key_value: dbCreds.service_key },
-                    { key_name: 'VITE_DB_SCHEMA',      key_value: dbCreds.schema },
+                    { key_name: 'VITE_DB_API_URL',        key_value: dbCreds.api_url },
+                    { key_name: 'VITE_DB_ANON_KEY',       key_value: dbCreds.anon_key },
+                    { key_name: 'VITE_DB_SERVICE_KEY',    key_value: dbCreds.service_key },
+                    { key_name: 'VITE_DB_SCHEMA',         key_value: dbCreds.schema },
+                    { key_name: 'VITE_FUNCTIONS_API_URL', key_value: functionsApiUrl },
                 ];
                 // Prepend DB creds; user-defined secrets with same key name take precedence
                 const userKeys2 = new Set(projectSecrets.map(s => s.key_name));

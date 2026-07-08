@@ -61,6 +61,41 @@ function tenantJwts(schemaId: string): { anon_key: string; service_key: string }
   };
 }
 
+/**
+ * Verify a tenant JWT (VITE_DB_ANON_KEY / VITE_DB_SERVICE_KEY) signed by signJwt().
+ * Returns the decoded { role, exp } payload if the signature and expiry are
+ * valid, or null otherwise. Used to authenticate public/anonymous requests
+ * (e.g. edge-function invocation from a generated app's own end users) without
+ * requiring an EcomGear platform login.
+ */
+export function verifyTenantJwt(token: string): { role: string; exp: number } | null {
+  try {
+    const { jwtSecret } = cfg();
+    const [header, body, sig] = token.split('.');
+    if (!header || !body || !sig) return null;
+    const expectedSig = createHmac('sha256', jwtSecret).update(`${header}.${body}`).digest('base64')
+      .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    if (sig !== expectedSig) return null;
+    const payload = JSON.parse(Buffer.from(body.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    if (typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000)) return null;
+    if (typeof payload.role !== 'string') return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve a tenant schema's owning user_id + project_id from its registered schema_name. */
+export async function getOwnerBySchema(schemaName: string): Promise<{ user_id: string; project_id: string | null } | null> {
+  const { data } = await supabase
+    .from('tenant_databases')
+    .select('user_id, project_id')
+    .eq('schema_name', schemaName)
+    .eq('status', 'active')
+    .maybeSingle();
+  return data ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // Schema ID: short, stable, postgres-safe from projectId.
 // Uses 16 hex chars (64 bits of UUID entropy) to make collisions negligible.

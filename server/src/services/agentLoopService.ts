@@ -440,6 +440,53 @@ function filePathToLabel(filePath: string): string {
   return words;
 }
 
+/** Compact, cheap-model-friendly summary of a step's tool calls (no huge args/results). */
+function summarizeStepForStatus(toolCalls: any[], toolResults: any[]): string {
+  return toolCalls.map((tc: any, i: number) => {
+    const args = tc.args ?? {};
+    const path = args.path ?? args.file_path ?? '';
+    const extra = args.thought ? `: "${String(args.thought).slice(0, 100)}"`
+      : args.command ? `: ${String(args.command).slice(0, 60)}`
+      : path ? `: ${path}`
+      : '';
+    const result = toolResults?.[i]?.result;
+    const failed = typeof result === 'string' && result.startsWith('Error') ? ' (failed)' : '';
+    return `${tc.toolName}${extra}${failed}`;
+  }).join('; ');
+}
+
+/**
+ * Ask a cheap/fast model to describe, in a few words, what this step actually
+ * did — used only for feature/build tier runs (the ones that already budget
+ * for higher per-run cost) so this doesn't undo the cost-optimization work on
+ * micro/fix/edit tiers. Fire-and-forget from the caller; never throws, returns
+ * null on any failure or if it doesn't resolve within the timeout so it can
+ * never block or break the main agent loop.
+ */
+async function generateDynamicStepStatus(toolCalls: any[], toolResults: any[]): Promise<string | null> {
+  if (toolCalls.length === 0) return null;
+  try {
+    const { provider } = resolveProviderWithFallback(DEFAULT_FREE_MODEL);
+    const summary = summarizeStepForStatus(toolCalls, toolResults);
+    const result = await Promise.race([
+      generateText({
+        model: provider,
+        messages: [{
+          role: 'user',
+          content: `A coding agent just did this step: ${summary}\n\nDescribe what it just did in under 8 words, present continuous tense (e.g. "Building the checkout page"). No quotes, no trailing period, no preamble.`,
+        }],
+        maxOutputTokens: 20,
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+    ]);
+    const text = result.text?.trim().replace(/^["']|["']$/g, '').replace(/\.$/, '');
+    if (!text || text.length < 3) return null;
+    return text.length > 90 ? text.slice(0, 87) + '...' : text;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Derive a concise, human-friendly status line from a completed step's tool calls.
  * Priority: think > write_file/edit_file groups > other tools.
@@ -2095,7 +2142,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       : '';
     const dbNote = hasDb
       ? '\n\nThis project\'s hosted database is the ONLY place for application data (any table the user asks for — posts, products, orders, custom records, etc.). Use PostgREST calls to `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` with headers `{ "Authorization": "Bearer <VITE_DB_ANON_KEY>", "apikey": "<VITE_DB_ANON_KEY>", "Accept-Profile": "<VITE_DB_SCHEMA>", "Content-Profile": "<VITE_DB_SCHEMA>" }`. Accept-Profile/Content-Profile are REQUIRED — without them PostgREST routes to its default schema instead of this project\'s isolated one and every request 403s. Call `get_database_schema` to inspect tables, `query_database` to run SQL.' +
-        (hasSb ? ' This hosted database has NO auth/login server of its own — it is Postgres + PostgREST only. Never attempt to hit `VITE_DB_API_URL/auth/...` — that endpoint does not exist here; auth always goes through Supabase (above).' : '')
+        (hasSb ? ' This hosted database has NO auth/login server of its own — it is Postgres + PostgREST only. Never attempt to hit `VITE_DB_API_URL/auth/...` — that endpoint does not exist here; auth always goes through Supabase (above).' : '') +
+        '\n\n**Edge functions** — use `write_edge_function` for server-side logic the browser should never run directly: code that needs a secret API key, webhook handlers, scheduled/triggered jobs, or any multi-step backend operation. Do NOT put that logic in frontend code just because PostgREST covers plain CRUD — if it needs a secret or must run server-side, it MUST be an edge function.\n' +
+        'Invoke a written function from the frontend with:\n```ts\nconst res = await fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/api/v1/functions/<name>/invoke`, {\n  method: \'POST\',\n  headers: { \'Content-Type\': \'application/json\', apikey: import.meta.env.VITE_DB_ANON_KEY },\n  body: JSON.stringify({ params: { /* ... */ } }),\n});\n```\nNo project_id is needed — the anon key itself identifies which project\'s function to run.\n' +
+        'This endpoint is public and rate-limited (30 req/min) — it authenticates with the SAME `VITE_DB_ANON_KEY` used for the database, not a login session, so it works for anonymous visitors of the generated app, not just its owner.'
       : '';
     const ecgNote = hasEcg
       ? '\n\n## eCG Agents Portal Integration\n\nThis project is linked to the eCG Agents Portal. Follow these rules strictly:\n\n**Frontend (React) code** — NEVER call the portal API directly from the browser. All portal data goes through the eComGear server proxy:\n```ts\n// In src/lib/ecgClient.ts — already configured\nconst url = `${import.meta.env.VITE_ECG_PROXY_URL}/api/v1/ecg-proxy${path}?projectId=${import.meta.env.VITE_PROJECT_ID}`;\n```\nUse `ecgApi` from `src/lib/ecgClient.ts` for all data fetching. Do not use `ECG_PORTAL_TOKEN` — it is server-side only.\n\n**Edge functions** — use the pre-injected `ecg` helper (not `fetch`). ECG credentials are injected server-side:\n```js\n// Agents\nconst agents = await ecg.get(\'/agents\');\n// Approve a post\nawait ecg.patch(\'/planned-posts/\' + params.postId, { status: \'approved\' });\n// Run history\nconst runs = await ecg.get(\'/runs\');\n// LLM call (uses the configured AI model, key stays server-side)\nconst reply = await ecg.llm([\n  { role: \'user\', content: \'Summarize agent performance\' }\n], \'You are an eCG assistant.\');\n```\n`ecg` is `null` for projects without portal integration — check before using.\n\n**AI chat** — the dashboard has a built-in `AiAssistantPage.tsx` that calls `/api/v1/ecg-proxy/ai-chat`. Extend it, do not duplicate it.\n\n**Security rule** — NEVER expose `ECG_PORTAL_TOKEN`, `ECG_LLM_API_KEY`, or any `ECG_*` secret in frontend code, logs, or responses.' +
@@ -2450,6 +2500,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               runCostUsd:  parseFloat(runCost.toFixed(5)),
             },
           });
+
+          // Fire-and-forget: replace the canned status with a cheap-model-generated
+          // one once it resolves, feature/build tiers only (see generateDynamicStepStatus
+          // doc comment — never blocks this callback, never throws).
+          if ((_tier === 'feature' || _tier === 'build') && !abortController.signal.aborted) {
+            const stepForStatus = stepCount;
+            generateDynamicStepStatus(toolCalls ?? [], toolResults ?? []).then((dynamicStatus) => {
+              if (dynamicStatus && !abortController.signal.aborted) {
+                sseWrite(res, 'step-status-refine', { step: stepForStatus, status: dynamicStatus });
+              }
+            }).catch(() => {});
+          }
 
           console.log(
             `[AgentLoop] Step ${stepCount} | tools: ${toolNames.join(', ') || 'none'}` +

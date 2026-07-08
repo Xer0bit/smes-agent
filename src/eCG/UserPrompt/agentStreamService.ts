@@ -94,6 +94,8 @@ export interface AgentStreamCallbacks {
   onToolOutput?: (xml: string) => void;
   /** Called when the agent finishes a thinking/tool step */
   onStepFinish?: (data: StepFinishData) => void;
+  /** Called when a cheap-model-generated status arrives to replace the canned one for a given step (feature/build tiers only) */
+  onStepStatusRefine?: (data: { step: number; status: string }) => void;
   /** Called on error */
   onError?: (message: string) => void;
   /** Called when all auto-repair attempts fail — errors can be shown to user for manual fix */
@@ -323,6 +325,12 @@ export async function streamAgentGeneration(params: {
                 failedEdits: payload.failedEdits ?? 0,
                 status: typeof payload.status === 'string' ? payload.status : undefined,
               });
+              break;
+            }
+            case 'step-status-refine': {
+              if (typeof payload.step === 'number' && typeof payload.status === 'string') {
+                callbacks.onStepStatusRefine?.({ step: payload.step, status: payload.status });
+              }
               break;
             }
             case 'done': {

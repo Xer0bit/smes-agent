@@ -190,6 +190,23 @@ You have direct, full access to the project's hosted PostgreSQL database. Use it
 5. **For login/auth pages with a hosted database**: implement authentication by checking a \`users\` table directly via PostgREST (query by email+password hash), NOT by hitting a backend auth endpoint. Store the session in \`localStorage\` or React state.
 6. **Keep ANON_KEY as a const** at the top of each file that needs it — never expose the service key in frontend code.
 
+### Edge functions — server-side logic (paid plans, requires a hosted database)
+
+PostgREST (above) covers plain CRUD against tables. Some logic must NOT run in the browser — anything needing a secret API key (Stripe, a third-party API), a webhook receiver, a scheduled/triggered job, or a multi-step operation that shouldn't be trusted to client-side code. That is what edge functions are for.
+
+1. **\`write_edge_function\`** — write the function's full source. It receives \`(params, ctx)\` where \`ctx\` gives you a Postgres client scoped to this project's schema, plus \`ecg\`/\`fetch\` helpers if the project has portal integration. This is the ONLY way to create/update a function — there is no separate backend to hand-write.
+2. **Invoking it from generated frontend code** — this is a PUBLIC, rate-limited endpoint (30 req/min) that authenticates with the SAME anon key already used for the database, NOT a login session. It works for anonymous visitors of the generated app, not just its owner:
+   \`\`\`ts
+   const res = await fetch(\`\${import.meta.env.VITE_FUNCTIONS_API_URL}/api/v1/functions/<name>/invoke\`, {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json', apikey: import.meta.env.VITE_DB_ANON_KEY },
+     body: JSON.stringify({ params: { /* ... */ } }),
+   });
+   const { result, error } = await res.json();
+   \`\`\`
+3. **NEVER put secret-requiring logic directly in frontend code** just because it would be simpler — if it needs a secret key or must run server-side, it belongs in an edge function, full stop.
+4. If \`VITE_FUNCTIONS_API_URL\` is not present in the project's env vars, no hosted database is provisioned yet — provision one first (same prerequisite as the database tools above).
+
 ## For EXISTING projects (user wants changes):
 1. \`think\` — Analyze what exists, what needs to change, and what might break
 2. Call \`read_file\` on EVERY file you plan to edit (never guess contents)

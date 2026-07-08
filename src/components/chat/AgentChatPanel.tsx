@@ -1208,6 +1208,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             if (stepData.status) pushStatus(stepData.status, isLLMStatus);
             else if (stepData.toolCount > 0) pushStatus('Reviewing generated changes...');
           },
+          onStepStatusRefine: ({ status }) => {
+            // A cheap-model-generated description of what the step actually did,
+            // replacing the rule-based canned phrase once it resolves (feature/build
+            // tiers only — see generateDynamicStepStatus on the server).
+            if (generationDone) return;
+            pushStatus(status, true, true);
+          },
           onDone: (result) => {
             generationDone = true;             // block any further text-delta updates
             setIsGenerating(false);
