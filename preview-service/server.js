@@ -1480,20 +1480,13 @@ function preprocessFile(filePath, content) {
         }
     }
 
-    // Fix 5: Replace import.meta.env.* EXCEPT BASE_URL with safe literal values.
-    // BASE_URL is left alone — Vite replaces it with the correct base path at serve time
-    // (base: `/preview/${projectId}/` in vite config). Replacing it here would break asset paths.
-    // DEV → true, PROD → false, MODE → "development", others → ""
-    fixed = fixed.replace(/import\.meta\.env\.([A-Z_]+)/g, (match, varName) => {
-        if (varName === 'BASE_URL') return match; // Let Vite handle it
-        if (varName === 'DEV') return 'true';
-        if (varName === 'PROD') return 'false';
-        if (varName === 'MODE') return '"development"';
-        return '""';
-    });
-    if (fixed !== content && fixed.includes('""')) {
-        issues.push('Replaced import.meta.env access with empty string');
-    }
+    // Fix 5 used to blanket-replace every import.meta.env.X (except BASE_URL) with a
+    // literal "" — including VITE_DB_API_URL/VITE_DB_ANON_KEY/VITE_SUPABASE_URL/etc.
+    // Vite's dev server already provides DEV/PROD/MODE/BASE_URL correctly at runtime,
+    // and real project secrets are written to a per-project .env.local file (see the
+    // /preview/:projectId/secrets endpoint below) which Vite loads natively — so this
+    // file must NOT touch import.meta.env.* text at all. Doing so silently nuked every
+    // hosted-database/auth/edge-function call in every preview, unconditionally.
 
     // Fix 5.5: Remove orphaned closing delimiters after export statements.
     // Common streamed-generation artifact:
@@ -3020,6 +3013,53 @@ async function startMainServer() {
             console.error(`[Export] ${projectId} build failed:`, e.message);
             res.status(500).json({ error: 'Build failed', detail: e.message });
         }
+    });
+
+    // Secrets API: POST /preview/:projectId/secrets
+    // Writes the project's real VITE_* secrets (hosted DB creds, Supabase auth,
+    // functions URL, etc.) to a .env.local file so Vite's own env loading serves
+    // the real values via import.meta.env.* — restarts the Vite server so it picks
+    // them up (Vite only reads .env files at server startup, not on every request).
+    app.options('/preview/:projectId/secrets', cors(corsOptions));
+    app.post('/preview/:projectId/secrets', async (req, res) => {
+        if (PREVIEW_UPDATE_SECRET) {
+            const provided = req.headers['x-update-secret'];
+            if (!provided || provided !== PREVIEW_UPDATE_SECRET) {
+                return res.status(401).json({ error: 'Unauthorized' });
+            }
+        }
+        const { projectId } = req.params;
+        if (!isValidProjectId(projectId)) {
+            return res.status(400).json({ error: 'Invalid project ID' });
+        }
+        const { secrets } = req.body;
+        if (!secrets || !Array.isArray(secrets)) {
+            return res.status(400).json({ error: 'Invalid secrets format' });
+        }
+
+        const projectRoot = initProject(projectId);
+        const envLines = secrets
+            .filter((s) => s && typeof s.key_name === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(s.key_name))
+            .map((s) => `${s.key_name}=${JSON.stringify(String(s.key_value ?? ''))}`);
+        const envContent = envLines.join('\n') + '\n';
+        const envPath = path.join(projectRoot, '.env.local');
+
+        let changed = true;
+        try {
+            const existing = fs.readFileSync(envPath, 'utf-8');
+            changed = existing !== envContent;
+        } catch {
+            // No existing file — this is a real change
+        }
+
+        fs.writeFileSync(envPath, envContent);
+        console.log(`[${projectId}] Wrote ${envLines.length} secret(s) to .env.local`);
+
+        if (changed) {
+            await restartProjectServer(projectId, 'secrets updated').catch(() => {});
+        }
+
+        res.json({ success: true, secretsWritten: envLines.length, restarted: changed });
     });
 
     // File Update API: POST /preview/:projectId/update

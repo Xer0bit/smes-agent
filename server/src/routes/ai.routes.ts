@@ -793,6 +793,32 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         } catch {
             // Non-fatal — agent can still discover credentials via get_database_schema tool
         }
+
+        // Sync VITE_* secrets to the preview service so the live preview actually has
+        // real values for import.meta.env.VITE_DB_API_URL etc. — previously nothing wrote
+        // these anywhere the running Vite dev server could see them, so every hosted-DB/
+        // auth/edge-function call in the preview silently had no real URL/key to use.
+        // Fire-and-forget: this must never block or fail the agent run.
+        (async () => {
+            try {
+                const viteSecrets = projectSecrets.filter(s => s.key_name.startsWith('VITE_'));
+                if (viteSecrets.length === 0) return;
+                const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001';
+                const previewUpdateSecret = process.env.PREVIEW_UPDATE_SECRET || '';
+                await fetch(`${previewServiceUrl}/preview/${projectId}/secrets`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(previewUpdateSecret ? { 'x-update-secret': previewUpdateSecret } : {}),
+                    },
+                    body: JSON.stringify({ secrets: viteSecrets }),
+                    signal: AbortSignal.timeout(10_000),
+                });
+            } catch {
+                // Non-fatal — preview will just lack real secrets until the next successful sync
+            }
+        })();
+
         // Resolve the agent working directory.
         //
         // Priority:
