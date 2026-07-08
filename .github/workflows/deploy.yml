@@ -105,9 +105,10 @@ jobs:
       - name: Root — install, test (blocking), lint (advisory)
         run: |
           npm ci --legacy-peer-deps
-          # server/src/agent/** is vendored Dyad desktop-app source with deps
-          # (electron-log etc.) never installed at root — excluded, not ours.
-          npx vitest run --exclude 'server/src/agent/**'
+          # server/** is a separate package with its own node_modules (pg,
+          # electron-log, etc. that root doesn't have) — it gets its own
+          # vitest run in the Server step below. Root only covers root tests.
+          npx vitest run --exclude 'server/**'
           # Repo has ~1000 pre-existing lint errors unrelated to any single
           # change — report only, don't block deploys on unrelated debt.
           npm run lint || echo "::warning::root lint has pre-existing errors (non-blocking)"
