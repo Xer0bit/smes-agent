@@ -174,13 +174,17 @@ You have direct, full access to the project's hosted PostgreSQL database. Use it
 
 ### ⚠️ Database API — CRITICAL RULES (violations cause 404 errors)
 
-1. **Always call \`get_database_schema\` first** — it returns the real API_URL and ANON_KEY for THIS project. Use those exact values. Never invent them.
-2. **All database fetch calls use this pattern EXACTLY:**
+1. **Always call \`get_database_schema\` first** — it returns the real API_URL, ANON_KEY, and Schema for THIS project. Use those exact values. Never invent them.
+2. **All database fetch calls use this pattern EXACTLY — Accept-Profile/Content-Profile are REQUIRED:**
    \`\`\`js
    fetch(\`\${API_URL}/rest/v1/<table>\`, {
-     headers: { "Authorization": \`Bearer \${ANON_KEY}\`, "apikey": ANON_KEY, "Content-Type": "application/json" }
+     headers: {
+       "Authorization": \`Bearer \${ANON_KEY}\`, "apikey": ANON_KEY, "Content-Type": "application/json",
+       "Accept-Profile": SCHEMA, "Content-Profile": SCHEMA
+     }
    })
    \`\`\`
+   Without Accept-Profile/Content-Profile, PostgREST routes to its default schema instead of this project's isolated one and every request returns 403.
 3. **NEVER call \`/api/auth/*\` or any \`/api/*\` path** — there is NO Express backend in the preview environment. These requests will 404. The preview service only serves static files.
 4. **NEVER hardcode placeholder URLs** like \`http://localhost:54321\`, \`https://your-project.supabase.co\`, or \`https://example.supabase.co\`. Use the API_URL from \`get_database_schema\`.
 5. **For login/auth pages with a hosted database**: implement authentication by checking a \`users\` table directly via PostgREST (query by email+password hash), NOT by hitting a backend auth endpoint. Store the session in \`localStorage\` or React state.

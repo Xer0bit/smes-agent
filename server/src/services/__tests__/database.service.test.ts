@@ -80,7 +80,7 @@ describe('databaseService.getCredentials — VITE_DB_* secret sync', () => {
     expect(secretsUpsert.opts).toEqual({ onConflict: 'project_id,key_name' });
 
     const keyNames = secretsUpsert.rows.map((r: any) => r.key_name).sort();
-    expect(keyNames).toEqual(['VITE_DB_ANON_KEY', 'VITE_DB_API_URL']);
+    expect(keyNames).toEqual(['VITE_DB_ANON_KEY', 'VITE_DB_API_URL', 'VITE_DB_SCHEMA']);
 
     const apiUrlRow = secretsUpsert.rows.find((r: any) => r.key_name === 'VITE_DB_API_URL');
     expect(apiUrlRow.project_id).toBe('project-1');
@@ -90,6 +90,9 @@ describe('databaseService.getCredentials — VITE_DB_* secret sync', () => {
     expect(anonKeyRow.key_value).toBe(creds!.anon_key);
     expect(typeof anonKeyRow.key_value).toBe('string');
     expect(anonKeyRow.key_value.split('.')).toHaveLength(3); // header.body.sig JWT shape
+
+    const schemaRow = secretsUpsert.rows.find((r: any) => r.key_name === 'VITE_DB_SCHEMA');
+    expect(schemaRow.key_value).toBe(creds!.schema);
   });
 
   it('does not touch project_secrets when no projectId is given (legacy path)', async () => {

@@ -159,14 +159,17 @@ export const databaseService = {
       db_url: `postgresql://${record.schema_name}_owner@${c.host}:${c.port}/${c.database}?search_path=${record.schema_name}`,
     };
 
-    // Keep VITE_DB_API_URL/VITE_DB_ANON_KEY in sync so generated frontend code
-    // (import.meta.env.VITE_DB_API_URL) always resolves to this one hosted DB
-    // instead of the agent falling back to inventing a separate one.
+    // Keep VITE_DB_API_URL/VITE_DB_ANON_KEY/VITE_DB_SCHEMA in sync so generated
+    // frontend code (import.meta.env.VITE_DB_*) always resolves to this one
+    // hosted DB instead of the agent falling back to inventing a separate one.
+    // VITE_DB_SCHEMA feeds the Accept-Profile/Content-Profile headers PostgREST
+    // requires to route to this tenant's isolated schema instead of its default.
     if (projectId) {
       supabase.from('project_secrets').upsert(
         [
           { project_id: projectId, key_name: 'VITE_DB_API_URL', key_value: creds.api_url },
           { project_id: projectId, key_name: 'VITE_DB_ANON_KEY', key_value: creds.anon_key },
+          { project_id: projectId, key_name: 'VITE_DB_SCHEMA', key_value: creds.schema },
         ],
         { onConflict: 'project_id,key_name' }
       ).then(({ error }) => {
@@ -326,7 +329,7 @@ export const databaseService = {
       if (projectId) {
         await supabase.from('project_secrets').delete()
           .eq('project_id', projectId)
-          .in('key_name', ['VITE_DB_API_URL', 'VITE_DB_ANON_KEY']);
+          .in('key_name', ['VITE_DB_API_URL', 'VITE_DB_ANON_KEY', 'VITE_DB_SCHEMA']);
       }
       logger.info('Tenant DB deprovisioned', { userId, projectId, schema });
 

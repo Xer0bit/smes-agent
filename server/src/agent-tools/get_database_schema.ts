@@ -53,8 +53,9 @@ export const getDatabaseSchemaTool: ToolDefinition<z.infer<typeof schema>> = {
       '',
       'IMPORTANT — Frontend database rules:',
       `  • All fetch requests go to: ${creds.api_url}/rest/v1/<table>`,
-      `  • ALWAYS include these headers: { "Authorization": "Bearer ${creds.anon_key}", "apikey": "${creds.anon_key}" }`,
-      '  • NEVER use placeholder URLs or hardcoded keys — always use the API_URL and ANON_KEY above',
+      `  • ALWAYS include these headers: { "Authorization": "Bearer ${creds.anon_key}", "apikey": "${creds.anon_key}", "Accept-Profile": "${creds.schema}", "Content-Profile": "${creds.schema}" }`,
+      `  • Accept-Profile/Content-Profile are REQUIRED, not optional — without them PostgREST routes to its default schema instead of "${creds.schema}" and every request 403s.`,
+      '  • NEVER use placeholder URLs or hardcoded keys — always use the API_URL, ANON_KEY, and schema above',
       '  • NEVER call /api/auth/* routes — there is no Express backend in the preview; use direct PostgREST calls only',
     ].join('\n');
   },
