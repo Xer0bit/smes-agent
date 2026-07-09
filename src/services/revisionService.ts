@@ -34,8 +34,10 @@ export interface Revision {
   revision_number: number;
   prompt: string;
   summary?: string;
-  generated_code: string; // Kept for backward compatibility
-  generated_files?: GeneratedFiles; // New JSONB field
+  // Not selected by getRevisions() (can be tens of MB per row) — fetch via
+  // getRevisionFiles()/getLegacyGeneratedCode() for one specific revision.
+  generated_code?: string;
+  generated_files?: GeneratedFiles;
   preview_url?: string;
   preview_status?: 'pending' | 'building' | 'ready' | 'failed';
   file_attachments?: any;
@@ -286,13 +288,30 @@ export const revisionService = {
     return result.files;
   },
 
+  /**
+   * List revisions for the history panel / "latest revision" lookups.
+   * Deliberately excludes generated_code/generated_files/file_attachments —
+   * those can be tens of MB per row, and every list caller only needs
+   * metadata + preview status. Callers that need actual file content must
+   * fetch it per-revision via getRevisionFiles()/getLegacyGeneratedCode().
+   */
   async getRevisions(projectId: string, limit = 50, offset = 0): Promise<Revision[]> {
     console.log('[RevisionService] Fetching revisions for project:', projectId, 'limit:', limit, 'offset:', offset);
 
     const { data, error } = await supabase
       .from('revisions')
       .select(`
-        *,
+        id,
+        project_id,
+        revision_number,
+        prompt,
+        summary,
+        is_published,
+        created_at,
+        user_id,
+        git_commit_hash,
+        git_branch,
+        git_author,
         revision_preview (
           preview_url,
           cloudflare_url,
@@ -315,7 +334,18 @@ export const revisionService = {
       ...rev,
       preview_url: (rev.revision_preview as any)?.cloudflare_url || (rev.revision_preview as any)?.preview_url,
       preview_status: (rev.revision_preview as any)?.preview_status || 'pending',
-    })) as Revision[];
+    })) as unknown as Revision[];
+  },
+
+  /** Fetch the legacy `generated_code` string for one revision (rare fallback path). */
+  async getLegacyGeneratedCode(revisionId: string): Promise<string> {
+    const { data, error } = await supabase
+      .from('revisions')
+      .select('generated_code')
+      .eq('id', revisionId)
+      .single();
+    if (error || !data) return '';
+    return data.generated_code ?? '';
   },
 
   /**

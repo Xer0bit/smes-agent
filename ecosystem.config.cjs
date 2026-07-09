@@ -60,7 +60,7 @@ module.exports = {
             env: {
                 NODE_ENV: 'production',
                 PORT: GEN_API_PORT,
-                TENANT_DB_API_URL: 'https://db.ecomgear.app',
+                TENANT_DB_API_URL: 'https://cloud.ecomgear.app',
             },
             max_memory_restart: '2000M',
             error_file: path.join(ROOT, 'logs', 'gen-error.log'),

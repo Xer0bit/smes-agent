@@ -82,7 +82,7 @@ describe('databaseService.getCredentials — VITE_DB_* secret sync', () => {
   it('upserts VITE_DB_API_URL and VITE_DB_ANON_KEY for the project', async () => {
     const creds = await databaseService.getCredentials('user-1', 'project-1');
     expect(creds).not.toBeNull();
-    expect(creds!.api_url).toBe('https://db.ecomgear.app');
+    expect(creds!.api_url).toBe('https://cloud.ecomgear.app');
 
     // upsert is fired async (not awaited) — flush microtasks.
     await new Promise((r) => setImmediate(r));

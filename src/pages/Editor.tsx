@@ -867,9 +867,12 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   }, [location.state]);
 
   const loadProject = async () => {
+    // Explicit column list — excludes latest_generated_code, which duplicates
+    // the entire project's file contents as a JSON-stringified blob (can be
+    // tens of MB) and is write-only (kept for backwards compat, never read).
     const { data, error } = await supabase
       .from("projects")
-      .select("*")
+      .select("id, name, status, created_at, updated_at, organization_id, slug, description, visibility, created_by, message_count, user_id, total_storage_bytes, revision_count, latest_revision_size, storage_warning_shown, org_id, docker_path, server_path, preview_port, template_type, node_version, published_subdomain, published_url, published_at, website_name, website_description, meta_image_url, favicon_url, custom_system_prompt, context_notes, thumbnail_url")
       .eq("id", projectId)
       .single();
 
@@ -1191,10 +1194,14 @@ export default defineConfig({
           setLatestPreviewUrl(latestRevision.preview_url);
         }
 
-        // JSONB files path
-        if (latestRevision.generated_files && latestRevision.generated_files.files && latestRevision.generated_files.files.length > 0) {
-          console.log('[Editor] Loading revision with JSONB files:', latestRevision.generated_files.files.length);
-          let files = latestRevision.generated_files.files.map((file: any) => ({
+        // Full file content is fetched on demand for just this one revision —
+        // getRevisions() above intentionally omits generated_files/generated_code
+        // (can be tens of MB per row) since list callers only need metadata.
+        const latestFiles = await revisionService.getRevisionFiles(projectId!, latestRevision.id);
+
+        if (latestFiles.length > 0) {
+          console.log('[Editor] Loading revision with JSONB files:', latestFiles.length);
+          let files = latestFiles.map((file: any) => ({
             path: file.path,
             content: file.content,
             type: file.type,
@@ -1273,7 +1280,7 @@ export default defineConfig({
           }
         } else {
           // Fallback to old format
-          const code = latestRevision.generated_code;
+          const code = await revisionService.getLegacyGeneratedCode(latestRevision.id);
           setGeneratedCode(code);
           setGeneratedFiles([{ path: 'index.html', content: code }]);
         }

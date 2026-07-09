@@ -12,7 +12,7 @@ function cfg() {
   const password = process.env.TENANT_DB_SUPERUSER_PASSWORD;
   const database = process.env.TENANT_DB_NAME          || 'ecg_tenants';
   const jwtSecret = process.env.TENANT_DB_JWT_SECRET;
-  const apiUrl   = process.env.TENANT_DB_API_URL       || 'https://db.ecomgear.app';
+  const apiUrl   = process.env.TENANT_DB_API_URL       || 'https://cloud.ecomgear.app';
 
   if (!host || !password || !jwtSecret) {
     throw new Error('Missing TENANT_DB_HOST, TENANT_DB_SUPERUSER_PASSWORD or TENANT_DB_JWT_SECRET env vars');

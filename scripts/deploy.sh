@@ -439,7 +439,7 @@ REMOTE_EOF
     TDB_PASS="${TENANT_DB_SUPERUSER_PASSWORD:-}"
     TDB_NAME="${TENANT_DB_NAME:-ecg_tenants}"
     TDB_JWT="${TENANT_DB_JWT_SECRET:-}"
-    TDB_API_URL="${TENANT_DB_API_URL:-https://db.ecomgear.app}"
+    TDB_API_URL="${TENANT_DB_API_URL:-https://cloud.ecomgear.app}"
     TDB_SSL="${TENANT_DB_SSL:-true}"
     TDB_RELOAD_URL="${TENANT_DB_RELOAD_URL:-}"
     TDB_RELOAD_SECRET="${TENANT_DB_RELOAD_SECRET:-}"

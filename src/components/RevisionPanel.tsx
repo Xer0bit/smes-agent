@@ -170,7 +170,8 @@ export function RevisionPanel({ projectId, onRevisionSelect, currentUserId, mode
                         } else {
                           // Absolute fallback: legacy generated_code string
                           console.warn('[RevisionPanel] No files found, falling back to generated_code');
-                          onRevisionSelect(rev.generated_code, previewUrl, rev.id);
+                          const legacyCode = await revisionService.getLegacyGeneratedCode(rev.id);
+                          onRevisionSelect(legacyCode, previewUrl, rev.id);
                         }
                         setIsExpanded(false);
                         toast.success(`Loaded revision #${rev.revision_number}`);

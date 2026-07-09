@@ -84,24 +84,33 @@ export function parseToolActivities(raw: string): ToolActivity[] {
   return Array.from(seen.values());
 }
 
-/** Build a readable summary from tool activities when the agent produced no prose. */
+/**
+ * Build a readable summary from tool activities when the agent produced no
+ * prose of its own. Reads like a short human sentence ("Updated the header,
+ * sign-up, and about pages.") rather than a raw file-change log.
+ */
 export function buildFallbackSummary(activities: ToolActivity[]): string {
   const fileActs = activities.filter(a => ['write', 'edit', 'delete', 'rename'].includes(a.type));
-  if (fileActs.length === 0) return 'Done.';
+  if (fileActs.length === 0) return '';
 
   const writes = fileActs.filter(a => a.type === 'write').length;
   const edits  = fileActs.filter(a => a.type === 'edit').length;
-  const verb   = writes > 0 && edits === 0 ? 'Created' : edits > 0 && writes === 0 ? 'Updated' : 'Changed';
+  const verb   = writes > 0 && edits === 0 ? 'Added' : 'Updated';
 
-  const names = fileActs.map(a =>
-    (a.type === 'rename' ? a.label : (a.label.split('/').pop() ?? a.label))
-  );
+  const labels = Array.from(new Set(fileActs.map(a =>
+    a.type === 'rename' ? a.label : filePathToLabel(a.label)
+  )));
+
   const MAX = 4;
-  const shown = names.slice(0, MAX);
-  const extra = names.length - MAX;
-  const fileList = extra > 0 ? shown.join(', ') + ` and ${extra} more` : shown.join(', ');
+  const shown = labels.slice(0, MAX);
+  const extra = labels.length - MAX;
+  const list = extra > 0
+    ? `${shown.join(', ')}, and ${extra} more`
+    : shown.length > 1
+      ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`
+      : shown[0];
 
-  return `${verb} ${fileActs.length} ${fileActs.length === 1 ? 'file' : 'files'}: ${fileList}.`;
+  return `${verb} ${list}.`;
 }
 
 // Return a human-readable live status for the tool currently being streamed.
@@ -551,10 +560,12 @@ export function filePathToLabel(filePath: string): string {
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
     .replace(/[-_]/g, ' ')
     .toLowerCase();
-  if (words.startsWith('use ')) return words.replace('use ', '') + ' hook';
-  if (filePath.includes('/pages/')) return words + ' page';
-  if (filePath.includes('/components/')) return words + ' component';
-  if (filePath.includes('/hooks/')) return words + ' hook';
+  if (words.startsWith('use ')) return words.replace('use ', '') + (words.endsWith(' hook') ? '' : ' hook');
+  // Avoid doubling up when the filename already ends with the directory's
+  // implied word (e.g. AboutPage.tsx in /pages/ → "about page", not "about page page").
+  if (filePath.includes('/pages/')) return words.endsWith(' page') ? words : words + ' page';
+  if (filePath.includes('/components/')) return words.endsWith(' component') ? words : words + ' component';
+  if (filePath.includes('/hooks/')) return words.endsWith(' hook') ? words : words + ' hook';
   if (filePath.includes('/lib/') || filePath.includes('/utils/')) return words;
   if (base === 'App') return 'app shell';
   if (base === 'main') return 'app entry';

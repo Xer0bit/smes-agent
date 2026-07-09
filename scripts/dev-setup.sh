@@ -4,7 +4,7 @@
 #
 # Wires up a local dev environment that uses production services:
 #   Supabase  → https://api.ecomgear.dev    (real DB, auth, edge functions)
-#   Tenant DB → https://db.ecomgear.app     (real isolated per-project DBs)
+#   Tenant DB → https://cloud.ecomgear.app  (real isolated per-project DBs)
 #   Preview   → https://preview.ecomgear.app (real preview service)
 #   Gen API   → http://localhost:5001        (run locally for debugging)
 #
@@ -98,6 +98,6 @@ echo ""
 echo "  Frontend → http://localhost:8080"
 echo "  Gen API  → http://localhost:5001"
 echo "  Supabase → https://api.ecomgear.dev (production)"
-echo "  Tenant DB→ https://db.ecomgear.app  (production)"
+echo "  Tenant DB→ https://cloud.ecomgear.app (production)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""

@@ -14,6 +14,8 @@ import { CollaboratorManager } from "./CollaboratorManager";
 import { ReferralContent } from "./ReferralContent";
 import { DomainSettings } from "./DomainSettings";
 import { SeoSettings } from "./SeoSettings";
+import { HeaderIntegrationsSettings } from "./HeaderIntegrationsSettings";
+import { GitHubSettings } from "./GitHubSettings";
 import { DatabaseSettings } from "./DatabaseSettings";
 import { KnowledgeSettings } from "./KnowledgeSettings";
 import { SecretsSettings } from "./SecretsSettings";
@@ -217,6 +219,12 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
         
       case "project-seo":
         return <SeoSettings projectId={projectId} />;
+
+      case "project-integrations":
+        return <HeaderIntegrationsSettings projectId={projectId} />;
+
+      case "connector-github":
+        return <GitHubSettings projectId={projectId} />;
 
       case "project-collaborators":
         return <CollaboratorManager projectId={projectId} />;
