@@ -18,6 +18,17 @@ interface SecretsSettingsProps {
   projectId?: string;
 }
 
+// Supabase-js throws plain PostgrestError objects ({message, code, details}),
+// not native Error instances, so `err instanceof Error` never matches them
+// and the real cause (RLS denial, missing table, etc.) got swallowed.
+function extractErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object' && 'message' in err && typeof (err as { message: unknown }).message === 'string') {
+    return (err as { message: string }).message;
+  }
+  return fallback;
+}
+
 export function SecretsSettings({ projectId }: SecretsSettingsProps) {
   const [secrets, setSecrets] = useState<SecretRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,8 +50,9 @@ export function SecretsSettings({ projectId }: SecretsSettingsProps) {
         .order('created_at', { ascending: true });
       if (error) throw error;
       setSecrets(data ?? []);
-    } catch {
-      // Table may not exist yet — silently ignore
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[SecretsSettings] failed to load project_secrets:', msg);
       setSecrets([]);
     } finally {
       setLoading(false);
@@ -74,7 +86,7 @@ export function SecretsSettings({ projectId }: SecretsSettingsProps) {
       setAdding(false);
       await load();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to save secret';
+      const msg = extractErrorMessage(err, 'Failed to save secret');
       toast.error(msg);
     } finally {
       setSaving(false);
@@ -89,7 +101,7 @@ export function SecretsSettings({ projectId }: SecretsSettingsProps) {
       toast.success(`Secret "${keyName}" deleted.`);
       setSecrets(prev => prev.filter(s => s.id !== id));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to delete secret';
+      const msg = extractErrorMessage(err, 'Failed to delete secret');
       toast.error(msg);
     } finally {
       setDeletingId(null);

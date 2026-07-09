@@ -105,11 +105,14 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     const [blankScreen, setBlankScreen] = useState(false);
     const blankTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Poll preview service for build errors once a preview URL is loaded
+    // Poll preview service for build errors once a preview URL is loaded.
+    // Skips the request while the tab is backgrounded (document.hidden) — this
+    // was firing every 4s indefinitely even when nobody was looking at the tab.
     useEffect(() => {
         if (!projectId || !src) return;
 
         const poll = async () => {
+            if (document.hidden) return;
             try {
                 const res = await fetch(`${PREVIEW_SERVICE_URL}/preview/${projectId}/status`, {
                     signal: AbortSignal.timeout(5000),
@@ -128,11 +131,14 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
             }
         };
 
-        // Initial check immediately, then every 4 s
+        // Initial check immediately, then every 4 s while the tab is visible.
+        // Also re-check the moment the tab comes back into focus.
         poll();
         pollRef.current = setInterval(poll, 4000);
+        document.addEventListener('visibilitychange', poll);
         return () => {
             if (pollRef.current) clearInterval(pollRef.current);
+            document.removeEventListener('visibilitychange', poll);
         };
     }, [projectId, src]);
 

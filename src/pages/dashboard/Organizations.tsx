@@ -21,7 +21,7 @@ import { z } from 'zod';
 import { OrganizationBillingContent } from '@/components/referral/settings/OrganizationBillingContent';
 import { DashboardPageHeader } from '@/components/dashboard/DashboardPageHeader';
 import { useOrganization } from '@/contexts/OrganizationContext';
-import { getGenServerUrl } from '@/config/external-api';
+import { getApiServerUrl } from '@/config/external-api';
 
 // Types
 type OrgRole = 'admin' | 'billing_admin' | 'member';
@@ -685,7 +685,7 @@ export default function DashboardOrganizations() {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
           deleteOrgProjectIds.forEach((projectId) => {
-            fetch(getGenServerUrl(`/api/v1/projects/${projectId}`), {
+            fetch(getApiServerUrl(`/api/v1/projects/${projectId}`), {
               method: 'DELETE',
               headers: { Authorization: `Bearer ${session.access_token}` },
             }).catch(() => {});

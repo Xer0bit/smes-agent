@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Database, Search, Loader2, RefreshCw, Radio, Download, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { getGenServerUrl } from '@/config/external-api';
+import { getApiServerUrl } from '@/config/external-api';
 
 interface TenantDbRow {
   id: string;
@@ -39,7 +39,7 @@ export default function DatabaseHosting() {
 
   const authedFetch = async (path: string, options: RequestInit = {}) => {
     const { data: { session } } = await supabase.auth.getSession();
-    return fetch(getGenServerUrl(path), {
+    return fetch(getApiServerUrl(path), {
       ...options,
       headers: { ...(options.headers || {}), Authorization: `Bearer ${session?.access_token}` },
     });

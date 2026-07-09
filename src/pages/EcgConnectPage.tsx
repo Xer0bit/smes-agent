@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../integrations/supabase/client';
-import { getGenServerUrl } from '../config/external-api';
+import { getApiServerUrl } from '../config/external-api';
 import { useOrganization } from '../contexts/OrganizationContext';
 import ecgLogo from '../assets/ecg-logo.png';
 
@@ -73,7 +73,7 @@ export default function EcgConnectPage() {
     setPhase('creating');
     setStepStatus(prev => ({ ...prev, [STEPS[0].id]: 'active' }));
     try {
-      const res = await fetch(getGenServerUrl('/api/v1/ecg-connect'), {
+      const res = await fetch(getApiServerUrl('/api/v1/ecg-connect'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

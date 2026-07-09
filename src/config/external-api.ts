@@ -98,9 +98,23 @@ export const getGenServerCandidateUrls = (path: string): string[] => {
 export const getGenServerUrl = (path: string): string =>
   `${GEN_SERVER_CONFIG.BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
 
-// Helper to build VPS3 agent-server URL  
+// Helper to build VPS3 agent-server URL
 export const getAgentServerUrl = (path: string): string =>
   `${GEN_SERVER_CONFIG.AGENT_URL}${path.startsWith('/') ? path : `/${path}`}`;
+
+// ── VPS1 API Server — everything except LLM generation ──────────────────
+// All /api/v1/* routes other than /api/v1/ai (auth, projects, files, preview,
+// system, runtime, database, admin-database, seo, header-integrations, github,
+// functions, ecg-*). In local dev this is the same single process as the gen
+// server (port 5001), so it defaults to the same fallback.
+const resolvedApiBase = import.meta.env.VITE_API_SERVER_URL || (IS_PRODUCTION ? 'https://api.ecomgear.dev' : 'http://localhost:5001');
+
+export const API_SERVER_CONFIG = {
+  BASE_URL: resolvedApiBase.replace(/\/$/, ''),
+};
+
+export const getApiServerUrl = (path: string): string =>
+  `${API_SERVER_CONFIG.BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
 
 // Check edge function availability
 export const checkEdgeFunctionHealth = async (): Promise<boolean> => {

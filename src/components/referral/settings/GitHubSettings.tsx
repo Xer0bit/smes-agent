@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { GitBranch, ExternalLink, RefreshCw, Unlink } from "lucide-react";
-import { getGenServerUrl } from "@/config/external-api";
+import { getApiServerUrl } from "@/config/external-api";
 
 interface GitHubSettingsProps {
   projectId?: string;
@@ -25,7 +25,7 @@ interface RepoOption {
 async function authedFetch(path: string, opts: RequestInit = {}) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error("Not authenticated");
-  const res = await fetch(getGenServerUrl(`/api/v1/github${path}`), {
+  const res = await fetch(getApiServerUrl(`/api/v1/github${path}`), {
     ...opts,
     headers: { ...opts.headers, Authorization: `Bearer ${session.access_token}` },
   });
@@ -96,7 +96,7 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
     setConnecting(true);
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { toast.error("Not authenticated"); setConnecting(false); return; }
-    window.location.href = getGenServerUrl(`/api/v1/github/connect?token=${encodeURIComponent(session.access_token)}`);
+    window.location.href = getApiServerUrl(`/api/v1/github/connect?token=${encodeURIComponent(session.access_token)}`);
   };
 
   const handleDisconnect = async () => {

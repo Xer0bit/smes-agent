@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import AdminServers from './Servers';
-import { EXTERNAL_API_CONFIG, getGenServerUrl } from '@/config/external-api';
+import { EXTERNAL_API_CONFIG, getGenServerUrl, getApiServerUrl } from '@/config/external-api';
 import { supabase } from '@/integrations/supabase/adminClient';
 
 type ServiceState = 'checking' | 'online' | 'offline';
@@ -228,12 +228,14 @@ function TroubleshootPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       }),
-      // Gen API health (no auth needed)
+      // Gen API health (no auth needed) — VPS3, generation-only now
       probe('Gen API (/health)', getGenServerUrl('/health')),
-      // Gen API LLM status (admin auth required)
-      probe('Gen API (LLM status)', getGenServerUrl('/api/v1/system/llm/status'), { headers: authHeader }),
-      // Gen API server status
-      probe('Gen API (server status)', getGenServerUrl('/api/v1/system/server-status'), { headers: authHeader }),
+      // API server health — VPS1, everything else
+      probe('API Server (/health)', getApiServerUrl('/health')),
+      // API server LLM status (admin auth required)
+      probe('API Server (LLM status)', getApiServerUrl('/api/v1/system/llm/status'), { headers: authHeader }),
+      // API server status
+      probe('API Server (server status)', getApiServerUrl('/api/v1/system/server-status'), { headers: authHeader }),
     ]);
 
     setResults(checks);

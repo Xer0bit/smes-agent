@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BarChart3, MessageCircle, Code2, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
-import { getGenServerUrl } from "@/config/external-api";
+import { getApiServerUrl } from "@/config/external-api";
 
 interface HeaderIntegrationsData {
   ga_measurement_id: string;
@@ -104,7 +104,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
         );
       const { data: { session } } = await lovableCloud.auth.getSession();
       if (!session) throw new Error("Not authenticated");
-      const res = await fetch(getGenServerUrl(`/api/v1/header-integrations/${projectId}/sync`), {
+      const res = await fetch(getApiServerUrl(`/api/v1/header-integrations/${projectId}/sync`), {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}` },
       });

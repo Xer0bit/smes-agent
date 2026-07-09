@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Share2, Image, RefreshCw, CheckCircle2, AlertCircle, MoreVertical } from "lucide-react";
-import { getGenServerUrl } from "@/config/external-api";
+import { getApiServerUrl } from "@/config/external-api";
 
 interface SeoData {
   title: string;
@@ -155,7 +155,7 @@ export const SeoSettings = ({ projectId }: SeoSettingsProps) => {
       // Then sync to site
       const { data: { session } } = await lovableCloud.auth.getSession();
       if (!session) throw new Error("Not authenticated");
-      const res = await fetch(getGenServerUrl(`/api/v1/seo/${projectId}/sync`), {
+      const res = await fetch(getApiServerUrl(`/api/v1/seo/${projectId}/sync`), {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}` },
       });

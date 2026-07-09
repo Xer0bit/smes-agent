@@ -54,6 +54,9 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
 
     try {
       const record = await databaseService.provision(ctx.userId, orgId, ctx.projectId);
+      // getCredentials() also upserts VITE_DB_* into project_secrets — call it
+      // immediately so secrets exist even if the agent never reaches get_database_schema.
+      await databaseService.getCredentials(ctx.userId, ctx.projectId);
       // Surface the billable DB provisioning in the chat (reuses the write_file
       // chip path). Previously this account-level mutation was invisible.
       ctx.onXmlComplete?.(`<ecomgear-write path="database/${record.schema_name}" description="Provisioned hosted PostgreSQL (${record.status})" />`);

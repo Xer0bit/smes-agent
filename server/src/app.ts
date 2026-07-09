@@ -140,24 +140,36 @@ const aiRateLimiter = rateLimit({
     message: { error: 'Too many AI requests — please wait a moment' },
 });
 
+// Which route groups this process serves. VPS3 (gen server) runs SERVICE_ROLE=gen
+// and only handles LLM/agent generation traffic; VPS1 runs SERVICE_ROLE=api and
+// handles everything else. Unset/'all' (local dev, tests) mounts both so nothing
+// else has to change to run the full stack in one process.
+const SERVICE_ROLE = process.env.SERVICE_ROLE || 'all';
+const servesGen = SERVICE_ROLE === 'gen' || SERVICE_ROLE === 'all';
+const servesApi = SERVICE_ROLE === 'api' || SERVICE_ROLE === 'all';
+
 // API routes
-app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/projects', projectRoutes);
-app.use('/api/v1/files', fileRoutes);
-app.use('/api/v1/ai', aiRateLimiter, aiRoutes);
-app.use('/api/v1/preview', previewRoutes);
-app.use('/api/v1/system', systemRoutes);
-app.use('/api/v1/runtime', runtimeRoutes);
-app.use('/api/v1/database', databaseRoutes);
-app.use('/api/v1/admin/database', adminDatabaseRoutes);
-app.use('/api/v1/seo', seoRoutes);
-app.use('/api/v1/header-integrations', headerIntegrationsRoutes);
-app.use('/api/v1/github', githubRoutes);
-app.use('/api/v1/functions', functionsRoutes);
-app.use('/api/v1/ecg-connect', ecgConnectRoutes);
-app.use('/api/v1/ecg-proxy', ecgProxyRoutes);
-app.use('/api/v1/ecg-chat', ecgChatRoutes);
-app.use('/api/v1/ecg-access', ecgAccessRoutes);
+if (servesGen) {
+    app.use('/api/v1/ai', aiRateLimiter, aiRoutes);
+}
+if (servesApi) {
+    app.use('/api/v1/auth', authRoutes);
+    app.use('/api/v1/projects', projectRoutes);
+    app.use('/api/v1/files', fileRoutes);
+    app.use('/api/v1/preview', previewRoutes);
+    app.use('/api/v1/system', systemRoutes);
+    app.use('/api/v1/runtime', runtimeRoutes);
+    app.use('/api/v1/database', databaseRoutes);
+    app.use('/api/v1/admin/database', adminDatabaseRoutes);
+    app.use('/api/v1/seo', seoRoutes);
+    app.use('/api/v1/header-integrations', headerIntegrationsRoutes);
+    app.use('/api/v1/github', githubRoutes);
+    app.use('/api/v1/functions', functionsRoutes);
+    app.use('/api/v1/ecg-connect', ecgConnectRoutes);
+    app.use('/api/v1/ecg-proxy', ecgProxyRoutes);
+    app.use('/api/v1/ecg-chat', ecgChatRoutes);
+    app.use('/api/v1/ecg-access', ecgAccessRoutes);
+}
 
 // 404 handler
 app.use((req: Request, res: Response) => {

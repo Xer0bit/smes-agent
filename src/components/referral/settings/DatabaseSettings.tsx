@@ -12,7 +12,7 @@ import { Database, Trash2, Zap, Lock, Table, Terminal, ChevronRight, RefreshCw, 
 import { useSubscription } from "@/contexts/SubscriptionContext";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { cn } from "@/lib/utils";
-import { getGenServerUrl } from "@/config/external-api";
+import { getApiServerUrl } from "@/config/external-api";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface TenantDb { id: string; schema_name: string; status: string; error_message: string | null; created_at: string; }
@@ -30,7 +30,7 @@ async function apiFetch(path: string, opts: RequestInit = {}, timeoutMs = 10_000
   const sep = path.includes('?') ? '&' : '?';
   const qs  = projectId ? `${sep}project_id=${encodeURIComponent(projectId)}` : '';
   try {
-    const res = await fetch(getGenServerUrl(`/api/v1/database${path}${qs}`), {
+    const res = await fetch(getApiServerUrl(`/api/v1/database${path}${qs}`), {
       ...opts,
       signal: controller.signal,
       headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json", ...(opts.headers || {}) },
@@ -455,7 +455,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
     const sep = path.includes('?') ? '&' : '?';
     const qs  = projectId ? `${sep}project_id=${encodeURIComponent(projectId)}` : '';
     try {
-      const res = await fetch(getGenServerUrl(`/api/v1${path}${qs}`), {
+      const res = await fetch(getApiServerUrl(`/api/v1${path}${qs}`), {
         ...opts,
         signal: controller.signal,
         headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json", ...(opts.headers || {}) },
@@ -521,7 +521,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Not authenticated");
-      const res = await fetch(getGenServerUrl('/api/v1/database/dump'), {
+      const res = await fetch(getApiServerUrl('/api/v1/database/dump'), {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (!res.ok) {

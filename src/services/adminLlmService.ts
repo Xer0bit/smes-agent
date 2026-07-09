@@ -1,4 +1,4 @@
-import { getGenServerUrl } from '@/config/external-api';
+import { getGenServerUrl, getApiServerUrl } from '@/config/external-api';
 import { supabase } from '@/integrations/supabase/adminClient';
 
 export type LlmProvider = 'anthropic' | 'deepseek' | 'gemini' | 'zai';
@@ -54,14 +54,14 @@ const readJson = async <T>(response: Response): Promise<T> => {
 export const adminLlmService = {
   async getStatus(): Promise<LlmStatus> {
     const headers = await getAuthHeader();
-    const response = await fetch(getGenServerUrl('/api/v1/system/llm/status'), { headers });
+    const response = await fetch(getApiServerUrl('/api/v1/system/llm/status'), { headers });
     const payload = await readJson<{ success: boolean; data: LlmStatus }>(response);
     return payload.data;
   },
 
   async saveStatus(input: Partial<LlmStatus>): Promise<LlmStatus> {
     const headers = await getAuthHeader();
-    const response = await fetch(getGenServerUrl('/api/v1/system/llm/status'), {
+    const response = await fetch(getApiServerUrl('/api/v1/system/llm/status'), {
       method: 'PUT',
       headers,
       body: JSON.stringify(input),
@@ -72,7 +72,7 @@ export const adminLlmService = {
 
   async addModel(id: string, provider: LlmProvider): Promise<LlmStatus> {
     const headers = await getAuthHeader();
-    const response = await fetch(getGenServerUrl('/api/v1/system/llm/models'), {
+    const response = await fetch(getApiServerUrl('/api/v1/system/llm/models'), {
       method: 'POST',
       headers,
       body: JSON.stringify({ id, provider }),
@@ -83,7 +83,7 @@ export const adminLlmService = {
 
   async removeModel(id: string): Promise<LlmStatus> {
     const headers = await getAuthHeader();
-    const response = await fetch(getGenServerUrl(`/api/v1/system/llm/models/${encodeURIComponent(id)}`), {
+    const response = await fetch(getApiServerUrl(`/api/v1/system/llm/models/${encodeURIComponent(id)}`), {
       method: 'DELETE',
       headers,
     });
@@ -111,7 +111,7 @@ export const adminLlmService = {
     env: string;
   }> {
     const headers = await getAuthHeader();
-    const response = await fetch(getGenServerUrl('/api/v1/system/server-status'), { headers });
+    const response = await fetch(getApiServerUrl('/api/v1/system/server-status'), { headers });
     const payload = await readJson<{ success: boolean; data: any }>(response);
     return payload.data;
   },

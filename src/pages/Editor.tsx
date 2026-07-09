@@ -67,6 +67,7 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { promptService } from "@/eCG/UserPrompt";
+import { messageService } from "@/eCG/UserPrompt/messageService";
 import { generatePreview } from "@/eCG/Preview/previewGenerator";
 import { checkPreviewHealth, updateDockerPreview, getPreviewUrl, handlePreviewSessionExpired } from "@/services/previewHealthService";
 import { validateAndFixFiles, getFixedContent } from "@/services/fileValidationService";
@@ -1500,19 +1501,17 @@ export default defineConfig({
 
   const loadMessages = async () => {
     if (isGuest) { setMessages([]); return; }
-    const { data, error } = await supabase
-      .from("messages")
-      .select("*")
-      .eq("project_id", projectId)
-      .order("created_at", { ascending: true });
-
-    if (error) {
+    // Bounded fetch — this used to be an unbounded select("*") over the whole
+    // project's message history, re-downloading every message every time the
+    // editor mounted. AgentChatPanel renders its own paginated history; this
+    // state is only consulted for "has any user message" / "last user message"
+    // checks below, so the most recent 50 is more than enough.
+    try {
+      const { messages: recent } = await messageService.loadRecentMessages(projectId!, 50);
+      setMessages(recent);
+    } catch (error) {
       console.error("Error loading messages:", error);
-      return;
     }
-
-    // Always set messages from database (the ref in useEffect prevents duplicate loads)
-    setMessages(data || []);
   };
 
   const validateFiles = (fileList: FileList): boolean => {

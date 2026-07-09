@@ -203,7 +203,10 @@ for f in $(ls /tmp/supabase-migrations/*.sql 2>/dev/null | sort); do
   fi
   echo "  apply $VERSION..."
   docker cp "$f" "$DB_CONTAINER:/tmp/${VERSION}.sql"
-  docker exec "$DB_CONTAINER" psql -U postgres -f "/tmp/${VERSION}.sql" 2>&1
+  if ! docker exec "$DB_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -f "/tmp/${VERSION}.sql" 2>&1; then
+    echo "  ✗ $VERSION FAILED — not marking as applied, aborting migrations" >&2
+    exit 1
+  fi
   docker exec "$DB_CONTAINER" psql -U postgres -c \
     "INSERT INTO supabase_migrations.schema_migrations(version) VALUES('$VERSION') ON CONFLICT DO NOTHING;" 2>/dev/null
   echo "  ✓ $VERSION"
@@ -237,6 +240,41 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx && echo 'nginx reloaded'
 echo "Backup preserved at dist.old for rollback"
 REMOTE
+
+    # ── ecomgear-api (server/, SERVICE_ROLE=api) — everything except LLM gen ──
+    # Rebuilt independently of deploy_vps3's server build since either function
+    # can run alone (single-target deploys) — a little duplicate CI time, but
+    # keeps the two VPS deploys decoupled instead of depending on run order.
+    if [ -f "$PROJECT_DIR/server/src/index.ts" ]; then
+        step "Building server TypeScript (for VPS1 API)..."
+        cd "$PROJECT_DIR/server"
+        npm ci
+        npm run build
+        cd "$PROJECT_DIR"
+        success "Server built (server/dist/)"
+    fi
+    step "Uploading server to VPS1 (staging dir)..."
+    ssh_vps1 "mkdir -p $DEPLOY_PATH/server.staging $DEPLOY_PATH/logs"
+    [ -d "$PROJECT_DIR/server/dist" ] && \
+        scp_vps1 --exclude='.env' --exclude='.env.*' --exclude='node_modules' \
+            "$PROJECT_DIR/server/" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/server.staging/"
+    scp_vps1 "$PROJECT_DIR/ecosystem.config.cjs" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/"
+    step "Remote: atomic swap + PM2 restart (ecomgear-api)..."
+    ssh_vps1 "bash -s" << 'REMOTE_API'
+set -e
+cd /var/www/ecomgear
+rm -rf server.old
+if [ -d server ]; then mv server server.old; fi
+if [ ! -d server.staging ]; then echo "ERROR: server.staging missing — rsync may have failed" >&2; exit 1; fi
+mv server.staging server
+cd server
+npm ci --omit=dev
+pm2 delete ecomgear-api 2>/dev/null || true
+pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-api --update-env
+pm2 save
+echo "ecomgear-api restarted"
+REMOTE_API
+    success "VPS1 API server deployed"
 
     # ── Post-deploy health gate ──────────────────────────────────────────────
     # Block until Auth and REST are both responding 200. If either is still

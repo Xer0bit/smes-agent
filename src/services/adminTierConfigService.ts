@@ -1,4 +1,4 @@
-import { getGenServerUrl } from '@/config/external-api';
+import { getApiServerUrl } from '@/config/external-api';
 import { supabase } from '@/integrations/supabase/adminClient';
 
 export interface TierFeatures {
@@ -64,14 +64,14 @@ const readJson = async <T>(response: Response): Promise<T> => {
 export const adminTierConfigService = {
   async getConfig(): Promise<TierConfig> {
     const headers = await getAuthHeader();
-    const response = await fetch(getGenServerUrl('/api/v1/system/tier-config'), { headers });
+    const response = await fetch(getApiServerUrl('/api/v1/system/tier-config'), { headers });
     const payload = await readJson<{ success: boolean; data: TierConfig }>(response);
     return payload.data;
   },
 
   async saveConfig(input: Partial<TierConfig>): Promise<TierConfig> {
     const headers = await getAuthHeader();
-    const response = await fetch(getGenServerUrl('/api/v1/system/tier-config'), {
+    const response = await fetch(getApiServerUrl('/api/v1/system/tier-config'), {
       method: 'PUT',
       headers,
       body: JSON.stringify(input),

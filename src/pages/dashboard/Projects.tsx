@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, lovableCloud } from '@/integrations/supabase/client';
 import { useOrganization } from '@/contexts/OrganizationContext';
-import { getGenServerUrl } from '@/config/external-api';
+import { getApiServerUrl } from '@/config/external-api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -312,11 +312,11 @@ export default function DashboardProjects() {
       // Fire-and-forget — the real-time projects subscription will reload when thumbnails land.
       const session = (await supabase.auth.getSession()).data.session;
       if (session?.access_token) {
-        const { getGenServerUrl, PREVIEW_CONFIG } = await import('@/config/external-api');
+        const { getApiServerUrl, PREVIEW_CONFIG } = await import('@/config/external-api');
         const needsCapture = allProjects.filter(p => !p.thumbnail_url);
         for (const p of needsCapture) {
           // Omit previewUrl — server will look it up from revisions table
-          fetch(getGenServerUrl(`/api/v1/projects/${p.id}/capture-thumbnail`), {
+          fetch(getApiServerUrl(`/api/v1/projects/${p.id}/capture-thumbnail`), {
             method: 'POST',
             headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(urls[p.id] ? { previewUrl: urls[p.id] } : {}),
@@ -700,7 +700,7 @@ export default function DashboardProjects() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return;
 
-    fetch(getGenServerUrl(`/api/v1/projects/${projectId}`), {
+    fetch(getApiServerUrl(`/api/v1/projects/${projectId}`), {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${session.access_token}` },
     }).then(async (res) => {

@@ -61,7 +61,8 @@ jobs:
           add() { [[ ",$TARGETS," != *",$1,"* ]] && TARGETS="$TARGETS,$1"; return 0; }
 
           # VPS1 — frontend + Supabase edge (React SPA, migrations also applied here)
-          echo "$CHANGED" | grep -qE '^(src/|index\.html|public/|vite\.config|tsconfig[^/]*\.json$|package[^/]*\.json$|infrastructure/nginx/vps1-)' \
+          # + ecomgear-api (server/, everything except LLM generation — see app.ts SERVICE_ROLE)
+          echo "$CHANGED" | grep -qE '^(src/|index\.html|public/|vite\.config|tsconfig[^/]*\.json$|package[^/]*\.json$|infrastructure/nginx/vps1-|server/)' \
             && add vps1
           echo "$CHANGED" | grep -qE '^supabase/(migrations|functions)/' \
             && add vps1
@@ -70,7 +71,7 @@ jobs:
           echo "$CHANGED" | grep -qE '^(preview-service/|infrastructure/nginx/vps2-)' \
             && add vps2
 
-          # VPS3 — gen/agent server (also gets supabase functions + migrations)
+          # VPS3 — gen/agent server, generation-only (also gets supabase functions + migrations)
           echo "$CHANGED" | grep -qE '^(server/|infrastructure/nginx/vps3-)' \
             && add vps3
           echo "$CHANGED" | grep -qE '^supabase/(migrations|functions)/' \
@@ -80,9 +81,9 @@ jobs:
           echo "$CHANGED" | grep -qE '^(hosting-service/|infrastructure/nginx/vps4-)' \
             && add vps4
 
-          # Shared ecosystem file touches VPS2+VPS3+VPS4 (all PM2-managed)
+          # Shared ecosystem file touches VPS1+VPS2+VPS3+VPS4 (all PM2-managed)
           echo "$CHANGED" | grep -qE '^ecosystem\.config\.cjs$' \
-            && { add vps2; add vps3; add vps4; }
+            && { add vps1; add vps2; add vps3; add vps4; }
 
           # VPS5 is a passive DB endpoint — never auto-deployed, dispatch only.
 
