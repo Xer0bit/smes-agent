@@ -167,6 +167,13 @@ export const promptService = {
           },
           onError: (message) => {
             void onSystemMessage(`Agent error: ${message}`);
+            // Persist whatever was streamed so far — otherwise a reload silently
+            // erases the agent's partial reply, leaving only the user's prompt.
+            if (!fingerprint && accumulatedText.trim()) {
+              void messageService.saveAssistantMessage(projectId, `${accumulatedText}\n\n*[error]*`, userId).catch(err => {
+                console.error('Failed to save partial assistant message on error', err);
+              });
+            }
           },
         },
       });

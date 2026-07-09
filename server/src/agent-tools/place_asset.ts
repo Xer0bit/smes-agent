@@ -118,6 +118,11 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
     const destPath = path.join(assetsDir, safeDest);
     fs.copyFileSync(resolvedSrc, destPath);
 
+    // Surface the placed asset in the chat as an activity chip/steps entry
+    // (same <ecomgear-write path="…"> tag the frontend already parses for
+    // write_file). Without this, an asset placement is a silent mutation.
+    ctx.onXmlComplete?.(`<ecomgear-write path="public/assets/${safeDest}" description="Placed uploaded image (${validation.format}, ${sizeKB} KB)" />`);
+
     // ── Pre-push binary to preview service so preview updates immediately ─────
     try {
       const imgBytes = fs.readFileSync(resolvedSrc);

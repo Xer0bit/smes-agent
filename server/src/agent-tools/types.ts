@@ -19,8 +19,6 @@ export interface AgentContext {
    * to the SSE client (e.g. <ecomgear-write …>…</ecomgear-write>).
    */
   onXmlComplete: (xml: string) => void;
-  /** Called progressively during streaming (live preview). */
-  onXmlStream?: (accumulatedXml: string) => void;
   /** Returns packages declared via <ecomgear-add-dependency> so far in this run. */
   getDeclaredDependencies?: () => string[];
   /**

@@ -13,7 +13,7 @@ import { CodeEditorPanel } from "@/components/CodeEditorPanel";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { MultiDevicePreview } from "@/components/MultiDevicePreview";
 import type { ActivityType } from "@/components/ProjectActivityIndicator";
-import { AgentChatPanel } from "@/components/chat/AgentChatPanel";
+import { AgentChatPanel } from "@/components/chat/_ui_/AgentChatPanel";
 import { SettingsDialog } from "@/components/referral/settings/SettingsDialog";
 import { buildPreviewNavigationUrl, normalizePreviewRoute } from "@/utils/previewNavigation";
 

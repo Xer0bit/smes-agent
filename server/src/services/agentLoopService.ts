@@ -44,6 +44,7 @@ import { canonicalizeModelId, DEFAULT_FREE_MODEL, DEFAULT_PRIMARY_MODEL } from '
 import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols } from '../knowledgebase/index.js';
 import { captureThumbnail } from './thumbnailService.js';
 import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
+import { beginRun as beginNarration, updateThought, endRun as endNarration, generateStatus, type LifecyclePhase } from './narration.service.js';
 import { lookupFailureFix, storeFailureFix } from './failureMemory.service.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
@@ -408,165 +409,6 @@ function truncStr(s: string | undefined, max: number): string {
   if (!s || s.length <= max) return s ?? '';
   const lines = s.split('\n').length;
   return s.substring(0, max) + `\n...[truncated, was ${lines} lines / ${s.length} chars]`;
-}
-
-/**
- * Shorten tool-call args in an assistant message part.
- * Mutates `part.args` in-place (caller deep-cloned the messages).
- */
-/**
- * Convert a file path into a concise human-readable label.
- * e.g. "src/pages/HomePage.tsx" → "Home page"
- *      "src/components/ProductCard.tsx" → "Product card"
- *      "src/hooks/useCart.ts" → "Cart hook"
- */
-function filePathToLabel(filePath: string): string {
-  const base = filePath.replace(/\.[^.]+$/, '').split('/').pop() ?? filePath;
-  // Convert CamelCase/PascalCase to words
-  const words = base
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
-    .replace(/[-_]/g, ' ')
-    .toLowerCase();
-  if (words.startsWith('use ')) return words.replace('use ', '') + ' hook';
-  if (filePath.includes('/pages/')) return words + ' page';
-  if (filePath.includes('/components/')) return words;
-  if (filePath.includes('/hooks/')) return words + ' hook';
-  if (filePath.includes('/lib/') || filePath.includes('/utils/')) return words + ' utilities';
-  if (filePath.includes('/services/')) return words + ' service';
-  if (filePath.includes('/types')) return words + ' types';
-  if (base === 'App') return 'app shell';
-  if (base === 'main') return 'app entry';
-  return words;
-}
-
-/** Compact, cheap-model-friendly summary of a step's tool calls (no huge args/results). */
-function summarizeStepForStatus(toolCalls: any[], toolResults: any[]): string {
-  return toolCalls.map((tc: any, i: number) => {
-    const args = tc.args ?? {};
-    const path = args.path ?? args.file_path ?? '';
-    const extra = args.thought ? `: "${String(args.thought).slice(0, 100)}"`
-      : args.command ? `: ${String(args.command).slice(0, 60)}`
-      : path ? `: ${path}`
-      : '';
-    const result = toolResults?.[i]?.result;
-    const failed = typeof result === 'string' && result.startsWith('Error') ? ' (failed)' : '';
-    return `${tc.toolName}${extra}${failed}`;
-  }).join('; ');
-}
-
-/**
- * Ask a cheap/fast model to describe, in a few words, what this step actually
- * did — used only for feature/build tier runs (the ones that already budget
- * for higher per-run cost) so this doesn't undo the cost-optimization work on
- * micro/fix/edit tiers. Fire-and-forget from the caller; never throws, returns
- * null on any failure or if it doesn't resolve within the timeout so it can
- * never block or break the main agent loop.
- */
-async function generateDynamicStepStatus(toolCalls: any[], toolResults: any[]): Promise<string | null> {
-  if (toolCalls.length === 0) return null;
-  try {
-    const { provider } = resolveProviderWithFallback(DEFAULT_FREE_MODEL);
-    const summary = summarizeStepForStatus(toolCalls, toolResults);
-    const result = await Promise.race([
-      generateText({
-        model: provider,
-        messages: [{
-          role: 'user',
-          content: `A coding agent just did this step: ${summary}\n\nDescribe what it just did in under 8 words, present continuous tense (e.g. "Building the checkout page"). No quotes, no trailing period, no preamble.`,
-        }],
-        maxOutputTokens: 20,
-      }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
-    ]);
-    const text = result.text?.trim().replace(/^["']|["']$/g, '').replace(/\.$/, '');
-    if (!text || text.length < 3) return null;
-    return text.length > 90 ? text.slice(0, 87) + '...' : text;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Derive a concise, human-friendly status line from a completed step's tool calls.
- * Priority: think > write_file/edit_file groups > other tools.
- */
-function deriveStepStatus(toolCalls: any[], toolResults: any[]): string | null {
-  if (toolCalls.length === 0) return null;
-
-  // 1. think tool — extract first meaningful sentence of the thought
-  const thinkCall = toolCalls.find((tc: any) => tc.toolName === 'think');
-  if (thinkCall) {
-    const thought: string = thinkCall.args?.thought ?? '';
-    if (thought) {
-      // Take the first non-empty sentence (up to ~80 chars)
-      const firstSentence = thought
-        .replace(/\n+/g, ' ')
-        .replace(/^(okay|alright|so|now|first|let me|i will|i'll|i need to|i should|i'm going to)\s*/i, '')
-        .split(/[.!?]/)[0]
-        .trim();
-      if (firstSentence.length > 8) {
-        const capped = firstSentence.length > 80
-          ? firstSentence.slice(0, 77) + '...'
-          : firstSentence;
-        // Capitalise first letter
-        return capped.charAt(0).toUpperCase() + capped.slice(1);
-      }
-    }
-    return 'Thinking...';
-  }
-
-  // 2. save_memory
-  if (toolCalls.some((tc: any) => tc.toolName === 'save_memory')) {
-    return 'Saving project context...';
-  }
-
-  // 3. write_file / edit_file — group by file and describe what's being built
-  const writeCalls = toolCalls.filter((tc: any) => tc.toolName === 'write_file' || tc.toolName === 'edit_file');
-  if (writeCalls.length > 0) {
-    const labels = writeCalls
-      .map((tc: any) => filePathToLabel(tc.args?.path ?? tc.args?.file_path ?? ''))
-      .filter(Boolean);
-    const unique = Array.from(new Set(labels));
-    if (unique.length === 1) {
-      const verb = writeCalls[0].toolName === 'edit_file' ? 'Updating' : 'Building';
-      return `${verb} ${unique[0]}...`;
-    }
-    if (unique.length === 2) return `Building ${unique[0]} and ${unique[1]}...`;
-    if (unique.length >= 3) return `Building ${unique[0]}, ${unique[1]} and ${unique.length - 2} more...`;
-  }
-
-  // 4. read_file — show what's being read
-  const readCalls = toolCalls.filter((tc: any) => tc.toolName === 'read_file');
-  if (readCalls.length > 0) {
-    const label = filePathToLabel(readCalls[0].args?.path ?? readCalls[0].args?.file_path ?? '');
-    return label ? `Reading ${label}...` : 'Reading project files...';
-  }
-
-  // 5. delete_file / rename_file
-  if (toolCalls.some((tc: any) => tc.toolName === 'delete_file')) return 'Removing unused files...';
-  if (toolCalls.some((tc: any) => tc.toolName === 'rename_file')) return 'Renaming files...';
-
-  // 6. list_files / grep
-  if (toolCalls.some((tc: any) => tc.toolName === 'list_files' || tc.toolName === 'grep')) {
-    return 'Scanning project structure...';
-  }
-
-  // 7. get_build_errors
-  if (toolCalls.some((tc: any) => tc.toolName === 'get_build_errors')) return 'Checking for errors...';
-
-  // 8. run_command
-  const runCall = toolCalls.find((tc: any) => tc.toolName === 'run_command');
-  if (runCall) {
-    const cmd: string = runCall.args?.command ?? '';
-    if (cmd.includes('install') || cmd.includes('add ')) {
-      const pkg = cmd.split(/install|add/)[1]?.trim().split(' ')[0] ?? '';
-      return pkg ? `Installing ${pkg}...` : 'Installing packages...';
-    }
-    return 'Running command...';
-  }
-
-  return null;
 }
 
 
@@ -1387,6 +1229,7 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
   return await _runAgentLoopInner(params);
   } finally {
     lock.release();
+    endNarration(projectId);
     // Clean up the lock chain entry if we're the last in queue
     const current = projectAgentLocks.get(projectId);
     if (current) current.then(() => {
@@ -1398,6 +1241,10 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
 
 async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResult> {
   const { prompt, projectId, appPath, model, mode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, res, userId, abortSignal } = params;
+
+  // Start a narration context for this run so the narrator can ground its
+  // real-time descriptions in the agent's think() reasoning + user intent.
+  beginNarration(projectId, prompt);
 
   // Dynamic step budget: map request tier to a proportionate step ceiling.
   // Values must match TIER_MAX_STEPS in intentClassifier.ts.
@@ -1519,9 +1366,6 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       parseXmlOperation(xml, { filesToWrite, filesEdited, filesToDelete, renames, dependencies });
       // Stream the XML to the frontend
       sseWrite(res, 'tool-output', { xml });
-    },
-    onXmlStream: (xml: string) => {
-      sseWrite(res, 'tool-streaming', { xml });
     },
     getDeclaredDependencies: () => [...dependencies],
   };
@@ -2261,9 +2105,6 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       ? [] // plan mode: the FULL system prompt lives in the cache — sending it again would conflict
       : [{ role: 'system' as const, content: systemPrompt }];
 
-  // Signal SSE stream start
-  sseWrite(res, 'start', { projectId, model: modelId, mode: runtimeMode });
-
   // Use a real default timeout so upstream stalls do not leave the frontend
   // waiting indefinitely. Anthropic gets a shorter cutoff because it is the
   // provider currently most prone to long rate-limit stalls.
@@ -2482,9 +2323,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const stepCost    = calcCost(stepInp, stepOut, stepCacheR, stepCacheW);
           const runCost     = calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens);
 
-          // Derive a human-readable status from this step's tool calls so the
-          // user sees contextual progress rather than raw file paths.
-          const stepStatus = deriveStepStatus(toolCalls ?? [], toolResults ?? []);
+          // Status narration is now handled in real-time by the status service
+          // (generateStatus) on each tool-call stream part — see the tool-call
+          // handler in consumeResultStream. The step-finish event below carries
+          // token accounting only; no canned status string is emitted here.
 
           sseWrite(res, 'step-finish', {
             step: stepCount,
@@ -2492,7 +2334,6 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             toolCount: toolNames.length,
             tools: toolNames,
             failedEdits,
-            ...(stepStatus ? { status: stepStatus } : {}),
             tokens: {
               step:  { input: stepInp, output: stepOut, cacheRead: stepCacheR, cacheWrite: stepCacheW, total: stepInp + stepOut + stepCacheR + stepCacheW },
               run:   { input: runTokens.inputTokens, output: runTokens.outputTokens, cacheRead: runTokens.cacheReadTokens, cacheWrite: runTokens.cacheWriteTokens, total: runTokens.total },
@@ -2500,18 +2341,6 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               runCostUsd:  parseFloat(runCost.toFixed(5)),
             },
           });
-
-          // Fire-and-forget: replace the canned status with a cheap-model-generated
-          // one once it resolves, feature/build tiers only (see generateDynamicStepStatus
-          // doc comment — never blocks this callback, never throws).
-          if ((_tier === 'feature' || _tier === 'build') && !abortController.signal.aborted) {
-            const stepForStatus = stepCount;
-            generateDynamicStepStatus(toolCalls ?? [], toolResults ?? []).then((dynamicStatus) => {
-              if (dynamicStatus && !abortController.signal.aborted) {
-                sseWrite(res, 'step-status-refine', { step: stepForStatus, status: dynamicStatus });
-              }
-            }).catch(() => {});
-          }
 
           console.log(
             `[AgentLoop] Step ${stepCount} | tools: ${toolNames.join(', ') || 'none'}` +
@@ -2531,7 +2360,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               ? `cost cap $${HARD_COST_CAP} hit ($${runCost.toFixed(3)} spent)`
               : `token cap ${RUN_TOKEN_CAP} hit (${runTokens.total} used)`;
             console.warn(`[AgentLoop] Run aborted — ${reason} (user=${userId ?? 'unknown'})`);
-            sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: 'Wrapping up — run budget reached.' });
+            generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
+              if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
+            }).catch(() => {});
             abortController.abort();
           }
         },
@@ -2549,6 +2380,24 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const safeText = sanitizeUserFacingDelta(part.text);
             if (safeText) {
               sseWrite(res, 'text-delta', { text: safeText });
+            }
+          } else if (part.type === 'tool-call') {
+            // ── Real-time narration microservice ──────────────────────────
+            // The model just decided to call a tool — narrate it NOW, in human
+            // words, before the tool runs. Captures think() reasoning so the
+            // narrator is grounded in the agent's actual intent. Fire-and-forget,
+            // 2.5s capped, never blocks the stream.
+            const tcArgs = (part as any).args ?? {};
+            const tcName = (part as any).toolName ?? '';
+            if (tcName === 'think' && typeof tcArgs.thought === 'string') {
+              updateThought(projectId, tcArgs.thought);
+            }
+            if (!abortController.signal.aborted) {
+              generateStatus(projectId, { kind: 'tool', toolName: tcName, args: tcArgs }).then((status) => {
+                if (status && !abortController.signal.aborted && !res.writableEnded) {
+                  sseWrite(res, 'agent-narration', { narration: status });
+                }
+              }).catch(() => { /* status service must never break the run */ });
             }
           } else if (part.type === 'finish') {
             lastFinishReason = (part as any).finishReason;
@@ -2608,7 +2457,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         if (abortController.signal.aborted) throw err; // Don't retry on abort
         if (providerName === 'anthropic' && isRateLimitError(err)) {
           console.warn('[AgentLoop] Anthropic rate-limited — skipping same-provider retries and switching to fallback');
-          sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: 'Claude rate-limited. Switching to backup model...' });
+          generateStatus(projectId, { kind: 'lifecycle', phase: 'provider-fallback' }).then((s) => {
+            if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+          }).catch(() => {});
           break;
         }
         // Network errors (DNS, connection refused) won't resolve with retries — go straight to fallback.
@@ -2636,7 +2487,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           : Math.min(1000 * Math.pow(2, attempt), 8000);  // 1s, 2s, 4s, max 8s
         console.warn(`[AgentLoop] Retryable error (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${err?.message ?? err}. Retrying in ${delay}ms...`);
         // Show retry status in activity log, NOT in the chat text
-        sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: `Retrying in ${Math.round(delay / 1000)}s...` });
+        generateStatus(projectId, { kind: 'lifecycle', phase: 'rate-limit-retry', detail: `${Math.round(delay / 1000)}s` }).then((s) => {
+          if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+        }).catch(() => {});
         await new Promise<void>(r => setTimeout(r, delay));
       }
     }
@@ -2755,7 +2608,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     if (runtimeMode !== 'plan' && !wroteAnythingSoFar && !hasLegacyWriteTags && claimsCompletedEdit
         && stepsRemaining >= 3 && !abortController.signal.aborted) {
       console.warn(`[AgentLoop] Hallucinated completion claim detected (zero writes, text claims a change) — forcing corrective continuation. user=${userId ?? 'unknown'}`);
-      sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: 'Double-checking — applying the described change...' });
+      generateStatus(projectId, { kind: 'lifecycle', phase: 'post-gen-verify' }).then((s) => {
+        if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
+      }).catch(() => {});
 
       conversationMessages = [
         ...conversationMessages,
@@ -2814,7 +2669,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
       if (newPageFiles.length > 0 && !appTsxWasUpdated) {
         console.log(`[AgentLoop] Post-gen validation: ${newPageFiles.length} page(s) written but App.tsx not updated — codegenerating App.tsx`);
-        sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: 'Wiring new pages into App.tsx...' });
+        generateStatus(projectId, { kind: 'lifecycle', phase: 'router-wiring', detail: `${newPageFiles.length} ${newPageFiles.length === 1 ? 'page' : 'pages'}` }).then((s) => {
+          if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+        }).catch(() => {});
 
         let allPagesOnDisk: string[] = [];
         try {
@@ -2980,7 +2837,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     let previewPushOk = false;
     if (runtimeMode === 'build' && agentWroteFiles) {
-      sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: 'Syncing files to preview...' });
+      generateStatus(projectId, { kind: 'lifecycle', phase: 'preview-sync' }).then((s) => {
+        if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+      }).catch(() => {});
       try {
       const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001';
       const updateUrl = `${previewServiceUrl}/preview/${projectId}/update`;
@@ -3146,7 +3005,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       let lastRepairErrors: string[] = [];
 
       if (previewPushOk) {
-        sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: 'Verifying build...' });
+        generateStatus(projectId, { kind: 'lifecycle', phase: 'build-check' }).then((s) => {
+          if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+        }).catch(() => {});
         await new Promise<void>(r => setTimeout(r, 600));
         let status = await getPreviewStatus();
         if (!status.healthy) {
@@ -3168,9 +3029,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       }
       if (!previewPushOk && !pushWasTransportFailure) {
         const isRuntimeRepair = repairDiagnosticKind === 'runtime';
-        const repairStatusMsg = isRuntimeRepair ? 'Auto-repairing runtime errors...' : 'Auto-repairing build errors...';
         if (!SUPPRESS_RECOVERY_UI) {
-          sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: repairStatusMsg });
+          generateStatus(projectId, { kind: 'lifecycle', phase: 'repair', detail: isRuntimeRepair ? 'runtime' : 'build' }).then((s) => {
+            if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+          }).catch(() => {});
         }
         // Skip all repair attempts if already over token budget
         if (abortController.signal.aborted || runTokens.total >= RUN_TOKEN_CAP) {
@@ -3258,7 +3120,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const currentKind = repairDiagnosticKind === 'runtime' ? 'runtime' : 'build';
           console.log(`[AgentLoop] Auto-repair attempt ${repairAttempt + 1}: ${errors.length} ${currentKind} error(s) in ${brokenFileLocations.size} file(s)`);
           if (!SUPPRESS_RECOVERY_UI) {
-            sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: `Auto-repairing ${currentKind} errors (attempt ${repairAttempt + 1})...` });
+            generateStatus(projectId, { kind: 'lifecycle', phase: 'repair', detail: `${currentKind}, attempt ${repairAttempt + 1}` }).then((s) => {
+              if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+            }).catch(() => {});
           }
 
           // ── PASS -1: Failure memory (zero LLM tokens, cheaper than mechanical) ──
@@ -3387,9 +3251,6 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             onXmlComplete: (xml: string) => {
               parseXmlOperation(xml, { filesToWrite: repairFilesToWrite, filesEdited: [], filesToDelete: [], renames: [], dependencies: [] });
               sseWrite(res, 'tool-output', { xml });
-            },
-            onXmlStream: (xml: string) => {
-              sseWrite(res, 'tool-streaming', { xml });
             },
           };
           const repairToolSet = buildToolSet(repairCtx, []);

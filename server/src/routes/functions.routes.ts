@@ -89,12 +89,15 @@ async function requirePaidDb(userId: string, res: Response, projectId?: string):
 
 // ── GET /api/v1/functions ────────────────────────────────────────────────────
 router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
+  const projectId = getProjectId(req);
+  if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
+  if (!(await requirePaidDb(req.user!.id, res, projectId))) return;
   try {
     const { data, error } = await supabase
       .from('edge_functions')
       .select('id, name, description, is_active, created_at, updated_at')
       .eq('user_id', req.user!.id)
+      .eq('project_id', projectId)
       .order('created_at', { ascending: true });
     if (error) throw new Error(error.message);
     res.json({ functions: data || [] });
@@ -105,12 +108,15 @@ router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response)
 
 // ── GET /api/v1/functions/:name ──────────────────────────────────────────────
 router.get('/:name', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
+  const projectId = getProjectId(req);
+  if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
+  if (!(await requirePaidDb(req.user!.id, res, projectId))) return;
   try {
     const { data, error } = await supabase
       .from('edge_functions')
       .select('*')
       .eq('user_id', req.user!.id)
+      .eq('project_id', projectId)
       .eq('name', req.params.name)
       .maybeSingle();
     if (error) throw new Error(error.message);
@@ -140,12 +146,15 @@ router.patch('/:name', authMiddleware, (_req: AuthenticatedRequest, res: Respons
 
 // ── DELETE /api/v1/functions/:name ──────────────────────────────────────────
 router.delete('/:name', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
+  const projectId = getProjectId(req);
+  if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
+  if (!(await requirePaidDb(req.user!.id, res, projectId))) return;
   try {
     const { error } = await supabase
       .from('edge_functions')
       .delete()
       .eq('user_id', req.user!.id)
+      .eq('project_id', projectId)
       .eq('name', req.params.name);
     if (error) throw new Error(error.message);
     res.json({ success: true });
@@ -159,15 +168,19 @@ router.delete('/:name', authMiddleware, async (req: AuthenticatedRequest, res: R
 // VITE_DB_ANON_KEY (or VITE_DB_SERVICE_KEY) — see resolveInvokeAuth above.
 router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const creds = await databaseService.getCredentials(req.user!.id, getProjectId(req));
+    const invokeProjectId = getProjectId(req);
+    const creds = await databaseService.getCredentials(req.user!.id, invokeProjectId);
     if (!creds) { res.status(403).json({ error: 'No active database.' }); return; }
 
-    const { data: fn, error } = await supabase
+    let fnQuery = supabase
       .from('edge_functions')
       .select('id, code, is_active')
       .eq('user_id', req.user!.id)
-      .eq('name', req.params.name)
-      .maybeSingle();
+      .eq('name', req.params.name);
+    // Legacy rows written before project scoping have project_id NULL — only
+    // match those when no project_id is known, never mix scoped/unscoped rows.
+    fnQuery = invokeProjectId ? fnQuery.eq('project_id', invokeProjectId) : fnQuery.is('project_id', null);
+    const { data: fn, error } = await fnQuery.maybeSingle();
 
     if (error) throw new Error(error.message);
     if (!fn) { res.status(404).json({ error: 'Function not found.' }); return; }
@@ -177,11 +190,10 @@ router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: Authe
 
     // Load ECG secrets for this project (if it has ECG integration)
     let ecgCtx: EcgContext | undefined;
-    const projectId = getProjectId(req);
-    if (projectId) {
+    if (invokeProjectId) {
       const { data: ecgRows } = await supabase
         .from('project_secrets').select('key_name, key_value')
-        .eq('project_id', projectId)
+        .eq('project_id', invokeProjectId)
         .in('key_name', ['ECG_PORTAL_TOKEN', 'ECG_LLM_API_KEY', 'ECG_LLM_MODEL', 'ECG_LLM_PROVIDER']);
       const ecgMap = Object.fromEntries((ecgRows ?? []).map((r: { key_name: string; key_value: string }) => [r.key_name, r.key_value]));
       if (ecgMap['ECG_PORTAL_TOKEN']) {
@@ -205,6 +217,7 @@ router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: Authe
     // persist log (fire-and-forget)
     supabase.from('edge_function_logs').insert({
       user_id:     req.user!.id,
+      project_id:  invokeProjectId ?? null,
       function_id: fn.id,
       params,
       result:      result.result,
@@ -226,12 +239,15 @@ router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: Authe
 
 // ── GET /api/v1/functions/:name/logs ────────────────────────────────────────
 router.get('/:name/logs', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  if (!(await requirePaidDb(req.user!.id, res, getProjectId(req)))) return;
+  const projectId = getProjectId(req);
+  if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
+  if (!(await requirePaidDb(req.user!.id, res, projectId))) return;
   try {
     const { data: fn } = await supabase
       .from('edge_functions')
       .select('id')
       .eq('user_id', req.user!.id)
+      .eq('project_id', projectId)
       .eq('name', req.params.name)
       .maybeSingle();
     if (!fn) { res.status(404).json({ error: 'Function not found.' }); return; }

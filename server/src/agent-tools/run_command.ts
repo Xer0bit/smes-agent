@@ -131,11 +131,18 @@ export const runCommandTool: ToolDefinition<z.infer<typeof schema>> = {
 
     if (!ok) return `Command failed (${cmd}):\n${out}`;
 
-    // Local install succeeded — sync packages to preview service
+    // Local install succeeded — sync packages to preview service + surface to UI
     if (isInstall) {
       const pkgs = parsePackageNames(cmd);
       const previewUrl = ctx.previewServiceUrl || 'http://localhost:3001';
       await syncPackagesToPreviewService(pkgs, previewUrl);
+      // Surface the install in the chat as an activity chip/steps entry.
+      // The frontend already parses <ecomgear-add-dependency packages="…">
+      // (agentChatHelpers.parseToolActivities) — previously dead because no tool
+      // emitted it. Emits AFTER success so a failed install shows no chip.
+      if (pkgs.length > 0) {
+        ctx.onXmlComplete?.(`<ecomgear-add-dependency packages="${pkgs.join(', ')}" />`);
+      }
     }
 
     return `Command succeeded (${cmd}):\n${out}`;

@@ -54,6 +54,9 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
 
     try {
       const record = await databaseService.provision(ctx.userId, orgId, ctx.projectId);
+      // Surface the billable DB provisioning in the chat (reuses the write_file
+      // chip path). Previously this account-level mutation was invisible.
+      ctx.onXmlComplete?.(`<ecomgear-write path="database/${record.schema_name}" description="Provisioned hosted PostgreSQL (${record.status})" />`);
       return (
         `Database provisioned successfully!\n` +
         `Schema: ${record.schema_name}\n` +

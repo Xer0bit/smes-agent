@@ -11,560 +11,16 @@ import { lovableCloud } from '@/integrations/supabase/client';
 import { messageService } from '@/eCG/UserPrompt/messageService';
 import { uploadChatAttachment, isAllowedFile, formatFileSize, type ChatAttachment } from '@/services/chatAttachmentService';
 import { useUsage } from '@/contexts/UsageContext';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-export interface ToolActivity {
-  type: 'write' | 'edit' | 'delete' | 'rename' | 'dependency' | 'command';
-  label: string;
-}
-
-/** A file being actively written/edited during streaming */
-interface LiveFileChange {
-  path: string;
-  type: 'write' | 'edit' | 'delete' | 'rename' | 'dependency';
-  timestamp: number;
-}
-
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  status?: 'pending' | 'streaming' | 'complete' | 'error';
-  isPlan?: boolean;
-  /** True when the agent replied without writing/deleting any files (ghostRun) and it wasn't a confirm-first ask */
-  noChanges?: boolean;
-  summary?: string;
-  toolActivities?: ToolActivity[];
-  attachments?: ChatAttachment[];
-  /** Snapshot ID for rollback — present only on assistant messages after an agent run */
-  snapshotId?: string;
-  /** Commands the agent suggested (e.g. 'restart', 'refresh', 'rebuild') */
-  suggestedCommands?: string[];
-  /** AI-generated follow-up prompt chips shown after a build completes. null = loading */
-  followUpSuggestions?: string[] | null;
-}
-
-// ─── Tag helpers ──────────────────────────────────────────────────────────────
-
-// Extract and strip <ecomgear-chat-summary> from content
-function extractSummary(content: string): { body: string; summary?: string } {
-  const match = content.match(/<ecomgear-chat-summary>([\s\S]*?)<\/ecomgear-chat-summary>/i);
-  if (!match) return { body: content };
-  return {
-    body: content.replace(match[0], '').trim(),
-    summary: match[1].trim(),
-  };
-}
-
-
-
-// Parse all COMPLETED tool calls from raw agent output, deduplicating by path.
-function parseToolActivities(raw: string): ToolActivity[] {
-  // Use a Map keyed by label so later operations for the same file overwrite earlier ones.
-  const seen = new Map<string, ToolActivity>();
-
-  for (const m of raw.matchAll(/<ecomgear-write[^>]*\bpath="([^"]+)"/gi))
-    seen.set(m[1], { type: 'write', label: m[1] });
-
-  for (const m of raw.matchAll(/<ecomgear-edit[^>]*\bpath="([^"]+)"/gi))
-    seen.set(m[1], { type: 'edit', label: m[1] });
-
-  for (const m of raw.matchAll(/<ecomgear-delete[^>]*\bpath="([^"]+)"/gi))
-    seen.set(m[1], { type: 'delete', label: m[1] });
-
-  for (const m of raw.matchAll(/<ecomgear-rename[^>]*\bfrom="([^"]+)"[^>]*\bto="([^"]+)"/gi)) {
-    const label = `${m[1]} → ${m[2]}`;
-    seen.set(label, { type: 'rename', label });
-  }
-
-  for (const m of raw.matchAll(/<ecomgear-add-dependency[^>]*\bpackages="([^"]+)"/gi))
-    seen.set(`dep:${m[1]}`, { type: 'dependency', label: m[1] });
-
-  for (const m of raw.matchAll(/<ecomgear-command[^>]*\btype="([^"]+)"/gi))
-    seen.set(`cmd:${m[1]}`, { type: 'command', label: m[1] });
-
-  return Array.from(seen.values());
-}
-
-/** Build a readable summary from tool activities when the agent produced no prose. */
-function buildFallbackSummary(activities: ToolActivity[]): string {
-  const fileActs = activities.filter(a => ['write', 'edit', 'delete', 'rename'].includes(a.type));
-  if (fileActs.length === 0) return 'Done.';
-
-  const writes = fileActs.filter(a => a.type === 'write').length;
-  const edits  = fileActs.filter(a => a.type === 'edit').length;
-  const verb   = writes > 0 && edits === 0 ? 'Created' : edits > 0 && writes === 0 ? 'Updated' : 'Changed';
-
-  const names = fileActs.map(a =>
-    (a.type === 'rename' ? a.label : (a.label.split('/').pop() ?? a.label))
-  );
-  const MAX = 4;
-  const shown = names.slice(0, MAX);
-  const extra = names.length - MAX;
-  const fileList = extra > 0 ? shown.join(', ') + ` and ${extra} more` : shown.join(', ');
-
-  return `${verb} ${fileActs.length} ${fileActs.length === 1 ? 'file' : 'files'}: ${fileList}.`;
-}
-
-// Return a human-readable live status for the tool currently being streamed.
-// Returns null when no tool is mid-flight.
-function detectLiveTool(raw: string): string | null {
-  // An open <ecomgear-write> that hasn't been closed yet means we're streaming file content.
-  const open = raw.match(/<ecomgear-write[^>]*\bpath="([^"]+)"[^>]*>(?![\s\S]*?<\/ecomgear-write>)/i);
-  if (open) return `Writing ${open[1]}…`;
-
-  // Partial tag (agent is still typing the opening tag itself)
-  if (/<ecomgear-/i.test(raw.replace(/<ecomgear-[\s\S]*?<\/ecomgear-\w+>/gi, '')
-                              .replace(/<ecomgear-(?:rename|delete|add-dependency|command|file)[^>]*>/gi, ''))) {
-    return 'Working…';
-  }
-  return null;
-}
-
-// Extract command types the agent suggested (e.g. restart, refresh, rebuild)
-// Handles both <ecomgear-command> and abbreviated <egear-command> variants.
-function parseCommandSuggestions(raw: string): string[] {
-  const cmds: string[] = [];
-  for (const m of raw.matchAll(/<(?:ecomgear|egear)-command[^>]*\btype="([^"]+)"/gi))
-    if (!cmds.includes(m[1])) cmds.push(m[1]);
-  return cmds;
-}
-
-/** @deprecated Replaced by Gemini-generated suggestions from /api/v1/ai/suggestions */
-function generateFollowUpSuggestions(_filePaths: string[], _summaryText: string): string[] {
-  // Use the summary as the primary signal — it describes exactly what changed.
-  // File paths are used as fallback context when the summary is vague.
-  const summary = summaryText.toLowerCase();
-  const paths = filePaths.join(' ').toLowerCase();
-
-  // Helper: test summary first, then paths
-  const match = (...patterns: RegExp[]) => patterns.some(p => p.test(summary) || p.test(paths));
-
-  // Ordered from most specific to least — first 3 matching suggestions win.
-  const candidates: [RegExp[], string[]][] = [
-    // Navigation / header / menu
-    [
-      [/navbar|nav\s*bar|navigation\s*bar|top\s*bar|header\s*with\s*(link|nav|menu)/],
-      [
-        'Make the navbar sticky so it stays visible on scroll',
-        'Add a mobile hamburger menu that slides open',
-        'Add a dropdown submenu to the navigation links',
-      ],
-    ],
-    // Mobile menu / hamburger
-    [
-      [/hamburger|mobile\s*menu|responsive\s*nav|mobile\s*nav/],
-      [
-        'Add a smooth slide-in animation to the mobile menu',
-        'Close the menu automatically when a link is clicked',
-        'Add a backdrop/overlay behind the open mobile menu',
-      ],
-    ],
-    // Hero section
-    [
-      [/hero\s*section|hero\s*banner|landing\s*hero|above.the.fold/],
-      [
-        'Add a background image or subtle animated gradient to the hero',
-        'Add a scroll-down arrow that bounces at the bottom of the hero',
-        'Add a secondary CTA button alongside the primary one',
-      ],
-    ],
-    // Footer
-    [
-      [/footer\s*(section|component|with|added|created|built)/],
-      [
-        'Add a newsletter email signup field to the footer',
-        'Add social media icon links (Twitter, LinkedIn, Instagram)',
-        'Add a site map / quick links column to the footer',
-      ],
-    ],
-    // Pricing / pricing table
-    [
-      [/pricing\s*(table|page|section|card|plan)|price\s*(table|plan|tier)/],
-      [
-        'Add a monthly / annual billing toggle to the pricing table',
-        'Highlight the most popular plan with a badge',
-        'Add a feature comparison table below the pricing cards',
-      ],
-    ],
-    // Testimonials / reviews
-    [
-      [/testimonial|review\s*section|customer\s*review|star\s*rating|feedback\s*section/],
-      [
-        'Auto-rotate the testimonials as a carousel',
-        'Add star ratings and an avatar photo to each testimonial',
-        'Add a "Write a review" form below the testimonials',
-      ],
-    ],
-    // FAQ section
-    [
-      [/faq|frequently\s*asked|accordion\s*(faq|section|component)/],
-      [
-        'Make the FAQ items expand/collapse with a smooth animation',
-        'Add a search box above the FAQ to filter questions',
-        'Group FAQ items into categories with tabs',
-      ],
-    ],
-    // Contact form
-    [
-      [/contact\s*form|contact\s*page|get\s*in\s*touch\s*form|reach\s*out\s*form/],
-      [
-        'Add real-time validation that highlights empty required fields',
-        'Show a success toast / confirmation message after submit',
-        'Embed a Google Map next to the contact form',
-      ],
-    ],
-    // Booking / appointment form
-    [
-      [/appointment\s*(form|page|booking)|booking\s*form|schedule\s*(form|page)|reservation\s*form/],
-      [
-        'Add a calendar date picker to let users choose a date',
-        'Add time slot selection (morning / afternoon / evening)',
-        'Show a confirmation summary screen before final submit',
-      ],
-    ],
-    // Login / signup page
-    [
-      [/login\s*page|sign.?in\s*page|signup\s*page|registration\s*page|auth\s*page/],
-      [
-        'Add a "Forgot password?" link and reset flow',
-        'Add Google / social login buttons',
-        'Show a password strength indicator while typing',
-      ],
-    ],
-    // User profile / account
-    [
-      [/profile\s*page|user\s*profile|account\s*page|my\s*account/],
-      [
-        'Add an avatar upload with image preview',
-        'Add an editable bio / about section',
-        'Add a recent activity or order history section',
-      ],
-    ],
-    // Dashboard
-    [
-      [/dashboard\s*(page|layout|view|screen|component)/],
-      [
-        'Add summary stat cards at the top (total users, revenue, etc.)',
-        'Add a date range picker to filter the dashboard data',
-        'Add a sidebar navigation with collapse/expand toggle',
-      ],
-    ],
-    // Charts / graphs
-    [
-      [/chart|graph|analytics\s*(chart|component)|bar\s*chart|line\s*chart|pie\s*chart/],
-      [
-        'Add a date range selector to filter the chart data',
-        'Add a tooltip that shows exact values on hover',
-        'Add a chart legend and toggle to show/hide data series',
-      ],
-    ],
-    // Data table
-    [
-      [/data\s*table|list\s*table|table\s*(component|page|with\s*column)|sortable\s*table/],
-      [
-        'Add column sorting when the header is clicked',
-        'Add a search / filter input above the table',
-        'Add pagination controls at the bottom of the table',
-      ],
-    ],
-    // Product listing / catalog
-    [
-      [/product\s*(listing|grid|catalog|page|card)|shop\s*page|store\s*page/],
-      [
-        'Add filter by category, price range, and rating',
-        'Add a quick-view popup on product card hover',
-        'Add a wishlist / save button on each product card',
-      ],
-    ],
-    // Product detail page
-    [
-      [/product\s*detail|item\s*detail|product\s*page\s*with\s*(image|description|price)/],
-      [
-        'Add an image gallery with thumbnail carousel',
-        'Add a quantity selector and "Add to cart" button',
-        'Add a customer reviews section below the product info',
-      ],
-    ],
-    // Shopping cart
-    [
-      [/shopping\s*cart|cart\s*page|cart\s*sidebar|cart\s*drawer/],
-      [
-        'Add a promo code / discount field to the cart',
-        'Show estimated shipping cost in the cart summary',
-        'Add a "You might also like" recommended products row',
-      ],
-    ],
-    // Checkout
-    [
-      [/checkout\s*page|checkout\s*form|order\s*summary\s*page/],
-      [
-        'Add an order review step before payment confirmation',
-        'Add address auto-complete to the shipping field',
-        'Show a progress stepper (Cart → Shipping → Payment → Confirm)',
-      ],
-    ],
-    // Blog / article listing
-    [
-      [/blog\s*(page|listing|grid|index)|article\s*listing|post\s*listing/],
-      [
-        'Add a search bar to filter blog posts by title',
-        'Add category tags that filter posts when clicked',
-        'Add pagination or a "Load more" button at the bottom',
-      ],
-    ],
-    // Blog post / article detail
-    [
-      [/blog\s*post|article\s*page|post\s*detail|single\s*post/],
-      [
-        'Add a related posts section at the bottom of the article',
-        'Add social share buttons (Twitter, LinkedIn, copy link)',
-        'Add an estimated reading time badge near the title',
-      ],
-    ],
-    // Gallery / portfolio grid
-    [
-      [/gallery|image\s*grid|photo\s*grid|portfolio\s*grid|masonry/],
-      [
-        'Add a lightbox that opens when an image is clicked',
-        'Add category filter tabs above the gallery',
-        'Add a lazy-load / skeleton while images are loading',
-      ],
-    ],
-    // About page
-    [
-      [/about\s*(page|section|us\s*page)|company\s*about|team\s*section/],
-      [
-        'Add a team members section with photos and roles',
-        'Add a company timeline / milestones section',
-        'Add a mission statement and core values section',
-      ],
-    ],
-    // Services page
-    [
-      [/services\s*(page|section|list)|our\s*services|service\s*card/],
-      [
-        'Add icons and hover animations to each service card',
-        'Add a "Request this service" button linking to the contact form',
-        'Add pricing or "Starting from" labels to each service',
-      ],
-    ],
-    // Doctor / medical profiles
-    [
-      [/doctor\s*(profile|page|card|list)|physician|specialist\s*page|medical\s*team/],
-      [
-        'Add a "Book appointment" button on each doctor profile',
-        'Add a filter by specialty above the doctor listing',
-        'Add availability hours to each doctor card',
-      ],
-    ],
-    // Food menu
-    [
-      [/food\s*menu|restaurant\s*menu|menu\s*(page|section|with\s*item)|dish\s*listing/],
-      [
-        'Add category tabs (Starters, Mains, Desserts) to filter the menu',
-        'Add dietary labels (vegan, gluten-free) to each dish',
-        'Add a "Add to order" button for each menu item',
-      ],
-    ],
-    // Real estate listing
-    [
-      [/property\s*(listing|card|page)|real\s*estate\s*listing|house\s*listing/],
-      [
-        'Add a map view to show property locations',
-        'Add a filter bar (price, bedrooms, property type)',
-        'Add a mortgage calculator widget on the property detail page',
-      ],
-    ],
-    // Settings page
-    [
-      [/settings\s*page|preferences\s*page|account\s*settings/],
-      [
-        'Add a save confirmation toast when settings are updated',
-        'Group settings into sections with a left-side category nav',
-        'Add a danger zone section for account deletion / data export',
-      ],
-    ],
-    // Notifications
-    [
-      [/notification\s*(panel|center|bell|feed|list|page)/],
-      [
-        'Add a red badge count on the notification bell icon',
-        'Add "Mark all as read" button at the top',
-        'Add filter tabs (All, Unread, Mentions)',
-      ],
-    ],
-    // Sidebar navigation
-    [
-      [/sidebar\s*(nav|navigation|menu|layout)|side\s*nav/],
-      [
-        'Add a collapse/expand toggle to the sidebar',
-        'Highlight the active page link in the sidebar',
-        'Add a user avatar and name at the bottom of the sidebar',
-      ],
-    ],
-    // Modal / dialog
-    [
-      [/modal|dialog|popup|lightbox/],
-      [
-        'Add a fade-in animation when the modal opens',
-        'Close the modal when clicking the backdrop behind it',
-        'Add a confirmation step inside the modal before the action runs',
-      ],
-    ],
-    // Search
-    [
-      [/search\s*(bar|page|component|input|feature)|search\s*results/],
-      [
-        'Add autocomplete / type-ahead suggestions to the search bar',
-        'Highlight the search term in the results',
-        'Add filter chips to narrow down the search results',
-      ],
-    ],
-    // Home page (full page)
-    [
-      [/home\s*page|homepage|index\s*page|landing\s*page/],
-      [
-        'Add a smooth scroll animation between sections',
-        'Add a sticky header that shrinks on scroll',
-        'Add an animated counter for stats (users, projects, etc.)',
-      ],
-    ],
-    // Color / theme / styling update
-    [
-      [/color\s*scheme|color\s*palette|theme|typography|font|styling|redesign|visual/],
-      [
-        'Add a dark mode toggle that persists across pages',
-        'Apply the new colors to the buttons and hover states',
-        'Add subtle entrance animations as sections scroll into view',
-      ],
-    ],
-    // Responsive / mobile fix
-    [
-      [/mobile\s*responsive|responsive\s*(layout|design|fix)|mobile.?friendly|breakpoint/],
-      [
-        'Test and fix the tablet (768px) layout next',
-        'Add touch-friendly tap targets to all buttons',
-        'Add swipe gestures to the carousel / gallery',
-      ],
-    ],
-    // Animation / transition
-    [
-      [/animation|transition|framer.motion|fade.?in|slide.?in|scroll\s*animation/],
-      [
-        'Add staggered entrance animations to the list items',
-        'Add a parallax scroll effect to the background image',
-        'Add a loading skeleton before content appears',
-      ],
-    ],
-    // Full initial build (many files, first generation)
-    [
-      [/created|built|generated|implemented|added/],
-      [], // handled below by file-count logic
-    ],
-  ];
-
-  const picked: string[] = [];
-  for (const [patterns, suggestions] of candidates) {
-    if (suggestions.length === 0) continue;
-    if (match(...patterns)) {
-      for (const s of suggestions) {
-        if (!picked.includes(s)) picked.push(s);
-        if (picked.length === 3) return picked;
-      }
-    }
-  }
-
-  // Fallback: infer from what files changed — still change-specific, not generic
-  if (picked.length < 3) {
-    const changedFiles = filePaths.map(p => p.toLowerCase());
-    const justNav = changedFiles.some(p => /nav|header/.test(p)) && changedFiles.length <= 3;
-    const justPage = changedFiles.some(p => /page/.test(p)) && changedFiles.length <= 4;
-    const manyFiles = changedFiles.length > 5;
-
-    if (justNav && !picked.length) {
-      picked.push('Make the navbar sticky on scroll', 'Add a hamburger menu for mobile', 'Add active link highlighting');
-    } else if (justPage && !picked.length) {
-      picked.push('Add a loading skeleton for this page', 'Make this page fully mobile responsive', 'Add smooth scroll-to-top at the bottom');
-    } else if (manyFiles && !picked.length) {
-      picked.push('Make the layout fully mobile responsive', 'Add smooth entrance animations on scroll', 'Add a sticky header that hides on scroll down');
-    }
-  }
-
-  // Last resort — still change-aware (not domain-generic)
-  if (picked.length < 3) {
-    const remaining = [
-      'Make the layout fully mobile responsive',
-      'Add smooth entrance animations on scroll',
-      'Add a sticky header that hides on scroll down',
-    ].filter(s => !picked.includes(s));
-    picked.push(...remaining.slice(0, 3 - picked.length));
-  }
-
-  return picked.slice(0, 3);
-}
-
-// Strip ALL <ecomgear-*> / <egear-*> tags from the visible chat text.
-// During streaming, any open (unclosed) block tag hides everything after it
-// so the user never sees raw XML or partial code.
-function stripEcomgearTags(raw: string): string {
-  let s = raw;
-
-  // Strip model-internal reasoning/tool-call markup (thinking blocks, function calls)
-  // that leaks from DeepSeek, Gemini, and plan-mode responses into the text stream.
-  s = s.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
-  s = s.replace(/<thinking>[\s\S]*?<\/antml:thinking>/gi, '');
-  s = s.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, '');
-  s = s.replace(/<tool_calls>[\s\S]*?<\/tool_calls>/gi, '');
-  s = s.replace(/<invoke[\s\S]*?<\/invoke>/gi, '');
-  // Partial/unclosed internal block still streaming — truncate at start of tag
-  const internalPartials: RegExp[] = [/<(?:antml:)?thinking>/i, /<function_calls[\s>]/i, /<tool_calls[\s>]/i, /<invoke[\s>]/i];
-  for (const re of internalPartials) {
-    const idx = s.search(re);
-    if (idx !== -1) { s = s.slice(0, idx); break; }
-  }
-
-  // Remove complete ecomgear/egear block tags + their content
-  s = s.replace(/<ecomgear-write[\s\S]*?<\/ecomgear-write>/gi, '\n\n');
-  s = s.replace(/<ecomgear-edit[\s\S]*?<\/ecomgear-edit>/gi, '\n\n');
-  s = s.replace(/<ecomgear-chat-summary>[\s\S]*?<\/ecomgear-chat-summary>/gi, '');
-
-  // Remove complete self-closing / void tags (both ecomgear- and egear- prefixes)
-  s = s.replace(/<(?:ecomgear|egear)-(rename|delete|add-dependency|command|file)[^>]*\/?>/gi, '');
-
-  // Remove any explicit closing tags (both prefix forms)
-  s = s.replace(/<\/(?:ecomgear|egear)-[a-z-]+>/gi, '');
-
-  // Hide everything from any still-open ecomgear/egear tag to end of buffer
-  const partialIdx = s.search(/<(?:ecomgear|egear)-/i);
-  if (partialIdx !== -1) s = s.slice(0, partialIdx);
-
-  // Normalize whitespace
-  s = s.replace(/\n{3,}/g, '\n\n');
-
-  return s.trim();
-}
-
-// ─── Human-friendly file path labels ────────────────────────────────────────
-function filePathToLabel(filePath: string): string {
-  const base = filePath.replace(/\.[^.]+$/, '').split('/').pop() ?? filePath;
-  const words = base
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
-    .replace(/[-_]/g, ' ')
-    .toLowerCase();
-  if (words.startsWith('use ')) return words.replace('use ', '') + ' hook';
-  if (filePath.includes('/pages/')) return words + ' page';
-  if (filePath.includes('/components/')) return words + ' component';
-  if (filePath.includes('/hooks/')) return words + ' hook';
-  if (filePath.includes('/lib/') || filePath.includes('/utils/')) return words;
-  if (base === 'App') return 'app shell';
-  if (base === 'main') return 'app entry';
-  return words;
-}
-
-// ─── Model branding ───────────────────────────────────────────────────────────
+import type { StepEntry, LiveFileChange, Message } from '../_utils_/agentChatHelpers';
+import {
+  extractSummary,
+  parseToolActivities,
+  buildFallbackSummary,
+  detectLiveTool,
+  parseCommandSuggestions,
+  stripEcomgearTags,
+  filePathToLabel,
+} from '../_utils_/agentChatHelpers';
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -880,6 +336,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                     const isLLMStatus = stepData.step === 0 && stepData.toolCount === 0;
                     if (stepData.status) pushStatus(stepData.status, isLLMStatus);
                   },
+                  onAgentNarration: (narration) => {
+                    if (generationDone || cancelled) return;
+                    pushStatus(narration, true, true);
+                  },
                   onDone: (result) => {
                     generationDone = true;
                     setIsGenerating(false);
@@ -1118,6 +578,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     let toolXmlAccum = '';
     // Guard: once 'done' is received, ignore any late text-delta events.
     let generationDone = false;
+    // Step-by-step history — survives after completion (unlike statusText/liveFiles,
+    // which are wiped), rendered alongside the single-line status ticker, not instead of it.
+    const stepsAccum: StepEntry[] = [];
+    const syncSteps = () => {
+      const snapshot = [...stepsAccum];
+      setMessages(prev => prev.map(m => (m.id === asstId ? { ...m, steps: snapshot } : m)));
+    };
 
     try {
       abortRef.current = new AbortController();
@@ -1140,7 +607,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         callbacks: {
           onOpen: () => {
             onAgentStreamClear?.();
-            pushStatus('Reviewing request...');
+            // Honest initial state — the real per-step status arrives within
+            // a moment via onStepFinish / step-status-refine. Never show a
+            // fake "Working on your request" headline.
+            pushStatus('Starting…');
           },
           onTextDelta: (chunk) => {
             if (generationDone) return;          // drop late post-done events
@@ -1181,32 +651,52 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             const depMatch = /ecomgear-add-dependency[^>]*\bpackages="([^"]+)"/.exec(xml);
 
             if (writeMatch) {
-              pushStatus(`Building ${filePathToLabel(writeMatch[1])}...`, false, true);
+              const label = `Building ${filePathToLabel(writeMatch[1])}...`;
+              pushStatus(label, false, true);
               setLiveFiles(prev => [...prev, { path: writeMatch[1], type: 'write', timestamp: Date.now() }]);
               setFilesWritten(prev => prev + 1);
+              stepsAccum.push({ type: 'write', label, done: true });
             } else if (editMatch) {
-              pushStatus(`Updating ${filePathToLabel(editMatch[1])}...`, false, true);
+              const label = `Updating ${filePathToLabel(editMatch[1])}...`;
+              pushStatus(label, false, true);
               setLiveFiles(prev => [...prev, { path: editMatch[1], type: 'edit', timestamp: Date.now() }]);
               setFilesWritten(prev => prev + 1);
+              stepsAccum.push({ type: 'edit', label, done: true });
             } else if (deleteMatch) {
-              pushStatus(`Removing ${filePathToLabel(deleteMatch[1])}...`, false, true);
+              const label = `Removing ${filePathToLabel(deleteMatch[1])}...`;
+              pushStatus(label, false, true);
               setLiveFiles(prev => [...prev, { path: deleteMatch[1], type: 'delete', timestamp: Date.now() }]);
+              stepsAccum.push({ type: 'delete', label, done: true });
             } else if (renameMatch) {
-              pushStatus(`Renaming ${filePathToLabel(renameMatch[1])}...`, false, true);
+              const label = `Renaming ${filePathToLabel(renameMatch[1])}...`;
+              pushStatus(label, false, true);
               setLiveFiles(prev => [...prev, { path: `${renameMatch[1]} → ${renameMatch[2]}`, type: 'rename', timestamp: Date.now() }]);
+              stepsAccum.push({ type: 'rename', label, done: true });
             } else if (depMatch) {
-              pushStatus(`Installing ${depMatch[1]}...`, false, true);
+              const label = `Installing ${depMatch[1]}...`;
+              pushStatus(label, false, true);
               setLiveFiles(prev => [...prev, { path: depMatch[1], type: 'dependency', timestamp: Date.now() }]);
+              stepsAccum.push({ type: 'dependency', label, done: true });
             } else {
-              pushStatus('Applying changes...');
+              pushStatus('Applying changes…');
             }
+            syncSteps();
           },
           onStepFinish: (stepData: StepFinishData) => {
             if (generationDone) return;
             if (stepData.step > 0) setStepCount(stepData.step);
             const isLLMStatus = stepData.step === 0 && stepData.toolCount === 0;
-            if (stepData.status) pushStatus(stepData.status, isLLMStatus);
-            else if (stepData.toolCount > 0) pushStatus('Reviewing generated changes...');
+            // File-op steps already got their own entry from onToolOutput above —
+            // only add a narrative entry here when there's no more specific status.
+            if (stepData.status) {
+              pushStatus(stepData.status, isLLMStatus);
+              if (stepData.toolCount === 0) {
+                stepsAccum.push({ type: 'status', label: stepData.status, done: true });
+                syncSteps();
+              }
+            } else if (stepData.toolCount > 0) {
+              pushStatus('Reviewing generated changes...');
+            }
           },
           onStepStatusRefine: ({ status }) => {
             // A cheap-model-generated description of what the step actually did,
@@ -1214,6 +704,19 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             // tiers only — see generateDynamicStepStatus on the server).
             if (generationDone) return;
             pushStatus(status, true, true);
+            // Replace the last narrative entry in place (this is a refinement of it),
+            // rather than appending a duplicate.
+            const lastStatusIdx = stepsAccum.map(s => s.type).lastIndexOf('status');
+            if (lastStatusIdx >= 0) stepsAccum[lastStatusIdx] = { ...stepsAccum[lastStatusIdx], label: status };
+            else stepsAccum.push({ type: 'status', label: status, done: true });
+            syncSteps();
+          },
+          onAgentNarration: (narration) => {
+            // Real-time, LLM-written description of what the agent is doing RIGHT
+            // NOW (from the narration microservice). Highest priority — force-push
+            // so it always wins as the live headline, overriding canned strings.
+            if (generationDone) return;
+            pushStatus(narration, true, true);
           },
           onDone: (result) => {
             generationDone = true;             // block any further text-delta updates
@@ -1255,7 +758,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             setMessages(prev =>
               prev.map(m =>
                 m.id === asstId
-                  ? { ...m, status: 'complete', content: finalContent, isPlan, noChanges, summary, toolActivities, snapshotId: result.snapshotId, suggestedCommands, followUpSuggestions: initialSuggestions }
+                  ? { ...m, status: 'complete', content: finalContent, isPlan, noChanges, summary, toolActivities, steps: stepsAccum, snapshotId: result.snapshotId, suggestedCommands, followUpSuggestions: initialSuggestions }
                   : m
               )
             );
@@ -1373,14 +876,22 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             const display = errMsg
               ? errMsg.replace(/^Agent stream failed \(\d+\):\s*/i, '').slice(0, 300)
               : 'Model temporarily unavailable. Please try again.';
+            const errorContent = currentContent || display;
             setMessages(prev =>
               prev.map(m =>
                 m.id === asstId
-                  ? { ...m, status: 'error', content: currentContent || display }
+                  ? { ...m, status: 'error', content: errorContent, steps: stepsAccum }
                   : m
               )
             );
             toast.error(display);
+            // Persist whatever was streamed so far — otherwise a reload silently
+            // erases the agent's partial reply, leaving only the user's prompt.
+            if (!isGuest && errorContent.trim()) {
+              messageService.saveAssistantMessage(projectId, `${errorContent}\n\n*[error]*`, userId).catch(err => {
+                console.error('Failed to save partial assistant message on error', err);
+              });
+            }
           },
           onUsage: (tokensUsed) => {
             onUsage?.(tokensUsed);
@@ -1398,14 +909,21 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       const errDisplay = err instanceof Error
         ? err.message.replace(/^Agent stream failed \(\d+\):\s*/i, '').slice(0, 300)
         : 'Model temporarily unavailable. Please try again.';
+      const errorContent = currentContent || errDisplay;
+      let alreadyHandled = false;
       setMessages(prev =>
-        prev.map(m =>
-          m.id === asstId && m.status !== 'error'
-            ? { ...m, status: 'error', content: errDisplay }
-            : m
-        )
+        prev.map(m => {
+          if (m.id !== asstId) return m;
+          if (m.status === 'error') { alreadyHandled = true; return m; }
+          return { ...m, status: 'error', content: errorContent, steps: stepsAccum };
+        })
       );
       toast.error(errDisplay);
+      if (!alreadyHandled && !isGuest && errorContent.trim()) {
+        messageService.saveAssistantMessage(projectId, `${errorContent}\n\n*[error]*`, userId).catch(err2 => {
+          console.error('Failed to save partial assistant message on error', err2);
+        });
+      }
     }
   };
 
@@ -1419,9 +937,17 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (last?.role === 'assistant' && (last.status === 'pending' || last.status === 'streaming')) {
+        const cancelledContent = `${last.content || ''}\n\n*Cancelled.*`;
+        // Persist whatever was streamed so far — otherwise a reload silently
+        // erases the agent's partial reply, leaving only the user's prompt.
+        if (!isGuest && (last.content || '').trim()) {
+          messageService.saveAssistantMessage(projectId, cancelledContent, userId).catch(err => {
+            console.error('Failed to save partial assistant message on cancel', err);
+          });
+        }
         return prev.map((m, i) =>
           i === prev.length - 1
-            ? { ...m, status: 'error', content: (m.content || '') + '\n\n*Cancelled.*' }
+            ? { ...m, status: 'error', content: cancelledContent }
             : m
         );
       }
@@ -1447,7 +973,9 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
   if (isMinimized) return null;
 
-  const statusLabel = statusText || 'Working on your request...';
+  // Honest fallback — only used for the very first frame before any step
+  // status arrives. Once the server emits a step/status this is replaced.
+  const statusLabel = statusText || 'Starting…';
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -1484,7 +1012,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               ↑ Load older messages
             </button>
           )}
-          {messages.map((msg) => (
+          {messages.map((msg, msgIndex) => (
             <div key={msg.id} className="group">
               {msg.id === 'greeting' ? (
                 <div className="relative overflow-hidden rounded-2xl p-4 mb-1"
@@ -1513,7 +1041,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 status={msg.status}
                 attachments={msg.attachments}
                 liveStatus={isGenerating && msg.status === 'streaming' && !msg.content.trim()
-                  ? (statusText || 'Working on your request…')
+                  ? (statusText || 'Starting…')
                   : undefined}
               />
 
@@ -1532,45 +1060,48 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 </div>
               )}
 
-              {/* Tool activity chips — shown below assistant messages after completion */}
-              {msg.role === 'assistant' && msg.status === 'complete' &&
-               msg.toolActivities && msg.toolActivities.length > 0 && (
-                <div className="mt-1.5 ml-[30px] flex flex-wrap gap-1">
-                  {msg.toolActivities.map((act, i) => {
-                    const cfg: Record<ToolActivity['type'], { icon: string; cls: string }> = {
-                      write:      { icon: '✦', cls: 'text-indigo-300  bg-indigo-500/10  border-indigo-500/20'  },
-                      edit:       { icon: '✎', cls: 'text-blue-300    bg-blue-500/10    border-blue-500/20'    },
-                      delete:     { icon: '✕', cls: 'text-red-400     bg-red-500/10     border-red-500/20'     },
-                      rename:     { icon: '↪', cls: 'text-yellow-300  bg-yellow-500/10  border-yellow-500/20'  },
-                      dependency: { icon: '⬡', cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
-                      command:    { icon: '⚡', cls: 'text-orange-300  bg-orange-500/10  border-orange-500/20'  },
+              {/* Retry button — shown on an errored assistant message, resubmits the
+                  preceding user prompt (same call shape as the user-message retry above). */}
+              {msg.role === 'assistant' && msg.status === 'error' && (
+                <div className="flex justify-start mt-1">
+                  <button
+                    onClick={() => {
+                      for (let j = msgIndex - 1; j >= 0; j--) {
+                        if (messages[j].role === 'user') { handleSubmit(messages[j].content); break; }
+                      }
+                    }}
+                    disabled={isGenerating}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] text-red-400/70 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-30 disabled:cursor-default transition-all duration-150"
+                    title="Retry this prompt"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {/* Step-by-step history — live while streaming, survives after completion
+                  (unlike the single-line status ticker above, which is wiped). */}
+              {msg.role === 'assistant' && msg.steps && msg.steps.length > 0 && (
+                <div className="mt-1.5 ml-[30px] flex flex-col gap-0.5">
+                  {msg.steps.map((step, i) => {
+                    const cfg: Record<StepEntry['type'], { icon: string; cls: string }> = {
+                      write:      { icon: '✦', cls: 'text-indigo-300'  },
+                      edit:       { icon: '✎', cls: 'text-blue-300'    },
+                      delete:     { icon: '✕', cls: 'text-red-400'     },
+                      rename:     { icon: '↪', cls: 'text-yellow-300'  },
+                      dependency: { icon: '⬡', cls: 'text-emerald-300' },
+                      command:    { icon: '⚡', cls: 'text-orange-300'  },
+                      status:     { icon: '·', cls: 'text-gray-500'    },
                     };
-                    const { icon, cls } = cfg[act.type] ?? cfg.write;
-                    const displayLabel = (act.type === 'dependency' || act.type === 'command')
-                      ? act.label
-                      : filePathToLabel(act.label);
+                    const { icon, cls } = cfg[step.type] ?? cfg.status;
                     return (
-                      <span key={i} title={act.label} className={`inline-flex items-center gap-0.5 px-1.5 py-px rounded border text-[9px] font-mono ${cls}`}>
-                        <span>{icon}</span>{displayLabel}
-                      </span>
+                      <div key={i} className={`flex items-center gap-1.5 text-[10px] ${cls}`}>
+                        <span className="w-3 text-center shrink-0">{icon}</span>
+                        <span className="truncate">{step.label}</span>
+                      </div>
                     );
                   })}
-                </div>
-              )}
-
-              {/* Summary chip */}
-              {msg.summary && msg.status === 'complete' && (
-                <div className="mt-1 ml-[30px] inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.06] text-[9px] text-gray-600">
-                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-500/60 shrink-0" />
-                  {msg.summary}
-                </div>
-              )}
-
-              {/* No-changes chip — agent replied but wrote no files; never implied by the text alone */}
-              {msg.noChanges && msg.status === 'complete' && (
-                <div className="mt-1 ml-[30px] inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[9px] text-amber-500">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500/70 shrink-0" />
-                  No changes were made
                 </div>
               )}
 
@@ -1678,36 +1209,39 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             </div>
           ))}
 
-          {/* ── Live agent status — minimal inline text ── */}
+          {/* ── Live agent status — Lovable-style: real status headline first ── */}
           {isGenerating && (() => {
             const hasFile = liveFiles.length > 0;
             const f = hasFile ? liveFiles[liveFiles.length - 1] : null;
             const fileIcon: Record<string, string> = { write: '✦', edit: '✎', delete: '✕', rename: '↪', dependency: '⬡' };
-            const fileColor: Record<string, string> = {
-              write: 'text-indigo-300/50', edit: 'text-sky-300/50',
-              delete: 'text-red-400/50', rename: 'text-amber-300/50',
-              dependency: 'text-emerald-300/50',
-            };
-            // What to show: file > tool status > real thinking text > fallback
-            const toolStatus = statusText && !/writing response/i.test(statusText) ? statusText : '';
-            const displayLine = hasFile
-              ? `${fileIcon[f!.type] ?? '·'} ${f!.path.replace(/^src\//, '')}`
-              : toolStatus || thinkingText || '';
+
+            // Priority: REAL status (from the parallel cheap-model run / step)
+            // wins as the headline. The current file is shown as a subtle
+            // secondary detail, never replacing the descriptive status.
+            const hasStatus = Boolean(statusText) && !/writing response/i.test(statusText ?? '');
+            const headline = statusText || thinkingText || 'Working…';
+            const fileDetail = f ? `${fileIcon[f.type] ?? '·'} ${f.path.replace(/^src\//, '')}` : '';
 
             return (
-              <div className="ml-[28px] flex items-center gap-2 py-0.5">
-                {/* Blinking cursor — tiny, no ring */}
-                <span className="inline-block w-[3px] h-[13px] rounded-[1px] bg-indigo-400/40 animate-blink shrink-0" />
-                <span
-                  key={displayLine.slice(0, 20)}
-                  className={`text-[11px] truncate max-w-[220px] animate-status-in ${
-                    hasFile ? (fileColor[f!.type] ?? 'text-white/30')
-                    : toolStatus ? 'text-white/30'
-                    : 'text-white/25 italic'
-                  }`}
-                >
-                  {displayLine || 'thinking…'}
+              <div className="ml-[28px] flex items-center gap-2 py-1">
+                {/* Pulsing activity dot — indigo while thinking, emerald while writing files */}
+                <span className="relative flex h-2 w-2 shrink-0">
+                  <span className={`absolute inline-flex h-full w-full rounded-full opacity-60 ${hasFile ? 'bg-emerald-400' : 'bg-indigo-400'} animate-ping`} />
+                  <span className={`relative inline-flex h-2 w-2 rounded-full ${hasFile ? 'bg-emerald-400' : 'bg-indigo-400'}`} />
                 </span>
+                {/* Headline — the real status (replaces the old raw-file-path line) */}
+                <span
+                  key={headline.slice(0, 20)}
+                  className={`text-[11px] truncate max-w-[200px] animate-status-in ${hasStatus ? 'text-white/55' : 'text-white/35 italic'}`}
+                >
+                  {headline}
+                </span>
+                {/* Secondary: current file, subtle — only when a real status is present */}
+                {hasStatus && fileDetail && (
+                  <span className="text-[10px] text-white/25 truncate max-w-[120px] font-mono">
+                    {fileDetail}
+                  </span>
+                )}
                 {filesWritten > 1 && (
                   <span className="text-[10px] text-white/15 font-mono shrink-0">+{filesWritten - 1}</span>
                 )}

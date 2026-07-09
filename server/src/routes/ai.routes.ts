@@ -919,7 +919,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                         model: fastModel,
                         maxOutputTokens: 400,
                         temperature: 0.5,
-                        system: 'You are a helpful assistant for an AI app builder. Answer briefly.',
+                        system: `You are EcomGear AI, an app builder. Answer briefly and helpfully. Rules: NO emojis. Do not use the em dash character. Sound like a calm human teammate, not a bot. Never start a reply with phrases like "Great question", "Absolutely", "Of course", or "I would be happy to".`,
                         prompt: trimmedPrompt,
                     });
                     sseWrite(res, 'text-delta', { text });

@@ -96,6 +96,8 @@ export interface AgentStreamCallbacks {
   onStepFinish?: (data: StepFinishData) => void;
   /** Called when a cheap-model-generated status arrives to replace the canned one for a given step (feature/build tiers only) */
   onStepStatusRefine?: (data: { step: number; status: string }) => void;
+  /** Called with a real-time, LLM-written narration of what the agent is doing right now */
+  onAgentNarration?: (narration: string) => void;
   /** Called on error */
   onError?: (message: string) => void;
   /** Called when all auto-repair attempts fail — errors can be shown to user for manual fix */
@@ -330,6 +332,12 @@ export async function streamAgentGeneration(params: {
             case 'step-status-refine': {
               if (typeof payload.step === 'number' && typeof payload.status === 'string') {
                 callbacks.onStepStatusRefine?.({ step: payload.step, status: payload.status });
+              }
+              break;
+            }
+            case 'agent-narration': {
+              if (typeof payload.narration === 'string' && payload.narration.trim()) {
+                callbacks.onAgentNarration?.(payload.narration);
               }
               break;
             }
