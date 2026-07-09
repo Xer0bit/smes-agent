@@ -245,7 +245,7 @@ REMOTE
     # declared "done".
     step "Post-deploy health gate (auth + REST, up to 90s)..."
     API="https://api.ecomgear.dev"
-    ANON_KEY="sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH"
+    ANON_KEY="${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY not set}"
     DEADLINE=$(( $(date +%s) + 90 ))
     AUTH_OK=0; REST_OK=0
     while [[ $(date +%s) -lt $DEADLINE ]]; do

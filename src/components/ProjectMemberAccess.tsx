@@ -54,7 +54,10 @@ export function ProjectMemberAccess({ projectId, organizationId }: ProjectMember
             const { data: profilesData } = memberUserIds.length
                 ? await supabase.from('profiles').select('id, email, full_name').in('id', memberUserIds)
                 : { data: [] as { id: string; email: string; full_name?: string }[] };
-            const profileMap = new Map((profilesData || []).map(p => [p.id, p]));
+            const profileMap = new Map<string, { email: string; full_name?: string }>(
+                (profilesData || []).map((p): [string, { email: string; full_name?: string }] =>
+                    [p.id, { email: p.email, full_name: p.full_name }])
+            );
 
             // Fetch current project access assignments
             const { data: accessData, error: accessError } = await supabase

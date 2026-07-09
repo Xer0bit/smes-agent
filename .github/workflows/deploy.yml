@@ -20,6 +20,7 @@ permissions:
 jobs:
   detect:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       targets: ${{ steps.changes.outputs.targets }}
       skip: ${{ steps.changes.outputs.skip }}
@@ -95,16 +96,24 @@ jobs:
     needs: detect
     if: needs.detect.outputs.skip != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
-      - name: Root — install, test (blocking), lint (advisory)
+      - name: Root — install, typecheck (advisory), test (blocking), lint (advisory)
         run: |
           npm ci --legacy-peer-deps
+          # tsc -p tsconfig.app.json was never actually invokable before this
+          # workflow (an invalid ignoreDeprecations value in tsconfig.app.json
+          # made it hard-fail immediately) — now that it runs, it surfaces
+          # ~16 pre-existing type errors scattered across unrelated files.
+          # Report only until those are cleaned up; don't block deploys on unrelated debt.
+          npx tsc --noEmit -p tsconfig.app.json || echo "::warning::root typecheck has pre-existing errors (non-blocking)"
           # server/** is a separate package with its own node_modules (pg,
           # electron-log, etc. that root doesn't have) — it gets its own
           # vitest run in the Server step below. Root only covers root tests.
@@ -112,6 +121,12 @@ jobs:
           # Repo has ~1000 pre-existing lint errors unrelated to any single
           # change — report only, don't block deploys on unrelated debt.
           npm run lint || echo "::warning::root lint has pre-existing errors (non-blocking)"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
 
       - name: Server — install, typecheck (blocking), test (blocking), lint (advisory)
         run: |
@@ -182,5 +197,16 @@ jobs:
 
       - name: Notify on failure
         if: failure()
+        env:
+          WEBHOOK_URL: ${{ secrets.DEPLOY_ALERT_WEBHOOK_URL }}
         run: |
-          echo "::error::Deployment failed for targets: ${{ needs.detect.outputs.targets }}. Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TARGETS="${{ needs.detect.outputs.targets }}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "::error::Deployment failed for targets: $TARGETS. Logs: $RUN_URL"
+          if [ -n "$WEBHOOK_URL" ]; then
+            curl -sf -X POST "$WEBHOOK_URL" -H 'Content-Type: application/json' \
+              -d "{\"text\": \"🔴 ecomgear deploy FAILED — targets: ${TARGETS} — ${RUN_URL}\", \"content\": \"🔴 ecomgear deploy FAILED — targets: ${TARGETS} — ${RUN_URL}\"}" \
+              || echo "::warning::webhook notification failed (deploy failure already logged above)"
+          else
+            echo "::warning::DEPLOY_ALERT_WEBHOOK_URL secret not set — no webhook alert sent"
+          fi
