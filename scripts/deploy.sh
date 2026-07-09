@@ -406,8 +406,13 @@ deploy_vps3() {
     fi
     step "Uploading server to VPS3 (staging dir)..."
     ssh_vps3 "mkdir -p $DEPLOY_PATH/server.staging $DEPLOY_PATH/logs $DEPLOY_PATH/backups"
+    # node_modules is excluded — it's reinstalled remotely (npm ci --omit=dev
+    # below), same pattern as VPS4. Shipping node_modules over rsync was
+    # dragging every deploy out to 10+ minutes for no benefit: the CI-built
+    # copy still needs prod-only deps and the wrong platform's native builds
+    # would follow it there anyway.
     [ -d "$PROJECT_DIR/server/dist" ] && \
-        scp_vps3 --exclude='.env' --exclude='.env.*' \
+        scp_vps3 --exclude='.env' --exclude='.env.*' --exclude='node_modules' \
             "$PROJECT_DIR/server/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/server.staging/"
     step "Uploading supabase functions + migrations..."
     scp_vps3 "$PROJECT_DIR/supabase/functions/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/supabase/functions/"
@@ -494,6 +499,10 @@ if [ -d "\$DEPLOY_PATH/server" ]; then
     KEPT=\$(ls -1d "\$BACKUP_DIR"/server-* 2>/dev/null | wc -l)
     echo "  Backups retained: \$KEPT (max \$BACKUP_KEEP)"
 fi
+
+# ── 2b. Install deps into staging (node_modules is excluded from the upload) ──
+cd "\$DEPLOY_PATH/server.staging" && npm ci --omit=dev
+cd "\$DEPLOY_PATH"
 
 # ── 3. Atomic directory swap ──────────────────────────────────────────────────
 [ -d server ] && mv server server.old

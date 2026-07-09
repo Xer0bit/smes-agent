@@ -2510,7 +2510,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         console.warn(`[AgentLoop] Primary provider ${providerName} failed. Falling back to ${fallbackInfo.providerName}/${fallbackModelId}`);
         // Keep fallback behavior, but optionally suppress recovery UI noise.
         if (!SUPPRESS_RECOVERY_UI) {
-          sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: `Switching to fallback model...` });
+          generateStatus(projectId, { kind: 'lifecycle', phase: 'provider-fallback', detail: fallbackInfo.providerName }).then((s) => {
+            if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+          }).catch(() => {});
         }
         try {
           result = await attemptStream(fallbackInfo.provider, 0, fallbackInfo.providerName);

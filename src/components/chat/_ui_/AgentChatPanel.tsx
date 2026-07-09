@@ -650,31 +650,36 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             const renameMatch = /ecomgear-rename[^>]*\bfrom="([^"]+)"/.exec(xml);
             const depMatch = /ecomgear-add-dependency[^>]*\bpackages="([^"]+)"/.exec(xml);
 
+            // These template labels are a placeholder only — never force, so
+            // real LLM narration (onAgentNarration/onStepStatusRefine) always
+            // wins the live status ticker instead of being clobbered by them.
+            // They still go into stepsAccum, which is the persistent step
+            // history list, not the live headline.
             if (writeMatch) {
               const label = `Building ${filePathToLabel(writeMatch[1])}...`;
-              pushStatus(label, false, true);
+              pushStatus(label);
               setLiveFiles(prev => [...prev, { path: writeMatch[1], type: 'write', timestamp: Date.now() }]);
               setFilesWritten(prev => prev + 1);
               stepsAccum.push({ type: 'write', label, done: true });
             } else if (editMatch) {
               const label = `Updating ${filePathToLabel(editMatch[1])}...`;
-              pushStatus(label, false, true);
+              pushStatus(label);
               setLiveFiles(prev => [...prev, { path: editMatch[1], type: 'edit', timestamp: Date.now() }]);
               setFilesWritten(prev => prev + 1);
               stepsAccum.push({ type: 'edit', label, done: true });
             } else if (deleteMatch) {
               const label = `Removing ${filePathToLabel(deleteMatch[1])}...`;
-              pushStatus(label, false, true);
+              pushStatus(label);
               setLiveFiles(prev => [...prev, { path: deleteMatch[1], type: 'delete', timestamp: Date.now() }]);
               stepsAccum.push({ type: 'delete', label, done: true });
             } else if (renameMatch) {
               const label = `Renaming ${filePathToLabel(renameMatch[1])}...`;
-              pushStatus(label, false, true);
+              pushStatus(label);
               setLiveFiles(prev => [...prev, { path: `${renameMatch[1]} → ${renameMatch[2]}`, type: 'rename', timestamp: Date.now() }]);
               stepsAccum.push({ type: 'rename', label, done: true });
             } else if (depMatch) {
               const label = `Installing ${depMatch[1]}...`;
-              pushStatus(label, false, true);
+              pushStatus(label);
               setLiveFiles(prev => [...prev, { path: depMatch[1], type: 'dependency', timestamp: Date.now() }]);
               stepsAccum.push({ type: 'dependency', label, done: true });
             } else {

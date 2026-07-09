@@ -138,7 +138,7 @@ export function parseCommandSuggestions(raw: string): string[] {
 }
 
 /** @deprecated Replaced by Gemini-generated suggestions from /api/v1/ai/suggestions */
-export function generateFollowUpSuggestions(_filePaths: string[], _summaryText: string): string[] {
+export function generateFollowUpSuggestions(filePaths: string[], summaryText: string): string[] {
   // Use the summary as the primary signal — it describes exactly what changed.
   // File paths are used as fallback context when the summary is vague.
   const summary = summaryText.toLowerCase();
