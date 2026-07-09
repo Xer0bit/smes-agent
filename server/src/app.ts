@@ -164,6 +164,10 @@ if (servesApi) {
     app.use('/api/v1/seo', seoRoutes);
     app.use('/api/v1/header-integrations', headerIntegrationsRoutes);
     app.use('/api/v1/github', githubRoutes);
+    // Also mounted at the registered GitHub OAuth App callback path — the
+    // App's "Authorization callback URL" is /auth/github/callback, which
+    // must match REDIRECT_URI in github.routes.ts exactly.
+    app.use('/auth/github', githubRoutes);
     app.use('/api/v1/functions', functionsRoutes);
     app.use('/api/v1/ecg-connect', ecgConnectRoutes);
     app.use('/api/v1/ecg-proxy', ecgProxyRoutes);

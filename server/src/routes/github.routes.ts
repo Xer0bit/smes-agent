@@ -16,9 +16,11 @@ const router = Router();
 
 const GITHUB_CLIENT_ID     = process.env.GITHUB_CLIENT_ID || '';
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
-const SERVER_URL = (process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.ai').replace(/\/$/, '');
+const SERVER_URL = (process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.dev').replace(/\/$/, '');
 const APP_URL    = (process.env.APP_URL || 'https://www.ecomgear.dev').replace(/\/$/, '');
-const REDIRECT_URI = `${SERVER_URL}/api/v1/github/callback`;
+// Must exactly match the "Authorization callback URL" registered on the
+// GitHub OAuth App — that's /auth/github/callback, not /api/v1/github/callback.
+const REDIRECT_URI = `${SERVER_URL}/auth/github/callback`;
 // Reuses the tenant-DB HMAC secret purely as a signing key for this short-lived
 // OAuth state token — no relation to tenant DB auth, just an existing secret.
 const STATE_SECRET = process.env.TENANT_DB_JWT_SECRET || process.env.SUPABASE_JWT_SECRET || '';
@@ -219,6 +221,48 @@ router.get('/:projectId/link', authMiddleware, async (req: AuthenticatedRequest,
     .eq('setting_key', 'github_repo')
     .maybeSingle();
   res.json({ link: data?.setting_value ?? null });
+});
+
+// ── POST /api/v1/github/:projectId/create-repo ───────────────────────────────
+// Creates a brand-new repo on the connected GitHub account and links this
+// project to it in one step (for users with no existing repo to push to).
+router.post('/:projectId/create-repo', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { name, private: isPrivate } = req.body as { name?: string; private?: boolean };
+  if (!name || !/^[\w.-]+$/.test(name)) { res.status(400).json({ error: 'name must contain only letters, numbers, "-", "_", "."' }); return; }
+
+  try {
+    await projectService.getProject(req.params.projectId, req.user!.id);
+  } catch {
+    res.status(404).json({ error: 'Project not found or access denied.' });
+    return;
+  }
+
+  const conn = await getConnection(req.user!.id);
+  if (!conn) { res.status(403).json({ error: 'GitHub account not connected.' }); return; }
+
+  try {
+    const r = await fetch('https://api.github.com/user/repos', {
+      method: 'POST',
+      headers: { ...ghHeaders(conn.access_token), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, private: isPrivate ?? true, auto_init: true }),
+    });
+    const body = await r.json() as { full_name?: string; default_branch?: string; html_url?: string; message?: string };
+    if (!r.ok) { res.status(r.status).json({ error: body.message ?? `GitHub API error: ${r.status}` }); return; }
+
+    const link = { fullName: body.full_name!, branch: body.default_branch || 'main' };
+    await supabase.from('project_settings').upsert(
+      {
+        project_id: req.params.projectId,
+        setting_key: 'github_repo',
+        setting_value: link,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'project_id,setting_key' }
+    );
+    res.json({ ...link, htmlUrl: body.html_url });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 // ── POST /api/v1/github/:projectId/link ─────────────────────────────────────

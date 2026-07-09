@@ -259,6 +259,35 @@ REMOTE
         scp_vps1 --exclude='.env' --exclude='.env.*' --exclude='node_modules' \
             "$PROJECT_DIR/server/" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/server.staging/"
     scp_vps1 "$PROJECT_DIR/ecosystem.config.cjs" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/"
+    step "Writing ecomgear-api env to VPS1..."
+    SK="${SUPABASE_SERVICE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
+    ssh_vps1 "bash -s" << ENVREMOTE
+set -e
+cat > /var/www/ecomgear/.env.production << ENV
+NODE_ENV=production
+SUPABASE_URL=https://api.ecomgear.dev
+SUPABASE_SERVICE_ROLE_KEY=${SK}
+SUPABASE_SERVICE_KEY=${SK}
+SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
+SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-}
+TENANT_DB_HOST=${TENANT_DB_HOST:-}
+TENANT_DB_PORT=${TENANT_DB_PORT:-5432}
+TENANT_DB_SUPERUSER=${TENANT_DB_SUPERUSER:-ecg_provisioner}
+TENANT_DB_SUPERUSER_PASSWORD=${TENANT_DB_SUPERUSER_PASSWORD:-}
+TENANT_DB_NAME=${TENANT_DB_NAME:-ecg_tenants}
+TENANT_DB_JWT_SECRET=${TENANT_DB_JWT_SECRET:-}
+TENANT_DB_API_URL=${TENANT_DB_API_URL:-https://cloud.ecomgear.app}
+TENANT_DB_SSL=${TENANT_DB_SSL:-true}
+TENANT_DB_RELOAD_URL=${TENANT_DB_RELOAD_URL:-}
+TENANT_DB_RELOAD_SECRET=${TENANT_DB_RELOAD_SECRET:-}
+ECG_PORTAL_URL=${ECG_PORTAL_URL:-}
+ECG_SERVICE_KEY=${ECG_SERVICE_KEY:-}
+ECOMGEAR_SERVER_URL=${ECOMGEAR_SERVER_URL:-}
+DASHBOARD_ACCESS_SECRET=${DASHBOARD_ACCESS_SECRET:-}
+GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+ENV
+ENVREMOTE
     step "Remote: atomic swap + PM2 restart (ecomgear-api)..."
     ssh_vps1 "bash -s" << 'REMOTE_API'
 set -e
@@ -269,6 +298,7 @@ if [ ! -d server.staging ]; then echo "ERROR: server.staging missing — rsync m
 mv server.staging server
 cd server
 npm ci --omit=dev
+[ -f /var/www/ecomgear/.env.production ] && set -a && . /var/www/ecomgear/.env.production && set +a
 pm2 delete ecomgear-api 2>/dev/null || true
 pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-api --update-env
 pm2 save

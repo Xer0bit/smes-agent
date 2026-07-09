@@ -47,6 +47,8 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
   const [linking, setLinking] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [lastPushUrl, setLastPushUrl] = useState<string | null>(null);
+  const [creatingRepo, setCreatingRepo] = useState(false);
+  const [newRepoName, setNewRepoName] = useState("");
 
   const loadStatus = useCallback(async () => {
     setLoading(true);
@@ -126,6 +128,28 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
       toast.error(e.message ?? "Failed to link repository");
     } finally {
       setLinking(false);
+    }
+  };
+
+  const handleCreateRepo = async () => {
+    if (!projectId || !newRepoName.trim()) return;
+    setCreatingRepo(true);
+    try {
+      const result = await authedFetch(`/${projectId}/create-repo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newRepoName.trim(), private: true }),
+      });
+      setLinked({ fullName: result.fullName, branch: result.branch });
+      setSelectedRepo(result.fullName);
+      setBranch(result.branch);
+      setRepos(prev => [{ id: Date.now(), fullName: result.fullName, private: true, defaultBranch: result.branch, htmlUrl: result.htmlUrl }, ...prev]);
+      setNewRepoName("");
+      toast.success(`Created and linked ${result.fullName}`);
+    } catch (e: any) {
+      toast.error(e.message ?? "Failed to create repository");
+    } finally {
+      setCreatingRepo(false);
     }
   };
 
@@ -216,6 +240,28 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
             <Button size="sm" onClick={handleLink} disabled={linking || !selectedRepo} className="h-8 px-4 text-[13px] bg-indigo-600 hover:bg-indigo-500 text-white">
               {linking ? "Linking…" : linked?.fullName === selectedRepo && linked.branch === branch ? "Linked" : "Link Repository"}
             </Button>
+
+            <div className="flex items-center gap-2 pt-1">
+              <div className="h-px flex-1 bg-white/[0.06]" />
+              <span className="text-[11px] text-white/35">or</span>
+              <div className="h-px flex-1 bg-white/[0.06]" />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-white/60 text-xs">Create a new repository</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={newRepoName}
+                  onChange={e => setNewRepoName(e.target.value)}
+                  placeholder="my-project-name"
+                  className="bg-[#0a0a0d] border-white/[0.08] text-white/85 h-8 text-[13px]"
+                />
+                <Button size="sm" onClick={handleCreateRepo} disabled={creatingRepo || !newRepoName.trim()}
+                  className="h-8 px-4 text-[13px] whitespace-nowrap bg-indigo-600 hover:bg-indigo-500 text-white">
+                  {creatingRepo ? "Creating…" : "Create & Link"}
+                </Button>
+              </div>
+            </div>
 
             {linked && (
               <div className="flex items-center justify-between pt-2 border-t border-white/[0.06]">

@@ -43,7 +43,6 @@ export interface Revision {
   file_attachments?: any;
   git_commit_hash?: string;
   git_branch?: string;
-  git_author?: string;
   is_published: boolean;
   created_at: string;
   user_id?: string;
@@ -114,7 +113,6 @@ export const revisionService = {
     file_attachments?: any;
     git_commit_hash?: string;
     git_branch?: string;
-    git_author?: string;
     user_id?: string;
   }): Promise<string> {
     console.log('[RevisionService] Creating revision for project:', params.project_id);
@@ -311,7 +309,6 @@ export const revisionService = {
         user_id,
         git_commit_hash,
         git_branch,
-        git_author,
         revision_preview (
           preview_url,
           cloudflare_url,
