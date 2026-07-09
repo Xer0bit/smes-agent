@@ -19,6 +19,8 @@ import { GitHubSettings } from "./GitHubSettings";
 import { DatabaseSettings } from "./DatabaseSettings";
 import { KnowledgeSettings } from "./KnowledgeSettings";
 import { SecretsSettings } from "./SecretsSettings";
+import { StripeSettingsContent } from "./StripeSettingsContent";
+import { ZapierSettingsContent } from "./ZapierSettingsContent";
 import { Globe, Smartphone, CreditCard, ExternalLink } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -223,7 +225,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
       case "project-integrations":
         return <HeaderIntegrationsSettings projectId={projectId} />;
 
-      case "connector-github":
+      case "project-git":
         return <GitHubSettings projectId={projectId} />;
 
       case "project-collaborators":
@@ -462,17 +464,58 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
             />
           </div>
         );
-      
-      case "integrations-stripe":
+
         return (
           <div className="space-y-6">
             <div>
-              <h2 className="text-xl font-semibold text-white/85 mb-1">Stripe</h2>
-              <p className="text-sm text-white/45">Accept payments and manage subscriptions via Stripe.</p>
+              <h2 className="text-xl font-semibold text-white/85 mb-1">Integrations</h2>
+              <p className="text-sm text-white/45">Connect external services to power payments, automation, and workflows in your project.</p>
             </div>
-            {renderPlanLocked('Stripe Integration', 'Connect Stripe to enable payment processing in your apps.', 'integrations')}
+            <div className="grid gap-3">
+              {[
+                { label: 'Stripe', desc: 'Accept payments and manage subscriptions.' },
+                { label: 'Alipay', desc: 'Accept payments from the Chinese market.' },
+                { label: 'Airwallex', desc: 'Global payments and treasury.' },
+                { label: 'Zapier', desc: 'Give your project\'s AI chat access to thousands of Zapier-connected tools.' },
+              ].map(item => (
+                <Card key={item.label} className="bg-[#0f0f12] border-white/[0.07]">
+                  <CardContent className="p-4">
+                    <p className="text-sm font-medium text-white/85">{item.label}</p>
+                    <p className="text-xs text-white/45 mt-0.5">{item.desc}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           </div>
         );
+
+      case "integrations-zapier":
+        if (!hasFeature('integrations')) {
+          return (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-xl font-semibold text-white/85 mb-1">Zapier</h2>
+                <p className="text-sm text-white/45">Give your project's AI chat access to the tools you've set up in Zapier.</p>
+              </div>
+              {renderPlanLocked('Zapier Integration', 'Connect Zapier to give your AI chat access to thousands of tools.', 'integrations')}
+            </div>
+          );
+        }
+        return <ZapierSettingsContent projectId={projectId} />;
+
+      case "integrations-stripe":
+        if (!hasFeature('integrations')) {
+          return (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-xl font-semibold text-white/85 mb-1">Stripe</h2>
+                <p className="text-sm text-white/45">Accept payments and manage subscriptions via Stripe.</p>
+              </div>
+              {renderPlanLocked('Stripe Integration', 'Connect Stripe to enable payment processing in your apps.', 'integrations')}
+            </div>
+          );
+        }
+        return <StripeSettingsContent projectId={projectId} />;
 
       case "integrations-alipay":
         return (

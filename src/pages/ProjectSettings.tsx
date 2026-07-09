@@ -35,7 +35,7 @@ export default function ProjectSettings() {
   const handleBack = () => navigate(`/project/${projectId}`);
 
   return (
-    <div className="flex flex-col h-screen bg-background overflow-hidden">
+    <div className="flex flex-col h-screen bg-black overflow-hidden">
       {/* ── Top bar ─────────────────────────────────────────────────────────── */}
       <header className="flex items-center gap-3 px-4 py-3 border-b border-border shrink-0">
         <Button

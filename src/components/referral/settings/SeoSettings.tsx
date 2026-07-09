@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { lovableCloud } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -8,8 +9,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Share2, Image, RefreshCw, CheckCircle2, AlertCircle, MoreVertical } from "lucide-react";
+import { Share2, Image, RefreshCw, CheckCircle2, AlertCircle, MoreVertical, Upload, Loader2 } from "lucide-react";
 import { getApiServerUrl } from "@/config/external-api";
+import { revisionService } from "@/services/revisionService";
+import { SettingsSkeleton } from "./SettingsSkeleton";
 
 interface SeoData {
   title: string;
@@ -47,49 +50,49 @@ export const SeoSettings = ({ projectId }: SeoSettingsProps) => {
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'saved' | 'synced' | 'live' | 'error'>('idle');
   const [requiresRepublish, setRequiresRepublish] = useState(false);
-  const [loading, setLoading] = useState(true);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if (!projectId) { setLoading(false); return; }
-    const load = async () => {
-      setLoading(true);
+  const { data: loaded, isLoading: loading } = useQuery({
+    queryKey: ["seo-settings", projectId],
+    enabled: !!projectId,
+    queryFn: async () => {
       const [{ data: seoData }, { data: proj }] = await Promise.all([
         supabase
           .from("project_settings")
           .select("setting_value")
-          .eq("project_id", projectId)
+          .eq("project_id", projectId!)
           .eq("setting_key", "seo")
           .maybeSingle(),
         supabase
           .from("projects")
           .select("name, slug, description, published_subdomain, published_url")
-          .eq("id", projectId)
+          .eq("id", projectId!)
           .single(),
       ]);
+      return { seoData, proj };
+    },
+  });
 
-      const name = proj?.name ?? "";
-      const slug = proj?.published_subdomain || proj?.slug || "";
-      setProjectName(name);
-      setProjectSlug(slug);
+  useEffect(() => {
+    if (!loaded) return;
+    const { seoData, proj } = loaded;
+    const name = proj?.name ?? "";
+    const slug = proj?.published_subdomain || proj?.slug || "";
+    setProjectName(name);
+    setProjectSlug(slug);
 
-      if (seoData?.setting_value) {
-        const saved = seoData.setting_value as Partial<SeoData>;
-        setSeo({
-          ...DEFAULT_SEO,
-          title: saved.title || name,
-          description: saved.description || proj?.description || "",
-          ...saved,
-          title: saved.title || name,
-          description: saved.description || proj?.description || "",
-        });
-      } else {
-        setSeo({ ...DEFAULT_SEO, title: name, description: proj?.description || "" });
-      }
-      setLoading(false);
-    };
-    load();
-  }, [projectId]);
+    if (seoData?.setting_value) {
+      const saved = seoData.setting_value as Partial<SeoData>;
+      setSeo({
+        ...DEFAULT_SEO,
+        ...saved,
+        title: saved.title || name,
+        description: saved.description || proj?.description || "",
+      });
+    } else {
+      setSeo({ ...DEFAULT_SEO, title: name, description: proj?.description || "" });
+    }
+  }, [loaded]);
 
   const saveToDb = useCallback(async (data: SeoData) => {
     if (!projectId) return;
@@ -140,6 +143,37 @@ export const SeoSettings = ({ projectId }: SeoSettingsProps) => {
     autoSaveTimer.current = setTimeout(() => saveToDb(next), 800);
   };
 
+  const setValue = (key: keyof SeoData, value: string) => {
+    const next = { ...seo, [key]: value };
+    setSeo(next);
+    setSyncStatus('idle');
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => saveToDb(next), 800);
+  };
+
+  const [uploadingFavicon, setUploadingFavicon] = useState(false);
+  const [uploadingOgImage, setUploadingOgImage] = useState(false);
+  const faviconInputRef = useRef<HTMLInputElement>(null);
+  const ogImageInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageUpload = async (key: "favicon" | "og_image", file: File, setUploading: (v: boolean) => void) => {
+    if (!projectId) return;
+    setUploading(true);
+    try {
+      const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+      const path = `${projectId}/${key}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("project-assets").upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data } = supabase.storage.from("project-assets").getPublicUrl(path);
+      setValue(key, data.publicUrl);
+      toast.success("Image uploaded");
+    } catch (e: any) {
+      toast.error(e.message ?? "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleSync = useCallback(async (data?: SeoData) => {
     if (!projectId) return;
     const payload = data ?? seo;
@@ -153,11 +187,19 @@ export const SeoSettings = ({ projectId }: SeoSettingsProps) => {
           { onConflict: "project_id,setting_key" }
         );
       // Then sync to site
+      const revisions = await revisionService.getRevisions(projectId, 1, 0);
+      const latest = revisions[0];
+      if (!latest) throw new Error("No revisions found — generate the project first.");
+      const files = await revisionService.getRevisionFilesForExport(projectId, latest.id);
+      const indexHtml = files.find(f => f.path === "index.html")?.content;
+      if (!indexHtml) throw new Error("index.html not found in the latest revision.");
+
       const { data: { session } } = await lovableCloud.auth.getSession();
       if (!session) throw new Error("Not authenticated");
       const res = await fetch(getApiServerUrl(`/api/v1/seo/${projectId}/sync`), {
         method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ indexHtml }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Sync failed");
@@ -182,7 +224,7 @@ export const SeoSettings = ({ projectId }: SeoSettingsProps) => {
     : "yourproject.ecomgear.app";
   const displayUrl = `https://${displayHost}`;
 
-  if (loading) return <div className="p-6 text-sm text-white/45">Loading…</div>;
+  if (loading) return <SettingsSkeleton cards={3} />;
 
   return (
     <div className="space-y-5">
@@ -339,15 +381,21 @@ export const SeoSettings = ({ projectId }: SeoSettingsProps) => {
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="seo-favicon" className="text-white/60 text-xs">Favicon URL</Label>
+            <Label htmlFor="seo-favicon" className="text-white/60 text-xs">Favicon</Label>
             <div className="flex gap-2 items-center">
               {seo.favicon && (
                 <img src={seo.favicon} alt="" className="h-6 w-6 rounded object-contain shrink-0 border border-white/[0.08]"
                   onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
               )}
               <Input id="seo-favicon" value={seo.favicon} onChange={set("favicon")}
-                placeholder="https://example.com/favicon.ico"
+                placeholder="https://example.com/favicon.ico or upload below"
                 className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 h-8 text-[13px] flex-1" />
+              <input ref={faviconInputRef} type="file" accept="image/png,image/x-icon,image/jpeg,image/webp" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleImageUpload("favicon", f, setUploadingFavicon); e.target.value = ""; }} />
+              <Button type="button" size="sm" variant="outline" disabled={uploadingFavicon || !projectId}
+                onClick={() => faviconInputRef.current?.click()} className="h-8 px-2.5 shrink-0">
+                {uploadingFavicon ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              </Button>
             </div>
             <p className="text-[11px] text-white/30">.ico or .png, 32×32px recommended</p>
           </div>
@@ -407,10 +455,18 @@ export const SeoSettings = ({ projectId }: SeoSettingsProps) => {
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="og-image" className="text-white/60 text-xs">Social Image URL</Label>
-            <Input id="og-image" value={seo.og_image} onChange={set("og_image")}
-              placeholder="https://example.com/og-image.png"
-              className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
+            <Label htmlFor="og-image" className="text-white/60 text-xs">Social Image</Label>
+            <div className="flex gap-2 items-center">
+              <Input id="og-image" value={seo.og_image} onChange={set("og_image")}
+                placeholder="https://example.com/og-image.png or upload below"
+                className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 h-8 text-[13px] flex-1" />
+              <input ref={ogImageInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleImageUpload("og_image", f, setUploadingOgImage); e.target.value = ""; }} />
+              <Button type="button" size="sm" variant="outline" disabled={uploadingOgImage || !projectId}
+                onClick={() => ogImageInputRef.current?.click()} className="h-8 px-2.5 shrink-0">
+                {uploadingOgImage ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              </Button>
+            </div>
             <p className="text-[11px] text-white/30">Recommended: 1200×630px JPG or PNG</p>
           </div>
         </CardContent>

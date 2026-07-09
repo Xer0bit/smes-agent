@@ -7,6 +7,7 @@ import { CheckCircle2, Loader2, CreditCard, Building2, ArrowRight } from "lucide
 import { useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { SettingsSkeleton } from "./SettingsSkeleton";
 
 const PLAN_COPY: Record<string, { name: string; price: string; features: string[] }> = {
   free: {
@@ -59,11 +60,7 @@ export const SubscriptionContent = () => {
   const currentPlan = PLAN_COPY[planTier || 'free'];
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+    return <SettingsSkeleton cards={2} />;
   }
 
   // Show message if user has no organization

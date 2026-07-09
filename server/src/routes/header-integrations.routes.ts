@@ -1,7 +1,4 @@
 import { Router, Response } from 'express';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
 import { projectService } from '../services/project.service.js';
@@ -18,14 +15,6 @@ interface HeaderIntegrationsData {
   whatsapp_message?: string;
   custom_head_code?: string;
   custom_body_code?: string;
-}
-
-function resolveProjectPath(projectId: string, serverPath?: string): string {
-  if (serverPath) return serverPath;
-  if (process.env.SERVER_PROJECTS_DIR) return path.join(process.env.SERVER_PROJECTS_DIR, projectId);
-  if (process.env.NODE_ENV === 'production') return path.join('/var/ecomgear/projects', projectId);
-  const localBase = process.env.LOCAL_PREVIEW_DATA || path.join(os.homedir(), '.ecomgear', 'preview');
-  return path.join(localBase, projectId);
 }
 
 const HEAD_START = '<!-- ecomgear:header-integrations:head:start -->';
@@ -128,44 +117,58 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
     }
     void project;
 
-    const [{ data: setting }, { data: projectFull }] = await Promise.all([
-      supabase
-        .from('project_settings')
-        .select('setting_value')
-        .eq('project_id', projectId)
-        .eq('setting_key', 'header_integrations')
-        .maybeSingle(),
-      supabase
-        .from('projects')
-        .select('server_path')
-        .eq('id', projectId)
-        .maybeSingle(),
-    ]);
+    const { data: setting } = await supabase
+      .from('project_settings')
+      .select('setting_value')
+      .eq('project_id', projectId)
+      .eq('setting_key', 'header_integrations')
+      .maybeSingle();
+
+    // The project's real index.html lives on VPS2 (preview-service) — the
+    // live dev-server source that /export builds from — not on this server's
+    // disk. The client sends its current content (same source the editor and
+    // preview already use) so we can inject/update the integration snippets.
+    const original = req.body?.indexHtml as string | undefined;
+    if (!original) {
+      res.status(400).json({ error: 'No index.html content provided to sync.' });
+      return;
+    }
 
     const data = (setting?.setting_value as HeaderIntegrationsData) ?? {};
-    const appPath = resolveProjectPath(projectId, (projectFull as any)?.server_path);
-    const htmlPath = path.join(appPath, 'index.html');
-
-    if (!fs.existsSync(htmlPath)) {
-      res.status(404).json({ error: 'index.html not found — the project has not been built yet. Ask the agent to build it first.' });
-      return;
-    }
-
-    const original = fs.readFileSync(htmlPath, 'utf8');
     const updated = applyHeaderIntegrationsToHtml(original, data);
-
-    if (updated === original) {
-      res.json({ message: 'index.html already up to date — no changes needed.', changed: false });
-      return;
-    }
-
-    fs.writeFileSync(htmlPath, updated, 'utf8');
 
     // Trigger production rebuild + redeploy, same flow as SEO sync:
     // VPS2 (preview-service) exports a fresh build → VPS4 (hosting-service) serves it.
     const PREVIEW_BASE = (process.env.VITE_PREVIEW_SERVICE_URL || process.env.PREVIEW_SERVICE_URL || '').replace(/\/$/, '');
     const HOSTING_BASE  = (process.env.VITE_HOSTING_SERVICE_URL || process.env.HOSTING_SERVICE_URL || '').replace(/\/$/, '');
     const HOSTING_SECRET = process.env.VITE_HOSTING_SERVICE_SECRET || process.env.HOSTING_SERVICE_SECRET || '';
+    const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || '';
+
+    if (updated === original) {
+      res.json({ message: 'index.html already up to date — no changes needed.', changed: false });
+      return;
+    }
+
+    if (!PREVIEW_BASE) {
+      res.status(500).json({ error: 'Preview service is not configured on this server.' });
+      return;
+    }
+
+    // Write the updated index.html into the live preview project before
+    // exporting — /export builds from that source directory.
+    const updateRes = await fetch(`${PREVIEW_BASE}/preview/${projectId}/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(PREVIEW_UPDATE_SECRET ? { 'x-update-secret': PREVIEW_UPDATE_SECRET } : {}),
+      },
+      body: JSON.stringify({ files: [{ path: 'index.html', content: updated }] }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!updateRes.ok) {
+      res.status(502).json({ error: `Failed to write index.html to preview service: ${updateRes.status}` });
+      return;
+    }
 
     let productionDeployed = false;
     let deployError: string | null = null;

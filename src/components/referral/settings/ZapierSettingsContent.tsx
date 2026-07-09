@@ -4,12 +4,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CreditCard, ExternalLink, Loader2, Eye, EyeOff } from "lucide-react";
+import { Zap, ExternalLink, Loader2, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { SettingsSkeleton } from "./SettingsSkeleton";
 
-interface StripeSettingsContentProps {
+interface ZapierSettingsContentProps {
   projectId?: string;
 }
 
@@ -17,15 +17,17 @@ interface FieldState {
   keyName: string;
   label: string;
   placeholder: string;
-  sensitive: boolean; // masked-by-default input type; publishable keys aren't actually secret
-  preview: string | null; // existing masked preview from the DB, or null if unset
-  value: string; // new value being entered (empty = leave unchanged)
+  sensitive: boolean;
+  preview: string | null;
+  value: string;
 }
 
+// Zapier's MCP URL (https://mcp.zapier.com/mcp/YOUR-SECRET-KEY) already embeds
+// the secret — a separate bearer token is only needed for MCP servers that
+// require one, so it's kept optional here.
 const FIELD_DEFS: Omit<FieldState, "preview" | "value">[] = [
-  { keyName: "STRIPE_PUBLISHABLE_KEY", label: "Publishable Key", placeholder: "pk_live_...", sensitive: false },
-  { keyName: "STRIPE_SECRET_KEY", label: "Secret Key", placeholder: "sk_live_...", sensitive: true },
-  { keyName: "STRIPE_WEBHOOK_SECRET", label: "Webhook Signing Secret", placeholder: "whsec_...", sensitive: true },
+  { keyName: "ECG_MCP_URL", label: "Zapier MCP URL", placeholder: "https://mcp.zapier.com/mcp/...", sensitive: true },
+  { keyName: "ECG_MCP_TOKEN", label: "Bearer Token (optional)", placeholder: "Only if your MCP server requires one", sensitive: true },
 ];
 
 function extractErrorMessage(err: unknown, fallback: string): string {
@@ -36,13 +38,13 @@ function extractErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
-export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps) => {
+export const ZapierSettingsContent = ({ projectId }: ZapierSettingsContentProps) => {
   const [fields, setFields] = useState<FieldState[]>(FIELD_DEFS.map(f => ({ ...f, preview: null, value: "" })));
   const [reveal, setReveal] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
 
   const { data: previewRows, isLoading: loading } = useQuery({
-    queryKey: ["stripe-keys", projectId],
+    queryKey: ["zapier-connection", projectId],
     enabled: !!projectId,
     queryFn: async () => {
       const { data } = await supabase
@@ -67,22 +69,21 @@ export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps)
   const handleSave = async () => {
     if (!projectId) return;
     const toSave = fields.filter(f => f.value.trim().length > 0);
-    if (toSave.length === 0) { toast.error("Enter at least one key to save."); return; }
+    if (toSave.length === 0) { toast.error("Paste your Zapier MCP URL to connect."); return; }
 
     setSaving(true);
     try {
       for (const f of toSave) {
         const value = f.value.trim();
         const preview = value.length > 4 ? `****${value.slice(-4)}` : "****";
-        // No UPDATE policy on project_secrets — replace via delete-then-insert
-        // instead of upsert, matching the generic Secrets panel's pattern.
+        // No UPDATE policy on project_secrets — replace via delete-then-insert.
         await supabase.from("project_secrets").delete().eq("project_id", projectId).eq("key_name", f.keyName);
         const { error } = await supabase
           .from("project_secrets")
           .insert({ project_id: projectId, key_name: f.keyName, key_value: value, key_preview: preview });
         if (error) throw error;
       }
-      toast.success("Stripe keys saved.");
+      toast.success("Zapier connected.");
       setFields(prev => prev.map(f => {
         const saved = toSave.find(s => s.keyName === f.keyName);
         if (!saved) return f;
@@ -91,33 +92,54 @@ export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps)
         return { ...f, preview, value: "" };
       }));
     } catch (err: unknown) {
-      toast.error(extractErrorMessage(err, "Failed to save Stripe keys"));
+      toast.error(extractErrorMessage(err, "Failed to save Zapier connection"));
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) return <SettingsSkeleton cards={1} />;
+  if (loading) return <SettingsSkeleton cards={2} />;
+
+  const connected = fields.find(f => f.keyName === "ECG_MCP_URL")?.preview != null;
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-white/85 mb-1">Stripe</h2>
-        <p className="text-sm text-white/45">Accept payments and manage subscriptions via Stripe.</p>
+        <h2 className="text-xl font-semibold text-white/85 mb-1">Zapier</h2>
+        <p className="text-sm text-white/45">Give your project's AI chat access to the tools you've set up in Zapier.</p>
       </div>
 
       <Card className="bg-[#0f0f12] border-white/[0.07]">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base text-white/85">
-            <CreditCard className="h-4 w-4 text-indigo-400" />
-            API Keys
+            <Zap className="h-4 w-4 text-amber-400" />
+            How to connect
           </CardTitle>
-          <CardDescription className="text-white/45 text-xs flex items-center gap-1">
-            Find these in your{" "}
-            <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener noreferrer"
-              className="text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-0.5">
-              Stripe Dashboard <ExternalLink className="h-3 w-3" />
-            </a>
+        </CardHeader>
+        <CardContent className="space-y-2 text-[13px] text-white/60">
+          <ol className="list-decimal list-inside space-y-1.5">
+            <li>In Zapier, add the tools/actions you want available to your AI agent.</li>
+            <li>
+              Click the <strong className="text-white/80">Connect</strong> tab at the top — Zapier gives you an MCP URL that
+              looks like <code className="bg-[#0a0a0d] px-1 py-0.5 rounded text-[11px]">https://mcp.zapier.com/mcp/YOUR-SECRET-KEY</code>.
+            </li>
+            <li>Copy that URL (treat it like a password — don't share it) and paste it below.</li>
+          </ol>
+          <a href="https://mcp.zapier.com" target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 pt-1">
+            Open Zapier MCP <ExternalLink className="h-3 w-3" />
+          </a>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-[#0f0f12] border-white/[0.07]">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base text-white/85">Connection</CardTitle>
+            {connected && <span className="text-[11px] font-medium text-emerald-400">● Connected</span>}
+          </div>
+          <CardDescription className="text-white/45 text-xs">
+            Saved here — never displayed again in plaintext after saving.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -150,7 +172,7 @@ export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps)
 
           <Button size="sm" onClick={handleSave} disabled={saving} className="h-8 px-4 text-[13px] bg-indigo-600 hover:bg-indigo-500 text-white">
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
-            {saving ? "Saving…" : "Save Keys"}
+            {saving ? "Connecting…" : "Connect"}
           </Button>
         </CardContent>
       </Card>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { lovableCloud } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -9,6 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BarChart3, MessageCircle, Code2, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
 import { getApiServerUrl } from "@/config/external-api";
+import { revisionService } from "@/services/revisionService";
+import { SettingsSkeleton } from "./SettingsSkeleton";
 
 interface HeaderIntegrationsData {
   ga_measurement_id: string;
@@ -40,27 +43,27 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'saved' | 'synced' | 'live' | 'error'>('idle');
   const [requiresRepublish, setRequiresRepublish] = useState(false);
-  const [loading, setLoading] = useState(true);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if (!projectId) { setLoading(false); return; }
-    const load = async () => {
-      setLoading(true);
-      const { data: row } = await supabase
+  const { data: row, isLoading: loading } = useQuery({
+    queryKey: ["header-integrations", projectId],
+    enabled: !!projectId,
+    queryFn: async () => {
+      const { data } = await supabase
         .from("project_settings")
         .select("setting_value")
-        .eq("project_id", projectId)
+        .eq("project_id", projectId!)
         .eq("setting_key", "header_integrations")
         .maybeSingle();
+      return data;
+    },
+  });
 
-      if (row?.setting_value) {
-        setData({ ...DEFAULT_DATA, ...(row.setting_value as Partial<HeaderIntegrationsData>) });
-      }
-      setLoading(false);
-    };
-    load();
-  }, [projectId]);
+  useEffect(() => {
+    if (row?.setting_value) {
+      setData({ ...DEFAULT_DATA, ...(row.setting_value as Partial<HeaderIntegrationsData>) });
+    }
+  }, [row]);
 
   const saveToDb = useCallback(async (next: HeaderIntegrationsData) => {
     if (!projectId) return;
@@ -102,11 +105,19 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
           { project_id: projectId, setting_key: "header_integrations", setting_value: data },
           { onConflict: "project_id,setting_key" }
         );
+      const revisions = await revisionService.getRevisions(projectId, 1, 0);
+      const latest = revisions[0];
+      if (!latest) throw new Error("No revisions found — generate the project first.");
+      const files = await revisionService.getRevisionFilesForExport(projectId, latest.id);
+      const indexHtml = files.find(f => f.path === "index.html")?.content;
+      if (!indexHtml) throw new Error("index.html not found in the latest revision.");
+
       const { data: { session } } = await lovableCloud.auth.getSession();
       if (!session) throw new Error("Not authenticated");
       const res = await fetch(getApiServerUrl(`/api/v1/header-integrations/${projectId}/sync`), {
         method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ indexHtml }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Sync failed");
@@ -124,7 +135,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
     }
   }, [projectId, data]);
 
-  if (loading) return <div className="p-6 text-sm text-white/45">Loading…</div>;
+  if (loading) return <SettingsSkeleton cards={3} />;
 
   return (
     <div className="space-y-5">

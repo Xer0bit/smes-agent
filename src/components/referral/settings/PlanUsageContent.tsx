@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { getUsageColor, getProgressColor } from "@/hooks/useUsage";
 import { TIER_LIMITS, TIER_LABELS, TIER_FEATURES } from "@/services/subscriptionService";
+import { SettingsSkeleton } from "./SettingsSkeleton";
 
 const PLAN_CARDS = [
   {
@@ -72,11 +73,7 @@ export const PlanUsageContent = () => {
   const loading = usageLoading || subLoading;
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+    return <SettingsSkeleton cards={3} />;
   }
 
   const ecoLimit = getUsageLimit();

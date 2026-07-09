@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { KeyRound, Plus, Trash2, Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface SecretRow {
   id: string;
@@ -30,8 +32,8 @@ function extractErrorMessage(err: unknown, fallback: string): string {
 }
 
 export function SecretsSettings({ projectId }: SecretsSettingsProps) {
-  const [secrets, setSecrets] = useState<SecretRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const queryKey = ["project-secrets", projectId];
   const [adding, setAdding] = useState(false);
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
@@ -39,27 +41,19 @@ export function SecretsSettings({ projectId }: SecretsSettingsProps) {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const load = async () => {
-    if (!projectId) return;
-    setLoading(true);
-    try {
+  const { data: secrets = [], isLoading: loading } = useQuery({
+    queryKey,
+    enabled: !!projectId,
+    queryFn: async () => {
       const { data, error } = await supabase
         .from('project_secrets')
         .select('id, key_name, key_preview, created_at')
-        .eq('project_id', projectId)
+        .eq('project_id', projectId!)
         .order('created_at', { ascending: true });
       if (error) throw error;
-      setSecrets(data ?? []);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('[SecretsSettings] failed to load project_secrets:', msg);
-      setSecrets([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, [projectId]);
+      return (data ?? []) as SecretRow[];
+    },
+  });
 
   const handleAdd = async () => {
     const trimmedKey = newKey.trim().replace(/\s+/g, '_').toUpperCase();
@@ -84,7 +78,7 @@ export function SecretsSettings({ projectId }: SecretsSettingsProps) {
       setNewKey('');
       setNewValue('');
       setAdding(false);
-      await load();
+      queryClient.invalidateQueries({ queryKey });
     } catch (err: unknown) {
       const msg = extractErrorMessage(err, 'Failed to save secret');
       toast.error(msg);
@@ -99,7 +93,7 @@ export function SecretsSettings({ projectId }: SecretsSettingsProps) {
       const { error } = await supabase.from('project_secrets').delete().eq('id', id);
       if (error) throw error;
       toast.success(`Secret "${keyName}" deleted.`);
-      setSecrets(prev => prev.filter(s => s.id !== id));
+      queryClient.setQueryData(queryKey, (prev: SecretRow[] | undefined) => (prev ?? []).filter(s => s.id !== id));
     } catch (err: unknown) {
       const msg = extractErrorMessage(err, 'Failed to delete secret');
       toast.error(msg);
@@ -129,8 +123,9 @@ export function SecretsSettings({ projectId }: SecretsSettingsProps) {
         </CardHeader>
         <CardContent className="space-y-4">
           {loading ? (
-            <div className="flex items-center gap-2 text-sm text-white/45 py-2">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            <div className="space-y-2 py-1">
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
             </div>
           ) : secrets.length === 0 && !adding ? (
             <p className="text-sm text-white/45 py-2">No secrets yet.</p>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useParams, useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/contexts/OrganizationContext";
@@ -16,6 +17,7 @@ import type { ActivityType } from "@/components/ProjectActivityIndicator";
 import { AgentChatPanel } from "@/components/chat/_ui_/AgentChatPanel";
 import { SettingsDialog } from "@/components/referral/settings/SettingsDialog";
 import { buildPreviewNavigationUrl, normalizePreviewRoute } from "@/utils/previewNavigation";
+import { getApiServerUrl } from "@/config/external-api";
 
 import {
   Settings,
@@ -25,7 +27,7 @@ import {
   Monitor,
   Smartphone,
   Tablet,
-  Share2,
+  Github,
   Cloud,
   Bot,
   Globe,
@@ -71,7 +73,6 @@ import { messageService } from "@/eCG/UserPrompt/messageService";
 import { generatePreview } from "@/eCG/Preview/previewGenerator";
 import { checkPreviewHealth, updateDockerPreview, getPreviewUrl, handlePreviewSessionExpired } from "@/services/previewHealthService";
 import { validateAndFixFiles, getFixedContent } from "@/services/fileValidationService";
-import { ProjectShareDialog } from "@/components/ProjectShareDialog";
 import { QuotaLimitDialog } from "@/components/QuotaLimitDialog";
 import { useSubscription } from "@/contexts/SubscriptionContext"; // single source — hasFeature/tier/tierLabel now on context
 import { domainService } from "@/eCG/Publish";
@@ -658,8 +659,38 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
 
 
 
-  // Preview link dialog state
-  const [showShareDialog, setShowShareDialog] = useState(false);
+  // GitHub status — used by the header's GitHub button to decide whether to
+  // open the quick-details popover or send the user to the connect screen.
+  // Shares a query key with GitHubSettings.tsx so both read from the same
+  // cache instead of each hitting the API independently.
+  const [githubPopoverOpen, setGithubPopoverOpen] = useState(false);
+
+  const { data: githubStatus } = useQuery({
+    queryKey: ["github-status"],
+    enabled: !!projectId,
+    queryFn: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return { connected: false };
+      const res = await fetch(getApiServerUrl("/api/v1/github/status"), {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      return res.json().catch(() => ({ connected: false })) as Promise<{ connected: boolean; login?: string; avatarUrl?: string | null }>;
+    },
+  });
+
+  const { data: githubLinkData } = useQuery({
+    queryKey: ["github-link", projectId],
+    enabled: !!projectId && !!githubStatus?.connected,
+    queryFn: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return { link: null };
+      const res = await fetch(getApiServerUrl(`/api/v1/github/${projectId}/link`), {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      return res.json().catch(() => ({ link: null })) as Promise<{ link: { fullName: string; branch: string } | null }>;
+    },
+  });
+  const githubLink = githubLinkData?.link ?? null;
 
   const effectivePreviewUrl = previewUrl || latestPreviewUrl || fallbackPreviewUrl || null;
   const hasLoadedCode = workspaceFiles.size > 0 || generatedFiles.length > 0 || generatedCode.trim().length > 0;
@@ -2853,16 +2884,41 @@ export default defineConfig({
               </Tooltip>
 
               {canRenderProjectActions && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" disabled={!canInteractWithPublishActions}
-                      onClick={() => setShowShareDialog(true)}
-                      className="h-7 w-7 rounded-md text-white/25 hover:text-white/70 hover:bg-white/[0.06] disabled:text-white/10 disabled:hover:bg-transparent">
-                      <Share2 className="h-3.5 w-3.5" />
+                <Popover
+                  open={githubPopoverOpen}
+                  onOpenChange={(next) => { if (githubStatus?.connected) setGithubPopoverOpen(next); }}
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <PopoverTrigger asChild>
+                        <Button variant="ghost" size="icon"
+                          onClick={() => { if (!githubStatus?.connected) openSettings('project-integrations'); }}
+                          className="h-7 w-7 rounded-md text-white/25 hover:text-white/70 hover:bg-white/[0.06]">
+                          <Github className="h-3.5 w-3.5" />
+                        </Button>
+                      </PopoverTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent className="z-[300]"><p>{githubStatus?.connected ? 'GitHub' : 'Connect GitHub'}</p></TooltipContent>
+                  </Tooltip>
+                  <PopoverContent align="end" className="w-64 z-[300] p-3 space-y-2">
+                    <p className="text-[11px] text-white/45">
+                      Connected as <strong className="text-white/80">{githubStatus?.login}</strong>
+                    </p>
+                    {githubLink ? (
+                      <a href={`https://github.com/${githubLink.fullName}`} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-[12px] text-indigo-400 hover:text-indigo-300">
+                        <ExternalLink className="h-3 w-3" />
+                        {githubLink.fullName} ({githubLink.branch})
+                      </a>
+                    ) : (
+                      <p className="text-[11px] text-white/45">No repository linked yet.</p>
+                    )}
+                    <Button size="sm" variant="outline" onClick={() => { setGithubPopoverOpen(false); openSettings('project-integrations'); }}
+                      className="h-7 w-full text-[11px]">
+                      Manage
                     </Button>
-                  </TooltipTrigger>
-                  <TooltipContent className="z-[300]"><p>{canInteractWithPublishActions ? 'Share preview' : 'Generate a preview to enable sharing'}</p></TooltipContent>
-                </Tooltip>
+                  </PopoverContent>
+                </Popover>
               )}
 
               {canRenderProjectActions && (
@@ -3751,20 +3807,6 @@ export default defineConfig({
             </div>
           </DialogContent>
         </Dialog>
-
-        {/* Project Share Dialog */}
-        {projectId && (
-          <ProjectShareDialog
-            open={showShareDialog}
-            onOpenChange={setShowShareDialog}
-            projectId={projectId}
-            projectName={project?.name}
-            previewUrl={sharePreviewUrl}
-            publishedUrl={publishedUrl || project?.published_url || null}
-            onManageCollaborators={() => openSettings('project-collaborators')}
-          />
-        )}
-
 
         {/* Settings Dialog — opens in-place so the editor/preview stay mounted */}
         {projectId && (

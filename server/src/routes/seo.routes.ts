@@ -1,7 +1,4 @@
 import { Router, Response } from 'express';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
 import { projectService } from '../services/project.service.js';
@@ -20,14 +17,6 @@ interface SeoData {
   og_image?: string;
   robots?: string;
   google_verification?: string;
-}
-
-function resolveProjectPath(projectId: string, serverPath?: string): string {
-  if (serverPath) return serverPath;
-  if (process.env.SERVER_PROJECTS_DIR) return path.join(process.env.SERVER_PROJECTS_DIR, projectId);
-  if (process.env.NODE_ENV === 'production') return path.join('/var/ecomgear/projects', projectId);
-  const localBase = process.env.LOCAL_PREVIEW_DATA || path.join(os.homedir(), '.ecomgear', 'preview');
-  return path.join(localBase, projectId);
 }
 
 /** Inject or replace a <meta> tag in the HTML head. */
@@ -71,6 +60,21 @@ function injectGoogleVerification(html: string, content: string): string {
   return injectMeta(html, 'name="google-site-verification"', content);
 }
 
+const STRUCTURED_DATA_ID = 'ecomgear-structured-data';
+
+/** Inject or replace a JSON-LD WebSite schema block, keyed by a stable id so re-syncing replaces instead of duplicating. */
+function injectStructuredData(html: string, seo: SeoData, projectUrl: string): string {
+  const schema: Record<string, string> = { '@context': 'https://schema.org', '@type': 'WebSite' };
+  if (seo.title) schema.name = seo.title;
+  if (seo.description) schema.description = seo.description;
+  if (projectUrl) schema.url = projectUrl;
+
+  const script = `<script type="application/ld+json" id="${STRUCTURED_DATA_ID}">${JSON.stringify(schema)}</script>`;
+  const existingRe = new RegExp(`<script[^>]+id=["']${STRUCTURED_DATA_ID}["'][^>]*>[\\s\\S]*?<\\/script>`, 'i');
+  if (existingRe.test(html)) return html.replace(existingRe, script);
+  return html.replace('</head>', `  ${script}\n</head>`);
+}
+
 export function applySeoToHtml(html: string, seo: SeoData, projectUrl = ''): string {
   let out = html;
 
@@ -95,7 +99,19 @@ export function applySeoToHtml(html: string, seo: SeoData, projectUrl = ''): str
   if (ogDesc)       out = injectMeta(out, 'name="twitter:description"', ogDesc);
   if (seo.og_image) out = injectMeta(out, 'name="twitter:image"', seo.og_image);
 
+  // Structured data (JSON-LD)
+  if (seo.title || projectUrl) out = injectStructuredData(out, seo, projectUrl);
+
   return out;
+}
+
+// ponytail: sitemap covers the homepage only. The scaffold's HashRouter
+// routes (/#/path) aren't distinct crawlable URLs to begin with, so listing
+// more entries needs real route detection first — add when BrowserRouter
+// projects with discoverable routes are common enough to matter.
+function buildSitemapXml(projectUrl: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url>\n    <loc>${projectUrl}</loc>\n    <lastmod>${today}</lastmod>\n  </url>\n</urlset>\n`;
 }
 
 // ── POST /api/v1/seo/:projectId/sync ─────────────────────────────────────────
@@ -112,7 +128,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
       return;
     }
 
-    // 2. Load SEO settings + all needed project columns in parallel (single projects query)
+    // 2. Load SEO settings + project columns in parallel
     const [{ data: setting }, { data: projectFull }] = await Promise.all([
       supabase
         .from('project_settings')
@@ -122,7 +138,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
         .maybeSingle(),
       supabase
         .from('projects')
-        .select('name, description, published_subdomain, published_url, server_path')
+        .select('name, description, published_subdomain, published_url')
         .eq('id', projectId)
         .maybeSingle(),
     ]);
@@ -146,17 +162,16 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
       google_verification: saved.google_verification || '',
     };
 
-    // 3. Resolve project path (from the same projectFull query above)
-    const appPath = resolveProjectPath(projectId, (projectFull as any)?.server_path);
-    const htmlPath = path.join(appPath, 'index.html');
-
-    if (!fs.existsSync(htmlPath)) {
-      res.status(404).json({ error: 'index.html not found — the project has not been built yet. Ask the agent to build it first.' });
+    // 3. The project's real index.html lives on VPS2 (preview-service) — the
+    // live dev-server source that /export builds from — not on this server's
+    // disk. The client sends its current content (same source used for
+    // GitHub push / header-integrations sync).
+    const original = req.body?.indexHtml as string | undefined;
+    if (!original) {
+      res.status(400).json({ error: 'No index.html content provided to sync.' });
       return;
     }
 
-    // 4. Read, inject, write back
-    const original = fs.readFileSync(htmlPath, 'utf8');
     const projectUrl = projectCustomDomain
       ? `https://${projectCustomDomain}`
       : projectSubdomain
@@ -165,31 +180,55 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
 
     const updated = applySeoToHtml(original, seo, projectUrl);
 
-    if (updated === original) {
+    const PREVIEW_BASE = (process.env.VITE_PREVIEW_SERVICE_URL || process.env.PREVIEW_SERVICE_URL || '').replace(/\/$/, '');
+    const HOSTING_BASE  = (process.env.VITE_HOSTING_SERVICE_URL || process.env.HOSTING_SERVICE_URL || '').replace(/\/$/, '');
+    const HOSTING_SECRET = process.env.VITE_HOSTING_SERVICE_SECRET || process.env.HOSTING_SERVICE_SECRET || '';
+    const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || '';
+
+    // 4. Write index.html (+ robots.txt/sitemap.xml, if applicable) into the
+    // live preview project before exporting — /export builds from that source
+    // directory. robots.txt/sitemap.xml are written whenever their settings
+    // are on, even if index.html itself didn't change (those are separate
+    // files, not something index.html-diffing alone would catch).
+    const filesToWrite: { path: string; content: string }[] = [];
+    if (updated !== original) filesToWrite.push({ path: 'index.html', content: updated });
+    if (seo.robots) {
+      const robotsContent = seo.robots.includes('noindex')
+        ? `User-agent: *\nDisallow: /\n`
+        : `User-agent: *\nAllow: /\nSitemap: /sitemap.xml\n`;
+      filesToWrite.push({ path: 'public/robots.txt', content: robotsContent });
+    }
+    if (projectUrl) {
+      filesToWrite.push({ path: 'public/sitemap.xml', content: buildSitemapXml(projectUrl) });
+    }
+
+    if (filesToWrite.length === 0) {
       res.json({ message: 'index.html already up to date — no changes needed.', changed: false });
       return;
     }
 
-    fs.writeFileSync(htmlPath, updated, 'utf8');
-
-    // 5. Also write/update public/robots.txt if robots setting is present
-    if (seo.robots) {
-      const publicDir = path.join(appPath, 'public');
-      if (fs.existsSync(publicDir)) {
-        const robotsContent = seo.robots.includes('noindex')
-          ? `User-agent: *\nDisallow: /\n`
-          : `User-agent: *\nAllow: /\nSitemap: /sitemap.xml\n`;
-        fs.writeFileSync(path.join(publicDir, 'robots.txt'), robotsContent, 'utf8');
-      }
+    if (!PREVIEW_BASE) {
+      res.status(500).json({ error: 'Preview service is not configured on this server.' });
+      return;
     }
 
-    // 6. Trigger production rebuild + redeploy if hosting is configured.
+    const updateRes = await fetch(`${PREVIEW_BASE}/preview/${projectId}/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(PREVIEW_UPDATE_SECRET ? { 'x-update-secret': PREVIEW_UPDATE_SECRET } : {}),
+      },
+      body: JSON.stringify({ files: filesToWrite }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!updateRes.ok) {
+      res.status(502).json({ error: `Failed to write index.html to preview service: ${updateRes.status}` });
+      return;
+    }
+
+    // 5. Trigger production rebuild + redeploy if hosting is configured.
     //    Flow: VPS2 (preview-service) → vite build → export built dist/ files
     //          VPS4 (hosting-service) → serve built files at user's domain
-    const PREVIEW_BASE = (process.env.VITE_PREVIEW_SERVICE_URL || process.env.PREVIEW_SERVICE_URL || '').replace(/\/$/, '');
-    const HOSTING_BASE  = (process.env.VITE_HOSTING_SERVICE_URL || process.env.HOSTING_SERVICE_URL || '').replace(/\/$/, '');
-    const HOSTING_SECRET = process.env.VITE_HOSTING_SERVICE_SECRET || process.env.HOSTING_SERVICE_SECRET || '';
-
     let productionDeployed = false;
     let deployError: string | null = null;
 
@@ -255,45 +294,6 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
           ? `SEO saved to source. Production redeploy failed: ${deployError}. Re-publish your app to go live.`
           : 'SEO synced to source. Re-publish your app from the editor to push changes live.',
       requiresRepublish: !productionDeployed,
-    });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
-});
-
-// ── GET /api/v1/seo/:projectId/preview — return current index.html head tags ─
-router.get('/:projectId/preview', async (req: AuthenticatedRequest, res: Response) => {
-  const { projectId } = req.params;
-  try {
-    try {
-      await projectService.getProject(projectId, req.user!.id);
-    } catch {
-      res.status(404).json({ error: 'Not found' });
-      return;
-    }
-
-    const { data: serverPathRow } = await supabase
-      .from('projects').select('server_path').eq('id', projectId).maybeSingle();
-    const appPath = resolveProjectPath(projectId, (serverPathRow as any)?.server_path);
-    const htmlPath = path.join(appPath, 'index.html');
-
-    if (!fs.existsSync(htmlPath)) {
-      res.json({ synced: false, message: 'No index.html found yet.' });
-      return;
-    }
-
-    const html = fs.readFileSync(htmlPath, 'utf8');
-    const titleMatch = html.match(/<title>([^<]*)<\/title>/i);
-    const descMatch  = html.match(/<meta\s+name="description"\s+content="([^"]*)"/i);
-    const robotsMatch = html.match(/<meta\s+name="robots"\s+content="([^"]*)"/i);
-
-    res.json({
-      synced: true,
-      current: {
-        title: titleMatch?.[1] ?? '',
-        description: descMatch?.[1] ?? '',
-        robots: robotsMatch?.[1] ?? '',
-      },
     });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });

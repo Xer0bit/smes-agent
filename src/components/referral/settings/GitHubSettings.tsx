@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,17 +10,11 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { GitBranch, ExternalLink, RefreshCw, Unlink } from "lucide-react";
 import { getApiServerUrl } from "@/config/external-api";
+import { revisionService } from "@/services/revisionService";
+import { SettingsSkeleton } from "./SettingsSkeleton";
 
 interface GitHubSettingsProps {
   projectId?: string;
-}
-
-interface RepoOption {
-  id: number;
-  fullName: string;
-  private: boolean;
-  defaultBranch: string;
-  htmlUrl: string;
 }
 
 async function authedFetch(path: string, opts: RequestInit = {}) {
@@ -36,99 +31,77 @@ async function authedFetch(path: string, opts: RequestInit = {}) {
 
 export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [connected, setConnected] = useState<{ login: string; avatarUrl: string | null } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [connecting, setConnecting] = useState(false);
-  const [repos, setRepos] = useState<RepoOption[]>([]);
-  const [reposLoading, setReposLoading] = useState(false);
-  const [selectedRepo, setSelectedRepo] = useState<string>("");
-  const [branch, setBranch] = useState("main");
-  const [linked, setLinked] = useState<{ fullName: string; branch: string } | null>(null);
-  const [linking, setLinking] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [lastPushUrl, setLastPushUrl] = useState<string | null>(null);
   const [creatingRepo, setCreatingRepo] = useState(false);
   const [newRepoName, setNewRepoName] = useState("");
+  const [visibility, setVisibility] = useState<"private" | "public">("private");
 
-  const loadStatus = useCallback(async () => {
-    setLoading(true);
-    try {
-      const status = await authedFetch("/status");
-      setConnected(status.connected ? { login: status.login, avatarUrl: status.avatarUrl } : null);
-    } catch (e: any) {
-      toast.error(e.message ?? "Failed to load GitHub status");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { data: status, isLoading: statusLoading } = useQuery({
+    queryKey: ["github-status"],
+    queryFn: () => authedFetch("/status") as Promise<{ connected: boolean; login?: string; avatarUrl?: string | null }>,
+  });
+  const connected = status?.connected ? { login: status.login!, avatarUrl: status.avatarUrl ?? null } : null;
+
+  const { data: linkData, isLoading: linkLoading } = useQuery({
+    queryKey: ["github-link", projectId],
+    enabled: !!connected && !!projectId,
+    queryFn: () => authedFetch(`/${projectId}/link`) as Promise<{ link: { fullName: string; branch: string } | null }>,
+  });
+  const linked = linkData?.link ?? null;
+  const loading = statusLoading || (!!connected && linkLoading);
 
   useEffect(() => {
     const ghParam = searchParams.get("github");
-    if (ghParam === "connected") toast.success("GitHub account connected");
+    if (ghParam === "connected") toast.success("GitHub account connected — name a repository below to save your project");
     if (ghParam === "error") toast.error("Failed to connect GitHub account");
     if (ghParam) {
       const p = new URLSearchParams(searchParams);
       p.delete("github");
       setSearchParams(p, { replace: true });
     }
-    loadStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (!connected || !projectId) return;
-    (async () => {
-      try {
-        const { link } = await authedFetch(`/${projectId}/link`);
-        if (link) { setLinked(link); setSelectedRepo(link.fullName); setBranch(link.branch); }
-      } catch { /* non-fatal */ }
-      setReposLoading(true);
-      try {
-        const { repos: list } = await authedFetch("/repos");
-        setRepos(list);
-      } catch (e: any) {
-        toast.error(e.message ?? "Failed to load repositories");
-      } finally {
-        setReposLoading(false);
-      }
-    })();
-  }, [connected, projectId]);
 
   const handleConnect = async () => {
     setConnecting(true);
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { toast.error("Not authenticated"); setConnecting(false); return; }
-    window.location.href = getApiServerUrl(`/api/v1/github/connect?token=${encodeURIComponent(session.access_token)}`);
+    const params = new URLSearchParams({ token: session.access_token });
+    if (projectId) params.set("projectId", projectId);
+    window.location.href = getApiServerUrl(`/api/v1/github/connect?${params.toString()}`);
   };
 
   const handleDisconnect = async () => {
     try {
       await authedFetch("/disconnect", { method: "DELETE" });
-      setConnected(null);
-      setRepos([]);
-      setLinked(null);
+      queryClient.setQueryData(["github-status"], { connected: false });
+      queryClient.setQueryData(["github-link", projectId], { link: null });
       toast.success("GitHub account disconnected");
     } catch (e: any) {
       toast.error(e.message ?? "Failed to disconnect");
     }
   };
 
-  const handleLink = async () => {
-    if (!projectId || !selectedRepo) return;
-    setLinking(true);
-    try {
-      await authedFetch(`/${projectId}/link`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fullName: selectedRepo, branch }),
-      });
-      setLinked({ fullName: selectedRepo, branch });
-      toast.success(`Linked to ${selectedRepo}`);
-    } catch (e: any) {
-      toast.error(e.message ?? "Failed to link repository");
-    } finally {
-      setLinking(false);
-    }
+  // Shared by both "Create & Connect" (first push into a fresh repo) and the
+  // "Commit to GitHub" button (subsequent pushes) — same commit logic either way.
+  const pushCurrentCode = async () => {
+    if (!projectId) return;
+    const revisions = await revisionService.getRevisions(projectId, 1, 0);
+    const latest = revisions[0];
+    if (!latest) throw new Error("No revisions found — generate the project first.");
+    const files = await revisionService.getRevisionFilesForExport(projectId, latest.id);
+    if (files.length === 0) throw new Error("No files found in the latest revision.");
+
+    const result = await authedFetch(`/${projectId}/push`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files }),
+    });
+    setLastPushUrl(result.commitUrl);
+    return result;
   };
 
   const handleCreateRepo = async () => {
@@ -138,14 +111,20 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
       const result = await authedFetch(`/${projectId}/create-repo`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newRepoName.trim(), private: true }),
+        body: JSON.stringify({ name: newRepoName.trim(), private: visibility === "private" }),
       });
-      setLinked({ fullName: result.fullName, branch: result.branch });
-      setSelectedRepo(result.fullName);
-      setBranch(result.branch);
-      setRepos(prev => [{ id: Date.now(), fullName: result.fullName, private: true, defaultBranch: result.branch, htmlUrl: result.htmlUrl }, ...prev]);
+      queryClient.setQueryData(["github-link", projectId], { link: { fullName: result.fullName, branch: result.branch } });
       setNewRepoName("");
-      toast.success(`Created and linked ${result.fullName}`);
+      toast.success(`Created ${result.fullName} — uploading your code…`);
+
+      try {
+        const pushResult = await pushCurrentCode();
+        toast.success(`Uploaded ${pushResult.filesPushed} files to GitHub`);
+      } catch (pushErr: any) {
+        // Repo exists and is linked even if this first push failed — the user
+        // can retry via "Commit to GitHub" without losing the connection.
+        toast.error(pushErr.message ?? "Repository created, but the initial code upload failed");
+      }
     } catch (e: any) {
       toast.error(e.message ?? "Failed to create repository");
     } finally {
@@ -158,23 +137,22 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
     setPushing(true);
     setLastPushUrl(null);
     try {
-      const result = await authedFetch(`/${projectId}/push`, { method: "POST" });
-      setLastPushUrl(result.commitUrl);
-      toast.success(`Pushed ${result.filesPushed} files to GitHub`);
+      const result = await pushCurrentCode();
+      toast.success(`Committed ${result.filesPushed} files to GitHub`);
     } catch (e: any) {
-      toast.error(e.message ?? "Push failed");
+      toast.error(e.message ?? "Commit failed");
     } finally {
       setPushing(false);
     }
   };
 
-  if (loading) return <div className="p-6 text-sm text-white/45">Loading…</div>;
+  if (loading) return <SettingsSkeleton cards={2} />;
 
   return (
     <div className="space-y-5">
       <div>
         <h2 className="text-xl font-semibold text-white/85 mb-1">GitHub</h2>
-        <p className="text-sm text-white/45">Connect a GitHub account and push this project's code to a repository.</p>
+        <p className="text-sm text-white/45">Connect a GitHub account and push this project's code to a repository created just for it.</p>
       </div>
 
       <Card className="bg-[#0f0f12] border-white/[0.07]">
@@ -210,67 +188,48 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
         <Card className="bg-[#0f0f12] border-white/[0.07]">
           <CardHeader className="pb-2">
             <CardTitle className="text-base text-white/85">Repository</CardTitle>
-            <CardDescription className="text-white/45 text-xs">Choose which repo and branch this project syncs to</CardDescription>
+            <CardDescription className="text-white/45 text-xs">
+              This project only ever pushes to a repository created for it — not any of your other repos.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-1.5">
-              <Label className="text-white/60 text-xs">Repository</Label>
-              <Select value={selectedRepo} onValueChange={(v) => {
-                setSelectedRepo(v);
-                const r = repos.find(r => r.fullName === v);
-                if (r) setBranch(r.defaultBranch);
-              }}>
-                <SelectTrigger className="bg-[#0a0a0d] border-white/[0.08] text-white/70 h-8 text-[13px]">
-                  <SelectValue placeholder={reposLoading ? "Loading repositories…" : "Select a repository"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {repos.map(r => (
-                    <SelectItem key={r.id} value={r.fullName}>{r.fullName}{r.private ? " (private)" : ""}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-white/60 text-xs">Branch</Label>
-              <Input value={branch} onChange={e => setBranch(e.target.value)}
-                className="bg-[#0a0a0d] border-white/[0.08] text-white/85 h-8 text-[13px]" />
-            </div>
-
-            <Button size="sm" onClick={handleLink} disabled={linking || !selectedRepo} className="h-8 px-4 text-[13px] bg-indigo-600 hover:bg-indigo-500 text-white">
-              {linking ? "Linking…" : linked?.fullName === selectedRepo && linked.branch === branch ? "Linked" : "Link Repository"}
-            </Button>
-
-            <div className="flex items-center gap-2 pt-1">
-              <div className="h-px flex-1 bg-white/[0.06]" />
-              <span className="text-[11px] text-white/35">or</span>
-              <div className="h-px flex-1 bg-white/[0.06]" />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-white/60 text-xs">Create a new repository</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={newRepoName}
-                  onChange={e => setNewRepoName(e.target.value)}
-                  placeholder="my-project-name"
-                  className="bg-[#0a0a0d] border-white/[0.08] text-white/85 h-8 text-[13px]"
-                />
-                <Button size="sm" onClick={handleCreateRepo} disabled={creatingRepo || !newRepoName.trim()}
-                  className="h-8 px-4 text-[13px] whitespace-nowrap bg-indigo-600 hover:bg-indigo-500 text-white">
-                  {creatingRepo ? "Creating…" : "Create & Link"}
-                </Button>
-              </div>
-            </div>
-
-            {linked && (
-              <div className="flex items-center justify-between pt-2 border-t border-white/[0.06]">
+            {linked ? (
+              <div className="flex items-center justify-between">
                 <p className="text-[12px] text-white/45">
                   Linked to <strong className="text-white/70">{linked.fullName}</strong> ({linked.branch})
                 </p>
                 <Button size="sm" onClick={handlePush} disabled={pushing} className="h-7 px-3 text-[11px] gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white">
                   <RefreshCw className={`h-3 w-3 ${pushing ? 'animate-spin' : ''}`} />
-                  {pushing ? "Pushing…" : "Push to GitHub"}
+                  {pushing ? "Committing…" : "Commit to GitHub"}
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label className="text-white/60 text-xs">Repository name</Label>
+                  <Input
+                    value={newRepoName}
+                    onChange={e => setNewRepoName(e.target.value)}
+                    placeholder="my-project-name"
+                    autoFocus
+                    className="bg-[#0a0a0d] border-white/[0.08] text-white/85 h-8 text-[13px]"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-white/60 text-xs">Visibility</Label>
+                  <Select value={visibility} onValueChange={(v) => setVisibility(v as "private" | "public")}>
+                    <SelectTrigger className="bg-[#0a0a0d] border-white/[0.08] text-white/70 h-8 text-[13px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="private">Private</SelectItem>
+                      <SelectItem value="public">Public</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button size="sm" onClick={handleCreateRepo} disabled={creatingRepo || !newRepoName.trim()}
+                  className="h-8 px-4 text-[13px] w-full bg-indigo-600 hover:bg-indigo-500 text-white">
+                  {creatingRepo ? "Creating…" : "Create & Connect"}
                 </Button>
               </div>
             )}

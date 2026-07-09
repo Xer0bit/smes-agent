@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRight, Settings as SettingsIcon, Globe, BookOpen, Building2, CreditCard, Cloud, Wrench, TestTube, Boxes, ChevronDown, Database, Search, GitBranch } from "lucide-react";
+import { ChevronRight, Settings as SettingsIcon, Globe, BookOpen, Building2, CreditCard, Cloud, Wrench, TestTube, Boxes, ChevronDown, Database, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 interface SettingsSidebarProps {
@@ -18,7 +18,6 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
     project: true,
     workspace: true,
     integrations: true,
-    connectors: true,
     ecomgear: true,
     chinaEco: true,
     database: false,
@@ -33,6 +32,7 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
     { id: "project-settings", label: "Project Settings" },
     { id: "project-seo", label: "SEO" },
     { id: "project-integrations", label: "Header Integrations" },
+    { id: "project-git", label: "Git" },
     { id: "project-collaborators", label: "Collaborators", featureKey: "invite_editors" },
     { id: "project-domains", label: "Domains", featureKey: "hosting" },
     { id: "project-knowledge", label: "Knowledge", featureKey: "knowledge_base" },
@@ -52,10 +52,7 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
     { id: "integrations-stripe", label: "Stripe", featureKey: "integrations" },
     { id: "integrations-alipay", label: "Alipay", featureKey: "integrations" },
     { id: "integrations-airwallex", label: "Airwallex", featureKey: "integrations" },
-  ];
-
-  const connectorItems: NavItem[] = [
-    { id: "connector-github", label: "GitHub" },
+    { id: "integrations-zapier", label: "Zapier", featureKey: "integrations" },
   ];
 
   const chinaEcoItems: NavItem[] = [
@@ -195,7 +192,6 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
           {renderSection("Project", projectItems, "project", <SettingsIcon className="h-4 w-4" />)}
           {renderSection("Workspace", workspaceItems, "workspace", <Building2 className="h-4 w-4" />)}
           {renderSection("Integrations", integrationItems, "integrations", <CreditCard className="h-4 w-4" />)}
-          {renderSection("Connectors", connectorItems, "connectors", <GitBranch className="h-4 w-4" />)}
           {renderNestedSection()}
         </nav>
       </ScrollArea>

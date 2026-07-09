@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,6 +8,7 @@ import { BookOpen, Save, Loader2, Info, RotateCcw } from "lucide-react";
 import { useSubscription } from "@/contexts/SubscriptionContext";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface KnowledgeSettingsProps {
     projectId?: string;
@@ -53,32 +55,31 @@ export const KnowledgeSettings = ({ projectId }: KnowledgeSettingsProps) => {
     const [systemPrompt, setSystemPrompt] = useState('');
     const [contextNotes, setContextNotes] = useState('');
     const [original, setOriginal] = useState({ systemPrompt: '', contextNotes: '' });
-    const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
 
     // ── Load ─────────────────────────────────────────────────────────────────────
-    const load = useCallback(async () => {
-        if (!projectId) return;
-        setLoading(true);
-        const { data, error } = await supabase
-            .from('projects')
-            .select('custom_system_prompt, context_notes')
-            .eq('id', projectId)
-            .single();
+    const { data: loaded, isLoading: loading } = useQuery({
+        queryKey: ["knowledge-settings", projectId],
+        enabled: !!projectId,
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from('projects')
+                .select('custom_system_prompt, context_notes')
+                .eq('id', projectId!)
+                .single();
+            if (error) throw error;
+            return data as { custom_system_prompt?: string; context_notes?: string };
+        },
+    });
 
-        if (error) {
-            toast.error('Failed to load knowledge settings');
-        } else if (data) {
-            const sp = (data as { custom_system_prompt?: string; context_notes?: string }).custom_system_prompt ?? '';
-            const cn = (data as { custom_system_prompt?: string; context_notes?: string }).context_notes ?? '';
-            setSystemPrompt(sp);
-            setContextNotes(cn);
-            setOriginal({ systemPrompt: sp, contextNotes: cn });
-        }
-        setLoading(false);
-    }, [projectId]);
-
-    useEffect(() => { load(); }, [load]);
+    useEffect(() => {
+        if (!loaded) return;
+        const sp = loaded.custom_system_prompt ?? '';
+        const cn = loaded.context_notes ?? '';
+        setSystemPrompt(sp);
+        setContextNotes(cn);
+        setOriginal({ systemPrompt: sp, contextNotes: cn });
+    }, [loaded]);
 
     // ── Save ──────────────────────────────────────────────────────────────────────
     const handleSave = async () => {
@@ -134,8 +135,9 @@ export const KnowledgeSettings = ({ projectId }: KnowledgeSettingsProps) => {
             </div>
 
             {loading ? (
-                <div className="flex items-center justify-center py-12">
-                    <Loader2 className="h-6 w-6 animate-spin text-white/45" />
+                <div className="space-y-3">
+                    <Skeleton className="h-32 w-full" />
+                    <Skeleton className="h-24 w-full" />
                 </div>
             ) : (
                 <>

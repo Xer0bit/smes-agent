@@ -7,17 +7,14 @@ import { useSubscription } from "@/contexts/SubscriptionContext";
 import { Loader2, TrendingUp, Calendar, Zap, Send } from "lucide-react";
 import { getUsageColor, getProgressColor } from "@/hooks/useUsage";
 import { TIER_LIMITS, TIER_LABELS } from "@/services/subscriptionService";
+import { SettingsSkeleton } from "./SettingsSkeleton";
 
 export const UsageContent = () => {
   const { usageRecord, loading, refreshUsage, getUsagePercentage, getUsageLimit } = useUsage();
   const { subscribed, limits, publishLinesPercent } = useSubscription();
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+    return <SettingsSkeleton cards={2} />;
   }
 
   const limit = getUsageLimit();

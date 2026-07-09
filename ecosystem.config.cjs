@@ -101,6 +101,7 @@ module.exports = {
                 PORT: API_SERVER_PORT,
                 SERVICE_ROLE: 'api',
                 TENANT_DB_API_URL: 'https://cloud.ecomgear.app',
+                PREVIEW_SERVICE_URL: process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app',
             },
             max_memory_restart: '2000M',
             error_file: path.join(ROOT, 'logs', 'api-error.log'),

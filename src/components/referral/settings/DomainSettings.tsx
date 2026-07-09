@@ -20,6 +20,7 @@ import { domainService } from '@/eCG/Publish';
 import type { ProjectSubdomain, ProjectCustomDomain, DomainStatus } from '@/eCG/Publish/types';
 import { useSubscription } from '@/contexts/SubscriptionContext';
 import { supabase } from '@/integrations/supabase/client';
+import { SettingsSkeleton } from './SettingsSkeleton';
 
 interface DomainSettingsProps {
   projectId: string;
@@ -552,11 +553,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
   };
 
   if (loading || billingLoading) {
-    return (
-      <div className="flex items-center justify-center py-8">
-        <Loader2 className="h-6 w-6 animate-spin" />
-      </div>
-    );
+    return <SettingsSkeleton cards={2} />;
   }
 
   if (!canUseHosting) {
@@ -735,7 +732,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
                   {customDomains.map((domain) => {
                     const config = STATUS_CONFIG[domain.status];
                     const Icon = config.icon;
-                    const showDns = showDnsConfig === domain.id || domain.status === 'pending_dns';
+                    const showDns = showDnsConfig === domain.id || domain.status !== 'active';
                     
                     return (
                       <div key={domain.id} className="border rounded-lg p-4 space-y-3">

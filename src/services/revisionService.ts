@@ -287,6 +287,79 @@ export const revisionService = {
   },
 
   /**
+   * Same as getRevisionFiles(), but binary assets (images, fonts, etc.) are
+   * read as base64 instead of .text() — .text() mangles binary bytes via
+   * UTF-8 decoding, which is fine for the in-editor code view (nothing tries
+   * to render those files as text there) but corrupts the file for any export
+   * path that needs the original bytes back, like pushing to GitHub.
+   */
+  async getRevisionFilesForExport(
+    projectId: string,
+    revisionId: string
+  ): Promise<{ path: string; content: string; encoding?: 'base64' }[]> {
+    const BINARY_EXTENSIONS = new Set([
+      'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'ico', 'bmp',
+      'woff', 'woff2', 'ttf', 'eot', 'otf',
+      'mp4', 'webm', 'mp3', 'wav', 'ogg',
+      'pdf', 'zip',
+    ]);
+    const isBinary = (p: string) => BINARY_EXTENSIONS.has(p.split('.').pop()?.toLowerCase() ?? '');
+
+    const { data, error } = await supabase
+      .from('revisions')
+      .select('generated_files, generated_code')
+      .eq('id', revisionId)
+      .single();
+    if (error || !data) return [];
+
+    if ((data.generated_files as any)?.format === 'manifest-v1') {
+      const manifest = data.generated_files as unknown as RevisionManifest;
+      const STORAGE_BUCKET = 'user-projects-free';
+      const byRevision = new Map<string, string[]>();
+      for (const f of manifest.files) {
+        const list = byRevision.get(f.source_revision) ?? [];
+        list.push(f.path);
+        byRevision.set(f.source_revision, list);
+      }
+
+      const files: { path: string; content: string; encoding?: 'base64' }[] = [];
+      await Promise.all(
+        Array.from(byRevision.entries()).map(([srcRevId, paths]) =>
+          Promise.all(
+            paths.map(async (filePath) => {
+              const storagePath = `projects/${projectId}/${srcRevId}/${filePath}`;
+              const { data: blob, error: dlErr } = await supabase.storage
+                .from(STORAGE_BUCKET)
+                .download(storagePath);
+              if (dlErr || !blob) {
+                console.warn(`[RevisionService] Could not download ${storagePath}:`, dlErr?.message);
+                return;
+              }
+              if (isBinary(filePath)) {
+                const buf = new Uint8Array(await blob.arrayBuffer());
+                let binary = '';
+                for (const byte of buf) binary += String.fromCharCode(byte);
+                files.push({ path: filePath, content: btoa(binary), encoding: 'base64' });
+              } else {
+                files.push({ path: filePath, content: await blob.text() });
+              }
+            })
+          )
+        )
+      );
+      return files;
+    }
+
+    if ((data.generated_files as any)?.files?.length > 0) {
+      return (data.generated_files as any).files as { path: string; content: string }[];
+    }
+
+    const { storageService } = await import('./storageService');
+    const result = await storageService.loadProjectFiles(projectId, revisionId);
+    return result.files;
+  },
+
+  /**
    * List revisions for the history panel / "latest revision" lookups.
    * Deliberately excludes generated_code/generated_files/file_attachments —
    * those can be tens of MB per row, and every list caller only needs

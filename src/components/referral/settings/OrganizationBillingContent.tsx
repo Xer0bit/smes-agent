@@ -8,6 +8,7 @@ import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import { normalizeTier } from "@/hooks/useSubscription";
 import { Loader2, CreditCard, CheckCircle2, Calendar, DollarSign } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { SettingsSkeleton } from "./SettingsSkeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
@@ -250,11 +251,7 @@ export function OrganizationBillingContent({ organizationId, userRole }: Organiz
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-8">
-        <Loader2 className="h-8 w-8 animate-spin" />
-      </div>
-    );
+    return <SettingsSkeleton cards={2} />;
   }
 
   if (error) {

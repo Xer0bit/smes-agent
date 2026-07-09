@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -30,16 +31,14 @@ interface BillingInfo {
 }
 
 export function useOrganizationBilling(organizationId: string) {
-  const [billingInfo, setBillingInfo] = useState<BillingInfo | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const queryKey = ['organization-billing', organizationId];
 
-  const fetchBillingInfo = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
+  const { data: billingInfo, isLoading: loading, error } = useQuery({
+    queryKey,
+    enabled: !!organizationId,
+    queryFn: async () => {
       // Get the session from external Supabase (where the user is authenticated)
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not authenticated');
@@ -62,35 +61,21 @@ export function useOrganizationBilling(organizationId: string) {
       }
 
       const data = await response.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      setBillingInfo(data);
-    } catch (err: any) {
-      const errorMessage = err.message || 'Failed to fetch billing information';
-      setError(errorMessage);
-      toast({
-        title: 'Billing Error',
-        description: errorMessage,
-        variant: 'destructive'
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+      if (data.error) throw new Error(data.error);
+      return data as BillingInfo;
+    },
+  });
 
   useEffect(() => {
-    if (organizationId) {
-      fetchBillingInfo();
+    if (error) {
+      toast({ title: 'Billing Error', description: (error as Error).message || 'Failed to fetch billing information', variant: 'destructive' });
     }
-  }, [organizationId]);
+  }, [error]);
 
   return {
-    billingInfo,
+    billingInfo: billingInfo ?? null,
     loading,
-    error,
-    refreshBilling: fetchBillingInfo
+    error: error ? (error as Error).message : null,
+    refreshBilling: () => queryClient.invalidateQueries({ queryKey })
   };
 }
