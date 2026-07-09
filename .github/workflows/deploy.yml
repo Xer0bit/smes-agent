@@ -52,7 +52,13 @@ jobs:
           echo "$CHANGED"
 
           TARGETS=""
-          add() { [[ ",$TARGETS," != *",$1,"* ]] && TARGETS="$TARGETS,$1"; }
+          # Must always return 0 — under `bash -e`, a caller pattern like
+          # `grep ... && add vpsN` treats add()'s exit status as the whole
+          # statement's exit status. The dedup check below is legitimately
+          # false whenever a target is added a second time (e.g. a push that
+          # touches both src/ and supabase/migrations/ adds vps1 twice), and
+          # without this, that "no-op" trips set -e and aborts the whole job.
+          add() { [[ ",$TARGETS," != *",$1,"* ]] && TARGETS="$TARGETS,$1"; return 0; }
 
           # VPS1 — frontend + Supabase edge (React SPA, migrations also applied here)
           echo "$CHANGED" | grep -qE '^(src/|index\.html|public/|vite\.config|tsconfig[^/]*\.json$|package[^/]*\.json$|infrastructure/nginx/vps1-)' \
