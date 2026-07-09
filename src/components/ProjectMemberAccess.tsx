@@ -40,18 +40,21 @@ export function ProjectMemberAccess({ projectId, organizationId }: ProjectMember
             setLoading(true);
 
             // Fetch org members with role 'member' only (admins already have full access)
+            // org_members.user_id has no FK to public.profiles (it references auth.users),
+            // so PostgREST can't resolve an embedded profiles:user_id(...) join — fetch separately.
             const { data: membersData, error: membersError } = await supabase
                 .from('org_members')
-                .select(`
-          id,
-          user_id,
-          role,
-          profiles:user_id (email, full_name)
-        `)
+                .select('id, user_id, role')
                 .eq('org_id', organizationId)
                 .eq('role', 'member');
 
             if (membersError) throw membersError;
+
+            const memberUserIds = (membersData || []).map(m => m.user_id);
+            const { data: profilesData } = memberUserIds.length
+                ? await supabase.from('profiles').select('id, email, full_name').in('id', memberUserIds)
+                : { data: [] as { id: string; email: string; full_name?: string }[] };
+            const profileMap = new Map((profilesData || []).map(p => [p.id, p]));
 
             // Fetch current project access assignments
             const { data: accessData, error: accessError } = await supabase
@@ -61,9 +64,9 @@ export function ProjectMemberAccess({ projectId, organizationId }: ProjectMember
 
             if (accessError) throw accessError;
 
-            setMembers((membersData || []).map((m: any) => ({
+            setMembers((membersData || []).map((m) => ({
                 ...m,
-                profiles: Array.isArray(m.profiles) ? m.profiles[0] : m.profiles,
+                profiles: profileMap.get(m.user_id) || { email: '', full_name: undefined },
             })));
             setAccessList(accessData || []);
         } catch (err) {

@@ -1,5 +1,5 @@
 import { getGenServerUrl } from '@/config/external-api';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/integrations/supabase/adminClient';
 
 export interface TierFeatures {
   custom_domains: boolean;
