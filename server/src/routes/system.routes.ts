@@ -27,7 +27,7 @@ const ALLOWED_COMMAND_PREFIXES = [
     'ls'
 ];
 
-const requireAdmin = async (req: AuthenticatedRequest, res: Response): Promise<boolean> => {
+export const requireAdmin = async (req: AuthenticatedRequest, res: Response): Promise<boolean> => {
     if (!req.user?.id) {
         res.status(401).json({ error: 'Unauthorized' });
         return false;

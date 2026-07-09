@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import AdminSettings from './Settings';
 import AdminServers from './Servers';
 import { EXTERNAL_API_CONFIG, getGenServerUrl } from '@/config/external-api';
 import { supabase } from '@/integrations/supabase/adminClient';
@@ -350,13 +349,12 @@ export default function AdminSystemStatus() {
       <div>
         <h2 className="text-xl font-bold text-white">System Status</h2>
         <p className="text-sm text-gray-500 mt-1">
-          Unified production control center for LLM APIs, model routing, and hosting server status.
+          Live status of Supabase, the generation API, and hosting servers.
         </p>
       </div>
 
       <SupabaseStatusCard />
       <TroubleshootPanel />
-      <AdminSettings />
       <AdminServers />
     </div>
   );

@@ -10,8 +10,13 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext,
+} from '@/components/ui/pagination';
 import { Search, Pencil, Trash2, Shield, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
+
+const PAGE_SIZE = 20;
 
 interface UserWithRole {
   id: string;
@@ -23,9 +28,11 @@ interface UserWithRole {
 
 export default function Users() {
   const [users, setUsers] = useState<UserWithRole[]>([]);
-  const [filteredUsers, setFilteredUsers] = useState<UserWithRole[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
 
@@ -38,35 +45,47 @@ export default function Users() {
   const [roleUser, setRoleUser] = useState<UserWithRole | null>(null);
   const [selectedRole, setSelectedRole] = useState('');
 
-  useEffect(() => { loadUsers(); }, []);
-
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setFilteredUsers(users);
-    } else {
-      const q = searchQuery.toLowerCase();
-      setFilteredUsers(users.filter(u =>
-        u.email.toLowerCase().includes(q) ||
-        (u.full_name || '').toLowerCase().includes(q)
-      ));
-    }
-  }, [searchQuery, users]);
+    const t = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  useEffect(() => { loadUsers(); }, [page, debouncedSearch]);
 
   const loadUsers = async () => {
     try {
+      setLoading(true);
       const { data: { session } } = await supabase.auth.getSession();
       setCurrentUserId(session?.user?.id || null);
 
-      const { data: profiles, error } = await supabase
+      let query = supabase
         .from('profiles')
-        .select('id, email, full_name, created_at')
+        .select('id, email, full_name, created_at', { count: 'exact' })
         .order('created_at', { ascending: false });
+
+      if (debouncedSearch) {
+        const q = debouncedSearch.replace(/[%,]/g, '');
+        query = query.or(`email.ilike.%${q}%,full_name.ilike.%${q}%`);
+      }
+
+      const { data: profiles, error, count } = await query
+        .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
       if (error) throw error;
 
-      const { data: roles } = await supabase.from('user_roles').select('user_id, role');
+      const ids = (profiles || []).map(p => p.id);
+      const { data: roles } = await supabase
+        .from('user_roles')
+        .select('user_id, role')
+        .in('user_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
       const roleMap = new Map((roles || []).map(r => [r.user_id, r.role]));
+
       if (session?.user?.id) {
-        setCurrentUserRole(roleMap.get(session.user.id) || 'user');
+        const { data: myRole } = await supabase
+          .from('user_roles').select('role').eq('user_id', session.user.id).maybeSingle();
+        setCurrentUserRole(myRole?.role || 'user');
       }
 
       const merged = (profiles || []).map(p => ({
@@ -74,7 +93,7 @@ export default function Users() {
         role: roleMap.get(p.id) || null,
       }));
       setUsers(merged);
-      setFilteredUsers(merged);
+      setTotalCount(count ?? merged.length);
     } catch (error) {
       console.error('Failed to load users:', error);
       toast.error('Failed to load users');
@@ -216,7 +235,7 @@ export default function Users() {
             className="h-9 w-72 pl-9 text-xs bg-white/5 border-white/10 text-white placeholder:text-gray-500 focus:border-purple-500/50"
           />
         </div>
-        <span className="text-xs text-gray-500">{filteredUsers.length} users</span>
+        <span className="text-xs text-gray-500">{totalCount} users</span>
       </div>
 
       {/* Table */}
@@ -234,7 +253,7 @@ export default function Users() {
             </tr>
           </thead>
           <tbody>
-            {filteredUsers.map((user) => (
+            {users.map((user) => (
               <tr
                 key={user.id}
                 className="group hover:bg-white/[0.03] transition-colors"
@@ -271,7 +290,7 @@ export default function Users() {
                 </td>
               </tr>
             ))}
-            {filteredUsers.length === 0 && (
+            {users.length === 0 && (
               <tr>
                 <td colSpan={4} className="text-center py-12 text-sm text-gray-500">No users found</td>
               </tr>
@@ -279,6 +298,33 @@ export default function Users() {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {totalCount > PAGE_SIZE && (
+        <Pagination>
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                href="#"
+                onClick={(e) => { e.preventDefault(); if (page > 0) setPage(page - 1); }}
+                className={page === 0 ? 'pointer-events-none opacity-50' : ''}
+              />
+            </PaginationItem>
+            <PaginationItem>
+              <span className="text-xs text-gray-500 px-3">
+                Page {page + 1} of {Math.max(1, Math.ceil(totalCount / PAGE_SIZE))}
+              </span>
+            </PaginationItem>
+            <PaginationItem>
+              <PaginationNext
+                href="#"
+                onClick={(e) => { e.preventDefault(); if ((page + 1) * PAGE_SIZE < totalCount) setPage(page + 1); }}
+                className={(page + 1) * PAGE_SIZE >= totalCount ? 'pointer-events-none opacity-50' : ''}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      )}
 
       {/* Edit User Dialog */}
       <Dialog open={!!editUser} onOpenChange={() => setEditUser(null)}>

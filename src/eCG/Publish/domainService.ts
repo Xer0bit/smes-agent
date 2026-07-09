@@ -369,16 +369,24 @@ class DomainService {
 
   /**
    * List all active domain mappings from the hosting service (admin).
+   * Distinguishes auth failures (misconfigured VITE_HOSTING_SERVICE_SECRET)
+   * from a genuinely empty list, so the caller can surface a real error
+   * instead of silently rendering "no domains".
    */
-  async listHostingDomains(): Promise<{ domain: string; projectId: string }[]> {
-    if (!HOSTING_BASE) return [];
+  async listHostingDomains(): Promise<{ domains: { domain: string; projectId: string }[]; error?: string }> {
+    if (!HOSTING_BASE) return { domains: [], error: 'Hosting service URL not configured' };
     try {
       const res = await fetch(`${HOSTING_BASE}/domains/list`, { headers: authHeaders() });
-      if (!res.ok) return [];
+      if (res.status === 401 || res.status === 403) {
+        return { domains: [], error: 'Hosting service rejected credentials (check VITE_HOSTING_SERVICE_SECRET)' };
+      }
+      if (!res.ok) {
+        return { domains: [], error: `Hosting service error: ${res.status}` };
+      }
       const data = await res.json();
-      return data.domains || [];
-    } catch {
-      return [];
+      return { domains: data.domains || [] };
+    } catch (e: any) {
+      return { domains: [], error: e?.message || 'Failed to reach hosting service' };
     }
   }
 

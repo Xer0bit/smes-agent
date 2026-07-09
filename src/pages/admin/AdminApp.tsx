@@ -42,6 +42,7 @@ import AdminHosting from './Hosting';
 import AdminServers from './Servers';
 import AdminDatabaseHosting from './DatabaseHosting';
 import AdminSystemStatus from './SystemStatus';
+import AdminSettings from './Settings';
 import AdminTenantDetail from './TenantDetail';
 import AdminDemoRequests from './DemoRequests';
 import AdminAIMetrics from './AIMetrics';
@@ -137,6 +138,7 @@ export default function AdminApp() {
                 { title: 'Hosting & Domains', path: '/admin/hosting', icon: Server },
                 { title: 'ECG CLAUDE DBs', path: '/admin/database-hosting', icon: Database },
                 { title: 'System Status', path: '/admin/system-status', icon: Settings },
+                { title: 'LLM Providers', path: '/admin/llm-settings', icon: Zap },
             ],
         },
     ];
@@ -144,7 +146,8 @@ export default function AdminApp() {
     const navItems: NavItem[] = navGroups.flatMap(g => g.items);
 
     const getPageTitle = () => {
-        if (location.pathname.includes('system-status') || location.pathname.includes('settings')) return 'System Status';
+        if (location.pathname.includes('llm-settings') || location.pathname.endsWith('/settings')) return 'LLM Providers';
+        if (location.pathname.includes('system-status')) return 'System Status';
         const current = navItems.find(item => location.pathname.startsWith(item.path));
         return current?.title || 'Administrative Hub';
     };
@@ -374,7 +377,8 @@ export default function AdminApp() {
                                     <Route path="servers" element={<AdminServers />} />
                                     <Route path="tenant/:projectId" element={<AdminTenantDetail />} />
                                     <Route path="system-status" element={<AdminSystemStatus />} />
-                                    <Route path="settings" element={<Navigate to="/admin/system-status" replace />} />
+                                    <Route path="llm-settings" element={<AdminSettings />} />
+                                    <Route path="settings" element={<Navigate to="/admin/llm-settings" replace />} />
                                 </Routes>
                             </motion.div>
                         </AnimatePresence>

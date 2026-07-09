@@ -147,6 +147,7 @@ export default function AdminDashboard() {
       iconColor: 'text-blue-400',
       borderColor: 'border-blue-500/20',
       trend: trends.totalUsers,
+      path: '/admin/users',
     },
     {
       title: 'Organizations',
@@ -156,6 +157,7 @@ export default function AdminDashboard() {
       iconColor: 'text-purple-400',
       borderColor: 'border-purple-500/20',
       trend: trends.totalOrgs,
+      path: '/admin/organizations',
     },
     {
       title: 'Total Projects',
@@ -165,6 +167,7 @@ export default function AdminDashboard() {
       iconColor: 'text-emerald-400',
       borderColor: 'border-emerald-500/20',
       trend: trends.totalProjects,
+      path: '/admin/projects',
     },
     {
       title: 'Active Projects',
@@ -174,6 +177,7 @@ export default function AdminDashboard() {
       iconColor: 'text-amber-400',
       borderColor: 'border-amber-500/20',
       trend: trends.activeProjects,
+      path: '/admin/projects',
     },
   ];
 
@@ -199,7 +203,10 @@ export default function AdminDashboard() {
         {statCards.map((stat) => (
           <div
             key={stat.title}
-            className={`relative overflow-hidden rounded-xl border ${stat.borderColor} p-5 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg`}
+            onClick={() => navigate(stat.path)}
+            role="button"
+            tabIndex={0}
+            className={`relative overflow-hidden rounded-xl border ${stat.borderColor} p-5 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg cursor-pointer`}
             style={{ background: 'rgba(255,255,255,0.02)' }}
           >
             <div className={`absolute inset-0 bg-gradient-to-br ${stat.gradient} opacity-50`} />

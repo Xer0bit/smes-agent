@@ -9,9 +9,14 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext,
+} from '@/components/ui/pagination';
 import { Search, Pencil, Trash2, FolderKanban, Users } from 'lucide-react';
 import { ProjectMemberAccess } from '@/components/ProjectMemberAccess';
 import { toast } from 'sonner';
+
+const PAGE_SIZE = 20;
 
 interface ProjectWithOrg {
   id: string;
@@ -24,34 +29,42 @@ interface ProjectWithOrg {
 
 export default function Projects() {
   const [projects, setProjects] = useState<ProjectWithOrg[]>([]);
-  const [filteredProjects, setFilteredProjects] = useState<ProjectWithOrg[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
 
   const [editProject, setEditProject] = useState<ProjectWithOrg | null>(null);
   const [editName, setEditName] = useState('');
   const [editStatus, setEditStatus] = useState('');
   const [accessProject, setAccessProject] = useState<ProjectWithOrg | null>(null);
 
-  useEffect(() => { loadProjects(); }, []);
-
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setFilteredProjects(projects);
-    } else {
-      const q = searchQuery.toLowerCase();
-      setFilteredProjects(projects.filter(p =>
-        p.name.toLowerCase().includes(q) || (p.org_name || '').toLowerCase().includes(q)
-      ));
-    }
-  }, [searchQuery, projects]);
+    const t = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  useEffect(() => { loadProjects(); }, [page, debouncedSearch]);
 
   const loadProjects = async () => {
     try {
-      const { data, error } = await supabase
+      setLoading(true);
+      let query = supabase
         .from('projects')
-        .select('id, name, status, created_at, organization_id, organizations(name)')
+        .select('id, name, status, created_at, organization_id, organizations(name)', { count: 'exact' })
         .order('created_at', { ascending: false });
+
+      if (debouncedSearch) {
+        const q = debouncedSearch.replace(/[%,]/g, '');
+        query = query.ilike('name', `%${q}%`);
+      }
+
+      const { data, error, count } = await query
+        .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
       if (error) throw error;
       const mapped = (data || []).map((p: any) => ({
         id: p.id,
@@ -62,7 +75,7 @@ export default function Projects() {
         organization_id: p.organization_id || null,
       }));
       setProjects(mapped);
-      setFilteredProjects(mapped);
+      setTotalCount(count ?? mapped.length);
     } catch (error) {
       console.error('Failed to load projects:', error);
       toast.error('Failed to load projects');
@@ -143,7 +156,7 @@ export default function Projects() {
             className="h-9 w-72 pl-9 text-xs bg-white/5 border-white/10 text-white placeholder:text-gray-500 focus:border-purple-500/50"
           />
         </div>
-        <span className="text-xs text-gray-500">{filteredProjects.length} projects</span>
+        <span className="text-xs text-gray-500">{totalCount} projects</span>
       </div>
 
       <div className="rounded-xl border overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
@@ -158,7 +171,7 @@ export default function Projects() {
             </tr>
           </thead>
           <tbody>
-            {filteredProjects.map((project) => (
+            {projects.map((project) => (
               <tr key={project.id} className="group hover:bg-white/[0.03] transition-colors" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-3">
@@ -196,12 +209,39 @@ export default function Projects() {
                 </td>
               </tr>
             ))}
-            {filteredProjects.length === 0 && (
+            {projects.length === 0 && (
               <tr><td colSpan={5} className="text-center py-12 text-sm text-gray-500">No projects found</td></tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {totalCount > PAGE_SIZE && (
+        <Pagination>
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                href="#"
+                onClick={(e) => { e.preventDefault(); if (page > 0) setPage(page - 1); }}
+                className={page === 0 ? 'pointer-events-none opacity-50' : ''}
+              />
+            </PaginationItem>
+            <PaginationItem>
+              <span className="text-xs text-gray-500 px-3">
+                Page {page + 1} of {Math.max(1, Math.ceil(totalCount / PAGE_SIZE))}
+              </span>
+            </PaginationItem>
+            <PaginationItem>
+              <PaginationNext
+                href="#"
+                onClick={(e) => { e.preventDefault(); if ((page + 1) * PAGE_SIZE < totalCount) setPage(page + 1); }}
+                className={(page + 1) * PAGE_SIZE >= totalCount ? 'pointer-events-none opacity-50' : ''}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      )}
 
       {/* Access Management Dialog */}
       <Dialog open={!!accessProject} onOpenChange={() => setAccessProject(null)}>

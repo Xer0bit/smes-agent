@@ -110,9 +110,11 @@ export default function AdminHosting() {
   const [healthError, setHealthError] = useState<string | null>(null);
 
   const [domains, setDomains] = useState<DomainMapping[]>([]);
+  const [domainsError, setDomainsError] = useState<string | null>(null);
   const [liveSites, setLiveSites] = useState<LiveSite[]>([]);
   const [filteredSites, setFilteredSites] = useState<LiveSite[]>([]);
   const [sitesLoading, setSitesLoading] = useState(true);
+  const [tenantsError, setTenantsError] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [removingDomain, setRemovingDomain] = useState<string | null>(null);
@@ -205,7 +207,9 @@ export default function AdminHosting() {
       setFilteredSites(sites);
 
       // Also load hosting domains from the service
-      const hostingDomains = await domainService.listHostingDomains();
+      const { domains: hostingDomains, error: hostingErr } = await domainService.listHostingDomains();
+      setDomainsError(hostingErr || null);
+      if (hostingErr) toast.error(`Domain mappings: ${hostingErr}`);
       // Enrich with project names
       const enriched = hostingDomains.map(d => ({
         ...d,
@@ -229,6 +233,7 @@ export default function AdminHosting() {
   // ── Load tenant deployments ───────────────────────────────────────────────
   const loadTenants = useCallback(async () => {
     setTenantsLoading(true);
+    setTenantsError(null);
     try {
       // Load servers
       const { data: srvData } = await supabase
@@ -260,8 +265,10 @@ export default function AdminHosting() {
         server_ip: srvMap[d.hosting_server_id]?.public_ip || '?',
       }));
       setTenantDeployments(enriched);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to load tenants:', e);
+      setTenantsError(e?.message || 'Failed to load tenant deployments');
+      toast.error('Failed to load tenant deployments');
     } finally {
       setTenantsLoading(false);
     }
@@ -450,6 +457,10 @@ export default function AdminHosting() {
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-5 w-5 animate-spin text-gray-500" />
             </div>
+          ) : tenantsError ? (
+            <div className="text-center py-8 text-red-400 text-sm">
+              Failed to load tenant deployments: {tenantsError}
+            </div>
           ) : tenantDeployments.length === 0 ? (
             <div className="text-center py-8 text-gray-500 text-sm">
               No tenant deployments yet. Publish a project to provision a tenant.
@@ -517,7 +528,7 @@ export default function AdminHosting() {
       </Card>
 
       {/* Active Domain Mappings */}
-      {domains.length > 0 && (
+      {(domains.length > 0 || domainsError || !sitesLoading) && (
         <Card className="border-white/[0.06] bg-white/[0.02]">
           <CardHeader>
             <CardTitle className="text-base font-semibold text-white flex items-center gap-2">
@@ -527,6 +538,15 @@ export default function AdminHosting() {
             </CardTitle>
           </CardHeader>
           <CardContent>
+            {domainsError ? (
+              <div className="text-center py-8 text-red-400 text-sm">
+                Failed to load domain mappings: {domainsError}
+              </div>
+            ) : domains.length === 0 ? (
+              <div className="text-center py-8 text-gray-500 text-sm">
+                No active domain mappings.
+              </div>
+            ) : (
             <Table>
               <TableHeader>
                 <TableRow className="border-white/[0.06]">
@@ -570,6 +590,7 @@ export default function AdminHosting() {
                 ))}
               </TableBody>
             </Table>
+            )}
           </CardContent>
         </Card>
       )}

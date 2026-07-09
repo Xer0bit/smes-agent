@@ -6,8 +6,13 @@ import { Label } from '@/components/ui/label';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext,
+} from '@/components/ui/pagination';
 import { Search, Pencil, Trash2, Plus, Building2, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
+
+const PAGE_SIZE = 20;
 
 interface Organization {
   id: string;
@@ -24,9 +29,11 @@ interface Organization {
 
 export default function Organizations() {
   const [orgs, setOrgs] = useState<Organization[]>([]);
-  const [filteredOrgs, setFilteredOrgs] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
 
   // Create/Edit
   const [showCreate, setShowCreate] = useState(false);
@@ -37,26 +44,34 @@ export default function Organizations() {
   const [formEcoLimit, setFormEcoLimit] = useState('10');
   const [formEcoUsed, setFormEcoUsed] = useState('0');
 
-  useEffect(() => { loadOrganizations(); }, []);
-
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setFilteredOrgs(orgs);
-    } else {
-      const q = searchQuery.toLowerCase();
-      setFilteredOrgs(orgs.filter(o => o.name.toLowerCase().includes(q) || o.slug?.toLowerCase().includes(q)));
-    }
-  }, [searchQuery, orgs]);
+    const t = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  useEffect(() => { loadOrganizations(); }, [page, debouncedSearch]);
 
   const loadOrganizations = async () => {
     try {
-      const { data, error } = await supabase
+      setLoading(true);
+      let query = supabase
         .from('organizations')
-        .select('id, name, slug, seats_total, status, plan_tier, ai_gens_used, ai_gens_limit, ai_gens_reset_at, created_at')
+        .select('id, name, slug, seats_total, status, plan_tier, ai_gens_used, ai_gens_limit, ai_gens_reset_at, created_at', { count: 'exact' })
         .order('created_at', { ascending: false });
+
+      if (debouncedSearch) {
+        const q = debouncedSearch.replace(/[%,]/g, '');
+        query = query.or(`name.ilike.%${q}%,slug.ilike.%${q}%`);
+      }
+
+      const { data, error, count } = await query
+        .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
       if (error) throw error;
       setOrgs(data || []);
-      setFilteredOrgs(data || []);
+      setTotalCount(count ?? (data || []).length);
     } catch (error) {
       console.error('Failed to load organizations:', error);
       toast.error('Failed to load organizations');
@@ -189,9 +204,12 @@ export default function Organizations() {
             className="h-9 w-72 pl-9 text-xs bg-white/5 border-white/10 text-white placeholder:text-gray-500 focus:border-purple-500/50"
           />
         </div>
-        <Button onClick={() => setShowCreate(true)} className="h-9 bg-purple-600 hover:bg-purple-700 text-white gap-2 text-xs">
-          <Plus className="h-3.5 w-3.5" /> New Organization
-        </Button>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500">{totalCount} organizations</span>
+          <Button onClick={() => setShowCreate(true)} className="h-9 bg-purple-600 hover:bg-purple-700 text-white gap-2 text-xs">
+            <Plus className="h-3.5 w-3.5" /> New Organization
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-xl border overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
@@ -208,7 +226,7 @@ export default function Organizations() {
             </tr>
           </thead>
           <tbody>
-            {filteredOrgs.map((org) => (
+            {orgs.map((org) => (
               <tr key={org.id} className="group hover:bg-white/[0.03] transition-colors" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-3">
@@ -276,12 +294,39 @@ export default function Organizations() {
                 </td>
               </tr>
             ))}
-            {filteredOrgs.length === 0 && (
+            {orgs.length === 0 && (
               <tr><td colSpan={7} className="text-center py-12 text-sm text-gray-500">No organizations found</td></tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {totalCount > PAGE_SIZE && (
+        <Pagination>
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                href="#"
+                onClick={(e) => { e.preventDefault(); if (page > 0) setPage(page - 1); }}
+                className={page === 0 ? 'pointer-events-none opacity-50' : ''}
+              />
+            </PaginationItem>
+            <PaginationItem>
+              <span className="text-xs text-gray-500 px-3">
+                Page {page + 1} of {Math.max(1, Math.ceil(totalCount / PAGE_SIZE))}
+              </span>
+            </PaginationItem>
+            <PaginationItem>
+              <PaginationNext
+                href="#"
+                onClick={(e) => { e.preventDefault(); if ((page + 1) * PAGE_SIZE < totalCount) setPage(page + 1); }}
+                className={(page + 1) * PAGE_SIZE >= totalCount ? 'pointer-events-none opacity-50' : ''}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      )}
 
       {/* Create / Edit Dialog */}
       <Dialog open={showCreate || !!editOrg} onOpenChange={() => { setShowCreate(false); setEditOrg(null); }}>
