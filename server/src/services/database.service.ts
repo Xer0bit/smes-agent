@@ -207,11 +207,17 @@ export const databaseService = {
     // VITE_DB_SCHEMA feeds the Accept-Profile/Content-Profile headers PostgREST
     // requires to route to this tenant's isolated schema instead of its default.
     if (projectId) {
+      // VITE_FUNCTIONS_API_URL: edge functions are served by the API server
+      // (/api/v1/functions on VPS1), NOT the gen server and NOT the tenant DB
+      // host. Synced here so the env var the system prompt tells the agent to
+      // use actually exists — without it the model invents hardcoded fallbacks.
+      const functionsApiUrl = (process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.dev').replace(/\/$/, '');
       supabase.from('project_secrets').upsert(
         [
           { project_id: projectId, key_name: 'VITE_DB_API_URL', key_value: creds.api_url },
           { project_id: projectId, key_name: 'VITE_DB_ANON_KEY', key_value: creds.anon_key },
           { project_id: projectId, key_name: 'VITE_DB_SCHEMA', key_value: creds.schema },
+          { project_id: projectId, key_name: 'VITE_FUNCTIONS_API_URL', key_value: functionsApiUrl },
         ],
         { onConflict: 'project_id,key_name' }
       ).then(({ error }) => {

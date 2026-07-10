@@ -770,6 +770,30 @@ function buildToolSet(ctx: AgentContext, brainMemory: string[]): ToolSet {
             }
           }
         }
+        // ── Platform-URL guard ─────────────────────────────────────────────────
+        // EcomGear infrastructure URLs (api/gen.ecomgear.dev, db/cloud/preview/
+        // apps.ecomgear.app) must never be hardcoded into generated project code —
+        // they belong in env vars (VITE_SUPABASE_URL, VITE_DB_API_URL,
+        // VITE_FUNCTIONS_API_URL). The prompt says so, but models still write
+        // fallbacks like `import.meta.env.X || 'https://api.ecomgear.dev'`; this
+        // blocks them at the tool layer. edit_file only scans REPLACE sides so
+        // removing an already-hardcoded URL stays possible.
+        if ((def.name === 'write_file' || def.name === 'edit_file') && typeof args.path === 'string' && /\.(tsx?|jsx?)$/.test(args.path)) {
+          const newContent = def.name === 'write_file'
+            ? (typeof args.content === 'string' ? args.content : '')
+            : (typeof args.diff === 'string' ? args.diff.replace(/<<<<<<< SEARCH[\s\S]*?=======/g, '') : '');
+          const urlMatch = newContent.match(/https?:\/\/(?:[a-z0-9-]+\.)*ecomgear\.(?:dev|app|ai)\b/i);
+          if (urlMatch) {
+            return (
+              `BLOCKED: "${args.path}" contains a hardcoded EcomGear platform URL (${urlMatch[0]}). ` +
+              `Platform/system URLs must NEVER be written into project code — not even as env-var fallbacks. ` +
+              `Use the env var directly with NO fallback: import.meta.env.VITE_SUPABASE_URL for auth, ` +
+              `import.meta.env.VITE_DB_API_URL for the hosted database, import.meta.env.VITE_FUNCTIONS_API_URL for edge functions. ` +
+              `If the env var you need is not in the project's environment variables, that integration is not provisioned — ` +
+              `tell the user instead of inventing a URL.`
+            );
+          }
+        }
 
         try {
           const result = await def.execute(args, ctx);
@@ -1991,7 +2015,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const dbNote = hasDb
       ? '\n\nThis project\'s hosted database is the ONLY place for application data (any table the user asks for — posts, products, orders, custom records, etc.). Use PostgREST calls to `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` with headers `{ "Authorization": "Bearer <VITE_DB_ANON_KEY>", "apikey": "<VITE_DB_ANON_KEY>", "Accept-Profile": "<VITE_DB_SCHEMA>", "Content-Profile": "<VITE_DB_SCHEMA>" }`. Accept-Profile/Content-Profile are REQUIRED — without them PostgREST routes to its default schema instead of this project\'s isolated one and every request 403s. Call `get_database_schema` to inspect tables, `query_database` to run SQL.' +
         (hasSb ? ' This hosted database has NO auth/login server of its own — it is Postgres + PostgREST only. Never attempt to hit `VITE_DB_API_URL/auth/...` — that endpoint does not exist here; auth always goes through Supabase (above).' : '') +
-        '\n\n**Edge functions** — use `write_edge_function` for server-side logic the browser should never run directly: code that needs a secret API key, webhook handlers, scheduled/triggered jobs, or any multi-step backend operation. Do NOT put that logic in frontend code just because PostgREST covers plain CRUD — if it needs a secret or must run server-side, it MUST be an edge function.\n' +
+        '\n\n**Edge functions** — use `write_edge_function` for server-side logic the browser should never run directly: code that needs a secret API key, webhook handlers, scheduled/triggered jobs, or any multi-step backend operation. Do NOT put that logic in frontend code just because PostgREST covers plain CRUD — if it needs a secret or must run server-side, it MUST be an edge function. Inside the function, read saved secrets as `secrets.KEY_NAME` (save new keys with `set_secret` first — never paste key values into function code or frontend files).\n' +
         'Invoke a written function from the frontend with:\n```ts\nconst res = await fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/api/v1/functions/<name>/invoke`, {\n  method: \'POST\',\n  headers: { \'Content-Type\': \'application/json\', apikey: import.meta.env.VITE_DB_ANON_KEY },\n  body: JSON.stringify({ params: { /* ... */ } }),\n});\n```\nNo project_id is needed — the anon key itself identifies which project\'s function to run.\n' +
         'This endpoint is public and rate-limited (30 req/min) — it authenticates with the SAME `VITE_DB_ANON_KEY` used for the database, not a login session, so it works for anonymous visitors of the generated app, not just its owner.'
       : '';
@@ -2000,7 +2024,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         (hasEcgMcp ? '\n\n**Knowledge base** — you have a `search_org_knowledge` tool. Use it to ground generated UI copy and content (brand voice, product descriptions, business context) in the organization\'s real knowledge instead of inventing generic placeholder text.' : '')
       : '';
 
-    const noHardcodeRule = '\n\n**NEVER hardcode any secret value from this list as a string literal anywhere in generated code — not even as a fallback/default for a missing env var (e.g. `getEnvVar(\'X\', \'<real value>\')`).** Always reference `import.meta.env.VITE_XXX` / `process.env.XXX` directly. A hardcoded fallback that happens to be a real credential from THIS project can end up copied into a DIFFERENT project by mistake, silently pointing that other project at this one\'s database or auth — this has happened before. If an env var might be missing, fail loudly (throw/log an error) instead of falling back to a real value.';
+    const noHardcodeRule = '\n\n**NEVER hardcode any secret value from this list as a string literal anywhere in generated code — not even as a fallback/default for a missing env var (e.g. `getEnvVar(\'X\', \'<real value>\')`).** Always reference `import.meta.env.VITE_XXX` / `process.env.XXX` directly. A hardcoded fallback that happens to be a real credential from THIS project can end up copied into a DIFFERENT project by mistake, silently pointing that other project at this one\'s database or auth — this has happened before. If an env var might be missing, fail loudly (throw/log an error) instead of falling back to a real value.' +
+      '\n\n**The same rule applies to EcomGear platform URLs.** `api.ecomgear.dev`, `gen.ecomgear.dev`, `preview.ecomgear.app`, and `apps.ecomgear.app` are EcomGear\'s own infrastructure servers — they are NOT part of the user\'s app and must NEVER appear as string literals in generated code, not even as env-var fallbacks like `import.meta.env.X || \'https://api.ecomgear.dev\'`. The hosted database endpoint (`db.ecomgear.app` / `cloud.ecomgear.app`) is only ever reached through `import.meta.env.VITE_DB_API_URL` — never hardcode it either. Never invent placeholder values like `\'dummy\'` for keys. If an integration\'s env var is NOT in the list below, that integration is not configured for this project — do not guess a URL or key; tell the user what needs to be set up instead.';
 
     return `\n\n# Project Environment Variables\n\nThe following secrets are available as \`import.meta.env.VITE_XXX\` (frontend) or \`process.env.XXX\` (backend). NEVER echo, print, log, or reveal their values in chat responses — treat them as confidential.${noHardcodeRule}${sbNote}${dbNote}${ecgNote}\n\n\`\`\`\n${lines}\n\`\`\``;
   })();

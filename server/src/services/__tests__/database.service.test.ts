@@ -92,7 +92,11 @@ describe('databaseService.getCredentials — VITE_DB_* secret sync', () => {
     expect(secretsUpsert.opts).toEqual({ onConflict: 'project_id,key_name' });
 
     const keyNames = secretsUpsert.rows.map((r: any) => r.key_name).sort();
-    expect(keyNames).toEqual(['VITE_DB_ANON_KEY', 'VITE_DB_API_URL', 'VITE_DB_SCHEMA']);
+    expect(keyNames).toEqual(['VITE_DB_ANON_KEY', 'VITE_DB_API_URL', 'VITE_DB_SCHEMA', 'VITE_FUNCTIONS_API_URL']);
+
+    // Functions live on the API server — never gen.ecomgear.dev, never the tenant DB host.
+    const fnUrlRow = secretsUpsert.rows.find((r: any) => r.key_name === 'VITE_FUNCTIONS_API_URL');
+    expect(fnUrlRow.key_value).toBe(process.env.ECOMGEAR_SERVER_URL?.replace(/\/$/, '') || 'https://api.ecomgear.dev');
 
     const apiUrlRow = secretsUpsert.rows.find((r: any) => r.key_name === 'VITE_DB_API_URL');
     expect(apiUrlRow.project_id).toBe('project-1');
