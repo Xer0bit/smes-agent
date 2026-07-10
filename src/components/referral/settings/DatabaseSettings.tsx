@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Database, Trash2, Zap, Lock, Table, Terminal, ChevronRight, RefreshCw, Play, AlertCircle, Download, Wifi, WifiOff, FunctionSquare, Clock, Bot } from "lucide-react";
+import { Database, Trash2, Zap, Lock, Table, Terminal, ChevronRight, RefreshCw, Play, AlertCircle, Download, Wifi, WifiOff } from "lucide-react";
 import { useSubscription } from "@/contexts/SubscriptionContext";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { cn } from "@/lib/utils";
@@ -289,182 +289,11 @@ function SqlEditor({ projectId }: { projectId?: string | null }) {
   );
 }
 
-// ── Edge Functions Panel (read + invoke only — writes are agent-only) ─────────
-interface EdgeFn { id: string; name: string; description: string | null; is_active: boolean; created_at: string; }
-interface InvokeResult { result: unknown; logs: string[]; durationMs: number; error?: string; }
-
-function EdgeFunctionsPanel({ apiFetch: apiFetchProp }: { apiFetch: (p: string, o?: RequestInit, t?: number) => Promise<any> }) {
-  const [fns, setFns]           = useState<EdgeFn[]>([]);
-  const [selected, setSelected] = useState<EdgeFn | null>(null);
-  const [params, setParams]     = useState('{}');
-  const [result, setResult]     = useState<InvokeResult | null>(null);
-  const [loading, setLoading]   = useState(true);
-  const [invoking, setInvoking] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await apiFetchProp('/functions');
-      setFns(res.functions || []);
-    } catch (e) { toast.error((e as Error).message); }
-    finally { setLoading(false); }
-  }, [apiFetchProp]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const invoke = async () => {
-    if (!selected) return;
-    let parsed: unknown = {};
-    try { parsed = JSON.parse(params); } catch { toast.error('Params must be valid JSON'); return; }
-    setInvoking(true); setResult(null);
-    try {
-      const res = await apiFetchProp(`/functions/${selected.name}/invoke`, {
-        method: 'POST', body: JSON.stringify({ params: parsed }),
-      }, 10_000);
-      setResult(res);
-    } catch (e) { toast.error((e as Error).message); }
-    finally { setInvoking(false); }
-  };
-
-  const deleteFn = async () => {
-    if (!selected) return;
-    if (!confirm(`Delete function "${selected.name}"?`)) return;
-    setDeleting(true);
-    try {
-      await apiFetchProp(`/functions/${selected.name}`, { method: 'DELETE' });
-      toast.success('Deleted.');
-      setSelected(null); setResult(null);
-      load();
-    } catch (e) { toast.error((e as Error).message); }
-    finally { setDeleting(false); }
-  };
-
-  if (loading) return <div className="py-8 text-center text-sm text-white/45">Loading functions…</div>;
-
-  return (
-    <div className="space-y-4">
-      {/* Agent-only notice */}
-      <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
-        <Bot className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-        <p className="text-xs text-white/60">
-          Edge functions are managed by the AI agent. To create or modify a function, ask the agent in the project editor.
-        </p>
-      </div>
-
-      {fns.length === 0 ? (
-        <p className="py-6 text-center text-sm text-white/30">No functions yet. Ask the agent to create one.</p>
-      ) : (
-        <div className="flex gap-4 min-h-0">
-          {/* List */}
-          <div className="w-44 shrink-0 flex flex-col gap-1 border-r border-white/[0.07] pr-3">
-            <span className="text-xs text-white/45 font-medium mb-2">{fns.length} function{fns.length !== 1 ? 's' : ''}</span>
-            {fns.map(fn => (
-              <button
-                key={fn.id}
-                onClick={() => { setSelected(fn); setResult(null); }}
-                className={cn(
-                  "text-left text-xs px-2 py-1.5 rounded-md transition-colors flex items-center gap-1.5 truncate",
-                  selected?.id === fn.id ? "bg-primary/15 text-primary" : "text-white/60 hover:text-white/85 hover:bg-white/[0.04]"
-                )}
-              >
-                <FunctionSquare className="h-3 w-3 shrink-0" />
-                <span className="truncate font-mono">{fn.name}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Invoke panel */}
-          {selected ? (
-            <div className="flex-1 flex flex-col gap-3 min-w-0">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <FunctionSquare className="h-4 w-4 text-primary shrink-0" />
-                  <span className="font-mono text-sm font-medium truncate">{selected.name}</span>
-                  {selected.description && (
-                    <span className="text-xs text-white/40 truncate">{selected.description}</span>
-                  )}
-                </div>
-                <Button size="sm" variant="ghost" className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 shrink-0" onClick={deleteFn} disabled={deleting}>
-                  <Trash2 className="h-3 w-3 mr-1" />{deleting ? 'Deleting…' : 'Delete'}
-                </Button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Textarea
-                  value={params}
-                  onChange={e => setParams(e.target.value)}
-                  placeholder='{"key": "value"}'
-                  className="text-xs font-mono bg-white/[0.04] border-white/[0.10] flex-1 min-h-[60px] resize-none"
-                />
-                <Button size="sm" className="h-9 text-xs shrink-0 gap-1" onClick={invoke} disabled={invoking}>
-                  <Play className="h-3 w-3" />{invoking ? 'Running…' : 'Run'}
-                </Button>
-              </div>
-
-              {result && (
-                <div className={cn(
-                  "rounded-lg border p-2 text-xs space-y-1 max-h-40 overflow-y-auto",
-                  result.error ? "border-red-500/30 bg-red-500/5" : "border-green-500/20 bg-green-500/5"
-                )}>
-                  <div className="flex items-center gap-1.5 text-white/45 mb-1">
-                    <Clock className="h-3 w-3" /><span>{result.durationMs}ms</span>
-                    {result.error
-                      ? <span className="text-red-400 ml-auto">Error</span>
-                      : <span className="text-green-400 ml-auto">OK</span>}
-                  </div>
-                  {result.error && <p className="text-red-400 font-mono break-all">{result.error}</p>}
-                  {result.logs.map((l, i) => (
-                    <p key={i} className="text-white/45 font-mono break-all">{l}</p>
-                  ))}
-                  {!result.error && (
-                    <pre className="text-green-300/80 font-mono break-all whitespace-pre-wrap">
-                      {JSON.stringify(result.result, null, 2)}
-                    </pre>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-sm text-white/30">
-              Select a function to run it
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── Main component ───────────────────────────────────────────────────────────
 export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectId }: { organizationId?: string | null; projectId?: string | null }) => {
   const { hasFeature } = useSubscription();
   const { currentOrganizationId } = useOrganization();
   const isPaid = hasFeature("ecomgear_cloud");
-
-  // Append project_id query param to all API calls so the server can scope
-  // the tenant database lookup to this project (one DB per project).
-  const projectQs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
-
-  // Fetcher for /api/v1/functions/* — base is /api/v1, paths include /functions
-  const fnApiFetch = useCallback(async (path: string, opts: RequestInit = {}, timeoutMs = 10_000) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) throw new Error("Not authenticated");
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const sep = path.includes('?') ? '&' : '?';
-    const qs  = projectId ? `${sep}project_id=${encodeURIComponent(projectId)}` : '';
-    try {
-      const res = await fetch(getApiServerUrl(`/api/v1${path}${qs}`), {
-        ...opts,
-        signal: controller.signal,
-        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json", ...(opts.headers || {}) },
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Request failed");
-      return json;
-    } finally { clearTimeout(timer); }
-  }, [projectId]);
 
   const [db, setDb]         = useState<TenantDb | null>(null);
   const [tables, setTables] = useState<TableInfo[]>([]);
@@ -775,15 +604,12 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
 
       {/* Tabs */}
       <Tabs defaultValue="tables">
-        <TabsList className="w-full grid grid-cols-3">
+        <TabsList className="w-full grid grid-cols-2">
           <TabsTrigger value="tables" className="flex items-center gap-1.5">
             <Table className="h-3.5 w-3.5" />Tables
           </TabsTrigger>
           <TabsTrigger value="sql" className="flex items-center gap-1.5">
             <Terminal className="h-3.5 w-3.5" />SQL
-          </TabsTrigger>
-          <TabsTrigger value="functions" className="flex items-center gap-1.5">
-            <FunctionSquare className="h-3.5 w-3.5" />Functions
           </TabsTrigger>
         </TabsList>
 
@@ -809,10 +635,6 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
 
         <TabsContent value="sql" className="mt-4">
           <SqlEditor projectId={projectId} />
-        </TabsContent>
-
-        <TabsContent value="functions" className="mt-4">
-          <EdgeFunctionsPanel apiFetch={fnApiFetch} />
         </TabsContent>
       </Tabs>
     </div>

@@ -17,6 +17,7 @@ import { SeoSettings } from "./SeoSettings";
 import { HeaderIntegrationsSettings } from "./HeaderIntegrationsSettings";
 import { GitHubSettings } from "./GitHubSettings";
 import { DatabaseSettings } from "./DatabaseSettings";
+import { EdgeFunctionsSettings } from "./EdgeFunctionsSettings";
 import { KnowledgeSettings } from "./KnowledgeSettings";
 import { SecretsSettings } from "./SecretsSettings";
 import { StripeSettingsContent } from "./StripeSettingsContent";
@@ -144,7 +145,10 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
     switch (activeSection) {
       case "ecomgear-database":
         return <DatabaseSettings organizationId={project?.organization_id ?? null} projectId={projectId} />;
-        
+
+      case "ecomgear-functions":
+        return <EdgeFunctionsSettings projectId={projectId} />;
+
       case "ecomgear-llm":
         return (
           <div className="space-y-6">
@@ -490,28 +494,28 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
         );
 
       case "integrations-zapier":
-        if (!hasFeature('integrations')) {
+        if (!hasFeature('integration_app')) {
           return (
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl font-semibold text-white/85 mb-1">Zapier</h2>
                 <p className="text-sm text-white/45">Give your project's AI chat access to the tools you've set up in Zapier.</p>
               </div>
-              {renderPlanLocked('Zapier Integration', 'Connect Zapier to give your AI chat access to thousands of tools.', 'integrations')}
+              {renderPlanLocked('Zapier Integration', 'Connect Zapier to give your AI chat access to thousands of tools.', 'integration_app')}
             </div>
           );
         }
         return <ZapierSettingsContent projectId={projectId} />;
 
       case "integrations-stripe":
-        if (!hasFeature('integrations')) {
+        if (!hasFeature('integration_app')) {
           return (
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl font-semibold text-white/85 mb-1">Stripe</h2>
                 <p className="text-sm text-white/45">Accept payments and manage subscriptions via Stripe.</p>
               </div>
-              {renderPlanLocked('Stripe Integration', 'Connect Stripe to enable payment processing in your apps.', 'integrations')}
+              {renderPlanLocked('Stripe Integration', 'Connect Stripe to enable payment processing in your apps.', 'integration_app')}
             </div>
           );
         }
@@ -524,7 +528,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
               <h2 className="text-xl font-semibold text-white/85 mb-1">Alipay</h2>
               <p className="text-sm text-white/45">Accept Alipay payments for Chinese market customers.</p>
             </div>
-            {renderPlanLocked('Alipay Integration', 'Connect Alipay to accept payments from Chinese customers.', 'integrations')}
+            {renderPlanLocked('Alipay Integration', 'Connect Alipay to accept payments from Chinese customers.', 'integration_app')}
           </div>
         );
 
@@ -535,7 +539,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
               <h2 className="text-xl font-semibold text-white/85 mb-1">Airwallex</h2>
               <p className="text-sm text-white/45">Multi-currency payments and global payouts via Airwallex.</p>
             </div>
-            {renderPlanLocked('Airwallex Integration', 'Connect Airwallex for multi-currency payment support.', 'integrations')}
+            {renderPlanLocked('Airwallex Integration', 'Connect Airwallex for multi-currency payment support.', 'integration_app')}
           </div>
         );
 

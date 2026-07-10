@@ -34,6 +34,8 @@ import { getDatabaseSchemaTool } from '../agent-tools/get_database_schema.js';
 import { queryDatabaseTool } from '../agent-tools/query_database.js';
 import { provisionDatabaseTool } from '../agent-tools/provision_database.js';
 import { writeEdgeFunctionTool } from '../agent-tools/write_edge_function.js';
+import { setSecretTool } from '../agent-tools/set_secret.js';
+import { listSecretsTool } from '../agent-tools/list_secrets.js';
 import { searchOrgKnowledgeTool } from '../agent-tools/search_org_knowledge.js';
 import { sanitizeFileContent, sanitizeConfigFile } from '../agent-tools/sanitize.js';
 import ts from 'typescript';
@@ -696,6 +698,8 @@ function buildToolSet(ctx: AgentContext, brainMemory: string[]): ToolSet {
     queryDatabaseTool,
     provisionDatabaseTool,
     writeEdgeFunctionTool,
+    setSecretTool,
+    listSecretsTool,
     ...(ctx.ecgMcp ? [searchOrgKnowledgeTool] : []),
   ];
 

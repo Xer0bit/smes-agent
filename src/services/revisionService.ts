@@ -233,9 +233,13 @@ export const revisionService = {
    * Falls back to direct storage listing for legacy revisions without a manifest.
    */
   async getRevisionFiles(projectId: string, revisionId: string): Promise<{ path: string; content: string }[]> {
+    // Only fetch generated_files — generated_code is pulled separately by
+    // getLegacyGeneratedCode() as an absolute last-resort fallback, so we
+    // never need both columns in one request.  Fetching both here was pulling
+    // 35MB+ payloads for revisions with large inline JSONB content.
     const { data, error } = await supabase
       .from('revisions')
-      .select('generated_files, generated_code')
+      .select('generated_files')
       .eq('id', revisionId)
       .single();
 
@@ -307,7 +311,7 @@ export const revisionService = {
 
     const { data, error } = await supabase
       .from('revisions')
-      .select('generated_files, generated_code')
+      .select('generated_files')
       .eq('id', revisionId)
       .single();
     if (error || !data) return [];

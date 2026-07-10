@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/integrations/supabase/client';
+import { setEcgAuthTokens, clearEcgAuthTokens } from '@/integrations/supabase/client';
+import { getApiServerUrl } from '@/config/external-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -78,6 +80,11 @@ export default function Auth() {
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [showSignupConfirmPassword, setShowSignupConfirmPassword] = useState(false);
 
+  // eCG Auth 2FA flow
+  const [pending2faToken, setPending2faToken] = useState<string | null>(null);
+  const [twoFaCode, setTwoFaCode] = useState('');
+  const [twoFaLoading, setTwoFaLoading] = useState(false);
+
   // Redirect to the correct panel based on role
   const navigateByRole = async (userId: string, fallback?: string) => {
     const { data: roleData } = await supabase
@@ -133,27 +140,54 @@ export default function Auth() {
         password: loginPassword,
       });
 
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: validatedData.email,
-        password: validatedData.password,
+      // Use the backend eCG Auth login endpoint (handles both eCG Auth and legacy Supabase)
+      const res = await fetch(getApiServerUrl('/api/v1/auth/ecg/login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: validatedData.email,
+          password: validatedData.password,
+        }),
       });
 
-      if (error) {
-        if (error.message.includes('Invalid login credentials')) {
-          throw new Error(t('auth.login.invalidCredentials'));
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (data.error === 'invalid_credentials') {
+          throw new Error(data.message || t('auth.login.invalidCredentials'));
         }
-        throw error;
+        throw new Error(data.error || t('auth.login.invalidCredentials'));
       }
 
-      if (data.user) {
-        toast({
-          title: t('auth.login.success'),
-          description: t('auth.login.welcomeBack'),
-        });
-
-        // Redirect based on role: admins → /admin/dashboard, users → /dashboard
-        await navigateByRole(data.user.id, redirectTo);
+      // Check if 2FA is required
+      if (data.requires2fa) {
+        setPending2faToken(data.pendingToken);
+        setLoading(false);
+        return;
       }
+
+      // Store eCG Auth tokens if present
+      if (data.accessToken && data.refreshToken) {
+        setEcgAuthTokens(data.accessToken, data.refreshToken);
+      }
+
+      // Also store as Supabase session for compatibility with existing code
+      // that reads from supabase.auth.getSession()
+      if (data.accessToken) {
+        // The token is an eCG Auth token, not a Supabase JWT, so we set a
+        // custom localStorage entry that the session check can use
+        localStorage.setItem('ecg-auth-access-token', data.accessToken);
+        localStorage.setItem('ecg-auth-user-id', data.user.id);
+        localStorage.setItem('ecg-auth-user-email', data.user.email);
+      }
+
+      toast({
+        title: t('auth.login.success'),
+        description: t('auth.login.welcomeBack'),
+      });
+
+      // Redirect based on role: admins → /admin/dashboard, users → /dashboard
+      await navigateByRole(data.user.id, redirectTo);
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         toast({
@@ -181,190 +215,66 @@ export default function Auth() {
       // Validate input
       const validatedData = signupSchema.parse(signupData);
 
-      const provisionWorkspaceFallback = async (userId: string, organizationName: string, projectName: string) => {
-        const { data: existingMember } = await supabase
-          .from('org_members')
-          .select('org_id')
-          .eq('user_id', userId)
-          .limit(1)
-          .maybeSingle();
-
-        // Secondary guard: org may exist without a membership row (partial failure)
-        const { data: existingOrg } = existingMember ? { data: null } : await supabase
-          .from('organizations')
-          .select('id')
-          .eq('created_by', userId)
-          .limit(1)
-          .maybeSingle();
-
-        let organizationId = (existingMember?.org_id ?? existingOrg?.id) as string | undefined;
-        if (!organizationId) {
-          const slugBase = organizationName
-            .toLowerCase()
-            .replace(/\s+/g, '-')
-            .replace(/[^a-z0-9-]/g, '')
-            .replace(/-+/g, '-')
-            .replace(/^-|-$/g, '');
-          const slug = `${slugBase || 'workspace'}-${Math.random().toString(36).slice(2, 8)}`;
-
-          const { data: org, error: orgError } = await supabase
-            .from('organizations')
-            .insert({
-              name: organizationName,
-              slug,
-              created_by: userId,
-            })
-            .select('id')
-            .single();
-
-          if (orgError || !org?.id) {
-            throw new Error(orgError?.message || 'Failed to create organization');
-          }
-
-          organizationId = org.id;
-          await supabase.from('org_members').insert({
-            org_id: organizationId,
-            user_id: userId,
-            role: 'admin',
-          });
-        }
-
-        const { data: existingProject } = await supabase
-          .from('projects')
-          .select('id')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: true })
-          .limit(1)
-          .maybeSingle();
-
-        if (existingProject?.id) {
-          return existingProject.id;
-        }
-
-        const { data: project, error: projectError } = await supabase
-          .from('projects')
-          .insert({
-            name: projectName,
-            user_id: userId,
-            created_by: userId,
-            organization_id: organizationId,
-          })
-          .select('id')
-          .single();
-
-        if (projectError || !project?.id) {
-          throw new Error(projectError?.message || 'Failed to create project');
-        }
-
-        return project.id;
-      };
-
-      // Sign up the user
-      let { data: authData, error: signUpError } = await supabase.auth.signUp({
-        email: validatedData.email,
-        password: validatedData.password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/dashboard`,
-          data: {
-            full_name: validatedData.fullName,
-            organization_name: validatedData.organizationName,
-            project_name: validatedData.projectName,
-          },
-        },
-      });
-
-      // Some local Supabase setups reject redirect_to with 422. Retry once without it.
-      if (signUpError && (signUpError as any)?.status === 422 && /redirect|redirect_to|not allowed/i.test(signUpError.message || '')) {
-        const retry = await supabase.auth.signUp({
+      // Use the backend eCG Auth register endpoint
+      const res = await fetch(getApiServerUrl('/api/v1/auth/ecg/register'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           email: validatedData.email,
           password: validatedData.password,
-          options: {
-            data: {
-              full_name: validatedData.fullName,
-              organization_name: validatedData.organizationName,
-              project_name: validatedData.projectName,
+          fullName: validatedData.fullName,
+          organizationName: validatedData.organizationName,
+          projectName: validatedData.projectName,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Registration failed');
+      }
+
+      // Track referral if present
+      if (referralCode && data.user?.id) {
+        try {
+          await supabase.functions.invoke('track-referral', {
+            body: {
+              referral_code: referralCode,
+              event_type: 'registered',
+              user_id: data.user.id,
             },
-          },
-        });
-        authData = retry.data;
-        signUpError = retry.error;
+          });
+        } catch (err) {
+          console.error('Failed to track referral:', err);
+        }
       }
 
-      if (signUpError) {
-        if (signUpError.message.includes('already registered')) {
-          throw new Error(t('auth.signup.emailExists'));
+      // Handle guest project conversion
+      const guestProjectKey = 'ecomgear_temp_project';
+      const guestData = localStorage.getItem(guestProjectKey);
+      if (guestData) {
+        try {
+          const parsed = JSON.parse(guestData);
+          if (parsed.projectId) {
+            // Guest project conversion is handled by the backend already
+          }
+          localStorage.removeItem(guestProjectKey);
+        } catch {
+          // ignore parse errors
         }
-        throw signUpError;
       }
 
-      if (authData.user && authData.session) {
-        // Track referral if present
-        if (referralCode) {
-          try {
-            await supabase.functions.invoke('track-referral', {
-              body: {
-                referral_code: referralCode,
-                event_type: 'registered',
-                user_id: authData.user.id,
-              },
-            });
-          } catch (err) {
-            console.error('Failed to track referral:', err);
-          }
-        }
-
-        // Get guest project ID if coming from guest mode
-        const guestProjectKey = 'ecomgear_temp_project';
-        const guestData = localStorage.getItem(guestProjectKey);
-        let guestProjectId = null;
-
-        if (guestData) {
-          try {
-            const { projectId } = JSON.parse(guestData);
-            guestProjectId = projectId;
-            localStorage.removeItem(guestProjectKey);
-          } catch (err) {
-            console.error('Failed to parse guest data:', err);
-          }
-        }
-
-        // Call signup-complete edge function to create org and project
-        const sessionToken = authData.session?.access_token || (await supabase.auth.getSession()).data.session?.access_token;
-        const apikey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-
-        if (!sessionToken) {
-          throw new Error('Signup succeeded, but no active session token was found. Please try logging in once.');
-        }
-
-        const { data: signupData, error: signupError } = await supabase.functions.invoke('signup-complete', {
-          headers: {
-            Authorization: `Bearer ${sessionToken}`,
-            apikey,
-          },
-          body: {
-            user_id: authData.user.id,
-            organization_name: validatedData.organizationName,
-            project_name: validatedData.projectName,
-            guest_project_id: guestProjectId,
-          },
-        });
-
-        // Edge function returns { success, organization_id, project_id }
-        let project_id = signupData?.project_id;
-
-        if (signupError || !project_id) {
-          console.warn('Signup complete edge function failed. Falling back to direct provisioning.', signupError);
-          project_id = await provisionWorkspaceFallback(
-            authData.user.id,
-            validatedData.organizationName,
-            validatedData.projectName
-          );
-        }
+      if (data.accessToken && data.refreshToken) {
+        // Auto-login successful — store tokens
+        setEcgAuthTokens(data.accessToken, data.refreshToken);
+        localStorage.setItem('ecg-auth-access-token', data.accessToken);
+        localStorage.setItem('ecg-auth-user-id', data.user.id);
+        localStorage.setItem('ecg-auth-user-email', data.user.email);
 
         // Send welcome email (fire-and-forget)
-        supabase.functions.invoke("welcome", {
+        supabase.functions.invoke('welcome', {
           body: {
-            email: authData.user.email,
+            email: data.user.email,
             user_name: validatedData.fullName || validatedData.email.split('@')[0],
             org_name: validatedData.organizationName,
           },
@@ -375,22 +285,18 @@ export default function Auth() {
           description: t('auth.signup.accountCreated'),
         });
 
-        // Navigate to the new project
-        navigate(`/project/${project_id}`);
-      } else if (authData.user && !authData.session) {
-        // Email confirmation required — send our custom confirm email
-        supabase.functions.invoke("confirm-email", {
-          body: {
-            email: authData.user.email,
-            user_name: validatedData.fullName || validatedData.email.split('@')[0],
-            confirmation_url: `${window.location.origin}/auth/callback`,
-          },
-        }).catch(() => {});
-
+        navigate(`/project/${data.projectId}`);
+      } else {
+        // Registration succeeded but auto-login didn't (e.g. 2FA or email confirm required)
         toast({
-          title: t('auth.signup.checkEmail'),
-          description: t('auth.signup.verificationSent'),
+          title: data.message || t('auth.signup.checkEmail'),
+          description: data.projectId ? 'Please log in to continue.' : t('auth.signup.verificationSent'),
         });
+
+        if (data.projectId) {
+          setActiveTab('login');
+          setLoginEmail(validatedData.email);
+        }
       }
     } catch (error: any) {
       if (error instanceof z.ZodError) {
@@ -400,13 +306,9 @@ export default function Auth() {
           variant: 'destructive',
         });
       } else {
-        const message = error?.message || '';
-        const isRedirectIssue = /redirect|redirect_to|not allowed/i.test(message);
         toast({
           title: t('auth.signup.error'),
-          description: isRedirectIssue
-            ? 'Signup redirect URL is not allowed in the current environment. Please contact support or try again.'
-            : message,
+          description: error.message,
           variant: 'destructive',
         });
       }
@@ -435,6 +337,85 @@ export default function Auth() {
     }
   };
 
+  const handle2faVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pending2faToken || !twoFaCode) return;
+    setTwoFaLoading(true);
+
+    try {
+      const res = await fetch(getApiServerUrl('/api/v1/auth/ecg/2fa/verify'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pendingToken: pending2faToken, code: twoFaCode }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || '2FA verification failed');
+      }
+
+      // 2FA succeeded — store tokens and navigate
+      setEcgAuthTokens(data.accessToken, data.refreshToken);
+      localStorage.setItem('ecg-auth-access-token', data.accessToken);
+      localStorage.setItem('ecg-auth-user-id', data.user.id);
+      localStorage.setItem('ecg-auth-user-email', data.user.email);
+      setPending2faToken(null);
+      setTwoFaCode('');
+
+      toast({
+        title: t('auth.login.success'),
+        description: t('auth.login.welcomeBack'),
+      });
+
+      await navigateByRole(data.user.id, redirectTo);
+    } catch (error: any) {
+      toast({
+        title: 'Verification failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setTwoFaLoading(false);
+    }
+  };
+
+  const handle2faResend = async () => {
+    if (!pending2faToken) return;
+    setTwoFaLoading(true);
+
+    try {
+      const res = await fetch(getApiServerUrl('/api/v1/auth/ecg/2fa/resend'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pendingToken: pending2faToken }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to resend code');
+      }
+
+      toast({
+        title: 'Code resent',
+        description: 'Check your inbox for the new verification code.',
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Failed to resend',
+        description: error.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setTwoFaLoading(false);
+    }
+  };
+
+  const cancel2fa = () => {
+    setPending2faToken(null);
+    setTwoFaCode('');
+  };
+
   const handleForgotPassword = async () => {
     if (!loginEmail.trim()) {
       toast({
@@ -447,20 +428,17 @@ export default function Auth() {
 
     setPasswordResetLoading(true);
     try {
-      const resetUrl = `${window.location.origin}/auth/callback`;
-      const { error } = await supabase.auth.resetPasswordForEmail(loginEmail.trim(), {
-        redirectTo: resetUrl,
+      // Use the backend eCG Auth forgot-password endpoint (handles both eCG Auth and legacy)
+      const res = await fetch(getApiServerUrl('/api/v1/auth/ecg/forgot-password'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail.trim() }),
       });
 
-      if (error) throw error;
-
-      // Send branded reset email via our edge function (fire-and-forget)
-      supabase.functions.invoke("password-reset", {
-        body: {
-          email: loginEmail.trim(),
-          reset_url: resetUrl,
-        },
-      }).catch(() => {});
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Password reset failed');
+      }
 
       toast({
         title: 'Reset email sent',
@@ -507,6 +485,44 @@ export default function Auth() {
               </TabsList>
 
               <TabsContent value="login">
+                {pending2faToken ? (
+                  <form onSubmit={handle2faVerify} className="space-y-4">
+                    <div className="text-center space-y-2 mb-4">
+                      <h3 className="text-lg font-semibold">Two-Factor Authentication</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Enter the 6-digit code sent to your email.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="twofa-code">Verification Code</Label>
+                      <Input
+                        id="twofa-code"
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="000000"
+                        value={twoFaCode}
+                        onChange={(e) => setTwoFaCode(e.target.value.replace(/\D/g, ''))}
+                        required
+                        disabled={twoFaLoading}
+                        autoFocus
+                        className="text-center text-2xl tracking-[0.3em] font-mono"
+                      />
+                    </div>
+                    <Button type="submit" className="w-full bg-gradient-primary hover:opacity-90" disabled={twoFaLoading || twoFaCode.length !== 6}>
+                      {twoFaLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Verify Code
+                    </Button>
+                    <div className="flex justify-between">
+                      <Button type="button" variant="link" className="h-auto px-0 text-sm" onClick={handle2faResend} disabled={twoFaLoading}>
+                        Resend Code
+                      </Button>
+                      <Button type="button" variant="link" className="h-auto px-0 text-sm" onClick={cancel2fa}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                ) : (
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="login-email">
@@ -566,6 +582,7 @@ export default function Auth() {
                     {t('auth.login.submit')}
                   </Button>
                 </form>
+                )}
               </TabsContent>
 
               <TabsContent value="signup">

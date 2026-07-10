@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRight, Settings as SettingsIcon, Globe, BookOpen, Building2, CreditCard, Cloud, Wrench, TestTube, Boxes, ChevronDown, Database, Search } from "lucide-react";
+import { ChevronRight, Settings as SettingsIcon, Globe, BookOpen, Building2, CreditCard, Cloud, Wrench, TestTube, Boxes, ChevronDown, Database, Search, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 interface SettingsSidebarProps {
@@ -49,10 +49,10 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
   ];
 
   const integrationItems: NavItem[] = [
-    { id: "integrations-stripe", label: "Stripe", featureKey: "integrations" },
-    { id: "integrations-alipay", label: "Alipay", featureKey: "integrations" },
-    { id: "integrations-airwallex", label: "Airwallex", featureKey: "integrations" },
-    { id: "integrations-zapier", label: "Zapier", featureKey: "integrations" },
+    { id: "integrations-stripe", label: "Stripe", featureKey: "integration_app" },
+    { id: "integrations-alipay", label: "Alipay", featureKey: "integration_app" },
+    { id: "integrations-airwallex", label: "Airwallex", featureKey: "integration_app" },
+    { id: "integrations-zapier", label: "Zapier", featureKey: "integration_app" },
   ];
 
   const chinaEcoItems: NavItem[] = [
@@ -143,6 +143,20 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
           >
             <Boxes className="h-4 w-4" />
             <span className="flex-1">LLM</span>
+          </button>
+
+          {/* Edge Functions Section */}
+          <button
+            onClick={() => onSectionChange('ecomgear-functions')}
+            className={cn(
+              "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors text-left",
+              activeSection === 'ecomgear-functions'
+                ? "bg-indigo-500/10 text-white font-medium border-l-2 border-indigo-500/60"
+                : "text-white/40 hover:bg-white/[0.04] hover:text-white/70"
+            )}
+          >
+            <Zap className="h-4 w-4" />
+            <span className="flex-1">Edge Functions</span>
           </button>
 
           {/* China Ecosystem Section */}

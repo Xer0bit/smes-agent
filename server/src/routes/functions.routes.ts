@@ -3,7 +3,8 @@ import rateLimit from 'express-rate-limit';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase, supabaseAuth } from '../config/database.js';
 import { databaseService, verifyTenantJwt, getOwnerBySchema } from '../services/database.service.js';
-import { runEdgeFunction, EcgContext } from '../services/functionRunner.service.js';
+import { runEdgeFunction, EcgContext, FunctionContext } from '../services/functionRunner.service.js';
+import { projectService } from '../services/project.service.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
@@ -71,18 +72,16 @@ async function resolveInvokeAuth(req: AuthenticatedRequest, res: Response, next:
   res.status(401).json({ error: 'Invalid credentials' });
 }
 
-async function getDbCredentials(userId: string, projectId?: string) {
-  const creds = await databaseService.getCredentials(userId, projectId);
-  if (!creds) throw new Error('No active database. Provision a database first.');
-  return creds;
-}
-
-async function requirePaidDb(userId: string, res: Response, projectId?: string): Promise<boolean> {
+// Edge functions are project-scoped, not database-scoped — a function that
+// doesn't touch the DB (e.g. a pure webhook handler) should be listable/
+// manageable without one provisioned. Only /invoke needs DB credentials, and
+// only lazily (if the function's own code calls db.*).
+async function requireProjectAccess(userId: string, projectId: string, res: Response): Promise<boolean> {
   try {
-    await getDbCredentials(userId, projectId);
+    await projectService.getProject(projectId, userId);
     return true;
-  } catch (err) {
-    res.status(403).json({ error: (err as Error).message });
+  } catch {
+    res.status(404).json({ error: 'Project not found or access denied.' });
     return false;
   }
 }
@@ -91,7 +90,7 @@ async function requirePaidDb(userId: string, res: Response, projectId?: string):
 router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const projectId = getProjectId(req);
   if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
-  if (!(await requirePaidDb(req.user!.id, res, projectId))) return;
+  if (!(await requireProjectAccess(req.user!.id, projectId, res))) return;
   try {
     const { data, error } = await supabase
       .from('edge_functions')
@@ -110,7 +109,7 @@ router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response)
 router.get('/:name', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const projectId = getProjectId(req);
   if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
-  if (!(await requirePaidDb(req.user!.id, res, projectId))) return;
+  if (!(await requireProjectAccess(req.user!.id, projectId, res))) return;
   try {
     const { data, error } = await supabase
       .from('edge_functions')
@@ -148,7 +147,7 @@ router.patch('/:name', authMiddleware, (_req: AuthenticatedRequest, res: Respons
 router.delete('/:name', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const projectId = getProjectId(req);
   if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
-  if (!(await requirePaidDb(req.user!.id, res, projectId))) return;
+  if (!(await requireProjectAccess(req.user!.id, projectId, res))) return;
   try {
     const { error } = await supabase
       .from('edge_functions')
@@ -169,8 +168,10 @@ router.delete('/:name', authMiddleware, async (req: AuthenticatedRequest, res: R
 router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const invokeProjectId = getProjectId(req);
+    // Optional — a function that never calls db.* should run fine without a
+    // provisioned database. runEdgeFunction only errors on db.* calls if this
+    // is undefined.
     const creds = await databaseService.getCredentials(req.user!.id, invokeProjectId);
-    if (!creds) { res.status(403).json({ error: 'No active database.' }); return; }
 
     let fnQuery = supabase
       .from('edge_functions')
@@ -207,12 +208,28 @@ router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: Authe
       }
     }
 
-    const result = await runEdgeFunction(fn.code, params, {
+    const dbCtx: FunctionContext | undefined = creds ? {
       apiUrl:     creds.api_url,
       schema:     creds.schema,
       anonKey:    creds.anon_key,
       serviceKey: creds.service_key,
-    }, ecgCtx);
+    } : undefined;
+
+    // Expose all saved project secrets as `secrets.KEY_NAME` inside the function
+    // sandbox — values never leave this process, they're just readable by the
+    // function's own server-side code.
+    let secrets: Record<string, string> | undefined;
+    if (invokeProjectId) {
+      const { data: secretRows } = await supabase
+        .from('project_secrets')
+        .select('key_name, key_value')
+        .eq('project_id', invokeProjectId);
+      if (secretRows?.length) {
+        secrets = Object.fromEntries(secretRows.map((r: { key_name: string; key_value: string }) => [r.key_name, r.key_value]));
+      }
+    }
+
+    const result = await runEdgeFunction(fn.code, params, dbCtx, ecgCtx, secrets);
 
     // persist log (fire-and-forget)
     supabase.from('edge_function_logs').insert({
@@ -241,7 +258,7 @@ router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: Authe
 router.get('/:name/logs', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const projectId = getProjectId(req);
   if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
-  if (!(await requirePaidDb(req.user!.id, res, projectId))) return;
+  if (!(await requireProjectAccess(req.user!.id, projectId, res))) return;
   try {
     const { data: fn } = await supabase
       .from('edge_functions')

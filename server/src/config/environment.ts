@@ -32,6 +32,11 @@ export const config = {
     maxFileSizeMb: parseInt(process.env.MAX_FILE_SIZE_MB || '10', 10),
     maxProjectsPerUser: parseInt(process.env.MAX_PROJECTS_PER_USER || '100', 10),
 
+    // eCG Auth (centralised authentication service)
+    ecgAuthBaseUrl: process.env.ECG_AUTH_BASE_URL || '',
+    ecgAuthApiKey: process.env.ECG_AUTH_API_KEY || '',
+    ecgAuth2faActive: process.env.ECG_AUTH_2FA_ACTIVE === 'true',
+
     // Logging
     logLevel: process.env.LOG_LEVEL || 'info'
 };

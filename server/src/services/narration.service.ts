@@ -174,6 +174,8 @@ function buildPromptAndFallback(
       place_asset: 'adding an image',
       search_org_knowledge: 'looking up project notes',
       save_memory: 'saving context',
+      set_secret: 'saving a secret',
+      list_secrets: 'checking saved secrets',
     };
     const verb = verbMap[toolName] ?? 'working on';
     const target = fileLabel || (cmd ? `a package (${cmd.split(/\s+/).slice(1, 3).join(' ')})` : '');

@@ -25,6 +25,14 @@ export interface InvokeResult {
 
 const TIMEOUT_MS = 5_000;
 
+// No database provisioned for this project — db.* stays callable but errors
+// only if the function code actually tries to use it, so functions that
+// don't touch a database work fine without one.
+function buildNoDbHelper() {
+  const fail = () => { throw new Error('No database provisioned for this project — provision one in Database settings to use db.*'); };
+  return { select: fail, insert: fail, update: fail, delete: fail, rpc: fail };
+}
+
 // Minimal PostgREST helper exposed to function code as `db`
 function buildDbHelper(ctx: FunctionContext) {
   const base = `${ctx.apiUrl}/${ctx.schema}`;
@@ -141,8 +149,9 @@ function buildEcgHelper(ctx: EcgContext) {
 export async function runEdgeFunction(
   code: string,
   params: unknown,
-  dbCtx: FunctionContext,
+  dbCtx?: FunctionContext,
   ecgCtx?: EcgContext,
+  secrets?: Record<string, string>,
 ): Promise<InvokeResult> {
   const logs: string[] = [];
   const start = Date.now();
@@ -156,8 +165,9 @@ export async function runEdgeFunction(
   const context = vm.createContext({
     // user-facing API
     params,
-    db:  buildDbHelper(dbCtx),
+    db:  dbCtx ? buildDbHelper(dbCtx) : buildNoDbHelper(),
     ecg: ecgCtx ? buildEcgHelper(ecgCtx) : null,
+    secrets: Object.freeze({ ...(secrets ?? {}) }),
     fetch: safeFetch,
     console: consoleMock,
     // safe globals only
