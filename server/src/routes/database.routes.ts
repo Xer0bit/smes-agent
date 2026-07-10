@@ -78,6 +78,47 @@ router.get('/credentials', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
+// ── POST /api/v1/database/sync-secrets ──────────────────────────────────────
+// The Settings "Sync" button. getCredentials() only upserts VITE_DB_*/
+// VITE_FUNCTIONS_API_URL into the project_secrets TABLE — it never reaches the
+// live preview, which only reads a .env.local file written by the preview
+// service's own /secrets endpoint. Without this, the running app's
+// import.meta.env.VITE_DB_API_URL stays undefined ("Database API URL is not
+// configured") even though the row exists in project_secrets. This pushes the
+// full current secret set to the preview so it takes effect immediately.
+router.post('/sync-secrets', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const projectId = getProjectId(req);
+    if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
+
+    // Ensure VITE_DB_*/VITE_FUNCTIONS_API_URL rows are current before pushing.
+    await databaseService.getCredentials(req.user!.id, projectId);
+
+    const { data: secrets, error } = await supabase
+      .from('project_secrets')
+      .select('key_name, key_value')
+      .eq('project_id', projectId);
+    if (error) throw new Error(error.message);
+
+    const previewBase = (process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001').replace(/\/$/, '');
+    const previewRes = await fetch(`${previewBase}/preview/${projectId}/secrets`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.PREVIEW_UPDATE_SECRET ? { 'x-update-secret': process.env.PREVIEW_UPDATE_SECRET } : {}),
+      },
+      body: JSON.stringify({ secrets: secrets ?? [] }),
+    });
+    if (!previewRes.ok) throw new Error(`Preview service responded ${previewRes.status}`);
+    const previewResult = await previewRes.json().catch(() => ({})) as { restarted?: boolean };
+
+    res.json({ synced: (secrets ?? []).length, restarted: Boolean(previewResult.restarted) });
+  } catch (err) {
+    logger.error('sync-secrets error', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // ── POST /api/v1/database/provision ─────────────────────────────────────────
 router.post('/provision', dbProvisionLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {

@@ -2667,6 +2667,46 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       }
     }
 
+    // ─── Empty-response guard ────────────────────────────────────────────────
+    // Some provider failures (Gemini safety block, malformed function-call
+    // response, etc.) end the stream with a `finish` part carrying finishReason
+    // 'error'/'content-filter'/'other' WITHOUT throwing — the run "succeeds"
+    // with zero visible text, zero tool calls, and nothing written. Usage
+    // tokens (and cost) are still burned, and the user got nothing but the
+    // generic "didn't respond" fallback with no explanation and no retry.
+    // Detect that exact empty-run signature and retry once via a fallback
+    // provider before giving up for real.
+    {
+      const suspiciousFinish = outerFinishReason === 'error' || outerFinishReason === 'other' || outerFinishReason === 'content-filter';
+      const producedNothing = !accumulatedText.trim() && !wroteAnythingSoFar && !hasLegacyWriteTags;
+      if (producedNothing && suspiciousFinish && !abortController.signal.aborted) {
+        console.warn(`[AgentLoop] Empty run detected (finishReason=${outerFinishReason}, zero text/tools/writes) — retrying once via fallback provider. user=${userId ?? 'unknown'}`);
+        let recovered = false;
+        for (const fallbackModelId of buildFallbackCandidates(providerName, modelId)) {
+          const fallbackInfo = createProviderForModel(fallbackModelId);
+          if (!fallbackInfo) continue;
+          try {
+            const retryStream = await attemptStream(fallbackInfo.provider, 0, fallbackInfo.providerName);
+            const retryConsume = await consumeResultStream(retryStream);
+            if (!retryConsume.err && retryConsume.text.trim()) {
+              accumulatedText = retryConsume.text;
+              console.log(`[AgentLoop] Empty-run retry succeeded via ${fallbackInfo.providerName}/${fallbackModelId}`);
+              recovered = true;
+              break;
+            }
+          } catch (retryErr: any) {
+            console.warn(`[AgentLoop] Empty-run retry via ${fallbackInfo.providerName} failed: ${retryErr?.message ?? retryErr}`);
+          }
+        }
+        if (!recovered && !accumulatedText.trim()) {
+          throw new Error(
+            `The AI model produced no output (finishReason=${outerFinishReason}). This usually means a content-safety ` +
+            `filter blocked the response, or the provider had a transient failure. Please rephrase your request or try again.`
+          );
+        }
+      }
+    }
+
     const finalText = accumulatedText;
 
     // Extract summary from <ecomgear-chat-summary> if present

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -294,6 +295,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
   const { hasFeature } = useSubscription();
   const { currentOrganizationId } = useOrganization();
   const isPaid = hasFeature("ecomgear_cloud");
+  const queryClient = useQueryClient();
 
   const [db, setDb]         = useState<TenantDb | null>(null);
   const [tables, setTables] = useState<TableInfo[]>([]);
@@ -339,8 +341,10 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
   const handleSync = async () => {
     setSyncing(true);
     try {
+      const res = await apiFetch('/sync-secrets', { method: 'POST' }, 20_000, projectId);
       await loadStatus();
-      toast.success("Synced with database");
+      queryClient.invalidateQueries({ queryKey: ["project-secrets", projectId] });
+      toast.success(`Synced ${res.synced ?? 0} secret(s) to the live preview${res.restarted ? ' (preview restarted)' : ''}`);
     } catch (err) { toast.error((err as Error).message); }
     finally { setSyncing(false); }
   };
@@ -384,6 +388,11 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
         method: 'POST', body: JSON.stringify({ organization_id: currentOrganizationId || null }),
       }, 30_000, projectId);
       setDb(res.database);
+      // Push the new credentials to the live preview immediately — without this
+      // the app keeps hitting "Database API URL is not configured" until the
+      // owner separately clicks Sync.
+      await apiFetch('/sync-secrets', { method: 'POST' }, 20_000, projectId).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["project-secrets", projectId] });
       toast.success("Database provisioned!");
     } catch (err) { toast.error((err as Error).message); }
     finally { setProvisioning(false); }

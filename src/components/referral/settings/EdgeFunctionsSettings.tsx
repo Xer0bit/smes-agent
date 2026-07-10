@@ -128,15 +128,6 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
-            <Bot className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-            <p className="text-xs text-white/60">
-              Edge functions are managed by the AI agent. To create or modify a function, ask the agent in the project editor.
-              A function only needs a database if its own code calls <code className="bg-[#0a0a0d] px-1 py-0.5 rounded text-[11px]">db.*</code> —
-              otherwise it runs fine without one provisioned.
-            </p>
-          </div>
-
           {fns.length === 0 ? (
             <p className="py-6 text-center text-sm text-white/30">No functions yet. Ask the agent to create one.</p>
           ) : (
