@@ -777,12 +777,18 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             const dbCreds = await databaseService.getCredentials(userId, projectId);
             if (dbCreds) {
                 // Edge functions require a hosted DB, so this URL is only meaningful
-                // (and only injected) alongside DB credentials.
-                const functionsApiUrl = process.env.GEN_SERVER_PUBLIC_URL || 'https://gen.ecomgear.dev';
+                // (and only injected) alongside DB credentials. Functions are served by
+                // the API server (VPS1), NEVER the gen/LLM server — using the wrong
+                // fallback here previously fed the agent a base URL that always 404s.
+                const functionsApiUrl = process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.dev';
                 const dbSecrets = [
                     { key_name: 'VITE_DB_API_URL',        key_value: dbCreds.api_url },
                     { key_name: 'VITE_DB_ANON_KEY',       key_value: dbCreds.anon_key },
-                    { key_name: 'VITE_DB_SERVICE_KEY',    key_value: dbCreds.service_key },
+                    // service_key is intentionally NOT injected here — it's a full-privilege
+                    // credential with no legitimate frontend use. Edge functions already get
+                    // privileged db.* access server-side (functionRunner.service.ts); the agent
+                    // never needs the raw key, and a "VITE_"-prefixed name would make Vite embed
+                    // it directly into the client bundle if the agent ever referenced it.
                     { key_name: 'VITE_DB_SCHEMA',         key_value: dbCreds.schema },
                     { key_name: 'VITE_FUNCTIONS_API_URL', key_value: functionsApiUrl },
                 ];

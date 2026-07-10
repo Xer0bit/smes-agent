@@ -145,6 +145,34 @@ function sqlLiteral(value: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// Platform auth secrets — VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are the
+// EcomGear platform's OWN Supabase instance (used for user sign-up/login in
+// generated apps), NOT the per-project hosted database. Nothing else in the
+// codebase ever wrote these into project_secrets, so every generated app's
+// `createClient(import.meta.env.VITE_SUPABASE_URL, ...)` call got `undefined`
+// and threw "supabaseUrl is required" — the system prompt told the agent to
+// use these env vars, but they never actually existed anywhere. Every project
+// gets these regardless of plan tier or hosted-database status (auth works
+// even on free/no-DB projects).
+// ---------------------------------------------------------------------------
+export async function syncPlatformAuthSecrets(projectId: string): Promise<void> {
+  const url = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+  if (!url || !anonKey) {
+    logger.warn('[databaseService] SUPABASE_URL/SUPABASE_ANON_KEY not set on server — cannot sync platform auth secrets');
+    return;
+  }
+  const { error } = await supabase.from('project_secrets').upsert(
+    [
+      { project_id: projectId, key_name: 'VITE_SUPABASE_URL', key_value: url },
+      { project_id: projectId, key_name: 'VITE_SUPABASE_ANON_KEY', key_value: anonKey },
+    ],
+    { onConflict: 'project_id,key_name' }
+  );
+  if (error) logger.warn('[databaseService] failed to sync platform auth secrets', error);
+}
+
+// ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 export const databaseService = {

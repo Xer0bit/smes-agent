@@ -793,6 +793,28 @@ function buildToolSet(ctx: AgentContext, brainMemory: string[]): ToolSet {
               `tell the user instead of inventing a URL.`
             );
           }
+          // ANY fallback chained to these three critical connection URLs is wrong,
+          // not just a literal EcomGear domain — `window.location.origin`,
+          // `location.origin`, `'localhost'`, empty-string, etc. are all just as
+          // broken (createClient(window.location.origin, ...) silently points auth
+          // at the wrong host instead of failing loudly). Seen in the wild: an
+          // agent "fixed" a missing-env-var crash by falling back to
+          // window.location.origin — that masks the real bug (the secret was never
+          // synced) behind a subtler one (auth silently talks to the wrong origin).
+          const criticalEnvFallback = newContent.match(
+            /import\.meta\.env\.(VITE_SUPABASE_URL|VITE_DB_API_URL|VITE_FUNCTIONS_API_URL)\s*(\?\?|\|\|)/
+          );
+          if (criticalEnvFallback) {
+            return (
+              `BLOCKED: "${args.path}" adds a fallback after \`import.meta.env.${criticalEnvFallback[1]}\` ` +
+              `(via \`${criticalEnvFallback[2]}\`). This env var must NEVER have a fallback of any kind — not a ` +
+              `platform URL, not \`window.location.origin\`, not \`'localhost'\`, nothing. If it's missing, the ` +
+              `integration isn't set up for this project; the correct fix is to tell the user to sync/provision it ` +
+              `in Settings, NOT to silently substitute a different value that will point the app at the wrong place. ` +
+              `Read the value directly with no fallback, and let it fail loudly (or show a clear "not configured" ` +
+              `message) if missing.`
+            );
+          }
         }
 
         try {

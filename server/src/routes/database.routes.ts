@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
-import { databaseService } from '../services/database.service.js';
+import { databaseService, syncPlatformAuthSecrets } from '../services/database.service.js';
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 
@@ -92,7 +92,10 @@ router.post('/sync-secrets', async (req: AuthenticatedRequest, res: Response) =>
     if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
 
     // Ensure VITE_DB_*/VITE_FUNCTIONS_API_URL rows are current before pushing.
+    // getCredentials() is a no-op without an active hosted database — auth
+    // must sync regardless, so it's unconditional here.
     await databaseService.getCredentials(req.user!.id, projectId);
+    await syncPlatformAuthSecrets(projectId);
 
     const { data: secrets, error } = await supabase
       .from('project_secrets')
