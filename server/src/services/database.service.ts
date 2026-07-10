@@ -408,11 +408,20 @@ export const databaseService = {
         await c.query(`GRANT "${anonRole}"    TO authenticator`);
         await c.query(`GRANT "${serviceRole}" TO authenticator`);
 
-        // 8. Register schema in the tenant registry (updates PostgREST config)
+        // 8. Register schema in the tenant registry (updates PostgREST config).
+        // `id` MUST be unique per schema, not per user — a user provisioning a
+        // SECOND project previously reused `id = userId`, which collided with
+        // their first project's row under `ON CONFLICT (id) DO NOTHING` and
+        // silently skipped the insert. The new schema never entered the
+        // registry, so it was never added to PostgREST's exposed schema list —
+        // every table request against that project's DB permanently 404'd
+        // with PGRST106 "Invalid schema", even though tenant_databases showed
+        // status 'active'. schema_name already has its own unique constraint;
+        // use that as the conflict target instead.
         await c.query(
           `INSERT INTO public.ecg_tenant_registry (id, schema_name, anon_role, service_role)
-           VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING`,
-          [userId, schema, anonRole, serviceRole]
+           VALUES ($1, $2, $3, $4) ON CONFLICT (schema_name) DO NOTHING`,
+          [schema, schema, anonRole, serviceRole]
         );
       } finally {
         c.release();
