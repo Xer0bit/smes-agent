@@ -745,57 +745,16 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             contextNotes: typeof (projectRecord as any).context_notes === 'string' ? (projectRecord as any).context_notes.trim() : '',
         };
 
-        // Fetch project secrets (key=value pairs injected as env vars for the agent)
+        // Fetch project secrets (key=value pairs injected as env vars for the agent).
+        // buildProjectEnvSecrets is the SINGLE source of truth for auth/DB/functions
+        // env vars — do not re-derive any of these locally here. This file used to
+        // independently recompute VITE_FUNCTIONS_API_URL/VITE_SUPABASE_* with its own
+        // fallback logic and silently diverged from database.service.ts (wrong
+        // gen.ecomgear.dev fallback, missing VITE_SUPABASE_URL entirely).
         let projectSecrets: Array<{ key_name: string; key_value: string }> = [];
         try {
-            const { data: secretRows } = await supabase
-                .from('project_secrets')
-                .select('key_name, key_value')
-                .eq('project_id', projectId);
-            if (secretRows) projectSecrets = secretRows as Array<{ key_name: string; key_value: string }>;
-        } catch {
-            // Non-fatal — proceed without secrets
-        }
-
-        // Inject Supabase URL + anon key so the agent always uses the correct
-        // custom domain instead of the raw supabase.co project URL (which causes CORS errors).
-        const supabaseUrl  = process.env.SUPABASE_URL  || '';
-        const supabaseAnon = process.env.SUPABASE_ANON_KEY || '';
-        if (supabaseUrl && supabaseAnon) {
-            const userKeys = new Set(projectSecrets.map(s => s.key_name));
-            const sbSecrets = [
-                { key_name: 'VITE_SUPABASE_URL',      key_value: supabaseUrl },
-                { key_name: 'VITE_SUPABASE_ANON_KEY', key_value: supabaseAnon },
-            ].filter(s => !userKeys.has(s.key_name));
-            projectSecrets = [...sbSecrets, ...projectSecrets];
-        }
-
-        // Inject hosted DB credentials as project secrets so the agent can use
-        // them in generated code without needing to call get_database_schema first.
-        try {
-            const { databaseService } = await import('../services/database.service.js');
-            const dbCreds = await databaseService.getCredentials(userId, projectId);
-            if (dbCreds) {
-                // Edge functions require a hosted DB, so this URL is only meaningful
-                // (and only injected) alongside DB credentials. Functions are served by
-                // the API server (VPS1), NEVER the gen/LLM server — using the wrong
-                // fallback here previously fed the agent a base URL that always 404s.
-                const functionsApiUrl = process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.dev';
-                const dbSecrets = [
-                    { key_name: 'VITE_DB_API_URL',        key_value: dbCreds.api_url },
-                    { key_name: 'VITE_DB_ANON_KEY',       key_value: dbCreds.anon_key },
-                    // service_key is intentionally NOT injected here — it's a full-privilege
-                    // credential with no legitimate frontend use. Edge functions already get
-                    // privileged db.* access server-side (functionRunner.service.ts); the agent
-                    // never needs the raw key, and a "VITE_"-prefixed name would make Vite embed
-                    // it directly into the client bundle if the agent ever referenced it.
-                    { key_name: 'VITE_DB_SCHEMA',         key_value: dbCreds.schema },
-                    { key_name: 'VITE_FUNCTIONS_API_URL', key_value: functionsApiUrl },
-                ];
-                // Prepend DB creds; user-defined secrets with same key name take precedence
-                const userKeys2 = new Set(projectSecrets.map(s => s.key_name));
-                projectSecrets = [...dbSecrets.filter(s => !userKeys2.has(s.key_name)), ...projectSecrets];
-            }
+            const { buildProjectEnvSecrets } = await import('../services/database.service.js');
+            projectSecrets = await buildProjectEnvSecrets(userId, projectId);
         } catch {
             // Non-fatal — agent can still discover credentials via get_database_schema tool
         }

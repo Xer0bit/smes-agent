@@ -172,6 +172,60 @@ export async function syncPlatformAuthSecrets(projectId: string): Promise<void> 
   if (error) logger.warn('[databaseService] failed to sync platform auth secrets', error);
 }
 
+export interface ProjectSecret {
+  key_name: string;
+  key_value: string;
+}
+
+// ---------------------------------------------------------------------------
+// SINGLE SOURCE OF TRUTH for every env var injected into the agent's prompt
+// context. Previously ai.routes.ts independently re-derived VITE_FUNCTIONS_API_URL
+// / VITE_DB_* with its own fallback logic and disagreed with this file (used
+// gen.ecomgear.dev — the wrong server — as a fallback, and injected the
+// full-privilege service_key under a VITE_ name). Every caller that needs "what
+// env vars does this project have" MUST go through this function instead of
+// recomputing anything locally — that's how the two diverged last time.
+// ---------------------------------------------------------------------------
+export async function buildProjectEnvSecrets(userId: string, projectId: string): Promise<ProjectSecret[]> {
+  const { data: userRows } = await supabase
+    .from('project_secrets')
+    .select('key_name, key_value')
+    .eq('project_id', projectId);
+  const userSecrets: ProjectSecret[] = (userRows ?? []) as ProjectSecret[];
+  const userKeys = new Set(userSecrets.map(s => s.key_name));
+
+  const derived: ProjectSecret[] = [];
+
+  // Platform auth — every project gets this, regardless of plan tier or
+  // hosted-database status (also persisted via syncPlatformAuthSecrets, fired
+  // below, so it self-heals in project_secrets for the NEXT run too).
+  const authUrl = process.env.SUPABASE_URL;
+  const authAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+  if (authUrl && authAnonKey) {
+    derived.push({ key_name: 'VITE_SUPABASE_URL', key_value: authUrl });
+    derived.push({ key_name: 'VITE_SUPABASE_ANON_KEY', key_value: authAnonKey });
+  }
+  syncPlatformAuthSecrets(projectId).catch(() => {});
+
+  // Hosted DB — getCredentials() is a no-op (returns null) without an active
+  // database, and already upserts these same rows into project_secrets.
+  const dbCreds = await databaseService.getCredentials(userId, projectId);
+  if (dbCreds) {
+    const functionsApiUrl = (process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.dev').replace(/\/$/, '');
+    derived.push({ key_name: 'VITE_DB_API_URL', key_value: dbCreds.api_url });
+    derived.push({ key_name: 'VITE_DB_ANON_KEY', key_value: dbCreds.anon_key });
+    derived.push({ key_name: 'VITE_DB_SCHEMA', key_value: dbCreds.schema });
+    derived.push({ key_name: 'VITE_FUNCTIONS_API_URL', key_value: functionsApiUrl });
+    // service_key is deliberately NOT included — a full-privilege credential must
+    // never carry a VITE_ prefix (Vite would bundle it straight into the browser).
+    // Edge functions already get privileged db.* access server-side; nothing
+    // needs the raw key in agent-visible context.
+  }
+
+  // User-defined secrets win on any key collision.
+  return [...derived.filter(s => !userKeys.has(s.key_name)), ...userSecrets];
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------

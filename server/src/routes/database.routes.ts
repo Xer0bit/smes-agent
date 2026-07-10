@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
-import { databaseService, syncPlatformAuthSecrets } from '../services/database.service.js';
+import { databaseService, buildProjectEnvSecrets } from '../services/database.service.js';
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 
@@ -91,17 +91,10 @@ router.post('/sync-secrets', async (req: AuthenticatedRequest, res: Response) =>
     const projectId = getProjectId(req);
     if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
 
-    // Ensure VITE_DB_*/VITE_FUNCTIONS_API_URL rows are current before pushing.
-    // getCredentials() is a no-op without an active hosted database — auth
-    // must sync regardless, so it's unconditional here.
-    await databaseService.getCredentials(req.user!.id, projectId);
-    await syncPlatformAuthSecrets(projectId);
-
-    const { data: secrets, error } = await supabase
-      .from('project_secrets')
-      .select('key_name, key_value')
-      .eq('project_id', projectId);
-    if (error) throw new Error(error.message);
+    // buildProjectEnvSecrets is the single source of truth (see database.service.ts) —
+    // it upserts auth + DB/functions rows as a side effect and returns the full merged
+    // set, so this route never needs its own derivation logic to drift out of sync.
+    const secrets = await buildProjectEnvSecrets(req.user!.id, projectId);
 
     const previewBase = (process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001').replace(/\/$/, '');
     const previewRes = await fetch(`${previewBase}/preview/${projectId}/secrets`, {
