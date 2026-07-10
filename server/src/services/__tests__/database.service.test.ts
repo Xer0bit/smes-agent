@@ -82,7 +82,12 @@ describe('databaseService.getCredentials — VITE_DB_* secret sync', () => {
   it('upserts VITE_DB_API_URL and VITE_DB_ANON_KEY for the project', async () => {
     const creds = await databaseService.getCredentials('user-1', 'project-1');
     expect(creds).not.toBeNull();
-    expect(creds!.api_url).toBe('https://cloud.ecomgear.app');
+    // api_url carries the tenant schema as a URL path segment — see
+    // database.service.ts's getCredentials(): the header-based Accept-Profile
+    // convention was error-prone (forgetting the header silently 404/406'd),
+    // so the schema now lives in the URL itself and VPS5's nginx derives the
+    // real header from it.
+    expect(creds!.api_url).toBe('https://cloud.ecomgear.app/tenant_project1');
 
     // upsert is fired async (not awaited) — flush microtasks.
     await new Promise((r) => setImmediate(r));

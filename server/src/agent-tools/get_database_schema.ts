@@ -44,18 +44,19 @@ export const getDatabaseSchemaTool: ToolDefinition<z.infer<typeof schema>> = {
         }).join('\n');
 
     return [
-      `Schema: "${creds.schema}" (this project's isolated schema — available as import.meta.env.VITE_DB_SCHEMA)`,
-      `API_URL available as import.meta.env.VITE_DB_API_URL`,
+      `Schema: "${creds.schema}" (this project's isolated schema)`,
+      `API_URL: ${creds.api_url} (available as import.meta.env.VITE_DB_API_URL)`,
       `ANON_KEY available as import.meta.env.VITE_DB_ANON_KEY`,
       '',
       'Tables:',
       tableLines,
       '',
       'IMPORTANT — Frontend database rules:',
-      `  • All fetch requests go to: \${import.meta.env.VITE_DB_API_URL}/rest/v1/<table>`,
-      `  • ALWAYS include these headers: { "Authorization": \`Bearer \${import.meta.env.VITE_DB_ANON_KEY}\`, "apikey": import.meta.env.VITE_DB_ANON_KEY, "Accept-Profile": import.meta.env.VITE_DB_SCHEMA, "Content-Profile": import.meta.env.VITE_DB_SCHEMA }`,
-      '  • Accept-Profile/Content-Profile are REQUIRED, not optional — without them PostgREST routes to its default schema and every request 403s.',
-      '  • NEVER hardcode the URL, key, or schema as a string literal anywhere in code — not even as a fallback/default value. ALWAYS reference the import.meta.env.VITE_DB_* variable directly. A hardcoded fallback containing a real credential can point at the WRONG project\'s database if the env var is ever missing, silently leaking or corrupting data across projects.',
+      `  • API_URL already includes the schema path segment — use it EXACTLY as given, do not add or modify any path segments before /rest/v1/.`,
+      `  • All fetch requests go to: \`\${import.meta.env.VITE_DB_API_URL}/rest/v1/<table>\``,
+      `  • Headers (ONLY these — do NOT add Accept-Profile or Content-Profile, the server derives the schema from the URL path automatically):`,
+      `    { "Authorization": \`Bearer \${import.meta.env.VITE_DB_ANON_KEY}\`, "apikey": import.meta.env.VITE_DB_ANON_KEY, "Content-Type": "application/json" }`,
+      '  • NEVER hardcode the URL, key, or schema as a string literal anywhere in code — not even as a fallback/default value. ALWAYS reference the import.meta.env.VITE_DB_* variable directly.',
       '  • NEVER call /api/auth/* routes — there is no Express backend in the preview; use direct PostgREST calls only',
     ].join('\n');
   },

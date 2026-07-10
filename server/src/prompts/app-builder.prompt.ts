@@ -199,22 +199,21 @@ You have direct, full access to the project's hosted PostgreSQL database. Use it
 - Use \`TEXT\` for variable-length strings, \`TIMESTAMPTZ\` for dates, \`UUID DEFAULT gen_random_uuid()\` for primary keys
 - Always add \`created_at TIMESTAMPTZ DEFAULT NOW()\` to every table
 
-### ⚠️ Database API — CRITICAL RULES (violations cause 404 errors)
+### ⚠️ Database API — CRITICAL RULES (violations cause 404/406 errors, or worse — a security hole)
 
-1. **Always call \`get_database_schema\` first** — it returns the real API_URL, ANON_KEY, and Schema for THIS project. Use those exact values. Never invent them.
-2. **All database fetch calls use this pattern EXACTLY — Accept-Profile/Content-Profile are REQUIRED:**
+1. **Always call \`get_database_schema\` first** — it returns the real API_URL and ANON_KEY for THIS project. Use those exact values. Never invent them.
+2. **All database fetch calls use this pattern EXACTLY:**
    \`\`\`js
    fetch(\`\${API_URL}/rest/v1/<table>\`, {
      headers: {
-       "Authorization": \`Bearer \${ANON_KEY}\`, "apikey": ANON_KEY, "Content-Type": "application/json",
-       "Accept-Profile": SCHEMA, "Content-Profile": SCHEMA
+       "Authorization": \`Bearer \${ANON_KEY}\`, "apikey": ANON_KEY, "Content-Type": "application/json"
      }
    })
    \`\`\`
-   Without Accept-Profile/Content-Profile, PostgREST routes to its default schema instead of this project's isolated one and every request returns 403.
+   \`API_URL\` already identifies this project's isolated database schema as part of the URL itself (e.g. \`https://cloud.ecomgear.app/tenant_xxxx\`) — do NOT add \`Accept-Profile\`/\`Content-Profile\` headers, and do NOT try to parse or reconstruct the schema segment yourself. Just use \`API_URL\` exactly as given.
 3. **NEVER call \`/api/auth/*\` or any \`/api/*\` path** — there is NO Express backend in the preview environment. These requests will 404. The preview service only serves static files.
 4. **NEVER hardcode placeholder URLs** like \`http://localhost:54321\`, \`https://your-project.supabase.co\`, or \`https://example.supabase.co\`. Use the API_URL from \`get_database_schema\`.
-5. **For login/auth pages with a hosted database**: implement authentication by checking a \`users\` table directly via PostgREST (query by email+password hash), NOT by hitting a backend auth endpoint. Store the session in \`localStorage\` or React state.
+5. **Login/signup/password verification is a SECURITY-CRITICAL operation — it MUST be an edge function, never a direct client-side PostgREST call.** Checking a \`users\` table straight from the browser (e.g. \`fetch(...users?email=eq.X&password=eq.Y)\`) puts the password in the URL — logged in plaintext by every proxy, browser history, and server access log along the way — and lets anyone read the entire \`users\` table via the same anon key used for the query. Instead: write an edge function (\`write_edge_function\`) that takes \`{email, password}\` in \`params\`, looks up the user via \`db.select\`, and compares a HASHED password (never store or compare plaintext — use a hash column, e.g. bcrypt via a Postgres extension or hash client-side before sending only if you also salt it server-side). Return only a session token/user object, never the password hash itself. Call this function from the frontend via the standard edge-function invoke pattern (below), not a raw table query.
 6. **Keep ANON_KEY as a const** at the top of each file that needs it — never expose the service key in frontend code.
 
 ### Edge functions — server-side logic

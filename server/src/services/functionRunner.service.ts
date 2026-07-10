@@ -34,8 +34,14 @@ function buildNoDbHelper() {
 }
 
 // Minimal PostgREST helper exposed to function code as `db`
+// ctx.apiUrl already carries the tenant schema as a URL path segment
+// (https://cloud.ecomgear.app/tenant_xxxx — see database.service.ts), so this
+// just adds the standard /rest/v1 suffix. Accept-Profile/Content-Profile are
+// still sent for defense in depth, but VPS5's nginx derives the real schema
+// from the URL path itself and overrides these headers regardless — the path
+// is the source of truth, not the header.
 function buildDbHelper(ctx: FunctionContext) {
-  const base = `${ctx.apiUrl}/${ctx.schema}`;
+  const base = `${ctx.apiUrl}/rest/v1`;
   const headers = {
     'Content-Type': 'application/json',
     'apikey': ctx.serviceKey,
@@ -78,7 +84,7 @@ function buildDbHelper(ctx: FunctionContext) {
       return res.json();
     },
     async rpc(fn: string, args: unknown = {}) {
-      const res = await fetch(`${ctx.apiUrl}/rpc/${fn}`, {
+      const res = await fetch(`${base}/rpc/${fn}`, {
         method: 'POST',
         headers,
         body: JSON.stringify(args),

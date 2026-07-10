@@ -4,8 +4,9 @@
  */
 import { z } from 'zod';
 import { ToolDefinition, AgentContext } from './types.js';
-import { databaseService } from '../services/database.service.js';
+import { databaseService, buildProjectEnvSecrets } from '../services/database.service.js';
 import { supabase } from '../config/database.js';
+import { logger } from '../utils/logger.js';
 
 const schema = z.object({
   organization_id: z.string().optional().describe(
@@ -57,6 +58,28 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
       // getCredentials() also upserts VITE_DB_* into project_secrets — call it
       // immediately so secrets exist even if the agent never reaches get_database_schema.
       await databaseService.getCredentials(ctx.userId, ctx.projectId);
+
+      // ── CRITICAL: push the new secrets to the LIVE preview so the app can
+      // use them immediately. Without this, import.meta.env.VITE_DB_API_URL
+      // stays undefined in the running app ("Database API URL is not
+      // configured") even though the row exists in project_secrets. The
+      // frontend "Sync" button does the same thing — we replicate it here so
+      // one-click provisioning from the agent actually works end-to-end.
+      try {
+        const secrets = await buildProjectEnvSecrets(ctx.userId, ctx.projectId);
+        const previewBase = (process.env.PREVIEW_SERVICE_URL || ctx.previewServiceUrl || 'http://localhost:3001').replace(/\/$/, '');
+        await fetch(`${previewBase}/preview/${ctx.projectId}/secrets`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.PREVIEW_UPDATE_SECRET ? { 'x-update-secret': process.env.PREVIEW_UPDATE_SECRET } : {}),
+          },
+          body: JSON.stringify({ secrets }),
+        });
+      } catch (syncErr) {
+        logger.warn('[provision_database] preview secret sync failed (DB is still provisioned)', syncErr);
+      }
+
       // Surface the billable DB provisioning in the chat (reuses the write_file
       // chip path). Previously this account-level mutation was invisible.
       ctx.onXmlComplete?.(`<ecomgear-write path="database/${record.schema_name}" description="Provisioned hosted PostgreSQL (${record.status})" />`);

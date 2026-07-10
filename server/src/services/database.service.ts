@@ -275,8 +275,16 @@ export const databaseService = {
     if (!record || record.status !== 'active') return null;
     const c = cfg();
     const { anon_key, service_key } = tenantJwts(record.schema_name);
+    // api_url carries the tenant's schema AS PART OF THE PATH
+    // (https://cloud.ecomgear.app/tenant_xxxx), not just the bare shared host.
+    // Old convention required every caller to remember a separate
+    // Accept-Profile/Content-Profile header naming the schema — forget it (as
+    // generated frontend code repeatedly did) and PostgREST 404s/406s silently
+    // routing to the wrong schema. VPS5's nginx now reads the tenant segment
+    // out of the URL itself and sets those headers server-side, so a caller
+    // that only ever uses this URL cannot get the schema wrong.
     const creds: TenantCredentials = {
-      api_url:     c.apiUrl,
+      api_url:     `${c.apiUrl}/${record.schema_name}`,
       schema:      record.schema_name,
       anon_key,
       service_key,
@@ -286,8 +294,6 @@ export const databaseService = {
     // Keep VITE_DB_API_URL/VITE_DB_ANON_KEY/VITE_DB_SCHEMA in sync so generated
     // frontend code (import.meta.env.VITE_DB_*) always resolves to this one
     // hosted DB instead of the agent falling back to inventing a separate one.
-    // VITE_DB_SCHEMA feeds the Accept-Profile/Content-Profile headers PostgREST
-    // requires to route to this tenant's isolated schema instead of its default.
     if (projectId) {
       // VITE_FUNCTIONS_API_URL: edge functions are served by the API server
       // (/api/v1/functions on VPS1), NOT the gen server and NOT the tenant DB
