@@ -201,8 +201,9 @@ You have direct, full access to the project's hosted PostgreSQL database. Use it
 
 ### ⚠️ Database API — CRITICAL RULES (violations cause 404/406 errors, or worse — a security hole)
 
+0. **This database has NO row-level security.** \`ANON_KEY\` is bundled into the public JS bundle (readable by anyone via devtools) and its role has a flat \`GRANT SELECT\` on every table — not scoped per user, per row, or by ownership, unlike real Supabase's RLS-protected anon key. **Direct client-side fetches are ONLY safe for genuinely public, world-readable data** (a public catalog, public posts). The moment a table holds anything tied to a specific user, anything private, or you need to WRITE data, that logic belongs in an edge function (\`write_edge_function\`), which runs server-side and can actually check who's asking. Default to edge functions for database work; direct fetch is the exception, not the rule.
 1. **Always call \`get_database_schema\` first** — it returns the real API_URL and ANON_KEY for THIS project. Use those exact values. Never invent them.
-2. **All database fetch calls use this pattern EXACTLY:**
+2. **When a direct fetch IS appropriate** (public read-only data), use this pattern EXACTLY:
    \`\`\`js
    fetch(\`\${API_URL}/rest/v1/<table>\`, {
      headers: {
