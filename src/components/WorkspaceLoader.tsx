@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Boxes, Check } from 'lucide-react';
 
 interface Step {
   id: string;
   label: string;
-  detail?: string;
 }
 
 const STEPS: Step[] = [
@@ -19,27 +18,52 @@ interface WorkspaceLoaderProps {
   projectName?: string | null;
   fileCount?: number;
   visible: boolean;
+  /** Real loading milestones — drive the step index instead of a fake timer. */
+  authResolved?: boolean;
+  projectFetched?: boolean;
+  filesRestored?: boolean;
+  previewFirstPaint?: boolean;
 }
 
-export function WorkspaceLoader({ projectName, fileCount, visible }: WorkspaceLoaderProps) {
-  const [activeStep, setActiveStep] = useState(0);
-  const [leaving, setLeaving] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+export function WorkspaceLoader({
+  projectName,
+  fileCount,
+  visible,
+  authResolved,
+  projectFetched,
+  filesRestored,
+  previewFirstPaint,
+}: WorkspaceLoaderProps) {
+  // Derive the active step index directly from real milestones. Falls back
+  // to a timer only when milestones are not provided (backward compat).
+  const milestones = [authResolved, projectFetched, filesRestored, previewFirstPaint, visible === false];
+  const useMilestones = milestones.some((m) => m !== undefined);
 
-  // Advance steps automatically until the last one
+  const milestoneStep = (() => {
+    if (!useMilestones) return -1;
+    for (let i = 0; i < milestones.length; i++) {
+      if (!milestones[i]) return i;
+    }
+    return STEPS.length - 1;
+  })();
+
+  const [timerStep, setTimerStep] = useState(0);
+  const [leaving, setLeaving] = useState(false);
+
+  // Fake-progress fallback timer (only when milestones aren't provided)
   useEffect(() => {
-    if (!visible) return;
-    timerRef.current = setInterval(() => {
-      setActiveStep(s => (s < STEPS.length - 2 ? s + 1 : s));
+    if (useMilestones || !visible) return;
+    const id = setInterval(() => {
+      setTimerStep((s) => (s < STEPS.length - 2 ? s + 1 : s));
     }, 700);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [visible]);
+    return () => clearInterval(id);
+  }, [useMilestones, visible]);
+
+  const activeStep = useMilestones ? milestoneStep : timerStep;
 
   // When workspace finishes loading, jump to final step and fade out
   useEffect(() => {
     if (!visible) {
-      if (timerRef.current) clearInterval(timerRef.current);
-      setActiveStep(STEPS.length - 1);
       const t = setTimeout(() => setLeaving(true), 120);
       return () => clearTimeout(t);
     }

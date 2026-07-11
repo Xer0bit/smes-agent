@@ -88,8 +88,18 @@ export function ProjectMemberAccess({ projectId, organizationId }: ProjectMember
         try {
             setToggling(userId);
 
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) throw new Error('Not authenticated');
+            // getUser() re-validates the token against Supabase's auth server on every
+            // call — on the admin app (long-lived tabs, infrequent interaction) this
+            // occasionally raced with token refresh and spuriously reported "not
+            // authenticated" even though the session was genuinely still valid.
+            // getSession() reads the already-verified local session instead (same
+            // source AdminApp's own mount-time gate uses), avoiding that race.
+            const { data: { session } } = await supabase.auth.getSession();
+            const user = session?.user;
+            if (!user) {
+                toast.error('Your session has expired. Please refresh the page and sign in again.');
+                return;
+            }
 
             if (currentlyHasAccess) {
                 // Revoke access

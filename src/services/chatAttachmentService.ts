@@ -1,10 +1,12 @@
 /**
  * Chat Attachment Service
- * Uploads files to the backend /tmp storage for use in the agent chat.
- * No Supabase storage bucket required — files live in /tmp with auto-cleanup.
+ * Uploads files to BOTH the backend /tmp storage (for the agent to read from
+ * disk) AND Supabase Storage (permanent URL for message persistence). The
+ * public URL survives reloads; the temp path is ephemeral and cleaned up.
  */
 import { getGenServerCandidateUrls } from '@/config/external-api';
 import { lovableCloud } from '@/integrations/supabase/client';
+import { supabase } from '@/integrations/supabase/client';
 
 export interface ChatAttachment {
   id: string;
@@ -15,6 +17,8 @@ export interface ChatAttachment {
   previewUrl: string;
   /** Server-side temp path — sent to the agent loop */
   tempPath: string;
+  /** Permanent Supabase Storage URL — persists across reloads */
+  publicUrl: string;
   /** 'image' | 'document' — determines rendering */
   category: 'image' | 'document';
 }
@@ -65,12 +69,14 @@ export async function uploadChatAttachment(
   const { data: { session } } = await lovableCloud.auth.getSession();
   if (!session) throw new Error('Not authenticated');
 
+  // ── Step 1: Upload to backend /tmp (agent reads from disk) ────────────
   const formData = new FormData();
-  formData.append('projectId', projectId);  // must come before file so req.body is populated when multer destination runs
+  formData.append('projectId', projectId);
   formData.append('file', file);
 
   const urls = getGenServerCandidateUrls('/api/v1/ai/upload-attachment');
   let lastError = '';
+  let tempPath = '';
 
   for (const url of urls) {
     try {
@@ -89,21 +95,42 @@ export async function uploadChatAttachment(
       }
 
       const result = await resp.json();
-      return {
-        id: crypto.randomUUID(),
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        previewUrl: URL.createObjectURL(file),
-        tempPath: result.tempPath,
-        category: categorize(file.type),
-      };
+      tempPath = result.tempPath;
+      break;
     } catch (err: any) {
       lastError = err.message;
     }
   }
 
-  throw new Error(`Upload failed: ${lastError}`);
+  if (!tempPath) throw new Error(`Upload failed: ${lastError}`);
+
+  // ── Step 2: Upload to Supabase Storage for a permanent URL ────────────
+  // Falls back to the local blob URL if storage upload fails — the chat works
+  // for the current session, but the attachment won't survive reload.
+  const storagePath = `chat-attachments/${projectId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+  let publicUrl = '';
+  try {
+    const { error: uploadError } = await supabase.storage
+      .from('project-assets')
+      .upload(storagePath, file, { upsert: false, contentType: file.type });
+    if (!uploadError) {
+      const { data: urlData } = supabase.storage.from('project-assets').getPublicUrl(storagePath);
+      publicUrl = urlData.publicUrl;
+    }
+  } catch {
+    // Non-fatal — temp path still works for this session
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    name: file.name,
+    size: file.size,
+    type: file.type,
+    previewUrl: URL.createObjectURL(file),
+    tempPath,
+    publicUrl,
+    category: categorize(file.type),
+  };
 }
 
 /**

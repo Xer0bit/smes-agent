@@ -3,11 +3,20 @@
  */
 import { supabase } from '@/integrations/supabase/client';
 
+export interface MessageAttachment {
+  name: string;
+  size: number;
+  type: string;
+  url: string;
+  category: 'image' | 'document';
+}
+
 export interface DbMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
+  attachments?: MessageAttachment[] | null;
 }
 
 const isValidUUID = (id: string | null | undefined) => {
@@ -16,11 +25,12 @@ const isValidUUID = (id: string | null | undefined) => {
 };
 
 export const messageService = {
-  async saveUserMessage(projectId: string, content: string, userId?: string): Promise<void> {
+  async saveUserMessage(projectId: string, content: string, userId?: string, attachments?: MessageAttachment[]): Promise<void> {
     if (!isValidUUID(projectId)) throw new Error('Invalid projectId');
 
     const row: Record<string, unknown> = { project_id: projectId, role: 'user', content };
     if (userId) row.user_id = userId;
+    if (attachments && attachments.length > 0) row.attachments = attachments;
 
     const { error } = await supabase.from('messages').insert(row);
     if (error) {
@@ -47,7 +57,7 @@ export const messageService = {
 
     const { data, error } = await supabase
       .from('messages')
-      .select('id, role, content, created_at')
+      .select('id, role, content, created_at, attachments')
       .eq('project_id', projectId)
       .order('created_at', { ascending: true });
 
@@ -61,6 +71,7 @@ export const messageService = {
       role: m.role as 'user' | 'assistant',
       content: m.content,
       created_at: m.created_at,
+      attachments: m.attachments as MessageAttachment[] | null,
     }));
   },
 
@@ -70,7 +81,7 @@ export const messageService = {
 
     const { data, error } = await supabase
       .from('messages')
-      .select('id, role, content, created_at')
+      .select('id, role, content, created_at, attachments')
       .eq('project_id', projectId)
       .order('created_at', { ascending: false })
       .limit(limit + 1);
@@ -87,6 +98,7 @@ export const messageService = {
       role: m.role as 'user' | 'assistant',
       content: m.content,
       created_at: m.created_at,
+      attachments: m.attachments as MessageAttachment[] | null,
     }));
 
     return { messages, hasMore };
@@ -98,7 +110,7 @@ export const messageService = {
 
     const { data, error } = await supabase
       .from('messages')
-      .select('id, role, content, created_at')
+      .select('id, role, content, created_at, attachments')
       .eq('project_id', projectId)
       .lt('created_at', beforeTimestamp)
       .order('created_at', { ascending: false })
@@ -116,6 +128,7 @@ export const messageService = {
       role: m.role as 'user' | 'assistant',
       content: m.content,
       created_at: m.created_at,
+      attachments: m.attachments as MessageAttachment[] | null,
     }));
 
     return { messages, hasMore };

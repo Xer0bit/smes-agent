@@ -716,6 +716,19 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         } else {
             // Authenticated user — normal tier logic
             projectRecord = await projectService.getProject(projectId, req.user!.id) as unknown as Record<string, unknown>;
+
+            // getProject() above only checks "has ANY access" — it doesn't distinguish
+            // a full editor from a read-only viewer/client collaborator. Without this,
+            // any accepted collaborator (regardless of the role they were invited with)
+            // could invoke the agent to generate/modify code, since role was never
+            // enforced anywhere. Owners/admins/editors can generate; viewers/clients
+            // cannot — this is the actual "edit the project" action.
+            const projectRole = await projectService.getUserRole(projectId, req.user!.id);
+            if (projectRole === 'viewer' || projectRole === 'client') {
+                res.status(403).json({ error: 'You have read-only access to this project and cannot generate or modify code.' });
+                return;
+            }
+
             const tier = await getUserPlanTier(req.user!.id);
    
                if (tier === 'free') {

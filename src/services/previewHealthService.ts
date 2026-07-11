@@ -220,8 +220,15 @@ export async function refreshPreviewHealth(projectId: string): Promise<PreviewHe
 
 /**
  * Update files to Docker preview service for a specific project.
+ *
+ * @param fullSync When true (default), the preview prunes files not in the
+ *                 `files` array and does a full Vite reload. When false, only
+ *                 the provided files are patched and Vite's HMR hot-replaces
+ *                 just the changed modules — no full reload, feels instant.
+ *                 Pass false for single-file edits during a chat turn; pass
+ *                 true for structural changes (new/deleted files, multi-file).
  */
-export async function updateDockerPreview(projectId: string, files: { path: string; content: string }[]): Promise<{ success: boolean; error?: string }> {
+export async function updateDockerPreview(projectId: string, files: { path: string; content: string }[], fullSync: boolean = true): Promise<{ success: boolean; error?: string }> {
     const tryUpdate = async (attempt: number): Promise<{ success: boolean; error?: string }> => {
         let timeoutId: any;
         try {
@@ -240,7 +247,7 @@ export async function updateDockerPreview(projectId: string, files: { path: stri
             const response = await fetch(updateUrl, {
                 method: 'POST',
                 headers: updateHeaders,
-                body: JSON.stringify({ files, fullSync: true }),
+                body: JSON.stringify({ files, fullSync }),
                 signal: controller.signal,
             });
 

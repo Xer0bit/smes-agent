@@ -202,7 +202,26 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               const { body, summary } = extractSummary(stripEcomgearTags(m.content));
               return { id: m.id, role: 'assistant' as const, content: body, status: 'complete' as const, summary };
             }
-            return { id: m.id, role: 'user' as const, content: m.content, status: 'complete' as const };
+            // Map DB attachments to the ChatAttachment shape for rendering.
+            // Use the permanent publicUrl as the previewUrl (no blob URL needed
+            // — the image loads directly from Supabase Storage).
+            const dbAttachments = (m.attachments ?? []).map(a => ({
+              id: m.id,
+              name: a.name,
+              size: a.size,
+              type: a.type,
+              previewUrl: a.url,
+              tempPath: '',
+              publicUrl: a.url,
+              category: a.category,
+            }));
+            return {
+              id: m.id,
+              role: 'user' as const,
+              content: m.content,
+              status: 'complete' as const,
+              ...(dbAttachments.length > 0 ? { attachments: dbAttachments } : {}),
+            };
           }),
         ];
         setMessages(mapped);
@@ -241,7 +260,23 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           const { body, summary } = extractSummary(stripEcomgearTags(m.content));
           return { id: m.id, role: 'assistant' as const, content: body, status: 'complete' as const, summary };
         }
-        return { id: m.id, role: 'user' as const, content: m.content, status: 'complete' as const };
+        const dbAttachments = (m.attachments ?? []).map(a => ({
+          id: m.id,
+          name: a.name,
+          size: a.size,
+          type: a.type,
+          previewUrl: a.url,
+          tempPath: '',
+          publicUrl: a.url,
+          category: a.category,
+        }));
+        return {
+          id: m.id,
+          role: 'user' as const,
+          content: m.content,
+          status: 'complete' as const,
+          ...(dbAttachments.length > 0 ? { attachments: dbAttachments } : {}),
+        };
       });
 
       // Preserve scroll position: save height before prepend, restore delta after
@@ -500,7 +535,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
     // Persist user message (skip for guests — no DB project row)
     if (!isGuest) {
-      messageService.saveUserMessage(projectId, raw, userId).catch(err => {
+      const attachmentsForDb = messageAttachments
+        .filter(a => a.publicUrl)
+        .map(a => ({ name: a.name, size: a.size, type: a.type, url: a.publicUrl, category: a.category }));
+      messageService.saveUserMessage(projectId, raw, userId, attachmentsForDb.length > 0 ? attachmentsForDb : undefined).catch(err => {
         console.error('Failed to save user message', err);
         toast.error('Message could not be saved. Check your connection.');
       });

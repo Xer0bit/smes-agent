@@ -677,21 +677,33 @@ export const databaseService = {
   },
 
   // ── Reload PostgREST schemas via SSH-less mechanism ──────────────────────
+  // This was previously fire-and-forget: one attempt, no response-status check,
+  // any failure silently swallowed. A transient network blip between VPS1 and
+  // VPS5 meant the schema got registered in ecg_tenant_registry correctly but
+  // PostgREST never actually picked it up — the project showed "active" and
+  // every request against it 404'd with PGRST106 "Invalid schema" until someone
+  // noticed and ran the reload manually. Retries 3x with backoff and throws on
+  // total failure so provision() can surface it instead of reporting success.
   async _reloadPostgREST(): Promise<void> {
-    // Read all active schemas from registry and update PostgREST config via API
-    // PostgREST reloads on SIGUSR1 — we signal it via the VPS5 reload script
-    // For now: fire-and-forget HTTP request to a reload endpoint we'll expose
-    // If that fails, PostgREST still works; new schema just needs manual reload
-    try {
-      const reloadUrl = process.env.TENANT_DB_RELOAD_URL;
-      if (reloadUrl) {
-        await fetch(reloadUrl, {
+    const reloadUrl = process.env.TENANT_DB_RELOAD_URL;
+    if (!reloadUrl) return;
+
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetch(reloadUrl, {
           method: 'POST',
           headers: { Authorization: `Bearer ${process.env.TENANT_DB_RELOAD_SECRET}` },
+          signal: AbortSignal.timeout(10_000),
         });
+        if (!res.ok) throw new Error(`reload endpoint returned ${res.status}`);
+        return;
+      } catch (err) {
+        lastErr = err;
+        logger.warn(`PostgREST reload attempt ${attempt}/3 failed`, err);
+        if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 1000));
       }
-    } catch {
-      logger.warn('PostgREST reload signal failed — restart manually if schema not visible');
     }
+    throw new Error(`PostgREST reload failed after 3 attempts: ${(lastErr as Error)?.message ?? lastErr}`);
   },
 };

@@ -109,6 +109,48 @@ export class ProjectService {
         throw new Error('Unauthorized access to project');
     }
 
+    // ── Role resolution ──────────────────────────────────────────────────────
+    // getProject() above is a binary all-or-nothing gate — every accepted
+    // collaborator got full access regardless of the Editor/Viewer/Client role
+    // they were invited with, because nothing ever read project_member_access's
+    // role column (which didn't even exist until this was added). Callers that
+    // need to distinguish "can view" from "can actually change the project"
+    // (agent generation, file writes, settings, deploys) should use this
+    // instead of just calling getProject() and assuming write access.
+    async getUserRole(projectId: string, userId: string): Promise<'owner' | 'admin' | 'editor' | 'viewer' | 'client'> {
+        const { data } = await supabase
+            .from('projects')
+            .select('user_id, created_by, organization_id')
+            .eq('id', projectId)
+            .single();
+
+        if (!data) throw new Error('Project not found');
+        if (data.user_id === userId || data.created_by === userId) return 'owner';
+
+        if (data.organization_id) {
+            const { data: membership } = await supabase
+                .from('org_members')
+                .select('role')
+                .eq('org_id', data.organization_id)
+                .eq('user_id', userId)
+                .maybeSingle();
+
+            if (membership?.role === 'billing_admin') throw new Error('Unauthorized access to project');
+            if (membership?.role === 'admin') return 'admin';
+        }
+
+        const { data: pma } = await supabase
+            .from('project_member_access')
+            .select('role')
+            .eq('project_id', projectId)
+            .eq('user_id', userId)
+            .maybeSingle();
+
+        if (pma) return (pma.role as 'editor' | 'viewer' | 'client') || 'editor';
+
+        throw new Error('Unauthorized access to project');
+    }
+
     async listProjects(userId: string, limit = 50, offset = 0): Promise<Project[]> {
         // Owned projects
         const { data: owned, error } = await supabase

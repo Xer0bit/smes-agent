@@ -48,6 +48,7 @@ import { captureThumbnail } from './thumbnailService.js';
 import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
 import { beginRun as beginNarration, updateThought, endRun as endNarration, generateStatus, type LifecyclePhase } from './narration.service.js';
 import { lookupFailureFix, storeFailureFix } from './failureMemory.service.js';
+import { databaseService } from './database.service.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -2021,7 +2022,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
   // Inject project secrets as env var context — agent may reference them in code
   // but MUST NEVER echo, print, log, or reveal their values in chat responses.
-  const secretsBlock = (() => {
+  //
+  // Also injects the REAL current schema (table names/columns/row counts)
+  // directly into every request when a hosted DB exists — previously the agent
+  // only saw the schema if it remembered to call get_database_schema first,
+  // and skipping that call was the single biggest cause of it guessing wrong
+  // column names or inventing tables that don't exist. This makes schema
+  // access unconditional instead of tool-call-dependent.
+  const secretsBlock = await (async () => {
     if (!projectSecrets || projectSecrets.length === 0) return '';
     const lines = projectSecrets.map(s => `${s.key_name}=${s.key_value}`).join('\n');
     const hasSb  = projectSecrets.some(s => s.key_name === 'VITE_SUPABASE_URL');
@@ -2034,8 +2042,27 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           ? '\n\nUse `import.meta.env.VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for AUTHENTICATION ONLY (sign up, log in, log out, session/user). This project also has its own hosted database (below) — ALL application data (tables like posts, products, orders, profiles, etc.) MUST go through `VITE_DB_API_URL`, NEVER through Supabase. Do not create or query app-data tables against Supabase when a hosted database is present. NEVER hardcode any `*.supabase.co` URL — it will cause CORS errors in the preview.'
           : '\n\nFor Supabase auth/data in generated code ALWAYS use `import.meta.env.VITE_SUPABASE_URL` and `import.meta.env.VITE_SUPABASE_ANON_KEY`. NEVER hardcode any `*.supabase.co` URL — it will cause CORS errors in the preview.')
       : '';
+    // Fetch the real current schema unconditionally — don't rely on the agent
+    // remembering to call get_database_schema. Best-effort: a fetch failure
+    // here just means no live schema block, never blocks the run.
+    let liveSchemaBlock = '';
+    if (hasDb && userId) {
+      try {
+        const tables = await databaseService.listTables(userId, projectId);
+        liveSchemaBlock = tables.length === 0
+          ? '\n\n**Current schema: no tables yet.** Use `query_database` with CREATE TABLE to add some before writing data-dependent code.'
+          : '\n\n**Current schema (live, as of this message):**\n' + tables.map((t) => {
+              const cols = t.columns.map((c) => `${c.name} ${c.type}${c.nullable ? '' : ' NOT NULL'}`).join(', ');
+              return `- ${t.name} (${t.row_count ?? '?'} rows): ${cols}`;
+            }).join('\n') +
+            '\n\nUse these EXACT table/column names — never guess or invent one. If you need to change the schema, call `query_database`, then re-check via `get_database_schema` before writing dependent code.';
+      } catch {
+        // Non-fatal — agent can still call get_database_schema itself
+      }
+    }
+
     const dbNote = hasDb
-      ? '\n\nThis project\'s hosted database is the ONLY place for application data (any table the user asks for — posts, products, orders, custom records, etc.). Use PostgREST calls to `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` with headers `{ "Authorization": "Bearer <VITE_DB_ANON_KEY>", "apikey": "<VITE_DB_ANON_KEY>" }` — `VITE_DB_API_URL` already carries this project\'s isolated schema as a URL path segment (e.g. `https://cloud.ecomgear.app/tenant_xxxx`), so do NOT add `Accept-Profile`/`Content-Profile` headers or reference `VITE_DB_SCHEMA` in fetch calls. Call `get_database_schema` to inspect tables, `query_database` to run SQL.' +
+      ? '\n\nThis project\'s hosted database is the ONLY place for application data (any table the user asks for — posts, products, orders, custom records, etc.). Use PostgREST calls to `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` with headers `{ "Authorization": "Bearer <VITE_DB_ANON_KEY>", "apikey": "<VITE_DB_ANON_KEY>" }` — `VITE_DB_API_URL` already carries this project\'s isolated schema as a URL path segment (e.g. `https://cloud.ecomgear.app/tenant_xxxx`), so do NOT add `Accept-Profile`/`Content-Profile` headers or reference `VITE_DB_SCHEMA` in fetch calls.' + liveSchemaBlock +
         (hasSb ? ' This hosted database has NO auth/login server of its own — it is Postgres + PostgREST only. Never attempt to hit `VITE_DB_API_URL/auth/...` — that endpoint does not exist here; auth always goes through Supabase (above).' : '') +
         '\n\n**Login/signup/password checks are SECURITY-CRITICAL and MUST be an edge function — never a direct client-side PostgREST call.** Querying `users?email=eq.X&password=eq.Y` straight from the browser puts the password in the URL (logged everywhere) and exposes the whole table to anyone with the anon key. Write an edge function that looks up the user via `db.select` and compares a HASHED password server-side; return only a session token/user object.\n' +
         '\n\n**Edge functions** — use `write_edge_function` for server-side logic the browser should never run directly: auth/password checks (above), code that needs a secret API key, webhook handlers, scheduled/triggered jobs, or any multi-step backend operation. Do NOT put that logic in frontend code just because PostgREST covers plain CRUD — if it needs a secret, touches passwords, or must run server-side, it MUST be an edge function. Inside the function, read saved secrets as `secrets.KEY_NAME` (save new keys with `set_secret` first — never paste key values into function code or frontend files).\n' +

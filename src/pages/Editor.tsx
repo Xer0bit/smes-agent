@@ -109,6 +109,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
 
   // Track if initial workspace load has completed (for preview refresh)
   const [hasInitialLoadCompleted, setHasInitialLoadCompleted] = useState(false);
+  const [previewFirstPaint, setPreviewFirstPaint] = useState(false);
   const prevWorkspaceLoadingRef = useRef(true);
   const [prompt, setPrompt] = useState("");
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -477,6 +478,12 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
             transitionPreviewStatus('ready', { message: 'Preview Ready' });
           }
         });
+      } else if (event.data?.type === 'ecg-element-selected') {
+        // Click-to-select from inspect mode — scope the chat input to the
+        // clicked element so the next prompt has context (Lovable/v0 parity).
+        const { selector, tagName, text } = event.data;
+        const label = text ? `"${text.slice(0, 60)}"` : selector;
+        setInspectTarget({ selector, tagName: tagName || '', label: label || '' });
       }
     };
 
@@ -489,6 +496,9 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   const [fallbackPreviewUrl, setFallbackPreviewUrl] = useState<string | null>(null);
   const [previewStatus, setPreviewStatus] = useState<'pending' | 'building' | 'ready' | 'failed'>('pending');
   const [latestPreviewUrl, setLatestPreviewUrl] = useState<string | null>(null);
+  // Click-to-select inspect mode
+  const [inspectMode, setInspectMode] = useState(false);
+  const [inspectTarget, setInspectTarget] = useState<{ selector: string; tagName: string; label: string } | null>(null);
   const sharePreviewUrl = useMemo(() => {
     const candidate = latestPreviewUrl || previewUrl;
     if (!candidate) return null;
@@ -2410,6 +2420,10 @@ export default defineConfig({
         visible={isWorkspaceLoading && !hasInitialLoadCompleted}
         projectName={project?.name}
         fileCount={workspaceFiles.size > 0 ? workspaceFiles.size : undefined}
+        authResolved={!!currentUser}
+        projectFetched={!!project}
+        filesRestored={!isWorkspaceLoading && workspaceFiles.size > 0}
+        previewFirstPaint={previewFirstPaint}
       />
       {!isMobileViewport && !isMinimized && (
         <button
@@ -2451,7 +2465,76 @@ export default defineConfig({
                     </Button>
                   </div>
                 </div>
-                <div className="flex-1 min-h-0 overflow-hidden" />
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  {projectId && (currentUser || isGuest) && (
+                    <AgentChatPanel
+                      currentOrganizationId={currentOrganizationId}
+                      projectId={projectId}
+                      userId={currentUser?.id || `guest:${guestFingerprint || 'anonymous'}`}
+                      isMinimized={false}
+                      triggerPrompt={repairPrompt}
+                      onTriggerConsumed={() => {
+                        setRepairPrompt(null);
+                        isAgentRunningRef.current = true;
+                      }}
+                      onFilesGenerated={(files, filesToDelete, previewPushed) => {
+                        const normalizedFiles = files.length > 0
+                          ? normalizeProjectFiles(files.map(f => ({ path: f.path, content: f.content })))
+                          : [];
+                        const deletedSet = new Set((filesToDelete ?? []).map(p => p.replace(/^\//, '')));
+                        if (normalizedFiles.length > 0) {
+                          setGeneratedFiles(normalizedFiles as any[]);
+                          const htmlFile = normalizedFiles.find(f => f.path === 'index.html' || f.path.endsWith('.html')) || normalizedFiles[0];
+                          if (htmlFile) setGeneratedCode(htmlFile.content);
+                        }
+                        deletedSet.forEach((deletedPath) => deleteFileWorkspace(deletedPath, 'ai'));
+                        normalizedFiles.forEach((file) => writeFileWorkspace(file.path, file.content, 'ai'));
+                        saveWorkspaceToDb().catch((err) => {
+                          console.error('[Editor] Failed to persist agent files:', err);
+                          scheduleWorkspaceSave();
+                        });
+                        if (normalizedFiles.length > 0 && !previewPushed) {
+                          const merged = new Map(
+                            Array.from(workspaceFiles.values())
+                              .filter(f => !deletedSet.has(f.path.replace(/^\//, '')))
+                              .map(f => [f.path, { path: f.path, content: f.content }])
+                          );
+                          normalizedFiles.forEach(f => merged.set(f.path, f));
+                          buildPreviewNow(Array.from(merged.values()), previewPathRef.current || '/').catch((error) => {
+                            console.error('[Editor] Preview sync failed after generation:', error);
+                          });
+                        }
+                        lastAgentEcoRef.current = normalizedFiles.length > 0 ? 1 : 0;
+                      }}
+                      onGenerationComplete={() => {
+                        isAgentRunningRef.current = false;
+                        if (!pendingAutoRepairRef.current) {
+                          consecutiveRepairsRef.current = 0;
+                        }
+                        pendingAutoRepairRef.current = false;
+                        if (document.visibilityState === 'visible' && previewUrlRef.current) {
+                          setActiveBuilderTab('preview');
+                        }
+                        if (!isGuest) {
+                          refreshUsage().catch((err) =>
+                            console.error('[Editor] Error refreshing usage:', err)
+                          );
+                        }
+                      }}
+                      onPreviewCommand={(cmd) => {
+                        if ((cmd === 'restart' || cmd === 'refresh' || cmd === 'rebuild') && projectId) {
+                          const baseUrl = getPreviewUrl(projectId);
+                          setPreviewUrl(buildPreviewNavigationUrl(baseUrl, previewPath || '/', true));
+                          setLatestPreviewUrl(baseUrl);
+                          transitionPreviewStatus('building', { message: 'Refreshing preview…' });
+                        }
+                      }}
+                      onUsage={(_tokensUsed) => {}}
+                      onAgentStreamText={handleAgentStreamText}
+                      onAgentStreamClear={handleAgentStreamClear}
+                    />
+                  )}
+                </div>
               </div>
             </SheetContent>
           </Sheet>
@@ -2541,6 +2624,21 @@ export default defineConfig({
         {/* New Agent Chat Panel */}
         {!isMinimized && projectId && (currentUser || isGuest) && activeBuilderTab !== 'revisions' && (
           <div className="flex-1 overflow-hidden">
+            {inspectTarget && (
+              <div className="mx-3 mt-2 mb-1 rounded-lg bg-indigo-500/[0.08] border border-indigo-500/20 px-3 py-2 flex items-center gap-2 text-xs">
+                <MousePointerClick className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                <span className="text-indigo-200/90 truncate flex-1">
+                  Selected: <code className="text-indigo-300 font-mono">{inspectTarget.tagName}</code>
+                  {inspectTarget.label && <span className="text-indigo-200/60"> {inspectTarget.label}</span>}
+                </span>
+                <button
+                  onClick={() => setInspectTarget(null)}
+                  className="text-indigo-300/50 hover:text-white shrink-0"
+                >
+                  ×
+                </button>
+              </div>
+            )}
             {isGuest && (
               <div className="mx-3 mt-3 mb-1 rounded-lg bg-cyan-500/[0.06] px-3 py-2.5 text-xs text-cyan-200/80">
                 <span className="font-medium text-cyan-200">Guest</span> — Gemini &middot; {(() => {
@@ -3413,9 +3511,12 @@ export default defineConfig({
                   onViewModeChange={setViewMode}
                   onRefresh={() => buildPreviewNow()}
                   onOpenExternal={effectivePreviewUrl ? () => window.open(effectivePreviewUrl, '_blank') : undefined}
+                  onPreviewFirstPaint={() => setPreviewFirstPaint(true)}
                   status={previewStatus}
                   currentPath={previewPath}
                   projectId={projectId ?? undefined}
+                  inspectMode={inspectMode}
+                  onInspectModeChange={setInspectMode}
                   onRepair={(errorSummary) => {
                     setRepairPrompt(errorSummary);
                     setIsMinimized(false);

@@ -920,6 +920,17 @@ function pruneProjectFiles(projectRoot, userFilePaths) {
             // causing Vite to fail resolving any import until the next initProject call.
             if (protectedTopLevel.has(relPath.split('/')[0])) continue;
 
+            // .env.local (and any .env* file) is written by the /secrets endpoint,
+            // NOT by the agent — it never appears in userFilePaths since the agent
+            // doesn't "own" it. Without this guard, the very next fullSync (which
+            // runs at the end of EVERY agent turn) deleted it as a "stale" file,
+            // silently wiping VITE_DB_API_URL/VITE_SUPABASE_URL/etc. moments after
+            // they were synced — the running Vite server kept them in memory until
+            // its next restart, but any restart (secrets re-sync, redeploy, crash)
+            // came back up with no env file at all ("Database API URL is not
+            // configured" / import.meta.env.VITE_* all undefined).
+            if (/^\.env(\..+)?$/.test(entry.name)) continue;
+
             if (entry.isDirectory()) {
                 walk(absPath);
                 try {
@@ -2287,6 +2298,88 @@ async function getOrCreateServer(projectId) {
     var msg = e.reason ? (e.reason.message || String(e.reason)) : 'Unhandled promise rejection';
     report(msg, '', 0);
   }, true);
+})();`,
+                                injectTo: 'head-prepend',
+                            },
+                            {
+                                tag: 'script',
+                                attrs: { type: 'text/javascript' },
+                                children: `(function(){
+  // ── Click-to-select inspector ────────────────────────────────────
+  // Activated/deactivated via postMessage from the parent (MultiDevicePreview).
+  // When active, clicking an element posts its selector + rect + tagName back
+  // so the chat can scope the next prompt to that element (Lovable/v0 parity).
+  var _inspectActive = false;
+  var _overlay = null;
+
+  function clearOverlay() {
+    if (_overlay) { _overlay.remove(); _overlay = null; }
+  }
+
+  function highlight(el) {
+    if (!_overlay) {
+      _overlay = document.createElement('div');
+      _overlay.style.cssText = 'position:fixed;pointer-events:none;z-index:999999;border:2px solid #6366f1;background:rgba(99,102,241,0.12);transition:all 80ms ease;';
+      document.body.appendChild(_overlay);
+    }
+    var r = el.getBoundingClientRect();
+    _overlay.style.left = r.left + 'px';
+    _overlay.style.top = r.top + 'px';
+    _overlay.style.width = r.width + 'px';
+    _overlay.style.height = r.height + 'px';
+  }
+
+  function buildSelector(el) {
+    if (el.id) return '#' + el.id;
+    var parts = [];
+    while (el && el.nodeType === 1 && parts.length < 4) {
+      var part = el.tagName.toLowerCase();
+      if (el.className && typeof el.className === 'string') {
+        var cls = el.className.trim().split(/\\s+/).slice(0, 2).join('.');
+        if (cls) part += '.' + cls;
+      }
+      var parent = el.parentElement;
+      if (parent) {
+        var siblings = Array.from(parent.children).filter(function(c) { return c.tagName === el.tagName; });
+        if (siblings.length > 1) part += ':nth-of-type(' + (siblings.indexOf(el) + 1) + ')';
+      }
+      parts.unshift(part);
+      el = parent;
+    }
+    return parts.join(' > ');
+  }
+
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'ecg-inspect-mode') {
+      _inspectActive = e.data.active;
+      if (!_inspectActive) clearOverlay();
+    }
+  });
+
+  document.addEventListener('click', function(e) {
+    if (!_inspectActive) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var el = e.target;
+    if (!el || el === document.body || el === document.documentElement) return;
+    var selector = buildSelector(el);
+    var r = el.getBoundingClientRect();
+    try {
+      window.parent.postMessage({
+        type: 'ecg-element-selected',
+        selector: selector,
+        tagName: el.tagName.toLowerCase(),
+        text: (el.innerText || '').slice(0, 100),
+        rect: { x: r.x, y: r.y, width: r.width, height: r.height }
+      }, '*');
+    } catch(err) {}
+  }, true);
+
+  document.addEventListener('mousemove', function(e) {
+    if (!_inspectActive) return;
+    var el = e.target;
+    if (el && el !== document.body && el !== document.documentElement) highlight(el);
+  });
 })();`,
                                 injectTo: 'head-prepend',
                             },

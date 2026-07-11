@@ -168,15 +168,33 @@ router.delete('/:name', authMiddleware, async (req: AuthenticatedRequest, res: R
 router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const invokeProjectId = getProjectId(req);
+
+    // Resolve the project OWNER's user_id so credential lookups and function
+    // fetches hit the right rows regardless of who is invoking. A collaborator
+    // calling via their own platform session has a different user_id than the
+    // owner who owns the edge_functions row + tenant_databases row — without
+    // this resolution they get a false 404.
+    let ownerId = req.user!.id;
+    if (invokeProjectId) {
+      try {
+        const project = await projectService.getProject(invokeProjectId, req.user!.id);
+        ownerId = project.user_id;
+      } catch {
+        // getProject throws if the caller has no access — but a tenant-public
+        // caller was already validated via getOwnerBySchema in resolveInvokeAuth.
+        // Fall through with the original user id.
+      }
+    }
+
     // Optional — a function that never calls db.* should run fine without a
     // provisioned database. runEdgeFunction only errors on db.* calls if this
     // is undefined.
-    const creds = await databaseService.getCredentials(req.user!.id, invokeProjectId);
+    const creds = await databaseService.getCredentials(ownerId, invokeProjectId);
 
     let fnQuery = supabase
       .from('edge_functions')
       .select('id, code, is_active')
-      .eq('user_id', req.user!.id)
+      .eq('user_id', ownerId)
       .eq('name', req.params.name);
     // Legacy rows written before project scoping have project_id NULL — only
     // match those when no project_id is known, never mix scoped/unscoped rows.

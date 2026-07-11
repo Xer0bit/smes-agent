@@ -14,6 +14,7 @@ import { UserPlus, Trash2, Shield, Clock, Mail, X } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { useSubscription } from "@/contexts/SubscriptionContext";
+import { canInviteMember as checkSeatAvailability, invalidateOrgCache } from "@/services/subscriptionService";
 
 interface CollaboratorManagerProps {
   projectId?: string;
@@ -23,6 +24,7 @@ interface Collaborator {
   id: string;
   user_id: string;
   granted_at: string;
+  role: 'editor' | 'viewer' | 'client';
   profiles: {
     email: string;
     full_name?: string;
@@ -35,6 +37,7 @@ interface PendingInvite {
   email: string;
   created_at: string;
   expires_at: string;
+  role: 'editor' | 'viewer' | 'client';
 }
 
 export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => {
@@ -51,7 +54,11 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
   const [projectName, setProjectName] = useState<string>('');
   const [removeCollaboratorId, setRemoveCollaboratorId] = useState<string | null>(null);
   const [cancelInviteId, setCancelInviteId] = useState<string | null>(null);
-  const { hasFeature, canInviteMember, tierLabel } = useSubscription();
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
+  // Seat availability defaults to `true` while unknown/loading so the UI never
+  // shows a false "seat limit reached" nudge before the real check resolves.
+  const [seatStatus, setSeatStatus] = useState<{ allowed: boolean; reason?: string }>({ allowed: true });
+  const { hasFeature, tierLabel } = useSubscription();
 
   useEffect(() => {
     if (projectId) {
@@ -59,6 +66,23 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
       loadData();
     }
   }, [projectId]);
+
+  // canInviteMember() is an async, org-scoped seat check (RPC-backed) — it was
+  // previously destructured straight off useSubscription() as if it were a
+  // precomputed boolean, which doesn't exist there. That silently resolved to
+  // `undefined` (falsy) forever, permanently disabling the invite button and
+  // permanently blocking handleSendInvite for EVERY non-superadmin user on
+  // EVERY tier, including paid ones with open seats. Seats are an
+  // organization-level concept — a project with no organization (personal
+  // project) has no seat ceiling to check, so this defaults to allowed.
+  useEffect(() => {
+    if (!organizationId) { setSeatStatus({ allowed: true }); return; }
+    let cancelled = false;
+    checkSeatAvailability(organizationId).then((result) => {
+      if (!cancelled) setSeatStatus(result);
+    });
+    return () => { cancelled = true; };
+  }, [organizationId]);
 
   const canAddCollaborators = isSuperAdmin || hasFeature('invite_editors');
   const canAssignEditor = isSuperAdmin || hasFeature('invite_editors');
@@ -78,6 +102,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
 
       if (!project) return;
       setProjectName(project.name || '');
+      setOrganizationId(project.organization_id ?? null);
 
       const isCreator = project.created_by === user.id;
       let isOrgAdmin = false;
@@ -126,7 +151,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
   const loadCollaborators = async () => {
     const { data, error } = await supabase
       .from('project_member_access')
-      .select('id, user_id, granted_at')
+      .select('id, user_id, granted_at, role')
       .eq('project_id', projectId)
       .order('granted_at', { ascending: false });
 
@@ -147,6 +172,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
       id: item.id,
       user_id: item.user_id,
       granted_at: item.granted_at,
+      role: item.role || 'editor',
       profiles: {
         email: profileMap.get(item.user_id)?.email || '',
         full_name: profileMap.get(item.user_id)?.full_name,
@@ -158,7 +184,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
   const loadPendingInvites = async () => {
     const { data, error } = await supabase
       .from('project_invitations')
-      .select('id, email, created_at, expires_at')
+      .select('id, email, created_at, expires_at, role')
       .eq('project_id', projectId)
       .eq('status', 'pending')
       .gte('expires_at', new Date().toISOString())
@@ -179,8 +205,21 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
         toast.error(`Collaborators are not available on ${tierLabel}. Upgrade your plan.`);
         return;
       }
-      if (!isSuperAdmin && !canInviteMember) {
-        toast.error('Your organization has reached its seat limit. Upgrade to invite more members.');
+      if (!isSuperAdmin && !seatStatus.allowed) {
+        toast.error(seatStatus.reason || 'Your organization has reached its seat limit. Upgrade to invite more members.');
+        return;
+      }
+      // Re-check the specific role being granted, not just whether inviting is
+      // allowed at all — canAddCollaborators only reflects invite_editors, so
+      // without this a starter/professional-tier user could still pick
+      // "Client" in the dropdown (a hidden-but-selectable option) even though
+      // their tier doesn't include invite_clients.
+      if (!isSuperAdmin && selectedRole === 'editor' && !canAssignEditor) {
+        toast.error(`Editor invitations are not available on ${tierLabel}. Upgrade your plan.`);
+        return;
+      }
+      if (!isSuperAdmin && selectedRole === 'client' && !canAssignClient) {
+        toast.error(`Client invitations are not available on ${tierLabel}. Upgrade your plan.`);
         return;
       }
 
@@ -199,6 +238,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
           project_id: projectId,
           email: trimmedEmail,
           invited_by: currentUserId,
+          role: selectedRole,
         })
         .select('token')
         .single();
@@ -224,6 +264,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
       toast.success(`Invitation sent to ${trimmedEmail}`);
       setEmail('');
       await loadPendingInvites();
+      if (organizationId) invalidateOrgCache(organizationId);
     } catch (err: any) {
       console.error('Error sending invite:', err);
       toast.error(err.message || 'Failed to send invitation');
@@ -243,6 +284,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
       toast.success('Invitation cancelled');
       setCancelInviteId(null);
       await loadPendingInvites();
+      if (organizationId) invalidateOrgCache(organizationId);
     } catch {
       toast.error('Failed to cancel invitation');
     }
@@ -259,6 +301,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
       toast.success('Collaborator removed');
       setRemoveCollaboratorId(null);
       await loadCollaborators();
+      if (organizationId) invalidateOrgCache(organizationId);
     } catch {
       toast.error('Failed to remove collaborator');
     }
@@ -310,7 +353,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
         </Card>
       )}
 
-      {canManage && !isSuperAdmin && canAddCollaborators && !canInviteMember && (
+      {canManage && !isSuperAdmin && canAddCollaborators && !seatStatus.allowed && (
         <Card className="bg-[#0f0f12] border-indigo-500/30">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
@@ -372,7 +415,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
             </div>
             <Button
               onClick={handleSendInvite}
-              disabled={inviting || !email.trim() || !canInviteMember}
+              disabled={inviting || !email.trim() || (!isSuperAdmin && !seatStatus.allowed)}
               className="w-full md:w-auto"
             >
               {inviting ? 'Sending...' : 'Send Invitation'}
@@ -414,6 +457,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
                         <Badge variant="outline" className="text-xs text-amber-600 border-amber-200 bg-amber-50">
                           Pending
                         </Badge>
+                        <Badge variant="secondary" className="text-xs capitalize">{invite.role}</Badge>
                       </div>
                     </TableCell>
                     <TableCell className="text-sm text-white/45">
@@ -496,7 +540,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary">Member</Badge>
+                      <Badge variant="secondary" className="capitalize">{collaborator.role}</Badge>
                     </TableCell>
                     <TableCell className="text-sm text-white/45">
                       {collaborator.granted_at ? format(new Date(collaborator.granted_at), 'MMM d, yyyy') : '—'}

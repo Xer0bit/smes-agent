@@ -5,7 +5,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Monitor, Tablet, Smartphone, ExternalLink, RotateCcw, Wrench, AlertTriangle } from 'lucide-react';
+import { Monitor, Tablet, Smartphone, ExternalLink, RotateCcw, Wrench, AlertTriangle, MousePointerClick } from 'lucide-react';
 
 const PREVIEW_SERVICE_URL =
   (import.meta.env.VITE_PREVIEW_SERVICE_URL as string | undefined) || 'http://localhost:3001';
@@ -57,9 +57,14 @@ interface MultiDevicePreviewProps {
     onRefresh?: () => void;
     onOpenExternal?: () => void;
     onRepair?: (errorSummary: string) => void;
+    /** Fired once when the preview iframe fires its first load event. */
+    onPreviewFirstPaint?: () => void;
     status?: 'pending' | 'building' | 'ready' | 'failed';
     currentPath?: string;
     projectId?: string;
+    /** Inspect mode toggle — when true, clicking elements in the preview posts a selector back. */
+    inspectMode?: boolean;
+    onInspectModeChange?: (active: boolean) => void;
 }
 
 function isNonFatalAssetError(errorText: string): boolean {
@@ -95,15 +100,27 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     onRefresh,
     onOpenExternal,
     onRepair,
+    onPreviewFirstPaint,
     status = 'pending',
     currentPath,
     projectId,
+    inspectMode = false,
+    onInspectModeChange,
 }) => {
     const config = DEVICE_CONFIGS[viewMode];
     const [previewDiagnostics, setPreviewDiagnostics] = useState<PreviewStatus>({ healthy: true, errors: [], diagnosticKind: 'healthy' });
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const [blankScreen, setBlankScreen] = useState(false);
     const blankTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const iframeRef = useRef<HTMLIFrameElement>(null);
+
+    // Toggle inspect mode in the iframe via postMessage whenever the prop changes
+    useEffect(() => {
+        const iframe = iframeRef.current;
+        if (iframe?.contentWindow) {
+            iframe.contentWindow.postMessage({ type: 'ecg-inspect-mode', active: inspectMode }, '*');
+        }
+    }, [inspectMode, src]);
 
     // Poll preview service for build errors once a preview URL is loaded.
     // Skips the request while the tab is backgrounded (document.hidden) — this
@@ -149,6 +166,8 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     }, [src, htmlContent]);
 
     const handleIframeLoad = (e: React.SyntheticEvent<HTMLIFrameElement>) => {
+        // Notify parent that the preview iframe has rendered (for loading UI).
+        onPreviewFirstPaint?.();
         // After the iframe loads, wait 3 s then check if the body has any rendered content.
         // A truly blank white screen will have an empty (or near-empty) body.
         if (blankTimerRef.current) clearTimeout(blankTimerRef.current);
@@ -191,12 +210,30 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
 
     const handleRepair = () => {
         if (!onRepair) return;
-        const firstError = fatalBuildErrors[0] ?? buildErrors[0] ?? '';
+        // Build a structured repair prompt from the actual diagnostics instead
+        // of a generic "fix the build error" — the agent gets the real error
+        // text, the diagnostic kind, and the file path, so it can fix it in
+        // one shot instead of guessing.
+        const allErrors = [...fatalBuildErrors, ...buildErrors].filter(Boolean);
+        const firstError = allErrors[0] ?? '';
         const file = extractFilePath(firstError);
-        const summary = file
-            ? `Fix the build error in ${file}.`
-            : 'Fix the build error in the preview.';
-        onRepair(summary);
+        const kind = previewDiagnostics.diagnosticKind ?? 'build';
+
+        const errorText = allErrors.slice(0, 3).join('\n').slice(0, 1500);
+        const parts: string[] = [];
+        if (kind === 'runtime') {
+            parts.push('The preview is showing a blank screen due to a runtime error.');
+        } else if (kind === 'validation') {
+            parts.push('The preview failed a source validation check.');
+        } else {
+            parts.push('The preview has a build error.');
+        }
+        if (file) parts.push(`The error is in ${file}.`);
+        if (errorText) {
+            parts.push(`Here is the actual error output:\n\n${errorText}`);
+        }
+        parts.push('Fix the root cause so the app renders correctly.');
+        onRepair(parts.join(' '));
     };
 
     const renderContent = () => {
@@ -274,6 +311,7 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
             return (
                 <div className="relative w-full h-full">
                     <iframe
+                        ref={iframeRef}
                         src={src}
                         title="Preview"
                         className="w-full h-full border-0 bg-white"
@@ -343,7 +381,22 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     return (
         <div className="flex flex-col h-full">
             {/* Toolbar */}
-
+            {onInspectModeChange && (
+                <div className="flex items-center gap-1 px-2 py-1 bg-gray-800/50 border-b border-white/5">
+                    <button
+                        onClick={() => onInspectModeChange(!inspectMode)}
+                        className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+                            inspectMode
+                                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+                                : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
+                        }`}
+                        title={inspectMode ? 'Exit inspect mode' : 'Click an element in the preview to scope your next prompt'}
+                    >
+                        <MousePointerClick className="w-3.5 h-3.5" />
+                        {inspectMode ? 'Inspecting — click an element' : 'Inspect'}
+                    </button>
+                </div>
+            )}
 
             {/* Preview Container */}
             <div className="flex-1 bg-gray-900/50 flex items-center justify-center p-1 overflow-hidden">

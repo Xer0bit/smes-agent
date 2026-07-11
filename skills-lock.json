@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "ditto": {
+      "source": "ohad6k/ditto",
+      "sourceType": "github",
+      "skillPath": "skills/ditto/SKILL.md",
+      "computedHash": "bcab02e8b486479b3a6bff3aa0968f70ae4b9a1302d1bc07cdc9ec9156245daf"
+    }
+  }
+}
