@@ -729,14 +729,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             if (generationDone) return;
             if (stepData.step > 0) setStepCount(stepData.step);
             const isLLMStatus = stepData.step === 0 && stepData.toolCount === 0;
-            // File-op steps already got their own entry from onToolOutput above —
-            // only add a narrative entry here when there's no more specific status.
+            // File-op steps already got their own permanent entry from onToolOutput
+            // above. A narrative-only step (think, or any step with no file-changing
+            // tool call) is shown live in the status ticker ONLY — it never gets a
+            // permanent stepsAccum entry, so the saved chat transcript isn't cluttered
+            // with a growing list of "thinking about X..." lines that never go away.
             if (stepData.status) {
               pushStatus(stepData.status, isLLMStatus);
-              if (stepData.toolCount === 0) {
-                stepsAccum.push({ type: 'status', label: stepData.status, done: true });
-                syncSteps();
-              }
             } else if (stepData.toolCount > 0) {
               pushStatus('Reviewing generated changes...');
             }
@@ -744,15 +743,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           onStepStatusRefine: ({ status }) => {
             // A cheap-model-generated description of what the step actually did,
             // replacing the rule-based canned phrase once it resolves (feature/build
-            // tiers only — see generateDynamicStepStatus on the server).
+            // tiers only — see generateDynamicStepStatus on the server). Live ticker
+            // only, same as onStepFinish above — never saved to the permanent history.
             if (generationDone) return;
             pushStatus(status, true, true);
-            // Replace the last narrative entry in place (this is a refinement of it),
-            // rather than appending a duplicate.
-            const lastStatusIdx = stepsAccum.map(s => s.type).lastIndexOf('status');
-            if (lastStatusIdx >= 0) stepsAccum[lastStatusIdx] = { ...stepsAccum[lastStatusIdx], label: status };
-            else stepsAccum.push({ type: 'status', label: status, done: true });
-            syncSteps();
           },
           onAgentNarration: (narration) => {
             // Real-time, LLM-written description of what the agent is doing RIGHT

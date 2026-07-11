@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { ToolDefinition, AgentContext } from './types.js';
 import { supabase } from '../config/database.js';
 import { databaseService } from '../services/database.service.js';
+import { logger } from '../utils/logger.js';
 
 const MAX_FUNCTIONS_PER_PROJECT = 20;
 
@@ -126,7 +127,10 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
         .select('id, name, created_at, updated_at')
         .single();
 
-      if (error) return `ERROR writing edge function: ${error.message}`;
+      if (error) {
+        logger.error(`[write_edge_function] upsert failed project=${ctx.projectId} name=${name}: ${error.message}`, error);
+        return `ERROR writing edge function: ${error.message}`;
+      }
 
       const verb = existing ? 'Updated' : 'Created';
       // Surface the deployed edge function in the chat (reuses the write_file
@@ -149,6 +153,7 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
         `of the app calls it. Never show secret values — refer to them by name only.`
       );
     } catch (err: unknown) {
+      logger.error(`[write_edge_function] unexpected failure project=${ctx.projectId} name=${name}`, err);
       return `ERROR writing edge function: ${err instanceof Error ? err.message : String(err)}`;
     }
   },

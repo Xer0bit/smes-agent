@@ -3227,11 +3227,9 @@ async function startMainServer() {
         try {
             const materialized = await materializeProjectFiles(projectId, projectRoot, files);
             const { userFilePaths, allFixedIssues, validationErrors } = materialized;
-
-            if (validationErrors.length > 0) {
-                // Non-blocking: surface as warnings, let Vite HMR show them in browser.
-                setProjectErrors(projectId, validationErrors.map((error) => error.summary), 'warning');
-            }
+            // validationErrors (real TS semantic errors — undefined names, etc.) are
+            // merged with the post-write build check below into one real health
+            // signal, rather than being filed here as a non-blocking 'warning'.
 
             // Clean up default template files that might conflict with user's app
             const hasUserApp = userFilePaths.has('src/App.tsx') || userFilePaths.has('src/App.jsx') ||
@@ -3313,12 +3311,29 @@ export default App;
             // Run syntax check on all source files. Report errors as 'build'
             // so getProjectDiagnostics() returns healthy:false — this ensures
             // the agent loop sees the failure and retries instead of stopping.
+            //
+            // IMPORTANT: quickViteBuildCheck only runs esbuild (syntax-only —
+            // parses fine even for `supabase.auth.getSession()` with zero import
+            // of `supabase` anywhere, since that's a semantic/binding issue, not
+            // a parse error). The earlier validateSourceFile() pass (TypeScript's
+            // transpileModule, captured above as validationErrors) DOES catch
+            // those — undefined-name references, unbound identifiers — but used
+            // to be filed under diagnosticKind 'warning' (non-blocking), and this
+            // check's success branch then unconditionally cleared ALL errors,
+            // silently erasing whatever validateSourceFile had just found. Merge
+            // both into one real signal so undefined-symbol bugs (e.g. a page
+            // referencing `localDb`/`localAuth` that was never imported) actually
+            // mark the preview unhealthy instead of being reported as clean.
             const buildCheck = await quickViteBuildCheck(projectId, projectRoot);
-            if (!buildCheck.ok) {
-                console.warn(`[${projectId}] Syntax errors: ${buildCheck.errors.length} issue(s) — agent will repair`);
-                setProjectErrors(projectId, buildCheck.errors.map((e) => e.summary), 'build');
+            const combinedErrorSummaries = [
+                ...validationErrors.map((e) => e.summary),
+                ...(buildCheck.ok ? [] : buildCheck.errors.map((e) => e.summary)),
+            ];
+            if (combinedErrorSummaries.length > 0) {
+                console.warn(`[${projectId}] Build/type errors: ${combinedErrorSummaries.length} issue(s) — agent will repair`);
+                setProjectErrors(projectId, combinedErrorSummaries, 'build');
             } else {
-                // Clear previous errors if all files are now clean
+                // Clear previous errors only when BOTH checks are clean.
                 setProjectErrors(projectId, []);
             }
             cleanupSnapshot(projectRoot);

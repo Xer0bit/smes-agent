@@ -1383,6 +1383,19 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     return (inp * PRICE.input + out * PRICE.output + cacheR * PRICE.cacheRead + cacheW * PRICE.cacheWrite) / 1_000_000;
   }
 
+  // ── Tool-failure circuit breaker ──────────────────────────────────────────
+  // Keyed on toolName, tracks the last error message and how many times in a
+  // row it repeated VERBATIM. A tool returning a NEW/different error each time
+  // is normal iteration (e.g. fixing one syntax issue reveals another) — only
+  // the exact same failure repeating is a sign the model is stuck retrying an
+  // approach that structurally cannot work (it should stop and try something
+  // fundamentally different, or tell the user it's blocked, instead of
+  // silently repeating the same failing call). This is per-run state; it does
+  // not persist across separate agent runs.
+  const toolFailureStreak = new Map<string, { message: string; count: number }>();
+  const CIRCUIT_BREAKER_THRESHOLD = 3;
+  let circuitBreakerNote = '';
+
   // Collected operation log
   const filesToWrite: Array<{ path: string; content: string }> = [];
   const filesToDelete: string[] = [];
@@ -2213,44 +2226,65 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     console.warn(`[AgentLoop] Timeout hit after ${AGENT_TIMEOUT_MS}ms — salvaging files before aborting`);
 
     try {
-      const SKIP_DIRS_TIMEOUT = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.tmp', 'coverage']);
-      const SKIP_FILES_TIMEOUT = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
-      const BINARY_EXTS_TIMEOUT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.webp', '.mp4', '.mp3', '.pdf', '.zip']);
-      const BIN_SENTINEL = '__ECOMGEAR_BIN64__';
+      // Prefer the known-clean pre-agent snapshot over a fresh disk scan. A
+      // fresh scan can catch the project mid-repair — e.g. after a mechanical
+      // brace-balancer has already run but before the repair loop finished —
+      // and would ship that half-broken intermediate state as if it were a
+      // safe "partial progress" checkpoint. The pre-agent snapshot is always
+      // syntactically valid (it's whatever was on disk before this run
+      // touched anything), so on timeout it's the safer choice whenever it's
+      // a FULL snapshot. It's only partial for the micro tier (single
+      // mentioned file only) — using a partial file set here would delete
+      // the rest of the project on the next fullSync, so micro tier keeps
+      // the original disk-scan fallback.
+      const useCleanSnapshot = _tier !== 'micro' && preAgentDiskSnapshot.size > 0;
 
-      const salvageMap = new Map<string, string>();
-      const salvageCollect = (dir: string) => {
-        let entries: fs.Dirent[];
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-        for (const entry of entries) {
-          if (SKIP_DIRS_TIMEOUT.has(entry.name)) continue;
-          if (SKIP_FILES_TIMEOUT.has(entry.name)) continue;
-          const fp = path.join(dir, entry.name);
-          if (entry.isDirectory()) { salvageCollect(fp); }
-          else {
-            const ext = path.extname(entry.name).toLowerCase();
-            const rel = path.relative(appPath, fp);
-            try {
-              if (BINARY_EXTS_TIMEOUT.has(ext)) {
-                salvageMap.set(rel, `${BIN_SENTINEL}${fs.readFileSync(fp).toString('base64')}`);
-              } else {
-                salvageMap.set(rel, fs.readFileSync(fp, 'utf8'));
-              }
-            } catch { /* skip */ }
+      let salvageFiles: Array<{ path: string; content: string }>;
+      if (useCleanSnapshot) {
+        salvageFiles = Array.from(preAgentDiskSnapshot.entries()).map(([p, c]) => ({ path: p, content: c }));
+        console.warn(`[AgentLoop] Timeout salvage: using clean pre-agent snapshot (${salvageFiles.length} files) instead of current (possibly mid-repair) disk state`);
+      } else {
+        const SKIP_DIRS_TIMEOUT = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.tmp', 'coverage']);
+        const SKIP_FILES_TIMEOUT = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
+        const BINARY_EXTS_TIMEOUT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.webp', '.mp4', '.mp3', '.pdf', '.zip']);
+        const BIN_SENTINEL = '__ECOMGEAR_BIN64__';
+
+        const salvageMap = new Map<string, string>();
+        const salvageCollect = (dir: string) => {
+          let entries: fs.Dirent[];
+          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+          for (const entry of entries) {
+            if (SKIP_DIRS_TIMEOUT.has(entry.name)) continue;
+            if (SKIP_FILES_TIMEOUT.has(entry.name)) continue;
+            const fp = path.join(dir, entry.name);
+            if (entry.isDirectory()) { salvageCollect(fp); }
+            else {
+              const ext = path.extname(entry.name).toLowerCase();
+              const rel = path.relative(appPath, fp);
+              try {
+                if (BINARY_EXTS_TIMEOUT.has(ext)) {
+                  salvageMap.set(rel, `${BIN_SENTINEL}${fs.readFileSync(fp).toString('base64')}`);
+                } else {
+                  salvageMap.set(rel, fs.readFileSync(fp, 'utf8'));
+                }
+              } catch { /* skip */ }
+            }
           }
-        }
-      };
-      salvageCollect(appPath);
+        };
+        salvageCollect(appPath);
+        salvageFiles = Array.from(salvageMap.entries()).map(([p, c]) => ({ path: p, content: c }));
+      }
 
-      if (salvageMap.size > 0) {
-        const salvageFiles = Array.from(salvageMap.entries()).map(([p, c]) => ({ path: p, content: c }));
+      if (salvageFiles.length > 0) {
         sseWrite(res, 'done', {
           filesToWrite: runtimeMode === 'plan' ? [] : salvageFiles,
           filesToDelete: [],
           renames: [],
           dependencies: [],
           mode: runtimeMode,
-          summary: 'Agent timed out. Partial progress was saved.',
+          summary: useCleanSnapshot
+            ? 'Agent timed out mid-repair. Reverted to the last known-good state.'
+            : 'Agent timed out. Partial progress was saved.',
           tokensUsed: 0,
           snapshotId: `${projectId}_${randomUUID().replace(/-/g, '')}`,
         });
@@ -2359,7 +2393,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             ? `\n\n⚠️ STEP BUDGET WARNING: You have ${stepsLeft} steps remaining (used ${stepNumber}/${MAX_STEPS}).\n\nIMMEDIATE PRIORITY — check the file tree right now:\n1. If src/App.tsx is still the Welcome stub → write all missing page files THEN write src/App.tsx IMMEDIATELY. Do NOT write more utility or component files first.\n2. If pages exist but App.tsx is missing routes → fix App.tsx NOW.\n3. If App.tsx is complete → continue normal work.\n\nDo NOT let the step limit expire without writing a proper src/App.tsx. A partial build = broken preview.`
             : '';
 
-          if (journalBlock || lowStepsWarning) {
+          if (journalBlock || lowStepsWarning || circuitBreakerNote) {
             const base = compacted !== messages ? compacted : [...messages];
             // Append at the very end rather than splicing into the middle of the
             // conversation. The journal changes every step (it embeds the step
@@ -2368,7 +2402,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // for the entire conversation instead of getting a cache hit on
             // everything before this step. Appending keeps that whole prefix
             // byte-identical across steps; only this trailing message is new.
-            const injectedContent = [journalBlock, lowStepsWarning].filter(Boolean).join('\n\n');
+            const injectedContent = [journalBlock, lowStepsWarning, circuitBreakerNote].filter(Boolean).join('\n\n');
+            circuitBreakerNote = ''; // fire once per detection, not every subsequent step
             const withInjected = [
               ...base,
               { role: 'user' as const, content: injectedContent },
@@ -2385,9 +2420,50 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           stepCount++;
           runLedger.setStep(stepCount);
           const toolNames = (toolCalls ?? []).map((tc: any) => tc.toolName);
+          // NOTE: AI SDK v6 renamed the tool-result field from `result` to `output`
+          // (StaticToolResult/DynamicToolResult in ai/dist/index.d.ts). Both checks
+          // below read `.output` — reading `.result` here would silently always be
+          // undefined and never match, which is exactly what happened before.
           const failedEdits = (toolResults ?? [])
-            .filter((tr: any) => typeof tr?.result === 'string' && tr.result.startsWith('Error'))
+            .filter((tr: any) => typeof tr?.output === 'string' && tr.output.startsWith('Error'))
             .length;
+
+          // ── Tool-failure circuit breaker: detect the SAME error repeating ──
+          for (const tr of (toolResults ?? []) as any[]) {
+            const toolName = tr?.toolName as string | undefined;
+            const result = tr?.output;
+            if (!toolName || typeof result !== 'string') continue;
+
+            const isError = result.startsWith('Error') || result.startsWith('ERROR');
+            if (!isError) {
+              toolFailureStreak.delete(toolName); // any success/non-error resets the streak
+              continue;
+            }
+
+            const prev = toolFailureStreak.get(toolName);
+            if (prev && prev.message === result) {
+              prev.count++;
+            } else {
+              toolFailureStreak.set(toolName, { message: result, count: 1 });
+            }
+
+            const streak = toolFailureStreak.get(toolName)!;
+            if (streak.count === CIRCUIT_BREAKER_THRESHOLD) {
+              console.warn(`[AgentLoop] Circuit breaker: "${toolName}" failed with the identical error ${streak.count}x in a row (user=${userId ?? 'unknown'})`);
+              circuitBreakerNote =
+                `⚠️ REPEATED FAILURE DETECTED: "${toolName}" has now failed ${streak.count} times in a row ` +
+                `with the EXACT SAME error:\n\n"${streak.message.slice(0, 300)}"\n\n` +
+                `Retrying the same call again will almost certainly fail the same way — this is a structural ` +
+                `problem (wrong approach, wrong tier/table, a platform limitation), not something that will ` +
+                `resolve by repeating the identical action. STOP retrying this exact approach. Either: ` +
+                `(a) diagnose the actual root cause and try something fundamentally different, or ` +
+                `(b) tell the user plainly that this is blocked and why, instead of continuing to retry silently.`;
+              // Reset so this doesn't re-fire every single step if the model
+              // (correctly) keeps trying variations that still happen to fail —
+              // only re-trip after another full streak of identical repeats.
+              toolFailureStreak.delete(toolName);
+            }
+          }
 
           // ── Token accounting for this step ────────────────────────────
           const stepInp    = (usage?.promptTokens     ?? usage?.inputTokens     ?? 0) as number;
@@ -2906,7 +2982,21 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       ).catch(() => {});
     }
 
+    // Scope the sanitize pass to files THIS run actually touched. `mergedWrites`
+    // is the whole project (collectDiskFiles scans everything on disk) merged
+    // with this run's writes — sanitizing every file in that set, including
+    // ones this run never looked at, meant a persistently-broken file from a
+    // PAST run could get re-discovered, "fixed" by a naive bracket-counting
+    // heuristic that doesn't repair real structural errors, and written back
+    // to disk STILL broken — every single run, forever, on files nobody asked
+    // to change. Worse: the push/repair/rollback safety net below is gated on
+    // agentWroteFiles (this run's own tracked writes), so a sanitize-caused
+    // bad write to an untouched file got zero safety net — the run would just
+    // skip the preview push entirely ("No file operations") and leave the
+    // broken write sitting on disk.
+    const touchedThisRun = new Set<string>([...filesToWrite.map(f => f.path), ...filesEdited]);
     for (const f of mergedWrites) {
+      if (!touchedThisRun.has(f.path)) continue;
       if (/\.(tsx?|jsx?)$/.test(f.path) && !f.path.startsWith('node_modules')) {
         const { content: sanitized, fixes } = sanitizeFileContent(f.path, f.content);
         if (fixes.length > 0) {
@@ -3525,12 +3615,36 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const preAgentFiles = Array.from(preAgentDiskSnapshot.entries()).map(([p, c]) => ({ path: p, content: c }));
             mergedWrites.length = 0;
             preAgentFiles.forEach(f => mergedWrites.push(f));
-            // Push the clean pre-agent state to the preview service
-            try {
-              await httpPost(updateUrl, JSON.stringify({ files: preAgentFiles, fullSync: true }));
+            // Push the clean pre-agent state to the preview service. This is the
+            // last line of defense when repair fails — if it silently fails too,
+            // the live preview stays broken with nothing telling the user. Retry
+            // with backoff and verify a 200 status (httpPost resolves with
+            // {status, body} rather than throwing on non-2xx, so the old
+            // try/catch here never actually detected a failed push, only a
+            // network-level throw).
+            let restorePushOk = false;
+            let lastRestoreStatus: number | undefined;
+            for (let attempt = 1; attempt <= 3 && !restorePushOk; attempt++) {
+              try {
+                const restoreRes = await httpPost(updateUrl, JSON.stringify({ files: preAgentFiles, fullSync: true }));
+                lastRestoreStatus = restoreRes.status;
+                if (restoreRes.status === 200) {
+                  restorePushOk = true;
+                } else if (attempt < 3) {
+                  await new Promise((r) => setTimeout(r, attempt * 1000));
+                }
+              } catch (restoreErr) {
+                console.warn(`[AgentLoop] Pre-agent restore push attempt ${attempt}/3 threw`, restoreErr);
+                if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 1000));
+              }
+            }
+            if (restorePushOk) {
               console.log(`[AgentLoop] Pre-agent state restored to preview (${preAgentFiles.length} files)`);
-            } catch {
-              console.warn('[AgentLoop] Pre-agent restore push failed — preview may be stale');
+            } else {
+              console.error(`[AgentLoop] Pre-agent restore push FAILED after 3 attempts (last status: ${lastRestoreStatus ?? 'none'}) — live preview may still show broken code for project=${projectId}`);
+              sseWrite(res, 'repair-failed', {
+                errors: ['Restore to last known-good state failed to reach the preview service — the preview may still show broken code. Try again or manually refresh.'],
+              });
             }
           } else {
             // No pre-agent snapshot available — scan disk and push whatever is there

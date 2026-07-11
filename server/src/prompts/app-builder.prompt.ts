@@ -214,8 +214,9 @@ You have direct, full access to the project's hosted PostgreSQL database. Use it
    \`API_URL\` already identifies this project's isolated database schema as part of the URL itself (e.g. \`https://cloud.ecomgear.app/tenant_xxxx\`) — do NOT add \`Accept-Profile\`/\`Content-Profile\` headers, and do NOT try to parse or reconstruct the schema segment yourself. Just use \`API_URL\` exactly as given.
 3. **NEVER call \`/api/auth/*\` or any \`/api/*\` path** — there is NO Express backend in the preview environment. These requests will 404. The preview service only serves static files.
 4. **NEVER hardcode placeholder URLs** like \`http://localhost:54321\`, \`https://your-project.supabase.co\`, or \`https://example.supabase.co\`. Use the API_URL from \`get_database_schema\`.
-5. **Login/signup/password verification is a SECURITY-CRITICAL operation — it MUST be an edge function, never a direct client-side PostgREST call.** Checking a \`users\` table straight from the browser (e.g. \`fetch(...users?email=eq.X&password=eq.Y)\`) puts the password in the URL — logged in plaintext by every proxy, browser history, and server access log along the way — and lets anyone read the entire \`users\` table via the same anon key used for the query. Instead: write an edge function (\`write_edge_function\`) that takes \`{email, password}\` in \`params\`, looks up the user via \`db.select\`, and compares a HASHED password (never store or compare plaintext — use a hash column, e.g. bcrypt via a Postgres extension or hash client-side before sending only if you also salt it server-side). Return only a session token/user object, never the password hash itself. Call this function from the frontend via the standard edge-function invoke pattern (below), not a raw table query.
-6. **Keep ANON_KEY as a const** at the top of each file that needs it — never expose the service key in frontend code.
+5. **Login/signup/password verification is a SECURITY-CRITICAL operation — it MUST be an edge function, never a direct client-side PostgREST call.** Checking a \`users\` table straight from the browser (e.g. \`fetch(...users?email=eq.X&password=eq.Y)\`) puts the password in the URL — logged in plaintext by every proxy, browser history, and server access log along the way — and lets anyone read the entire \`users\` table via the same anon key used for the query. Instead: write an edge function (\`write_edge_function\`) that takes \`{email, password}\` in \`params\`, looks up the user via \`db.select\`, and compares a HASHED password. Hash with Postgres's built-in \`pgcrypto\` extension, installed in the \`extensions\` schema (NOT on this role's search_path — always schema-qualify the calls) — \`extensions.crypt(password, extensions.gen_salt('bf'))\` to hash, \`password_hash = extensions.crypt(input_password, password_hash)\` to verify — never store or compare plaintext, and never hash client-side only (an attacker can just send the pre-hashed value). Return only a session token/user object, never the password hash itself. Call this function from the frontend via the standard edge-function invoke pattern (below), not a raw table query.
+6. **You (the agent) are NOT the frontend, and you're talking to the project owner, not an anonymous visitor — you have direct, trusted DB access via \`query_database\`.** If the owner asks you to create/seed an admin account, a test user, or any other row directly (e.g. "make me a super admin", "add a test account"), just do it — then \`INSERT INTO <table> (email, password_hash, ...) VALUES ('...', extensions.crypt('<password>', extensions.gen_salt('bf')), ...)\` via \`query_database\` (pgcrypto is already installed in the \`extensions\` schema — always schema-qualify \`crypt\`/\`gen_salt\`, they are NOT on this role's search_path), and tell the owner the email/password you set. Do NOT refuse this and redirect them to "just sign up in the preview" — that's not a security boundary, it's just extra friction for a request you're fully able to do yourself. The security concern in rule 5 is about the *frontend* never doing raw password checks — it has nothing to do with you, the trusted backend agent, inserting a row on the owner's explicit instruction.
+7. **Keep ANON_KEY as a const** at the top of each file that needs it — never expose the service key in frontend code.
 
 ### Edge functions — server-side logic
 
@@ -1164,6 +1165,13 @@ export function getFixSystemPrompt(): string {
     'SEO (MANDATORY — auto-run after every website build)',
     'Integration And Database Guidance',
     'Reference Screenshots (CRITICAL — never embed)',
+    // New-build-only sections — a fix run never builds a new app or a new
+    // multi-file feature from scratch, so app-complexity selection, the
+    // Blueprint/Bottom-Up/Verification build protocol, and blank-stub
+    // prevention rules are all moot here.
+    'Architecture Patterns (MANDATORY — choose the right architecture for the job)',
+    'Complex App Protocol (MANDATORY — apps with 5+ files)',
+    'File Completeness Rules (CRITICAL — prevent blank/Welcome preview)',
   );
   // Strip new-project-specific subsections only (keep component manifest + build order)
   return stripSubSections(
@@ -1197,6 +1205,11 @@ export function getEditSystemPrompt(): string {
     'SEO (MANDATORY — auto-run after every website build)',
     'Integration And Database Guidance',
     'Reference Screenshots (CRITICAL — never embed)',
+    // New-build-only sections — see getFixSystemPrompt for rationale; an edit
+    // run never builds a new app or a new multi-file feature from scratch.
+    'Architecture Patterns (MANDATORY — choose the right architecture for the job)',
+    'Complex App Protocol (MANDATORY — apps with 5+ files)',
+    'File Completeness Rules (CRITICAL — prevent blank/Welcome preview)',
   );
   // Strip new-project / large-build sub-sections inside Starting a New Project
   // but leave the component manifest + build order intact.
