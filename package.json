@@ -8,6 +8,8 @@
     "dev:server": "cd server && npm run dev",
     "dev:preview": "cd preview-service && node --no-deprecation server.js",
     "dev:all": "concurrently -n \"vite,server,preview\" -c \"cyan,yellow,green\" \"npm run dev\" \"npm run dev:server\" \"npm run dev:preview\"",
+    "test:local": "bash scripts/local-test.sh",
+    "test:local:build-only": "bash scripts/local-test.sh --build-only",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "test": "vitest run",
