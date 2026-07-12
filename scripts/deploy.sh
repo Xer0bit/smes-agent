@@ -376,9 +376,61 @@ deploy_vps2() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  VPS2 — Preview Service → $VPS2_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    step "Checking for packages the agent installed at runtime since the last deploy..."
+    # /packages/install (preview-service/server.js) lets the agent's run_command
+    # tool add a dependency straight into the LIVE server's package.json via
+    # `npm install <pkg>` in its own directory — but that change only exists on
+    # VPS2, never in this repo. The next deploy used to run `npm ci` from this
+    # repo's lockfile, silently discarding every package added that way since
+    # the last deploy (reported bug: "libraries gone after any new deployment").
+    # Fix: pull the live package.json's dependencies and merge any that are
+    # missing locally BEFORE installing, so they survive this deploy and get
+    # committed here for every deploy after.
+    REMOTE_PKG_JSON=$(ssh_vps2 "cat /var/www/ecomgear/preview-service/package.json 2>/dev/null" || echo "")
+    if [ -n "$REMOTE_PKG_JSON" ]; then
+        MERGE_RESULT=$(node -e "
+const fs = require('fs');
+const path = '$PROJECT_DIR/preview-service/package.json';
+const local = JSON.parse(fs.readFileSync(path, 'utf8'));
+let remote;
+try { remote = JSON.parse(process.argv[1]); } catch { console.log('0'); process.exit(0); }
+const added = [];
+for (const dep of ['dependencies', 'devDependencies']) {
+    const remoteDeps = remote[dep] || {};
+    local[dep] = local[dep] || {};
+    for (const [name, version] of Object.entries(remoteDeps)) {
+        if (!local[dep][name]) {
+            local[dep][name] = version;
+            added.push(name);
+        }
+    }
+}
+if (added.length > 0) {
+    fs.writeFileSync(path, JSON.stringify(local, null, 4) + '\n');
+}
+console.log(added.length + (added.length ? ':' + added.join(',') : ''));
+" "$REMOTE_PKG_JSON")
+        ADDED_COUNT="${MERGE_RESULT%%:*}"
+        if [ "$ADDED_COUNT" != "0" ]; then
+            ADDED_NAMES="${MERGE_RESULT#*:}"
+            success "Preserved $ADDED_COUNT runtime-installed package(s): $ADDED_NAMES"
+        else
+            success "No runtime-installed packages to preserve"
+        fi
+    else
+        echo "  (no live preview-service found — first deploy, skipping check)"
+    fi
+
     step "Installing preview-service production deps locally..."
     cd "$PROJECT_DIR/preview-service"
-    npm ci --omit=dev
+    if [ "${ADDED_COUNT:-0}" != "0" ]; then
+        # A package was merged in above — it won't be in package-lock.json yet,
+        # so `npm ci` would reject the lockfile as out of sync. Use `npm install`
+        # to resolve and update the lockfile, same as a developer adding a dep.
+        npm install --omit=dev
+    else
+        npm ci --omit=dev
+    fi
     cd "$PROJECT_DIR"
     step "Uploading preview-service to VPS2 (staging dir)..."
     ssh_vps2 "mkdir -p $DEPLOY_PATH/preview-service.staging/projects $DEPLOY_PATH/logs"
