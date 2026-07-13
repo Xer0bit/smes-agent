@@ -493,7 +493,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   };
 
   // ── Submit ────────────────────────────────────────────────────────────────
-  const handleSubmit = async (overridePrompt?: string, displayText?: string, forcedMode?: 'build' | 'plan') => {
+  const handleSubmit = async (overridePrompt?: string, displayText?: string, forcedMode?: 'build' | 'plan', isAutoFix?: boolean) => {
     const raw = (overridePrompt ?? input).trim();
     const hasAttachments = !overridePrompt && pendingAttachments.length > 0;
     if ((!raw && !hasAttachments) || isGenerating || !projectId) return;
@@ -639,6 +639,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         history,
         olderSummary,
         fingerprint: guestFingerprint,
+        // The auto-fix follow-up fires right after the run that triggered it
+        // ends — the server can still be mid-cleanup (restore-push retries,
+        // async lock release) for several seconds after the client sees the
+        // stream close. Retry silently on PROJECT_LOCKED instead of showing
+        // the user an alarming "another generation is running" error for a
+        // race the system itself created.
+        retryOnLock: isAutoFix,
         attachments: messageAttachments.length > 0
           ? messageAttachments.map(a => ({
               name: a.name,
@@ -917,7 +924,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               )
             );
             // Brief delay so the completed message renders before the new run starts
-            setTimeout(() => handleSubmit(autoFixPrompt, '🔧 Auto-fix', 'build'), 300);
+            setTimeout(() => handleSubmit(autoFixPrompt, '🔧 Auto-fix', 'build', true), 300);
           },
           onError: (errMsg) => {
             setIsGenerating(false);

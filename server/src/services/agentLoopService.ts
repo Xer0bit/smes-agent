@@ -1192,16 +1192,23 @@ function isLikelyFixRequest(prompt: string): boolean {
 }
 
 function buildFallbackCandidates(primaryProviderName: string, primaryModelId?: string): string[] {
-  const configuredFallback = process.env.AI_FALLBACK_MODEL || DEFAULT_FREE_MODEL;
+  // Same fix as resolveProviderWithFallback above: an unset AI_FALLBACK_MODEL
+  // used to resolve straight to DEFAULT_FREE_MODEL (glm-4.5-flash), so this
+  // list tried THREE glm variants before ever reaching the stronger,
+  // typically-healthy claude/deepseek/gemini-2.5-pro candidates. Only use
+  // configuredFallback here if the operator actually set AI_FALLBACK_MODEL —
+  // otherwise let the strong candidates go first and treat glm as the
+  // last-resort options they're meant to be.
+  const configuredFallback = process.env.AI_FALLBACK_MODEL || undefined;
   const candidates = Array.from(new Set([
     configuredFallback,
+    'claude-sonnet-4-6',
+    'deepseek-chat',
+    'gemini-2.5-pro',
     DEFAULT_FREE_MODEL,
     'glm-4.5',
     'glm-4.5-air',
-    'gemini-2.5-pro',
-    'deepseek-chat',
-    'claude-sonnet-4-6',
-  ]));
+  ].filter(Boolean) as string[]));
   return candidates.filter((mid) => {
     // Never retry the exact same model that just failed
     if (mid === primaryModelId) return false;
@@ -1255,15 +1262,26 @@ function createProviderForModel(mid: string): { provider: any; providerName: str
 
 function resolveProviderWithFallback(requestedModelId: string): { provider: any; providerName: string; modelId: string } {
   const normalizedRequested = requestedModelId || process.env.AI_MODEL || DEFAULT_FREE_MODEL;
-  const fallbackModel = process.env.AI_FALLBACK_MODEL || DEFAULT_FREE_MODEL;
+  // DEFAULT_FREE_MODEL is glm-4.5-flash — a genuinely weaker model, meant for
+  // free-tier requests, not an emergency substitute for a paid request. The
+  // old chain used `env-var || DEFAULT_FREE_MODEL` for BOTH the AI_MODEL and
+  // AI_FALLBACK_MODEL slots, so whenever those env vars were unset (the
+  // normal case), glm became the literal 2nd/3rd candidate — landing there
+  // the instant Gemini's circuit tripped, before ever trying Claude or
+  // DeepSeek, even though both were confirmed healthy at the same moment
+  // (observed in production: "Skipping gemini" x2 → straight to glm-4.5-flash,
+  // with anthropic/deepseek never attempted at all). Try the two strong,
+  // already-configured providers first; glm is the last resort now, not the
+  // second guess.
   const candidates = [
     normalizedRequested,
-    process.env.AI_MODEL || DEFAULT_FREE_MODEL,
-    fallbackModel,
-    DEFAULT_FREE_MODEL,
-    DEFAULT_PRIMARY_MODEL,
+    process.env.AI_MODEL || undefined,
+    'claude-sonnet-4-6',
     'deepseek-chat',
-  ].filter(Boolean);
+    process.env.AI_FALLBACK_MODEL || undefined,
+    DEFAULT_PRIMARY_MODEL,
+    DEFAULT_FREE_MODEL,
+  ].filter((c): c is string => Boolean(c));
 
   const uniqueCandidates = Array.from(new Set(candidates));
   const triedProviders: string[] = [];
@@ -3905,9 +3923,23 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     } else if (runtimeMode === 'build' && !agentWroteFiles) {
       console.log(`[AgentLoop] No file operations — skipping preview push`);
       if (outerFinishReason === 'tool-calls') {
-        sseWrite(res, 'text-delta', {
-          text: '\n\n> I ran out of steps before completing the changes. Please send your request again and I\'ll continue from where I left off.',
-        });
+        // finishReason 'tool-calls' with zero files written can mean two very
+        // different things, and telling them apart matters for what the user
+        // should actually do next:
+        //  - stepCount is near MAX_STEPS: the run genuinely used its whole
+        //    budget mid-task — "try again" is honest advice, it'll pick up
+        //    roughly where it left off.
+        //  - stepCount is low (observed: 5 of 25): the model itself gave up
+        //    early, most often right after a provider fallback to a weaker
+        //    model (e.g. the primary provider's billing circuit was open).
+        //    Claiming "ran out of steps" here is simply false — it burns the
+        //    user's trust and points them at the wrong fix ("just resend")
+        //    when the real issue is a degraded model, not a budget limit.
+        const genuinelyOutOfSteps = stepCount >= MAX_STEPS - 1;
+        const text = genuinelyOutOfSteps
+          ? '\n\n> I ran out of steps before completing the changes. Please send your request again and I\'ll continue from where I left off.'
+          : `\n\n> I stopped without finishing this change (after ${stepCount} step${stepCount === 1 ? '' : 's'}) — this wasn't a budget limit, something interrupted the run partway through, sometimes a fallback AI provider being used during high load. Nothing was changed. Please send your request again.`;
+        sseWrite(res, 'text-delta', { text });
       }
     }
 

@@ -42,10 +42,16 @@ const DashboardSidebar = ({
   loadingOrganizations,
   setCurrentOrganizationId,
   handleLogout,
-  collapsed,
+  collapsed: collapsedPref,
   onToggleCollapse,
 }: DashboardSidebarProps) => {
   const { t } = useTranslation();
+  // Hovering over a collapsed sidebar temporarily expands it (common pattern —
+  // VS Code's activity bar, etc.) without touching the user's actual pinned
+  // preference: move the mouse away and it collapses back to collapsedPref.
+  // The manual toggle button still pins/unpins collapsedPref itself.
+  const [hovering, setHovering] = useState(false);
+  const collapsed = collapsedPref && !hovering;
 
   const menuItems = [
     { title: t('dashboard.home'), url: '/dashboard', icon: Home, end: true },
@@ -57,7 +63,11 @@ const DashboardSidebar = ({
   ];
 
   return (
-    <aside className={`border-b border-white/[0.06] bg-[#0e0e10] md:fixed md:left-0 md:top-0 md:z-20 md:h-screen md:border-b-0 md:border-r transition-[width] duration-300 ease-in-out ${collapsed ? 'md:w-[60px]' : 'md:w-60'}`}>
+    <aside
+      onMouseEnter={() => collapsedPref && setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+      className={`border-b border-white/[0.06] bg-[#0e0e10] md:fixed md:left-0 md:top-0 md:z-20 md:h-screen md:border-b-0 md:border-r md:overflow-hidden transition-[width] duration-300 ease-in-out ${collapsed ? 'md:w-[60px]' : 'md:w-60'}`}
+    >
       <div className="flex h-full flex-col">
         <div className="border-b border-white/[0.06] px-4 py-4 md:px-3 md:py-5">
           <Link to="/" className="flex items-center gap-3">
@@ -68,18 +78,24 @@ const DashboardSidebar = ({
                 className="h-6 w-auto object-contain"
               />
             </div>
-            {!collapsed && (
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/60">eComGear</p>
-                <p className="truncate text-sm font-medium text-white">
-                  {currentOrganization?.name || 'Workspace'}
-                </p>
-              </div>
-            )}
+            <div
+              className={`min-w-0 overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100 delay-100'
+              }`}
+            >
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/60">eComGear</p>
+              <p className="truncate text-sm font-medium text-white">
+                {currentOrganization?.name || 'Workspace'}
+              </p>
+            </div>
           </Link>
 
-          {!collapsed && (
-            <div className="mt-4 space-y-1.5">
+          <div
+            className={`overflow-hidden transition-all duration-200 ${
+              collapsed ? 'max-h-0 opacity-0' : 'mt-4 max-h-20 opacity-100 delay-100'
+            }`}
+          >
+            <div className="space-y-1.5">
               <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Workspace</p>
               <Select
                 value={currentOrganizationId || undefined}
@@ -98,15 +114,17 @@ const DashboardSidebar = ({
                 </SelectContent>
               </Select>
             </div>
-          )}
+          </div>
         </div>
 
         <div className="flex-1 px-2 py-4 overflow-hidden">
-          {!collapsed && (
-            <p className="mb-2 hidden px-2 text-[10px] uppercase tracking-[0.2em] text-white/50 md:block">
-              Navigation
-            </p>
-          )}
+          <p
+            className={`mb-2 hidden px-2 text-[10px] uppercase tracking-[0.2em] text-white/50 md:block overflow-hidden transition-all duration-200 ${
+              collapsed ? 'max-h-0 opacity-0 mb-0' : 'max-h-4 opacity-100 delay-100'
+            }`}
+          >
+            Navigation
+          </p>
           <nav className="flex gap-1.5 overflow-x-auto pb-1 md:block md:space-y-0.5 md:overflow-visible md:pb-0">
             {menuItems.map((item) => (
               <NavLink
@@ -125,30 +143,60 @@ const DashboardSidebar = ({
                 }
               >
                 <item.icon className="h-4 w-4 shrink-0" />
-                {!collapsed && <span>{item.title}</span>}
+                <span
+                  className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                    collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100 delay-100'
+                  }`}
+                >
+                  {item.title}
+                </span>
               </NavLink>
             ))}
           </nav>
         </div>
 
         <div className="border-t border-white/[0.06] px-2 py-3">
-          {!collapsed && (
-            <div className="mb-2 px-2">
-              <p className="truncate text-xs font-medium text-white/80">
-                {user?.user_metadata?.full_name || user?.email}
-              </p>
-              <p className="text-[11px] text-white/50 mt-0.5">
-                {currentOrganization?.slug ? `@${currentOrganization.slug}` : 'No workspace'}
-              </p>
-            </div>
-          )}
+          <div
+            className={`px-2 overflow-hidden transition-all duration-200 ${
+              collapsed ? 'max-h-0 opacity-0' : 'mb-2 max-h-10 opacity-100 delay-100'
+            }`}
+          >
+            <p className="truncate text-xs font-medium text-white/80">
+              {user?.user_metadata?.full_name || user?.email}
+            </p>
+            <p className="text-[11px] text-white/50 mt-0.5">
+              {currentOrganization?.slug ? `@${currentOrganization.slug}` : 'No workspace'}
+            </p>
+          </div>
           <div className="flex flex-col gap-0.5">
             <Button onClick={handleLogout} variant="ghost" size="sm" className={`w-full rounded-md text-white/40 hover:bg-white/[0.04] hover:text-white ${collapsed ? 'justify-center px-0' : 'justify-start'}`} title={collapsed ? t('dashboard.logout') : undefined}>
               <LogOut className={collapsed ? 'h-4 w-4' : 'mr-2 h-4 w-4'} />
-              {!collapsed && t('dashboard.logout')}
+              <span
+                className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                  collapsed ? 'max-w-0 opacity-0' : 'max-w-[120px] opacity-100 delay-100'
+                }`}
+              >
+                {t('dashboard.logout')}
+              </span>
             </Button>
             <Button onClick={onToggleCollapse} variant="ghost" size="sm" className={`hidden md:flex w-full rounded-md text-white/50 hover:bg-white/[0.04] hover:text-white/80 ${collapsed ? 'justify-center px-0' : 'justify-start'}`}>
-              {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <><PanelLeftClose className="mr-2 h-4 w-4" />Collapse</>}
+              {/* Label reflects the PINNED preference, not the temporary hover-expanded
+                  view — otherwise clicking while hover-expanded would pin it open,
+                  the opposite of what "Collapse" suggests. */}
+              {collapsedPref ? (
+                <PanelLeftOpen className="h-4 w-4" />
+              ) : (
+                <>
+                  <PanelLeftClose className="mr-2 h-4 w-4" />
+                  <span
+                    className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                      collapsed ? 'max-w-0 opacity-0' : 'max-w-[120px] opacity-100 delay-100'
+                    }`}
+                  >
+                    Collapse
+                  </span>
+                </>
+              )}
             </Button>
           </div>
         </div>

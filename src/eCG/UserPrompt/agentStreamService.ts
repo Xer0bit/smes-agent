@@ -131,10 +131,20 @@ export async function streamAgentGeneration(params: {
   }>;
   /** Guest fingerprint — when set, auth token is optional */
   fingerprint?: string;
+  /**
+   * When set, a PROJECT_LOCKED response is retried silently (with backoff)
+   * instead of surfacing to the user immediately — for system-triggered
+   * follow-up requests (like the post-repair auto-fix escalation) that can
+   * legitimately race the tail end of the very run that triggered them: the
+   * server may still be mid-cleanup (restore-push retries, lock release)
+   * for several seconds after the client sees the stream end. User-initiated
+   * requests should NOT set this — they want to know immediately if locked.
+   */
+  retryOnLock?: boolean;
   callbacks: AgentStreamCallbacks;
   signal?: AbortSignal;
 }): Promise<GenerationResponse> {
-  const { prompt, projectId, orgId, existingFiles, model, mode, history, olderSummary, attachments, fingerprint, callbacks, signal } = params;
+  const { prompt, projectId, orgId, existingFiles, model, mode, history, olderSummary, attachments, fingerprint, retryOnLock, callbacks, signal } = params;
 
   // Get session; if access token is missing, attempt a silent refresh before giving up.
   let sessionData = (await lovableCloud.auth.getSession()).data.session;
@@ -174,58 +184,83 @@ export async function streamAgentGeneration(params: {
     bodyPayload.fingerprint = fingerprint;
   }
 
-  // Use fetch with stream reading (EventSource doesn't support POST with body)
-  for (const url of candidateUrls) {
-    try {
-      const candidateResponse = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(bodyPayload),
-        signal,
-      });
+  // One pass over every candidate URL. Returns the response on success, or
+  // throws: a terminal tagged error (session/guest/eco/lock), a retryable
+  // lock signal (projectLockedRetry — only when retryOnLock lets a caller
+  // ask for it), or falls through to the generic "tried everything" path.
+  const tryAllCandidates = async (allowLockRetry: boolean): Promise<globalThis.Response | null> => {
+    for (const url of candidateUrls) {
+      try {
+        const candidateResponse = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(bodyPayload),
+          signal,
+        });
 
-      if (!candidateResponse.ok) {
-        const errText = await candidateResponse.text().catch(() => '');
+        if (!candidateResponse.ok) {
+          const errText = await candidateResponse.text().catch(() => '');
 
-        // Parse guest limit error specifically
-        try {
-          const errJson = JSON.parse(errText);
-          if (errJson.error === 'guest_limit_reached') {
-            const message = errJson.message || 'Guest request limit reached. Please sign up to continue.';
-            callbacks.onError?.(message);
-            throw Object.assign(new Error(message), { guestLimitReached: true });
+          // Parse guest limit error specifically
+          try {
+            const errJson = JSON.parse(errText);
+            if (errJson.error === 'guest_limit_reached') {
+              const message = errJson.message || 'Guest request limit reached. Please sign up to continue.';
+              callbacks.onError?.(message);
+              throw Object.assign(new Error(message), { guestLimitReached: true });
+            }
+            if (errJson.code === 'ECO_LIMIT_REACHED') {
+              const message = errJson.error || 'Monthly eco limit reached. Please upgrade your plan or wait for the reset.';
+              callbacks.onError?.(message);
+              throw Object.assign(new Error(message), { ecoLimitReached: true });
+            }
+            if (candidateResponse.status === 401 && errJson.error?.includes('Authentication required')) {
+              const message = 'Your session has expired. Please refresh the page and log in again.';
+              callbacks.onError?.(message);
+              throw Object.assign(new Error(message), { sessionExpired: true });
+            }
+            if (errJson.code === 'PROJECT_LOCKED') {
+              if (allowLockRetry) {
+                // Silent — no onError, no toast. The caller decides whether
+                // to retry or give up after enough attempts.
+                throw Object.assign(new Error('project locked — retrying'), { projectLockedRetry: true });
+              }
+              const message = 'Another generation is already running for this project. Please wait for it to finish before starting a new one.';
+              callbacks.onError?.(message);
+              throw Object.assign(new Error(message), { projectLocked: true });
+            }
+          } catch (parseErr) {
+            if ((parseErr as any).guestLimitReached || (parseErr as any).ecoLimitReached || (parseErr as any).sessionExpired || (parseErr as any).projectLocked || (parseErr as any).projectLockedRetry) throw parseErr;
           }
-          if (errJson.code === 'ECO_LIMIT_REACHED') {
-            const message = errJson.error || 'Monthly eco limit reached. Please upgrade your plan or wait for the reset.';
-            callbacks.onError?.(message);
-            throw Object.assign(new Error(message), { ecoLimitReached: true });
-          }
-          if (candidateResponse.status === 401 && errJson.error?.includes('Authentication required')) {
-            const message = 'Your session has expired. Please refresh the page and log in again.';
-            callbacks.onError?.(message);
-            throw Object.assign(new Error(message), { sessionExpired: true });
-          }
-          if (errJson.code === 'PROJECT_LOCKED') {
-            const message = 'Another generation is already running for this project. Please wait for it to finish before starting a new one.';
-            callbacks.onError?.(message);
-            throw Object.assign(new Error(message), { projectLocked: true });
-          }
-        } catch (parseErr) {
-          if ((parseErr as any).guestLimitReached || (parseErr as any).ecoLimitReached || (parseErr as any).sessionExpired || (parseErr as any).projectLocked) throw parseErr;
+
+          const message = `Agent stream failed (${candidateResponse.status}): ${errText}`;
+          callbacks.onError?.(message);
+          throw new Error(message);
         }
 
-        const message = `Agent stream failed (${candidateResponse.status}): ${errText}`;
-        callbacks.onError?.(message);
-        throw new Error(message);
+        callbacks.onOpen?.();
+        return candidateResponse;
+      } catch (error) {
+        // Terminal/retryable-lock errors — don't try other candidate URLs, propagate immediately
+        if ((error as any).sessionExpired || (error as any).guestLimitReached || (error as any).ecoLimitReached || (error as any).projectLocked || (error as any).projectLockedRetry) throw error;
+        lastNetworkError = error instanceof Error ? error.message : String(error);
       }
+    }
+    return null;
+  };
 
-      response = candidateResponse;
-      callbacks.onOpen?.();
+  const LOCK_RETRY_ATTEMPTS = 5;
+  const LOCK_RETRY_DELAY_MS = 2000;
+  for (let attempt = 1; attempt <= (retryOnLock ? LOCK_RETRY_ATTEMPTS : 1); attempt++) {
+    try {
+      response = await tryAllCandidates(!!retryOnLock && attempt < LOCK_RETRY_ATTEMPTS);
       break;
     } catch (error) {
-      // Terminal errors (session expired, guest limit, eco limit, project locked) — don't retry other URLs
-      if ((error as any).sessionExpired || (error as any).guestLimitReached || (error as any).ecoLimitReached || (error as any).projectLocked) throw error;
-      lastNetworkError = error instanceof Error ? error.message : String(error);
+      if ((error as any).projectLockedRetry) {
+        await new Promise((r) => setTimeout(r, LOCK_RETRY_DELAY_MS));
+        continue;
+      }
+      throw error;
     }
   }
 
