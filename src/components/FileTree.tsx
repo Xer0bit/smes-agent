@@ -16,20 +16,14 @@ interface FileTreeProps {
   onFileSelect: (path: string) => void;
 }
 
-function fileColor(name: string): string {
-  if (name.endsWith('.tsx') || name.endsWith('.jsx')) return 'text-cyan-400/80';
-  if (name.endsWith('.ts') || name.endsWith('.js')) return 'text-yellow-400/70';
-  if (name.endsWith('.css') || name.endsWith('.scss')) return 'text-blue-400/70';
-  if (name.endsWith('.json')) return 'text-amber-400/70';
-  if (name.endsWith('.html')) return 'text-orange-400/70';
-  if (name.endsWith('.svg')) return 'text-green-400/60';
-  return 'text-white/30';
-}
+// One muted color for every file type, matching the editor's own dark theme
+// and the rest of this panel's white/opacity palette — no per-extension
+// rainbow. Selected-row state still gets its own accent (see isSelected below).
+const FILE_ICON_COLOR = 'text-white/35';
 
-function FileIcon({ name }: { name: string }) {
-  const color = fileColor(name);
+function FileIcon() {
   return (
-    <span className={cn("inline-flex flex-shrink-0", color)} style={{ width: 12, height: 12 }}>
+    <span className={cn("inline-flex flex-shrink-0", FILE_ICON_COLOR)} style={{ width: 12, height: 12 }}>
       <svg viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
         <rect x="1.5" y="0.5" width="7" height="9" rx="0.75" stroke="currentColor" strokeWidth="1" fill="none"/>
         <path d="M7 0.5v2.5h2.5" stroke="currentColor" strokeWidth="1" fill="none"/>
@@ -110,12 +104,13 @@ export const FileTree = ({ files, selectedFile, onFileSelect }: FileTreeProps) =
             )}
             style={{ paddingLeft: `${indent}px` }}
             onClick={() => toggleFolder(node.path)}
+            title={node.name}
           >
             {isExpanded
               ? <ChevronDown className="w-[10px] h-[10px] flex-shrink-0 opacity-60" />
               : <ChevronRight className="w-[10px] h-[10px] flex-shrink-0 opacity-60" />
             }
-            <span className="ml-0.5 truncate">{node.name}</span>
+            <span className="ml-0.5 truncate min-w-0">{node.name}</span>
           </div>
           {isExpanded && node.children && (
             <div>{node.children.map((child) => renderNode(child, level + 1))}</div>
@@ -134,9 +129,10 @@ export const FileTree = ({ files, selectedFile, onFileSelect }: FileTreeProps) =
         )}
         style={{ paddingLeft: `${indent + 14}px` }}
         onClick={() => onFileSelect(node.path)}
+        title={node.path}
       >
-        <FileIcon name={node.name} />
-        <span className="truncate">{node.name}</span>
+        <FileIcon />
+        <span className="truncate min-w-0">{node.name}</span>
       </div>
     );
   };

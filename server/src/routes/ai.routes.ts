@@ -173,6 +173,84 @@ interface ActiveRun {
 }
 const activeAgentRuns = new Map<string, ActiveRun>();
 
+// ── Cross-process lock ────────────────────────────────────────────────────
+// `activeAgentRuns` above is a module-level Map — it only exists in the memory
+// of THIS PM2 worker process. This server runs in PM2 cluster mode (multiple
+// worker processes sharing the same filesystem but NOT the same memory), so
+// two requests for the same project can land on different workers and never
+// see each other's in-memory guard at all. Both then read/write the SAME
+// shared project directory on disk with zero coordination — a genuine race
+// where one run's file write (or its end-of-run rollback) can be silently
+// stomped by the other run's concurrent write, moments apart, with nothing in
+// any log to explain why. A plain file lock works here because — unlike the
+// in-memory Map — the filesystem itself IS shared across every worker.
+// Generous ceiling above the longest real AGENT_TIMEOUT_MS (see agentLoopService.ts
+// getDefaultAgentTimeoutMs) so a genuinely still-running request is never treated
+// as stale, while a lock left behind by a crashed/killed worker doesn't wedge a
+// project forever.
+const AGENT_LOCK_STALE_MS = 15 * 60_000;
+
+// Lock lives in the `agent_locks` DB table (not a local tmpfile) because the
+// preview-service pushing files for a run lives on a *different machine*
+// (VPS2) than the gen workers (VPS3) that hold this lock. A local file lock
+// only ever protected same-node PM2-cluster races; it was invisible to
+// preview-service's own /update endpoint, which happily accepted any push —
+// including a direct manual push racing a live agent run on another actor
+// entirely (a real production incident: a direct file push during an active
+// run silently stomped the run's own writes, moments apart). The DB row is
+// visible to every VPS via PostgREST, and the token in it lets preview-service
+// tell "this push came from the run that holds the lock" apart from anything
+// else — see preview-service/server.js's /update handler.
+function randomToken(): string {
+    return `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Try to acquire the cross-process, cross-machine lock for a project. Returns
+ *  the lock token to use on this run's preview-service pushes if acquired
+ *  (including by reclaiming a stale lock left behind by a dead worker), or
+ *  null if another worker genuinely holds it right now. */
+async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
+    const token = randomToken();
+    const { error: insertError } = await supabase
+        .from('agent_locks')
+        .insert({ project_id: projectId, token, owner: `pid:${process.pid}` });
+
+    if (!insertError) return token;
+
+    // Row already exists — check whether it's stale (a worker that crashed/was
+    // killed without reaching the finally-block release below).
+    const { data: existing, error: selectError } = await supabase
+        .from('agent_locks')
+        .select('acquired_at')
+        .eq('project_id', projectId)
+        .maybeSingle();
+
+    if (selectError) {
+        // Unexpected error (network, RLS, etc.) — fail open rather than
+        // blocking every generation request because locking itself broke.
+        logger.warn(`[agent-lock] Unexpected error checking lock for ${projectId}, allowing request: ${selectError.message}`);
+        return token;
+    }
+
+    const age = existing ? Date.now() - new Date(existing.acquired_at).getTime() : Infinity;
+    if (age > AGENT_LOCK_STALE_MS) {
+        logger.warn(`[agent-lock] Reclaiming stale lock for ${projectId} (age ${Math.round(age / 1000)}s)`);
+        const { error: updateError } = await supabase
+            .from('agent_locks')
+            .update({ token, owner: `pid:${process.pid}`, acquired_at: new Date().toISOString() })
+            .eq('project_id', projectId);
+        if (!updateError) return token;
+    }
+
+    return null;
+}
+
+async function releaseAgentLock(projectId: string): Promise<void> {
+    try {
+        await supabase.from('agent_locks').delete().eq('project_id', projectId);
+    } catch { /* best-effort — a stale-lock reclaim will clean up eventually */ }
+}
+
 // ─── Per-user rate limiting for /agent-stream ────────────────────────────────
 // Sliding window: max N requests per user within WINDOW_MS.
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
@@ -655,6 +733,22 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         }
     }
 
+    // Cross-process guard — see tryAcquireAgentLock's comment above. The
+    // in-memory `activeAgentRuns` check earlier only catches a duplicate on
+    // THIS worker; this catches one on any other worker in the cluster. There
+    // is no cheap way to fan out this second worker's SSE stream to the first
+    // (would need real cross-process IPC), so unlike the in-memory case this
+    // just rejects cleanly instead of silently racing on the shared project
+    // files.
+    const agentLockToken = await tryAcquireAgentLock(projectId);
+    if (!agentLockToken) {
+        res.status(429).json({
+            error: 'A generation is already running for this project (on another server process). Please wait for it to finish before starting another.',
+            code: 'PROJECT_LOCKED',
+        });
+        return;
+    }
+
     const routeAbortController = new AbortController();
     const abortRun = () => {
         if (!routeAbortController.signal.aborted) {
@@ -940,6 +1034,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             res,
             userId,
             abortSignal: routeAbortController.signal,
+            agentLockToken,
         });
 
         // Auto-reapply saved SEO settings whenever the agent writes a new index.html.
@@ -1000,6 +1095,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         }
 
         activeAgentRuns.delete(projectId);
+        await releaseAgentLock(projectId);
         currentRun.bus.emit('end');
         currentRun.bus.removeAllListeners();
         if (!res.writableEnded) {

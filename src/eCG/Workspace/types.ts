@@ -47,7 +47,8 @@ export interface WorkspaceActions {
 
     // Sync
     saveToDatabase: () => Promise<void>;
-    loadFromDatabase: () => Promise<void>;
+    /** Returns true if files were actually loaded (from Storage or legacy migration), false if the project is genuinely empty. */
+    loadFromDatabase: () => Promise<boolean>;
 }
 
 export interface FileModification {

@@ -98,6 +98,8 @@ export interface AgentStreamCallbacks {
   onStepStatusRefine?: (data: { step: number; status: string }) => void;
   /** Called with a real-time, LLM-written narration of what the agent is doing right now */
   onAgentNarration?: (narration: string) => void;
+  /** Called with the agent's actual internal reasoning (the `think` tool's real argument) — live/transient only, never persisted */
+  onAgentThinking?: (data: { step: number; thought: string }) => void;
   /** Called on error */
   onError?: (message: string) => void;
   /** Called when all auto-repair attempts fail — errors can be shown to user for manual fix */
@@ -203,8 +205,13 @@ export async function streamAgentGeneration(params: {
             callbacks.onError?.(message);
             throw Object.assign(new Error(message), { sessionExpired: true });
           }
+          if (errJson.code === 'PROJECT_LOCKED') {
+            const message = 'Another generation is already running for this project. Please wait for it to finish before starting a new one.';
+            callbacks.onError?.(message);
+            throw Object.assign(new Error(message), { projectLocked: true });
+          }
         } catch (parseErr) {
-          if ((parseErr as any).guestLimitReached || (parseErr as any).ecoLimitReached || (parseErr as any).sessionExpired) throw parseErr;
+          if ((parseErr as any).guestLimitReached || (parseErr as any).ecoLimitReached || (parseErr as any).sessionExpired || (parseErr as any).projectLocked) throw parseErr;
         }
 
         const message = `Agent stream failed (${candidateResponse.status}): ${errText}`;
@@ -216,8 +223,8 @@ export async function streamAgentGeneration(params: {
       callbacks.onOpen?.();
       break;
     } catch (error) {
-      // Terminal errors (session expired, guest limit, eco limit) — don't retry other URLs
-      if ((error as any).sessionExpired || (error as any).guestLimitReached || (error as any).ecoLimitReached) throw error;
+      // Terminal errors (session expired, guest limit, eco limit, project locked) — don't retry other URLs
+      if ((error as any).sessionExpired || (error as any).guestLimitReached || (error as any).ecoLimitReached || (error as any).projectLocked) throw error;
       lastNetworkError = error instanceof Error ? error.message : String(error);
     }
   }
@@ -338,6 +345,12 @@ export async function streamAgentGeneration(params: {
             case 'agent-narration': {
               if (typeof payload.narration === 'string' && payload.narration.trim()) {
                 callbacks.onAgentNarration?.(payload.narration);
+              }
+              break;
+            }
+            case 'agent-thinking': {
+              if (typeof payload.thought === 'string' && payload.thought.trim()) {
+                callbacks.onAgentThinking?.({ step: payload.step ?? 0, thought: payload.thought });
               }
               break;
             }

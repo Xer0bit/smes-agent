@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Boxes, Check } from 'lucide-react';
+import { Check } from 'lucide-react';
+import ecgLogo from '@/assets/ecg-logo.png';
 
 interface Step {
   id: string;
@@ -92,7 +93,7 @@ export function WorkspaceLoader({
         {/* Brand mark */}
         <div className="flex flex-col items-center gap-3">
           <div className="relative w-11 h-11 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shadow-[0_0_32px_rgba(99,102,241,0.15)]">
-            <Boxes className="w-5 h-5 text-white/50" />
+            <img src={ecgLogo} alt="eCG" className="w-6 h-6 object-contain" />
             {/* Corner pulse */}
             <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-indigo-400/80 animate-ping" />
             <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-indigo-400" />

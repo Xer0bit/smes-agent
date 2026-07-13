@@ -10,18 +10,31 @@
  * error and can iterate to a working function instead of deploying broken code.
  */
 import vm from 'node:vm';
+import fs from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
-import { ToolDefinition, AgentContext } from './types.js';
+import { ToolDefinition, AgentContext, safeJoin } from './types.js';
 import { supabase } from '../config/database.js';
 import { databaseService } from '../services/database.service.js';
 import { logger } from '../utils/logger.js';
+
+// Edge function code is mirrored into the project's own file tree here so the
+// agent's normal read_file/list_files/grep tools see what functions already
+// exist (before this, functions were invisible outside the DB — the direct
+// cause of the agent creating duplicate/orphaned functions instead of finding
+// and reusing one that already did the job). The DB row remains the actual
+// invocation source of truth; this file is a read/write mirror of it.
+export const EDGE_FUNCTIONS_DIR = '__edge_functions__';
 
 const MAX_FUNCTIONS_PER_PROJECT = 20;
 
 const schema = z.object({
   name: z.string().describe(
     'Unique function name (alphanumeric, hyphens, underscores). ' +
-    'Use the same name to overwrite an existing function.'
+    'Use the same name to overwrite an existing function. Before creating a NEW ' +
+    'function, list_files or read_file the __edge_functions__/ directory first — ' +
+    'every existing function for this project is mirrored there as __edge_functions__/' +
+    '<name>.js. Extend an existing function instead of writing a near-duplicate one.'
   ),
   code: z.string().describe(
     'JavaScript source that runs INSIDE an async function body — write plain statements ' +
@@ -111,11 +124,25 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
         return `ERROR: this project already has ${count} edge functions (limit ${MAX_FUNCTIONS_PER_PROJECT}). Consolidate related logic into one function or delete unused ones instead of adding more.`;
       }
 
+      // The invoke endpoint (functions.routes.ts) looks up a function by
+      // matching edge_functions.user_id against the PROJECT's owner
+      // (projects.user_id), not the id of whoever is currently chatting. On
+      // an org project, ctx.userId is often a collaborator, not the owner —
+      // saving under ctx.userId silently makes the function permanently
+      // uninvokable (404 "Function not found") even though it saved fine and
+      // the code is correct. Always save under the actual project owner.
+      const { data: projectRow } = await supabase
+        .from('projects')
+        .select('user_id')
+        .eq('id', ctx.projectId)
+        .maybeSingle();
+      const ownerId = projectRow?.user_id ?? ctx.userId;
+
       const { data, error } = await supabase
         .from('edge_functions')
         .upsert(
           {
-            user_id: ctx.userId,
+            user_id: ownerId,
             project_id: ctx.projectId,
             name,
             description: args.description ?? null,
@@ -133,10 +160,26 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
       }
 
       const verb = existing ? 'Updated' : 'Created';
-      // Surface the deployed edge function in the chat (reuses the write_file
-      // chip path). Description rides along so the chip is meaningful.
+
+      // Mirror to __edge_functions__/<name>.js — same write pattern as
+      // write_file.ts (disk write + pendingPreviewFiles), so this shows up in
+      // the file tree, the code viewer, and the run's preview push exactly
+      // like any other file. NEVER served to the browser — preview-service
+      // excludes this directory from the Vite build (see server.js).
+      const mirrorRelPath = `${EDGE_FUNCTIONS_DIR}/${name}.js`;
+      try {
+        const mirrorFullPath = safeJoin(ctx.appPath, mirrorRelPath);
+        fs.mkdirSync(path.dirname(mirrorFullPath), { recursive: true });
+        fs.writeFileSync(mirrorFullPath, args.code, 'utf8');
+        ctx.pendingPreviewFiles?.set(mirrorRelPath, args.code);
+      } catch (mirrorErr) {
+        // Non-fatal — the DB row (the actual invocation source) already
+        // saved successfully above. Log and continue.
+        logger.warn(`[write_edge_function] mirror write failed for ${mirrorRelPath}: ${mirrorErr instanceof Error ? mirrorErr.message : String(mirrorErr)}`);
+      }
+
       const chipDesc = `${verb} edge function${args.description ? `: ${args.description}` : ''}`.replace(/"/g, '&quot;');
-      ctx.onXmlComplete?.(`<ecomgear-write path="supabase/functions/${name}.ts" description="${chipDesc}" />`);
+      ctx.onXmlComplete?.(`<ecomgear-write path="${mirrorRelPath}" description="${chipDesc}" />`);
 
       const dbStatus = await databaseService.getStatus(ctx.userId, ctx.projectId);
       const noDbNote = (!dbStatus || dbStatus.status !== 'active')

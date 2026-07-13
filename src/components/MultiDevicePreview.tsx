@@ -380,21 +380,15 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
 
     return (
         <div className="flex flex-col h-full">
-            {/* Toolbar */}
-            {onInspectModeChange && (
-                <div className="flex items-center gap-1 px-2 py-1 bg-gray-800/50 border-b border-white/5">
-                    <button
-                        onClick={() => onInspectModeChange(!inspectMode)}
-                        className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
-                            inspectMode
-                                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
-                                : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
-                        }`}
-                        title={inspectMode ? 'Exit inspect mode' : 'Click an element in the preview to scope your next prompt'}
-                    >
-                        <MousePointerClick className="w-3.5 h-3.5" />
-                        {inspectMode ? 'Inspecting — click an element' : 'Inspect'}
-                    </button>
+            {/* Inspect mode toggle now lives in Editor's main toolbar (next to the
+                source-code-view button) instead of its own bar here — a second
+                strip stacked right under that toolbar was visually redundant. */}
+            {inspectMode && (
+                <div className="flex items-center justify-center px-2 py-1 bg-indigo-500/10 border-b border-indigo-500/20">
+                    <span className="flex items-center gap-1.5 text-[11px] text-indigo-300">
+                        <MousePointerClick className="w-3 h-3" />
+                        Click an element in the preview to inspect it
+                    </span>
                 </div>
             )}
 

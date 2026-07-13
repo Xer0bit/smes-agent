@@ -33,7 +33,7 @@ import { thinkTool } from '../agent-tools/think.js';
 import { getDatabaseSchemaTool } from '../agent-tools/get_database_schema.js';
 import { queryDatabaseTool } from '../agent-tools/query_database.js';
 import { provisionDatabaseTool } from '../agent-tools/provision_database.js';
-import { writeEdgeFunctionTool } from '../agent-tools/write_edge_function.js';
+import { writeEdgeFunctionTool, EDGE_FUNCTIONS_DIR } from '../agent-tools/write_edge_function.js';
 import { setSecretTool } from '../agent-tools/set_secret.js';
 import { listSecretsTool } from '../agent-tools/list_secrets.js';
 import { searchOrgKnowledgeTool } from '../agent-tools/search_org_knowledge.js';
@@ -56,6 +56,33 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABAS
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 const SUPPRESS_RECOVERY_UI = (process.env.AGENT_SUPPRESS_RECOVERY_UI ?? '1') !== '0';
+
+// Self-healing backfill for projects that had edge functions written before
+// the __edge_functions__/ mirror existed. Runs once at the start of every
+// agent run — cheap (single query, early-exits when nothing's missing) and
+// spreads the fix across every existing project the next time each one is
+// actually used, instead of a one-off bulk migration touching every live
+// preview at once.
+async function backfillEdgeFunctionMirrors(appPath: string, projectId: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { data: fns } = await supabase
+      .from('edge_functions')
+      .select('name, code')
+      .eq('project_id', projectId);
+    if (!fns || fns.length === 0) return;
+
+    for (const fn of fns) {
+      if (!fn.name || typeof fn.code !== 'string') continue;
+      const mirrorPath = safeJoin(appPath, `${EDGE_FUNCTIONS_DIR}/${fn.name}.js`);
+      if (fs.existsSync(mirrorPath)) continue;
+      try {
+        fs.mkdirSync(path.dirname(mirrorPath), { recursive: true });
+        fs.writeFileSync(mirrorPath, fn.code, 'utf8');
+      } catch { /* best-effort — a write failure here shouldn't block the run */ }
+    }
+  } catch { /* best-effort — DB unavailable shouldn't block the run */ }
+}
 
 // Circuit breaker: providers that returned a credit/billing error this server session.
 // Avoids retrying a dead provider on every subsequent run until restart.
@@ -946,6 +973,14 @@ export interface AgentRunParams {
   userId?: string;
   /** Optional external abort signal (e.g. client disconnected) */
   abortSignal?: AbortSignal;
+  /**
+   * Token for the DB-backed `agent_locks` row this run holds (see
+   * ai.routes.ts's tryAcquireAgentLock). Sent as `x-agent-lock-token` on every
+   * preview-service push below so preview-service can tell "this push came
+   * from the run that holds the lock" apart from any other actor — including
+   * a direct manual push racing this same run.
+   */
+  agentLockToken?: string;
 }
 
 export interface AgentRunResult {
@@ -1291,11 +1326,15 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
 }
 
 async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResult> {
-  const { prompt, projectId, appPath, model, mode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, res, userId, abortSignal } = params;
+  const { prompt, projectId, appPath, model, mode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, res, userId, abortSignal, agentLockToken } = params;
 
   // Start a narration context for this run so the narrator can ground its
   // real-time descriptions in the agent's think() reasoning + user intent.
   beginNarration(projectId, prompt);
+
+  // Backfill __edge_functions__/ mirrors for any function written before
+  // that mirror pattern existed — see backfillEdgeFunctionMirrors above.
+  await backfillEdgeFunctionMirrors(appPath, projectId);
 
   // Dynamic step budget: map request tier to a proportionate step ceiling.
   // Values must match TIER_MAX_STEPS in intentClassifier.ts.
@@ -1395,6 +1434,44 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const toolFailureStreak = new Map<string, { message: string; count: number }>();
   const CIRCUIT_BREAKER_THRESHOLD = 3;
   let circuitBreakerNote = '';
+
+  // ── Stuck-analysis detector ─────────────────────────────────────────────
+  // The identical-error circuit breaker above only fires when a TOOL returns
+  // the exact same error string repeatedly. It does NOT catch a different,
+  // equally real failure mode: the model re-reading/re-diagnosing the same
+  // problem in DIFFERENT words each time (read_file, get_build_errors, think —
+  // "let me check X... I see Y... let me try Z...") without ever committing to
+  // a write_file/edit_file that actually lands. No tool is erroring, so the
+  // error-based breaker never trips, but the run is just as stuck — burning a
+  // full step/token budget in circles. Track steps since the last SUCCESSFUL
+  // write/edit; once it crosses a threshold, force a "stop analyzing, commit
+  // to an action or say you're stuck" directive, same delivery mechanism as
+  // circuitBreakerNote.
+  let stepsSinceLastWrite = 0;
+  const STUCK_ANALYSIS_THRESHOLD = 6;
+  let stuckAnalysisNoteFiredAt = -1; // step number of last firing, so it can re-fire later in a long run
+  // A soft nudge alone isn't enough — a real incident (2026-07-12) showed the
+  // model ignore it 3 times in a row (fired at steps 6, 12, 18) and burn the
+  // entire token cap on nothing but `think` calls. After the nudge has fired
+  // and been ignored twice (i.e. firing a 3rd time), stop nudging and abort
+  // the run cleanly instead of letting it grind to the hard cap regardless.
+  let stuckAnalysisFireCount = 0;
+  const STUCK_ANALYSIS_HARD_STOP_FIRINGS = 3;
+  let stuckAnalysisAbortReason: string | null = null;
+  // Live signal for "did this run actually change anything" — filesToWrite/
+  // filesEdited below are only populated from XML tags in the model's FINAL
+  // text, which is empty on an aborted run even if native write_file/edit_file
+  // tool calls already succeeded earlier in the same run. Track that directly.
+  let anySuccessfulWriteThisRun = false;
+
+  // Set when onStepFinish aborts the run for hitting the token/cost cap — lets
+  // the summary-building code downstream tell the difference between "the
+  // model produced nothing" (safety block / provider failure, already has its
+  // own error message) and "budget ran out mid-task" (previously silent: the
+  // run just ended with an empty summary and the frontend fell through to a
+  // generic "didn't respond, try rephrasing" message that has nothing to do
+  // with what actually happened).
+  let budgetAbortReason: string | null = null;
 
   // Collected operation log
   const filesToWrite: Array<{ path: string; content: string }> = [];
@@ -2076,11 +2153,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     const dbNote = hasDb
       ? '\n\nThis project\'s hosted database is the ONLY place for application data (any table the user asks for — posts, products, orders, custom records, etc.).' +
-        '\n\n**⚠️ CRITICAL — this database has NO row-level security.** `VITE_DB_ANON_KEY` is bundled straight into the public JS bundle (anyone can read it via devtools), and its role has a flat `GRANT SELECT` on every table — not scoped per user, per row, or by ownership. There is no `auth.uid()`-style policy layer like real Supabase. **This means direct client-side PostgREST access is only safe for genuinely PUBLIC data that anyone should be able to read in full** (a public product catalog, public blog posts, a public leaderboard). The moment a table holds anything tied to a specific user, anything private, or ANY write operation, direct client access lets every visitor read or corrupt every other user\'s rows — there is nothing stopping them.' +
-        '\n\n**Default to edge functions for database work, not direct PostgREST.** Concretely: reads/writes of user-specific or private data (orders, profiles, messages, anything with an owner), ALL writes in general (INSERT/UPDATE/DELETE from the browser bypasses any validation you meant to enforce), and anything requiring authorization logic ("only the owner can see this") MUST go through `write_edge_function`, which runs server-side with privileged `db.*` access and can actually check who is asking before returning data. Only reach for direct `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` fetches for read-only, world-public, no-privacy-expectation data — and even then, `VITE_DB_API_URL` already carries this project\'s isolated schema as a URL path segment (e.g. `https://cloud.ecomgear.app/tenant_xxxx`), so do NOT add `Accept-Profile`/`Content-Profile` headers or reference `VITE_DB_SCHEMA` in fetch calls.' + liveSchemaBlock +
+        '\n\n**⚠️ CRITICAL — this database has NO row-level security.** `VITE_DB_ANON_KEY` is bundled straight into the public JS bundle (anyone can read it via devtools), and its role has a flat `GRANT SELECT` on every table — not scoped per user, per row, or by ownership. There is no `auth.uid()`-style policy layer like real Supabase. Direct client-side PostgREST access lets every visitor read or corrupt every table in full, public data or not — there is nothing stopping them. This is why direct frontend database access is never used here (see the rule right below): edge functions are the only place `db.*` access is safe to grant.' +
+        '\n\n**ALL database work MUST go through edge functions — never call the database directly from frontend code, including read-only data.** Use `write_edge_function` for every read and write: user-specific/private data (orders, profiles, messages, anything with an owner), ALL writes (INSERT/UPDATE/DELETE from the browser bypasses any validation you meant to enforce), anything requiring authorization logic ("only the owner can see this"), AND plain public reads (a product catalog, public blog posts, a leaderboard) — there is no exception for "it\'s just public read-only data." The frontend must never construct a `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` fetch itself; every piece of data the UI needs comes from an edge function you write and the frontend invokes via the pattern below. Inside an edge function, `VITE_DB_API_URL` is never needed — the privileged `db.*` helper is already scoped to this project\'s isolated schema.' + liveSchemaBlock +
         (hasSb ? ' This hosted database has NO auth/login server of its own — it is Postgres + PostgREST only. Never attempt to hit `VITE_DB_API_URL/auth/...` — that endpoint does not exist here; auth always goes through Supabase (above).' : '') +
         '\n\n**Login/signup/password checks are SECURITY-CRITICAL and MUST be an edge function — never a direct client-side PostgREST call.** Querying `users?email=eq.X&password=eq.Y` straight from the browser puts the password in the URL (logged everywhere) and exposes the whole table to anyone with the anon key. Write an edge function that looks up the user via `db.select` and compares a HASHED password server-side; return only a session token/user object.\n' +
-        '\n\n**Edge functions** — use `write_edge_function` for server-side logic the browser should never run directly: auth/password checks (above), any user-specific or private data access, any write, code that needs a secret API key, webhook handlers, scheduled/triggered jobs, or any multi-step backend operation. Do NOT put that logic in frontend code just because it seems simpler — if it touches private/owned data, writes anything, needs a secret, touches passwords, or must run server-side, it MUST be an edge function. Inside the function, read saved secrets as `secrets.KEY_NAME` (save new keys with `set_secret` first — never paste key values into function code or frontend files).\n' +
+        '\n\n**Edge functions** — use `write_edge_function` for server-side logic the browser should never run directly: auth/password checks (above), any user-specific or private data access, any write, code that needs a secret API key, webhook handlers, scheduled/triggered jobs, or any multi-step backend operation. Do NOT put that logic in frontend code just because it seems simpler — if it touches private/owned data, writes anything, needs a secret, touches passwords, or must run server-side, it MUST be an edge function. Inside the function, read saved secrets with the EXACT key name they were saved under, including a `VITE_` prefix if that\'s how it\'s stored — `secrets.VITE_DB_API_URL`, not `secrets.DB_API_URL`. Guessing a shortened name silently breaks every call in the function (the "secrets not configured" guard trips immediately) with no visible error until someone actually tests it. Check the actual secret list above instead of assuming a name (save new keys with `set_secret` first — never paste key values into function code or frontend files).\n' +
+        '\n\n**Writing an edge function is not the task — wiring it up is.** A function that exists in the database but that no frontend code ever calls does nothing; the app keeps using whatever it was using before, and it will look to the user like "the edge function isn\'t doing anything" even though the function itself is fine. Every time you write or update an edge function for an existing feature, in the SAME turn: (1) find every place in the frontend that currently does this work directly (a raw fetch, a `getDbUrl(...)` call, inline logic) and (2) replace it with an invoke call to the function, deleting the old direct-access code path. Never leave a newly written function orphaned while the old code keeps running.\n' +
+        '\n\n**Do not write a generic pass-through proxy** (e.g. one function that accepts an arbitrary `path`/`method`/`body` and forwards it straight to the database) as a way to satisfy "route through edge functions." That technically avoids a direct frontend fetch but adds zero real authorization or validation — it\'s functionally identical to direct client access, just relocated. Each edge function should implement one specific operation (or a small, named set of operations) with real server-side logic: check who\'s asking, validate the input, only allow what that specific operation actually needs.\n' +
         'Invoke a written function from the frontend with:\n```ts\nconst res = await fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/api/v1/functions/<name>/invoke`, {\n  method: \'POST\',\n  headers: { \'Content-Type\': \'application/json\', apikey: import.meta.env.VITE_DB_ANON_KEY },\n  body: JSON.stringify({ params: { /* ... */ } }),\n});\n```\nNo project_id is needed — the anon key itself identifies which project\'s function to run.\n' +
         'This endpoint is public and rate-limited (30 req/min) — it authenticates with the SAME `VITE_DB_ANON_KEY` used for the database, not a login session, so it works for anonymous visitors of the generated app, not just its owner.'
       : '';
@@ -2465,6 +2544,72 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             }
           }
 
+          // ── Stuck-analysis detector: no successful write/edit for N steps ──
+          const hadSuccessfulWriteThisStep = (toolResults ?? []).some((tr: any) => {
+            const toolName = tr?.toolName as string | undefined;
+            const result = tr?.output;
+            if (toolName !== 'write_file' && toolName !== 'edit_file') return false;
+            if (typeof result !== 'string') return false;
+            return !result.startsWith('Error') && !result.startsWith('BLOCKED') && !result.startsWith('PREFER EDIT');
+          });
+          if (hadSuccessfulWriteThisStep) {
+            stepsSinceLastWrite = 0;
+            anySuccessfulWriteThisRun = true;
+          } else {
+            stepsSinceLastWrite++;
+          }
+          // Budget-aware early exit: with prompt caching disabled (cacheR is
+          // consistently 0 — see cost audit), every step re-pays for the FULL
+          // context from scratch, so cumulative usage can compound past the
+          // token cap well before STUCK_ANALYSIS_HARD_STOP_FIRINGS worth of
+          // steps elapses (observed 2026-07-12: cap hit at step 12, before the
+          // 3rd nudge at step 18 could ever fire). If we're already stuck AND
+          // already deep into the budget, don't wait for more nudges to be
+          // ignored — stop now, before the run burns the rest for nothing.
+          const stuckAndBudgetCritical =
+            stepsSinceLastWrite >= STUCK_ANALYSIS_THRESHOLD && runTokens.total > RUN_TOKEN_CAP * 0.65;
+          if (
+            stuckAndBudgetCritical ||
+            (
+              stepsSinceLastWrite >= STUCK_ANALYSIS_THRESHOLD &&
+              stepCount - stuckAnalysisNoteFiredAt >= STUCK_ANALYSIS_THRESHOLD
+            )
+          ) {
+            stuckAnalysisFireCount++;
+            stuckAnalysisNoteFiredAt = stepCount;
+            if (stuckAndBudgetCritical || stuckAnalysisFireCount >= STUCK_ANALYSIS_HARD_STOP_FIRINGS) {
+              console.warn(`[AgentLoop] Stuck-analysis hard stop: ${stepsSinceLastWrite} steps with no successful write/edit${stuckAndBudgetCritical ? ` (budget-critical: ${runTokens.total}/${RUN_TOKEN_CAP} tokens used)` : ` after ${stuckAnalysisFireCount - 1} ignored nudges`} (user=${userId ?? 'unknown'})`);
+              stuckAnalysisAbortReason = `stuck analyzing without making a change for ${stepsSinceLastWrite} steps`;
+              generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
+                if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
+              }).catch(() => {});
+              abortController.abort();
+            } else {
+              console.warn(`[AgentLoop] Stuck-analysis detector: ${stepsSinceLastWrite} steps with no successful write/edit (user=${userId ?? 'unknown'})`);
+              const stuckNote =
+                `⚠️ STUCK IN ANALYSIS: You've spent ${stepsSinceLastWrite} steps reading/checking/reasoning without ` +
+                `a single write_file or edit_file actually landing. Re-reading the same file or re-stating the same ` +
+                `diagnosis in different words is NOT progress. Right now, on your very next step: either call ` +
+                `write_file/edit_file with your best understanding of the fix — even if you're not 100% certain — or, ` +
+                `if you genuinely cannot determine the fix, STOP and tell the user plainly what's blocking you instead ` +
+                `of continuing to investigate silently. This is your final warning before the run is stopped automatically.`;
+              circuitBreakerNote = circuitBreakerNote ? `${circuitBreakerNote}\n\n${stuckNote}` : stuckNote;
+            }
+          }
+
+          // ── Surface real agent reasoning to the UI ──────────────────────
+          // The `think` tool's actual argument (the model's real reasoning) used
+          // to be discarded entirely — thinkTool.execute ignores its args and just
+          // returns "OK", so the user never saw real thinking, only generic canned
+          // status strings. Emit it as a dedicated, live-only SSE event so the
+          // frontend can show the real content transiently — never persisted to
+          // the saved chat transcript.
+          for (const tc of (toolCalls ?? []) as any[]) {
+            if (tc?.toolName === 'think' && tc?.input?.thought) {
+              sseWrite(res, 'agent-thinking', { step: stepCount, thought: String(tc.input.thought) });
+            }
+          }
+
           // ── Token accounting for this step ────────────────────────────
           const stepInp    = (usage?.promptTokens     ?? usage?.inputTokens     ?? 0) as number;
           const stepOut    = (usage?.completionTokens ?? usage?.outputTokens    ?? 0) as number;
@@ -2517,6 +2662,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               ? `cost cap $${HARD_COST_CAP} hit ($${runCost.toFixed(3)} spent)`
               : `token cap ${RUN_TOKEN_CAP} hit (${runTokens.total} used)`;
             console.warn(`[AgentLoop] Run aborted — ${reason} (user=${userId ?? 'unknown'})`);
+            budgetAbortReason = reason;
             generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
               if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
             }).catch(() => {});
@@ -2845,6 +2991,29 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       summary = finalText.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, '').trim().split('\n')[0] ?? '';
     }
 
+    // Budget-abort with nothing to show: the model was still mid-tool-calls
+    // (reading files, editing) when the token/cost cap hit, so it never got to
+    // produce a final text response — summary is empty here. Without this, the
+    // frontend falls through every fallback to a generic "didn't respond, try
+    // rephrasing" message that has nothing to do with what actually happened
+    // and gives the user no way to know a retry with the same prompt will
+    // likely hit the exact same wall. Plain, non-technical wording only — the
+    // user doesn't need to see raw numbers like "token cap 450000 hit
+    // (472100 used)"; they need to know whether anything changed and what to
+    // do next.
+    const madeNoChanges = !anySuccessfulWriteThisRun && filesToWrite.length === 0 && filesEdited.length === 0;
+    if (stuckAnalysisAbortReason && !summary.trim()) {
+      summary = `I got stuck re-analyzing this without actually making a change, so I stopped instead of ` +
+        `continuing to spin. ${madeNoChanges ? 'Nothing was changed.' : 'What I did change so far is saved.'} ` +
+        `Could you give me a more specific instruction, or point me at the exact file/behavior to change?`;
+    } else if (budgetAbortReason && !summary.trim()) {
+      summary = madeNoChanges
+        ? `This request turned out to be bigger than I could finish in one go, and nothing was changed yet. ` +
+          `Try breaking it into smaller, more specific steps.`
+        : `This request turned out to be bigger than I could finish in one go. What I changed so far is saved — ` +
+          `send me a follow-up for the rest.`;
+    }
+
     // Parse ecomgear tags from the full final text as well (XML parser is more reliable)
     parseXmlResponse(finalText, { filesToWrite, filesEdited, filesToDelete, renames, dependencies });
 
@@ -2994,18 +3163,52 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // bad write to an untouched file got zero safety net — the run would just
     // skip the preview push entirely ("No file operations") and leave the
     // broken write sitting on disk.
+    // Count real TS syntax errors — used to make sure the mechanical sanitize
+    // pass below never makes a file WORSE. sanitizeFileContent's bracket-depth
+    // heuristic (sanitize.ts, "orphan closer" detection) tracks braces and
+    // parens with a single shared counter and has no special handling for
+    // `${...}` template-literal interpolations containing their own braces —
+    // it can misfire on a file that was already perfectly valid, "fixing" a
+    // false positive by appending or stripping closers, which actively
+    // CORRUPTS the file. Previously that corrupted result was written to disk
+    // unconditionally; the TS check right after only warned, never blocked.
+    const countSyntaxErrors = (path: string, content: string): number => {
+      try {
+        const result = ts.transpileModule(content, {
+          compilerOptions: {
+            jsx: ts.JsxEmit.ReactJSX,
+            module: ts.ModuleKind.ESNext,
+            target: ts.ScriptTarget.ES2020,
+          },
+          reportDiagnostics: true,
+          fileName: path,
+        });
+        return (result.diagnostics ?? []).length;
+      } catch {
+        return 0; // transpileModule exceptions are rare — don't treat as an error signal
+      }
+    };
+
     const touchedThisRun = new Set<string>([...filesToWrite.map(f => f.path), ...filesEdited]);
     for (const f of mergedWrites) {
       if (!touchedThisRun.has(f.path)) continue;
       if (/\.(tsx?|jsx?)$/.test(f.path) && !f.path.startsWith('node_modules')) {
         const { content: sanitized, fixes } = sanitizeFileContent(f.path, f.content);
         if (fixes.length > 0) {
-          f.content = sanitized;
-          try {
-            const fullPath = safeJoin(appPath, f.path);
-            fs.writeFileSync(fullPath, sanitized, 'utf8');
-          } catch {}
-          console.log(`[AgentLoop] Final sanitize: ${f.path} — ${fixes.join(', ')}`);
+          const errorsBefore = countSyntaxErrors(f.path, f.content);
+          const errorsAfter = countSyntaxErrors(f.path, sanitized);
+          if (errorsAfter > errorsBefore) {
+            // The "fix" made things worse (or broke a previously-valid file) —
+            // reject it and keep the original content untouched.
+            console.warn(`[AgentLoop] Final sanitize REJECTED for ${f.path} — would have made syntax errors worse (${errorsBefore} → ${errorsAfter}); keeping original content. Attempted fixes: ${fixes.join(', ')}`);
+          } else {
+            f.content = sanitized;
+            try {
+              const fullPath = safeJoin(appPath, f.path);
+              fs.writeFileSync(fullPath, sanitized, 'utf8');
+            } catch {}
+            console.log(`[AgentLoop] Final sanitize: ${f.path} — ${fixes.join(', ')}`);
+          }
         }
 
         // TS syntax check — only run on React source files under src/ to avoid
@@ -3065,9 +3268,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const mod = url.startsWith('https') ? https : http;
           const urlObj = new URL(url);
           let responseBody = '';
-          const extraHeaders: Record<string, string> = previewUpdateSecret
-            ? { 'x-update-secret': previewUpdateSecret }
-            : {};
+          const extraHeaders: Record<string, string> = {
+            ...(previewUpdateSecret ? { 'x-update-secret': previewUpdateSecret } : {}),
+            ...(agentLockToken ? { 'x-agent-lock-token': agentLockToken } : {}),
+          };
           const req = mod.request({
             hostname: urlObj.hostname,
             port: urlObj.port,
@@ -3604,13 +3808,27 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           }
 
           if (preAgentDiskSnapshot.size > 0) {
-            // Restore disk files to pre-agent state
+            // Restore disk files to pre-agent state on THIS server's own disk
+            // (appPath — the canonical project directory the agent tools read/write
+            // directly). This used to be silent best-effort: any failure here left
+            // this server's disk holding the run's bad content while the SEPARATE
+            // network push below could still succeed in restoring the preview
+            // service to clean — the two copies silently drifting out of sync with
+            // zero visibility into why. Track and log failures instead of
+            // swallowing them.
+            let diskRestoreFailures = 0;
             for (const [relPath, preContent] of preAgentDiskSnapshot) {
               try {
                 const fullFilePath = safeJoin(appPath, relPath);
                 fs.mkdirSync(path.dirname(fullFilePath), { recursive: true });
                 fs.writeFileSync(fullFilePath, preContent, 'utf8');
-              } catch { /* best-effort */ }
+              } catch (diskErr) {
+                diskRestoreFailures++;
+                console.error(`[AgentLoop] Pre-agent disk restore FAILED for ${relPath} — this server's own copy may still hold broken content`, diskErr);
+              }
+            }
+            if (diskRestoreFailures > 0) {
+              console.error(`[AgentLoop] Pre-agent disk restore: ${diskRestoreFailures}/${preAgentDiskSnapshot.size} file(s) failed to restore locally for project=${projectId}`);
             }
             const preAgentFiles = Array.from(preAgentDiskSnapshot.entries()).map(([p, c]) => ({ path: p, content: c }));
             mergedWrites.length = 0;

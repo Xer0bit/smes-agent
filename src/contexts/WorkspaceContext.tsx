@@ -193,7 +193,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
         }
     }, [manager, projectId]);
 
-    const loadFromDatabase = useCallback(async (): Promise<void> => {
+    const loadFromDatabase = useCallback(async (): Promise<boolean> => {
         setIsLoading(true);
         try {
             console.log('[WorkspaceContext] Attempting to load files from Storage (user-projects-free)...');
@@ -264,7 +264,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
                 manager.setFiles(loadedFiles);
                 setLastSyncedAt(new Date());
                 setIsLoading(false);
-                return; // Success! Skip legacy methods
+                return true; // Success! Skip legacy methods
             } else {
                 console.log('[WorkspaceContext] No files found in storage.');
             }
@@ -308,11 +308,14 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
 
                 console.log('[WorkspaceContext] Migration complete. Using migrated files.');
                 manager.setFiles(legacyFiles);
+                setLastSyncedAt(new Date());
+                return legacyFiles.length > 0;
             } else {
                 console.log('[WorkspaceContext] No legacy data found. Project is clean.');
             }
 
             setLastSyncedAt(new Date());
+            return false;
         } catch (error) {
             console.error('[WorkspaceContext] Load failed:', error);
             throw error;

@@ -43,6 +43,7 @@ import {
   Eye,
   Database,
   ArrowUpRight,
+  MousePointerClick,
 } from "lucide-react";
 import ecgLogo from "@/assets/ecg-logo.png";
 import {
@@ -1336,20 +1337,30 @@ export default defineConfig({
 
   useEffect(() => {
     if (projectId) {
-      // Load from revisions first (fast, single DB query).
-      // Only fall back to Storage if no revision files exist — the Storage
-      // download is slow (1 request per file) and would overwrite revision data.
-      loadLatestCode().then(hasRevisionFiles => {
-        if (!hasRevisionFiles) {
-          loadWorkspaceFromDb().catch(err => {
-            console.warn('[Editor] Failed to load workspace from db:', err);
+      // Load from Storage first — one small request per file, and it's what
+      // every active project already has fully populated. This used to be the
+      // "slow" fallback, with the single revisions.generated_files row treated
+      // as the fast path — but that row holds the FULL content of every file
+      // in the project inlined into one JSONB column, with no way to fetch it
+      // partially. For any project that's accumulated enough files/history,
+      // that single "fast" query balloons into a multi-MB (sometimes 40MB+)
+      // payload on every editor load. Only fall back to the heavy revision
+      // blob if Storage is genuinely empty (true legacy projects that
+      // predate Storage-based file sync) — never load it just because a
+      // revision happens to exist.
+      loadWorkspaceFromDb().then(hasStorageFiles => {
+        if (!hasStorageFiles) {
+          loadLatestCode().catch(err => {
+            console.warn('[Editor] Failed to load latest revision as fallback:', err);
           });
         } else {
-          // Revision files loaded directly — isWorkspaceLoading never cycled,
-          // so mark the initial load done here to prevent the WorkspaceLoader
-          // from flashing during subsequent saveToDatabase calls.
           setHasInitialLoadCompleted(true);
         }
+      }).catch(err => {
+        console.warn('[Editor] Failed to load workspace from Storage, falling back to revision:', err);
+        loadLatestCode().catch(fallbackErr => {
+          console.warn('[Editor] Fallback revision load also failed:', fallbackErr);
+        });
       });
     }
   }, [projectId, loadWorkspaceFromDb]);
@@ -2624,21 +2635,6 @@ export default defineConfig({
         {/* New Agent Chat Panel */}
         {!isMinimized && projectId && (currentUser || isGuest) && activeBuilderTab !== 'revisions' && (
           <div className="flex-1 overflow-hidden">
-            {inspectTarget && (
-              <div className="mx-3 mt-2 mb-1 rounded-lg bg-indigo-500/[0.08] border border-indigo-500/20 px-3 py-2 flex items-center gap-2 text-xs">
-                <MousePointerClick className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
-                <span className="text-indigo-200/90 truncate flex-1">
-                  Selected: <code className="text-indigo-300 font-mono">{inspectTarget.tagName}</code>
-                  {inspectTarget.label && <span className="text-indigo-200/60"> {inspectTarget.label}</span>}
-                </span>
-                <button
-                  onClick={() => setInspectTarget(null)}
-                  className="text-indigo-300/50 hover:text-white shrink-0"
-                >
-                  ×
-                </button>
-              </div>
-            )}
             {isGuest && (
               <div className="mx-3 mt-3 mb-1 rounded-lg bg-cyan-500/[0.06] px-3 py-2.5 text-xs text-cyan-200/80">
                 <span className="font-medium text-cyan-200">Guest</span> — Gemini &middot; {(() => {
@@ -2942,6 +2938,18 @@ export default defineConfig({
                 className={cn("h-7 w-7 rounded-md", showCodeViewer ? "bg-white/[0.1] text-white" : "text-white/25 hover:text-white/70 hover:bg-white/[0.06] disabled:text-white/10 disabled:hover:bg-transparent")}>
                 <FileCode className="h-3.5 w-3.5" />
               </Button>
+              <Button variant="ghost" size="icon" disabled={showCodeViewer}
+                onClick={() => setInspectMode(!inspectMode)}
+                title={inspectMode ? "Exit inspect mode" : "Inspect — click an element in the preview to scope your next prompt"}
+                className={cn("h-7 w-7 rounded-md", inspectMode ? "bg-indigo-500/20 text-indigo-300" : "text-white/25 hover:text-white/70 hover:bg-white/[0.06] disabled:text-white/10 disabled:hover:bg-transparent")}>
+                <MousePointerClick className="h-3.5 w-3.5" />
+              </Button>
+              {inspectTarget && (
+                <span className="hidden lg:flex items-center gap-1 h-7 px-2 rounded-md bg-indigo-500/10 text-[11px] text-indigo-300 whitespace-nowrap">
+                  Editing <code className="font-mono text-indigo-200">{inspectTarget.tagName}</code>
+                  <button onClick={() => setInspectTarget(null)} className="text-indigo-300/50 hover:text-white ml-0.5">×</button>
+                </span>
+              )}
             </>
           </div>
 

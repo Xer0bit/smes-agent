@@ -814,6 +814,21 @@ async function materializeProjectFiles(projectId, projectRoot, files) {
             continue;
         }
 
+        // __edge_functions__/*.js mirrors (see write_edge_function.ts) are raw
+        // sandbox function bodies — no imports, bare top-level statements,
+        // undeclared free variables (secrets/params/db) injected by the runner.
+        // They are NOT React/TS app code and must never go through preprocessFile
+        // or validateSourceFile, both built for component files: doing so both
+        // corrupted a function's syntax (the same false-positive "autoFix"
+        // pattern seen on regular files) AND surfaced its "errors" as blocking
+        // /status failures for the whole app, even though this directory is
+        // never bundled or executed client-side at all.
+        if (safePath.startsWith('__edge_functions__/')) {
+            fs.writeFileSync(filePath, file.content);
+            binaryWroteFiles.push(filePath);
+            continue;
+        }
+
         const { content: preprocessedContent, issues } = preprocessFile(safePath, file.content);
         allFixedIssues.push(...issues.map((issue) => `${safePath}: ${issue}`));
 
@@ -1710,6 +1725,36 @@ function isScaffoldOnly(projectRoot) {
     return files.every(f => scaffoldNames.has(f));
 }
 
+// Checks the DB-backed `agent_locks` table before accepting a file push. This
+// closes a race that used to be invisible here entirely: a running agent loop
+// (on VPS3) and any other direct push to this endpoint (a manual fix, a
+// second run, a rollback) would both land on the SAME project directory with
+// zero coordination — whichever wrote last silently won, moments after the
+// other. The agent loop sends its lock token as `x-agent-lock-token`; a push
+// is only rejected if a lock is currently held by someone else (no token, or
+// a mismatched one). No lock held at all → always allowed, so direct/manual
+// pushes work exactly as before when nothing is running.
+const AGENT_LOCK_STALE_MS = 15 * 60_000;
+async function checkAgentLock(projectId, providedToken) {
+    if (!SUPABASE_SERVICE_KEY) return { ok: true }; // fail open — locking unavailable, don't block all pushes
+    try {
+        const url = `${SUPABASE_REST_URL}/rest/v1/agent_locks?project_id=eq.${encodeURIComponent(projectId)}&select=token,acquired_at`;
+        const res = await fetch(url, {
+            headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
+        });
+        if (!res.ok) return { ok: true }; // fail open on lock-service errors
+        const rows = await res.json();
+        const lock = rows[0];
+        if (!lock) return { ok: true }; // nothing running for this project
+        const age = Date.now() - new Date(lock.acquired_at).getTime();
+        if (age > AGENT_LOCK_STALE_MS) return { ok: true }; // stale — treat as released
+        if (lock.token === providedToken) return { ok: true }; // this push IS the lock holder
+        return { ok: false };
+    } catch {
+        return { ok: true }; // fail open — never let lock-check errors block pushes
+    }
+}
+
 // Fetches the latest generated_files revision from Supabase and writes them to disk.
 // Called before Vite starts so the browser always gets the real app, not a blank scaffold.
 // Fails silently — Vite will still start with whatever files are present.
@@ -2194,6 +2239,25 @@ async function getOrCreateServer(projectId) {
             configFile: false,
             plugins: [
                 reactPluginFactory(),
+                // ── Block __edge_functions__/ from ever being served ──────────────
+                // server.fs.deny does NOT reliably block requests here (verified —
+                // Vite's dev middleware still transformed and served the file even
+                // with fs.deny set). configureServer runs as real middleware inside
+                // Vite's own stack, so it applies regardless of which of the 3
+                // vite.middlewares(...) call sites in this file handled the request.
+                {
+                    name: 'ecomgear-block-edge-functions',
+                    configureServer(server) {
+                        server.middlewares.use((req, res, next) => {
+                            if (req.url && req.url.includes('__edge_functions__')) {
+                                res.statusCode = 403;
+                                res.end('Forbidden');
+                                return;
+                            }
+                            next();
+                        });
+                    },
+                },
                 // ── Transform error auto-repair plugin ────────────────────────────
                 // Returns repaired code in-memory ONLY. Do NOT write to disk here —
                 // any fs.writeFileSync during a transform triggers the file watcher
@@ -2504,7 +2568,7 @@ async function getOrCreateServer(projectId) {
                 watch: {
                     usePolling: true,
                     interval: IS_PRODUCTION ? 300 : 100  // Slower polling in production
-                }
+                },
             },
             appType: 'spa',
             root: projectRoot,
@@ -3182,6 +3246,16 @@ async function startMainServer() {
 
         if (!files || !Array.isArray(files)) {
             return res.status(400).json({ error: 'Invalid files format' });
+        }
+
+        // ── Concurrent-edit guard: reject if a different agent run currently
+        // holds this project's lock (see checkAgentLock above) ───────────────
+        const lockCheck = await checkAgentLock(projectId, req.headers['x-agent-lock-token']);
+        if (!lockCheck.ok) {
+            return res.status(423).json({
+                error: 'Another generation is currently running for this project. This push was rejected to avoid corrupting its files — wait for it to finish and try again.',
+                code: 'PROJECT_LOCKED',
+            });
         }
 
         const now = Date.now();

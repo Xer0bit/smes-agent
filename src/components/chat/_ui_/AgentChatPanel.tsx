@@ -74,6 +74,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [thinkingText, setThinkingText] = useState('');
+  // The agent's real internal reasoning (the `think` tool's actual argument) —
+  // shown live only, cleared on the next step/completion, never saved to the
+  // persisted chat transcript.
+  const [liveThought, setLiveThought] = useState('');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [stepCount, setStepCount] = useState(0);
@@ -118,6 +122,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const startProgressFeedback = () => {
     setStatusText('');
     setThinkingText('');
+    setLiveThought('');
     setStepCount(0);
     setLiveFiles([]);
     setFilesWritten(0);
@@ -728,6 +733,9 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           onStepFinish: (stepData: StepFinishData) => {
             if (generationDone) return;
             if (stepData.step > 0) setStepCount(stepData.step);
+            // Clear the live thought once the agent moves past thinking into a real
+            // action step, so it doesn't linger stale behind a "Building X..." status.
+            if (!stepData.tools.includes('think')) setLiveThought('');
             const isLLMStatus = stepData.step === 0 && stepData.toolCount === 0;
             // File-op steps already got their own permanent entry from onToolOutput
             // above. A narrative-only step (think, or any step with no file-changing
@@ -755,11 +763,19 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             if (generationDone) return;
             pushStatus(narration, true, true);
           },
+          onAgentThinking: ({ thought }) => {
+            // The agent's real internal reasoning, live only — replaces the
+            // previous thought each time a new `think` step arrives, never
+            // accumulates, never gets saved to the persisted message.
+            if (generationDone) return;
+            setLiveThought(thought);
+          },
           onDone: (result) => {
             generationDone = true;             // block any further text-delta updates
             setIsGenerating(false);
             setStatusText('');
             setThinkingText('');
+            setLiveThought('');
             setStepCount(0);
             setLiveFiles([]);
             setFilesWritten(0);
@@ -1245,6 +1261,19 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               </>)}
             </div>
           ))}
+
+          {/* ── Live agent thinking — the model's real reasoning, shown once, live only.
+              Never added to `messages`, so it's never part of the saved transcript;
+              it just replaces itself each time a new `think` step arrives and
+              disappears the moment the agent moves to a real action or finishes. ── */}
+          {isGenerating && liveThought && (
+            <div className="ml-[28px] mb-1 flex items-start gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5 max-w-[320px]">
+              <Sparkles className="w-3 h-3 mt-0.5 shrink-0 text-indigo-300/60 animate-pulse" />
+              <p className="text-[11px] leading-snug text-white/40 italic line-clamp-3">
+                {liveThought}
+              </p>
+            </div>
+          )}
 
           {/* ── Live agent status — Lovable-style: real status headline first ── */}
           {isGenerating && (() => {
