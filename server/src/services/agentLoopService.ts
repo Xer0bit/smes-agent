@@ -34,6 +34,7 @@ import { getDatabaseSchemaTool } from '../agent-tools/get_database_schema.js';
 import { queryDatabaseTool } from '../agent-tools/query_database.js';
 import { provisionDatabaseTool } from '../agent-tools/provision_database.js';
 import { writeEdgeFunctionTool, EDGE_FUNCTIONS_DIR } from '../agent-tools/write_edge_function.js';
+import { deleteEdgeFunctionTool } from '../agent-tools/delete_edge_function.js';
 import { setSecretTool } from '../agent-tools/set_secret.js';
 import { listSecretsTool } from '../agent-tools/list_secrets.js';
 import { searchOrgKnowledgeTool } from '../agent-tools/search_org_knowledge.js';
@@ -87,6 +88,23 @@ async function backfillEdgeFunctionMirrors(appPath: string, projectId: string): 
 // Circuit breaker: providers that returned a credit/billing error this server session.
 // Avoids retrying a dead provider on every subsequent run until restart.
 const billingFailedProviders = new Set<string>();
+
+// Reads Anthropic prompt-cache usage out of AI SDK v6's providerMetadata shape.
+// `providerMetadata.anthropic.usage` is the RAW Anthropic API response (snake_case
+// JSON passed through as-is), while `cacheCreationInputTokens` is also exposed as a
+// separate camelCase convenience field one level up — read both to be safe, since
+// a prior bug here (reading a nonexistent `experimental_providerMetadata` field,
+// then reading camelCase names out of the raw snake_case `usage` object) silently
+// made every step log cacheR=0/cacheW=0 regardless of whether caching actually ran.
+function extractAnthropicCacheUsage(providerMetadata: any): { cacheRead: number; cacheWrite: number } {
+  const anth = providerMetadata?.anthropic;
+  const rawUsage = anth?.usage ?? {};
+  const cacheRead = Number(rawUsage.cache_read_input_tokens ?? rawUsage.cacheReadInputTokens ?? 0) || 0;
+  const cacheWrite = Number(
+    anth?.cacheCreationInputTokens ?? rawUsage.cache_creation_input_tokens ?? rawUsage.cacheCreationInputTokens ?? 0
+  ) || 0;
+  return { cacheRead, cacheWrite };
+}
 const MAX_PROMPT_CHARS = 8_000;
 const MAX_OLDER_SUMMARY_CHARS = 6_000;
 const MAX_FILE_TREE_CHARS = 5_000;   // trimmed: agent uses list_files for full tree
@@ -726,6 +744,7 @@ function buildToolSet(ctx: AgentContext, brainMemory: string[]): ToolSet {
     queryDatabaseTool,
     provisionDatabaseTool,
     writeEdgeFunctionTool,
+    deleteEdgeFunctionTool,
     setSecretTool,
     listSecretsTool,
     ...(ctx.ecgMcp ? [searchOrgKnowledgeTool] : []),
@@ -2513,7 +2532,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           }
           return {};
         },
-        onStepFinish: ({ text, toolCalls, toolResults, usage, experimental_providerMetadata }: any) => {
+        // NOTE: AI SDK v6 renamed `experimental_providerMetadata` to `providerMetadata`
+        // (see ai/dist/index.d.ts's StepResult type) — reading the old name here
+        // silently always returned undefined, so cache stats (cacheR/cacheW) were
+        // always logged as 0 regardless of whether Anthropic actually cached anything.
+        onStepFinish: ({ text, toolCalls, toolResults, usage, providerMetadata }: any) => {
           stepCount++;
           runLedger.setStep(stepCount);
           const toolNames = (toolCalls ?? []).map((tc: any) => tc.toolName);
@@ -2563,10 +2586,20 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           }
 
           // ── Stuck-analysis detector: no successful write/edit for N steps ──
+          // Must recognize EVERY state-modifying tool, not just write_file/edit_file —
+          // a run that's productively calling write_edge_function repeatedly (e.g.
+          // building 6 edge functions in a row) was being misclassified as "stuck"
+          // and hard-stopped mid-way, even though each call was succeeding. Confirmed
+          // live 2026-07-13: a CardPro run called write_edge_function successfully 6
+          // times in a row (auth-login, auth-signup, get-cards, get-mystery-cases,
+          // get-shops, process-payment) and was killed by this exact check.
+          const STATE_MODIFYING_TOOLS = new Set([
+            'write_file', 'edit_file', 'write_edge_function', 'delete_edge_function', 'delete_file', 'rename_file', 'place_asset',
+          ]);
           const hadSuccessfulWriteThisStep = (toolResults ?? []).some((tr: any) => {
             const toolName = tr?.toolName as string | undefined;
             const result = tr?.output;
-            if (toolName !== 'write_file' && toolName !== 'edit_file') return false;
+            if (!toolName || !STATE_MODIFYING_TOOLS.has(toolName)) return false;
             if (typeof result !== 'string') return false;
             return !result.startsWith('Error') && !result.startsWith('BLOCKED') && !result.startsWith('PREFER EDIT');
           });
@@ -2631,9 +2664,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // ── Token accounting for this step ────────────────────────────
           const stepInp    = (usage?.promptTokens     ?? usage?.inputTokens     ?? 0) as number;
           const stepOut    = (usage?.completionTokens ?? usage?.outputTokens    ?? 0) as number;
-          const anthMeta   = experimental_providerMetadata?.anthropic?.usage ?? (experimental_providerMetadata as any)?.usage ?? {};
-          const stepCacheR = (anthMeta.cacheReadInputTokens    ?? 0) as number;
-          const stepCacheW = (anthMeta.cacheCreationInputTokens ?? 0) as number;
+          const { cacheRead: stepCacheR, cacheWrite: stepCacheW } = extractAnthropicCacheUsage(providerMetadata);
 
           runTokens.inputTokens      += stepInp;
           runTokens.outputTokens     += stepOut;
@@ -2726,12 +2757,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // Final overall finish — log cumulative run totals (onStepFinish already
             // captured per-step detail; this is the authoritative end-of-run summary).
             const u    = (part as any).usage;
-            const meta = (part as any).providerMetadata?.anthropic?.usage ?? {};
+            const finishCache = extractAnthropicCacheUsage((part as any).providerMetadata);
             // Prefer values accumulated in runTokens (most complete); fall back to stream finish.
             const totalIn  = runTokens.inputTokens      || (u?.promptTokens     ?? u?.inputTokens     ?? 0);
             const totalOut = runTokens.outputTokens     || (u?.completionTokens ?? u?.outputTokens    ?? 0);
-            const totalCR  = runTokens.cacheReadTokens  || (meta.cacheReadInputTokens    ?? 0);
-            const totalCW  = runTokens.cacheWriteTokens || (meta.cacheCreationInputTokens ?? 0);
+            const totalCR  = runTokens.cacheReadTokens  || finishCache.cacheRead;
+            const totalCW  = runTokens.cacheWriteTokens || finishCache.cacheWrite;
             const totalCost = calcCost(totalIn, totalOut, totalCR, totalCW);
             console.log(
               `[AgentLoop] RUN COMPLETE` +
@@ -2823,7 +2854,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     })();
     if (lastStreamError && (isRetryableError(lastStreamError) || isNetworkError(lastStreamError) || isAuthOrBillingError(lastStreamError) || isModelNotFound)) {
       // Build a prioritised list of fallback candidates. Gemini-to-Gemini fallback is
-      // now allowed (different model) so a bad gemini-2.5-pro can fall to gemini-2.5-flash.
+      // now allowed (different model) so a bad gemini-2.5-pro can fall to gemini-flash-latest.
       const fallbackCandidates = buildFallbackCandidates(providerName, modelId);
       for (const fallbackModelId of fallbackCandidates) {
         const fallbackInfo = createProviderForModel(fallbackModelId);

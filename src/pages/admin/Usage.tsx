@@ -10,7 +10,7 @@ function fmtNum(n: number) { return n.toLocaleString(); }
 function shortModel(m: string): string {
   if (!m) return '—';
   if (m.includes('gemini-2.5-pro')) return 'Gemini 2.5 Pro';
-  if (m.includes('gemini-2.5-flash')) return 'Gemini Flash';
+  if (m.includes('gemini-2.5-flash') || m.includes('gemini-flash-latest')) return 'Gemini Flash';
   if (m.includes('gemini')) return 'Gemini';
   if (m.includes('deepseek')) return 'DeepSeek';
   if (m.includes('claude')) return m.replace(/^claude-/, '').replace(/-\d{8}$/, '').replace(/-latest$/, '');

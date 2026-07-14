@@ -982,7 +982,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             if (anthropicKey && process.env.AI_DISABLE_ANTHROPIC !== '1') {
                 fastModel = createAnthropic({ apiKey: anthropicKey })('claude-haiku-4-5-20251001');
             } else if (geminiKey && process.env.AI_DISABLE_GEMINI !== '1') {
-                fastModel = createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-2.5-flash');
+                fastModel = createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-flash-latest');
             }
 
             if (fastModel) {
@@ -1148,7 +1148,7 @@ router.post('/suggestions', optionalAuthMiddleware, async (req: AuthenticatedReq
     }
 
     try {
-        const model = createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-2.5-flash');
+        const model = createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-flash-latest');
 
         const fileContext = filePaths.length > 0
             ? `\nFiles changed: ${filePaths.slice(0, 8).join(', ')}`

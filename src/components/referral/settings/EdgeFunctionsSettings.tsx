@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { FunctionSquare, Trash2, Play, Clock, Bot, Lock } from "lucide-react";
+import { FunctionSquare, Play, Clock, Bot, Lock } from "lucide-react";
 import { useSubscription } from "@/contexts/SubscriptionContext";
 import { cn } from "@/lib/utils";
 import { getApiServerUrl } from "@/config/external-api";
@@ -46,11 +46,12 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
 
   const [fns, setFns] = useState<EdgeFn[]>([]);
   const [selected, setSelected] = useState<EdgeFn | null>(null);
+  const [code, setCode] = useState<string | null>(null);
+  const [codeLoading, setCodeLoading] = useState(false);
   const [params, setParams] = useState('{}');
   const [result, setResult] = useState<InvokeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [invoking, setInvoking] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     if (!projectId) { setLoading(false); return; }
@@ -64,6 +65,18 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
 
   useEffect(() => { load(); }, [load]);
 
+  // Load the full source for whichever function is selected — the list
+  // endpoint only returns name/description/is_active, never the code itself.
+  useEffect(() => {
+    if (!selected) { setCode(null); return; }
+    setCodeLoading(true);
+    setCode(null);
+    apiFetch(`/functions/${selected.name}`)
+      .then(res => setCode(res.code ?? ''))
+      .catch(e => toast.error((e as Error).message))
+      .finally(() => setCodeLoading(false));
+  }, [selected, apiFetch]);
+
   const invoke = async () => {
     if (!selected) return;
     let parsed: unknown = {};
@@ -76,19 +89,6 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
       setResult(res);
     } catch (e) { toast.error((e as Error).message); }
     finally { setInvoking(false); }
-  };
-
-  const deleteFn = async () => {
-    if (!selected) return;
-    if (!confirm(`Delete function "${selected.name}"?`)) return;
-    setDeleting(true);
-    try {
-      await apiFetch(`/functions/${selected.name}`, { method: 'DELETE' });
-      toast.success('Deleted.');
-      setSelected(null); setResult(null);
-      load();
-    } catch (e) { toast.error((e as Error).message); }
-    finally { setDeleting(false); }
   };
 
   if (!isPaid) {
@@ -159,9 +159,19 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
                         <span className="text-xs text-white/40 truncate">{selected.description}</span>
                       )}
                     </div>
-                    <Button size="sm" variant="ghost" className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 shrink-0" onClick={deleteFn} disabled={deleting}>
-                      <Trash2 className="h-3 w-3 mr-1" />{deleting ? 'Deleting…' : 'Delete'}
-                    </Button>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-white/45 font-medium">Source (read-only — ask the agent to change it)</span>
+                    </div>
+                    <div className="rounded-lg border border-white/[0.08] bg-black/40 max-h-56 overflow-y-auto">
+                      {codeLoading ? (
+                        <p className="text-xs text-white/30 p-3">Loading…</p>
+                      ) : (
+                        <pre className="text-xs font-mono text-white/70 p-3 whitespace-pre-wrap break-all">{code || '(empty)'}</pre>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-2">

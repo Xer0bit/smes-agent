@@ -92,10 +92,14 @@ router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response)
   if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
   if (!(await requireProjectAccess(req.user!.id, projectId, res))) return;
   try {
+    // Scoped by project_id only, not user_id — write_edge_function.ts saves
+    // rows under the PROJECT OWNER's user_id, not whoever's chatting, so a
+    // collaborator viewing this list under their own req.user.id would see
+    // nothing despite requireProjectAccess already confirming they may view
+    // this project's functions.
     const { data, error } = await supabase
       .from('edge_functions')
       .select('id, name, description, is_active, created_at, updated_at')
-      .eq('user_id', req.user!.id)
       .eq('project_id', projectId)
       .order('created_at', { ascending: true });
     if (error) throw new Error(error.message);
@@ -114,7 +118,6 @@ router.get('/:name', authMiddleware, async (req: AuthenticatedRequest, res: Resp
     const { data, error } = await supabase
       .from('edge_functions')
       .select('*')
-      .eq('user_id', req.user!.id)
       .eq('project_id', projectId)
       .eq('name', req.params.name)
       .maybeSingle();
@@ -144,23 +147,123 @@ router.patch('/:name', authMiddleware, (_req: AuthenticatedRequest, res: Respons
 });
 
 // ── DELETE /api/v1/functions/:name ──────────────────────────────────────────
-router.delete('/:name', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  const projectId = getProjectId(req);
-  if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
-  if (!(await requireProjectAccess(req.user!.id, projectId, res))) return;
-  try {
-    const { error } = await supabase
-      .from('edge_functions')
-      .delete()
-      .eq('user_id', req.user!.id)
-      .eq('project_id', projectId)
-      .eq('name', req.params.name);
-    if (error) throw new Error(error.message);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+// Locked: edge functions can only be deleted by the AI agent, same as create/
+// modify above — a user manually deleting one out from under the agent's own
+// understanding of the project is exactly the kind of drift this project
+// keeps needing an audit to catch.
+router.delete('/:name', authMiddleware, (_req: AuthenticatedRequest, res: Response) => {
+  res.status(403).json({
+    error: 'Edge functions can only be deleted by the AI agent. Ask the agent to remove it.',
+  });
 });
+
+// ── Shared bundle resolution — used by both the local /invoke route and the
+// internal /_internal/bundle route the VPS5 function-runner calls. Pulled out
+// so relocating execution to VPS5 doesn't duplicate this lookup logic. ──────
+interface FunctionBundle {
+  code: string;
+  functionId: string;
+  dbCtx?: FunctionContext;
+  ecgCtx?: EcgContext;
+  secrets?: Record<string, string>;
+}
+
+async function resolveFunctionBundle(
+  callerId: string,
+  name: string,
+  invokeProjectId: string | undefined,
+): Promise<{ bundle?: FunctionBundle; error?: string; status?: number }> {
+  // Resolve the project OWNER's user_id so credential lookups and function
+  // fetches hit the right rows regardless of who is invoking. A collaborator
+  // calling via their own platform session has a different user_id than the
+  // owner who owns the edge_functions row + tenant_databases row — without
+  // this resolution they get a false 404.
+  let ownerId = callerId;
+  if (invokeProjectId) {
+    try {
+      const project = await projectService.getProject(invokeProjectId, callerId);
+      ownerId = project.user_id;
+    } catch {
+      // getProject throws if the caller has no access — but a tenant-public
+      // caller was already validated via getOwnerBySchema before this is called.
+      // Fall through with the original user id.
+    }
+  }
+
+  // Optional — a function that never calls db.* should run fine without a
+  // provisioned database. runEdgeFunction only errors on db.* calls if this
+  // is undefined.
+  const creds = await databaseService.getCredentials(ownerId, invokeProjectId);
+
+  let fnQuery = supabase
+    .from('edge_functions')
+    .select('id, code, is_active')
+    .eq('user_id', ownerId)
+    .eq('name', name);
+  // Legacy rows written before project scoping have project_id NULL — only
+  // match those when no project_id is known, never mix scoped/unscoped rows.
+  fnQuery = invokeProjectId ? fnQuery.eq('project_id', invokeProjectId) : fnQuery.is('project_id', null);
+  const { data: fn, error } = await fnQuery.maybeSingle();
+
+  if (error) return { error: error.message, status: 500 };
+  if (!fn) return { error: 'Function not found.', status: 404 };
+  if (!fn.is_active) return { error: 'Function is disabled.', status: 400 };
+
+  // Load ECG secrets for this project (if it has ECG integration)
+  let ecgCtx: EcgContext | undefined;
+  if (invokeProjectId) {
+    const { data: ecgRows } = await supabase
+      .from('project_secrets').select('key_name, key_value')
+      .eq('project_id', invokeProjectId)
+      .in('key_name', ['ECG_PORTAL_TOKEN', 'ECG_LLM_API_KEY', 'ECG_LLM_MODEL', 'ECG_LLM_PROVIDER']);
+    const ecgMap = Object.fromEntries((ecgRows ?? []).map((r: { key_name: string; key_value: string }) => [r.key_name, r.key_value]));
+    if (ecgMap['ECG_PORTAL_TOKEN']) {
+      ecgCtx = {
+        portalToken:  ecgMap['ECG_PORTAL_TOKEN'],
+        portalApiUrl: process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai',
+        llmApiKey:    ecgMap['ECG_LLM_API_KEY'],
+        llmModel:     ecgMap['ECG_LLM_MODEL'],
+        llmProvider:  ecgMap['ECG_LLM_PROVIDER'],
+      };
+    }
+  }
+
+  const dbCtx: FunctionContext | undefined = creds ? {
+    apiUrl:     creds.api_url,
+    schema:     creds.schema,
+    anonKey:    creds.anon_key,
+    serviceKey: creds.service_key,
+  } : undefined;
+
+  // Expose all saved project secrets as `secrets.KEY_NAME` inside the function
+  // sandbox — values never leave this process, they're just readable by the
+  // function's own server-side code.
+  let secrets: Record<string, string> | undefined;
+  if (invokeProjectId) {
+    const { data: secretRows } = await supabase
+      .from('project_secrets')
+      .select('key_name, key_value')
+      .eq('project_id', invokeProjectId);
+    if (secretRows?.length) {
+      secrets = Object.fromEntries(secretRows.map((r: { key_name: string; key_value: string }) => [r.key_name, r.key_value]));
+    }
+  }
+
+  return { bundle: { code: fn.code, functionId: fn.id, dbCtx, ecgCtx, secrets } };
+}
+
+function persistInvokeLog(userId: string, projectId: string | undefined, functionId: string, params: unknown, result: Awaited<ReturnType<typeof runEdgeFunction>>) {
+  supabase.from('edge_function_logs').insert({
+    user_id:     userId,
+    project_id:  projectId ?? null,
+    function_id: functionId,
+    params,
+    result:      result.result,
+    logs:        result.logs,
+    duration_ms: result.durationMs,
+    error:       result.error ?? null,
+  }).then(() => {}, () => {});
+}
 
 // ── POST /api/v1/functions/:name/invoke ─────────────────────────────────────
 // Public path: a generated app's own end users call this with the project's
@@ -168,98 +271,12 @@ router.delete('/:name', authMiddleware, async (req: AuthenticatedRequest, res: R
 router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const invokeProjectId = getProjectId(req);
-
-    // Resolve the project OWNER's user_id so credential lookups and function
-    // fetches hit the right rows regardless of who is invoking. A collaborator
-    // calling via their own platform session has a different user_id than the
-    // owner who owns the edge_functions row + tenant_databases row — without
-    // this resolution they get a false 404.
-    let ownerId = req.user!.id;
-    if (invokeProjectId) {
-      try {
-        const project = await projectService.getProject(invokeProjectId, req.user!.id);
-        ownerId = project.user_id;
-      } catch {
-        // getProject throws if the caller has no access — but a tenant-public
-        // caller was already validated via getOwnerBySchema in resolveInvokeAuth.
-        // Fall through with the original user id.
-      }
-    }
-
-    // Optional — a function that never calls db.* should run fine without a
-    // provisioned database. runEdgeFunction only errors on db.* calls if this
-    // is undefined.
-    const creds = await databaseService.getCredentials(ownerId, invokeProjectId);
-
-    let fnQuery = supabase
-      .from('edge_functions')
-      .select('id, code, is_active')
-      .eq('user_id', ownerId)
-      .eq('name', req.params.name);
-    // Legacy rows written before project scoping have project_id NULL — only
-    // match those when no project_id is known, never mix scoped/unscoped rows.
-    fnQuery = invokeProjectId ? fnQuery.eq('project_id', invokeProjectId) : fnQuery.is('project_id', null);
-    const { data: fn, error } = await fnQuery.maybeSingle();
-
-    if (error) throw new Error(error.message);
-    if (!fn) { res.status(404).json({ error: 'Function not found.' }); return; }
-    if (!fn.is_active) { res.status(400).json({ error: 'Function is disabled.' }); return; }
+    const { bundle, error, status } = await resolveFunctionBundle(req.user!.id, req.params.name, invokeProjectId);
+    if (!bundle) { res.status(status ?? 500).json({ error }); return; }
 
     const params = req.body?.params ?? {};
-
-    // Load ECG secrets for this project (if it has ECG integration)
-    let ecgCtx: EcgContext | undefined;
-    if (invokeProjectId) {
-      const { data: ecgRows } = await supabase
-        .from('project_secrets').select('key_name, key_value')
-        .eq('project_id', invokeProjectId)
-        .in('key_name', ['ECG_PORTAL_TOKEN', 'ECG_LLM_API_KEY', 'ECG_LLM_MODEL', 'ECG_LLM_PROVIDER']);
-      const ecgMap = Object.fromEntries((ecgRows ?? []).map((r: { key_name: string; key_value: string }) => [r.key_name, r.key_value]));
-      if (ecgMap['ECG_PORTAL_TOKEN']) {
-        ecgCtx = {
-          portalToken:  ecgMap['ECG_PORTAL_TOKEN'],
-          portalApiUrl: process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai',
-          llmApiKey:    ecgMap['ECG_LLM_API_KEY'],
-          llmModel:     ecgMap['ECG_LLM_MODEL'],
-          llmProvider:  ecgMap['ECG_LLM_PROVIDER'],
-        };
-      }
-    }
-
-    const dbCtx: FunctionContext | undefined = creds ? {
-      apiUrl:     creds.api_url,
-      schema:     creds.schema,
-      anonKey:    creds.anon_key,
-      serviceKey: creds.service_key,
-    } : undefined;
-
-    // Expose all saved project secrets as `secrets.KEY_NAME` inside the function
-    // sandbox — values never leave this process, they're just readable by the
-    // function's own server-side code.
-    let secrets: Record<string, string> | undefined;
-    if (invokeProjectId) {
-      const { data: secretRows } = await supabase
-        .from('project_secrets')
-        .select('key_name, key_value')
-        .eq('project_id', invokeProjectId);
-      if (secretRows?.length) {
-        secrets = Object.fromEntries(secretRows.map((r: { key_name: string; key_value: string }) => [r.key_name, r.key_value]));
-      }
-    }
-
-    const result = await runEdgeFunction(fn.code, params, dbCtx, ecgCtx, secrets);
-
-    // persist log (fire-and-forget)
-    supabase.from('edge_function_logs').insert({
-      user_id:     req.user!.id,
-      project_id:  invokeProjectId ?? null,
-      function_id: fn.id,
-      params,
-      result:      result.result,
-      logs:        result.logs,
-      duration_ms: result.durationMs,
-      error:       result.error ?? null,
-    }).then(() => {}, () => {});
+    const result = await runEdgeFunction(bundle.code, params, bundle.dbCtx, bundle.ecgCtx, bundle.secrets);
+    persistInvokeLog(req.user!.id, invokeProjectId, bundle.functionId, params, result);
 
     if (result.error) {
       res.status(422).json(result);
@@ -272,6 +289,14 @@ router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: Authe
   }
 });
 
+// Note: edge-function EXECUTION happens entirely on VPS5 (see
+// vps5-functions-runner/), not here — api.ecomgear.dev is reserved for
+// EcomGear's own platform API and never serves tenant/end-user traffic.
+// write_edge_function.ts and set_secret.ts push code/secrets directly to
+// VPS5 (POST https://cloud.ecomgear.app/<schema>/functions/_sync and
+// /secrets/_sync) after saving here, so this file's DB rows stay the source
+// of truth for the editor/UI while VPS5 holds its own local, invoke-ready copy.
+
 // ── GET /api/v1/functions/:name/logs ────────────────────────────────────────
 router.get('/:name/logs', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const projectId = getProjectId(req);
@@ -281,7 +306,6 @@ router.get('/:name/logs', authMiddleware, async (req: AuthenticatedRequest, res:
     const { data: fn } = await supabase
       .from('edge_functions')
       .select('id')
-      .eq('user_id', req.user!.id)
       .eq('project_id', projectId)
       .eq('name', req.params.name)
       .maybeSingle();
@@ -290,7 +314,6 @@ router.get('/:name/logs', authMiddleware, async (req: AuthenticatedRequest, res:
     const { data } = await supabase
       .from('edge_function_logs')
       .select('id, params, result, logs, duration_ms, error, invoked_at')
-      .eq('user_id', req.user!.id)
       .eq('function_id', fn.id)
       .order('invoked_at', { ascending: false })
       .limit(50);

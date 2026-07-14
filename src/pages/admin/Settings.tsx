@@ -129,7 +129,7 @@ export default function Settings() {
     } else {
       await persistStatus({
         ...status,
-        models: { ...status.models, primary: 'gemini-3.1-pro-preview', fallback: 'deepseek-chat', freeModel: 'gemini-2.5-flash' },
+        models: { ...status.models, primary: 'gemini-3.1-pro-preview', fallback: 'deepseek-chat', freeModel: 'gemini-flash-latest' },
       }, 'Reverted to Gemini primary model');
     }
   };

@@ -63,7 +63,7 @@ export function endRun(projectId: string): void {
 function getProvider() {
   const geminiKey = process.env.GEMINI_API_KEY;
   if (geminiKey && process.env.AI_DISABLE_GEMINI !== '1') {
-    return createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-2.5-flash');
+    return createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-flash-latest');
   }
   const zaiKey = process.env.ZAI_API_KEY;
   if (zaiKey && process.env.AI_DISABLE_ZAI !== '1') {
@@ -73,7 +73,7 @@ function getProvider() {
   if (anthropicKey && process.env.AI_DISABLE_ANTHROPIC !== '1') {
     return createAnthropic({ apiKey: anthropicKey })('claude-haiku-4-5-20251001');
   }
-  return createGoogleGenerativeAI({ apiKey: geminiKey || 'missing' })('gemini-2.5-flash');
+  return createGoogleGenerativeAI({ apiKey: geminiKey || 'missing' })('gemini-flash-latest');
 }
 
 // ─── Core: generate a status line ────────────────────────────────────────────

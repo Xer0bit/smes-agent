@@ -181,7 +181,37 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
       const chipDesc = `${verb} edge function${args.description ? `: ${args.description}` : ''}`.replace(/"/g, '&quot;');
       ctx.onXmlComplete?.(`<ecomgear-write path="${mirrorRelPath}" description="${chipDesc}" />`);
 
+      // Functions execute on VPS5, next to the tenant database — never on the
+      // platform API. Sync the code there now so it's invocable immediately;
+      // this is the ONLY write path for that copy, same as the DB row above.
       const dbStatus = await databaseService.getStatus(ctx.userId, ctx.projectId);
+      let invokeUrl = '(provision a database first — invocation needs a tenant schema)';
+      if (dbStatus?.status === 'active') {
+        try {
+          const creds = await databaseService.getCredentials(ownerId, ctx.projectId);
+          if (creds) {
+            invokeUrl = `${creds.api_url}/functions/${name}/invoke`;
+            const internalSecret = process.env.FUNCTIONS_INTERNAL_SECRET;
+            if (internalSecret) {
+              const syncRes = await fetch(`${creds.api_url}/functions/_sync`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': internalSecret },
+                body: JSON.stringify({
+                  name, code: args.code, is_active: true,
+                  project_id: ctx.projectId, user_id: ownerId,
+                }),
+              });
+              if (!syncRes.ok) {
+                logger.warn(`[write_edge_function] VPS5 sync failed for ${name}: ${syncRes.status} ${await syncRes.text()}`);
+              }
+            } else {
+              logger.warn('[write_edge_function] FUNCTIONS_INTERNAL_SECRET not set — skipped VPS5 sync.');
+            }
+          }
+        } catch (syncErr) {
+          logger.warn(`[write_edge_function] VPS5 sync error for ${name}`, syncErr);
+        }
+      }
       const noDbNote = (!dbStatus || dbStatus.status !== 'active')
         ? '\nNOTE: no hosted database is provisioned — db.* calls inside this function will error, and the ' +
           'app\'s frontend cannot invoke it yet (invocation authenticates with VITE_DB_ANON_KEY, which comes ' +
@@ -191,7 +221,7 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
 
       return (
         `${verb} edge function "${name}" (id: ${data.id}). It is active and invocable via ` +
-        `POST /api/v1/functions/${name}/invoke.${noDbNote}\n` +
+        `POST ${invokeUrl}.${noDbNote}\n` +
         `Now tell the user, in plain words: what this function does, what params it expects, and which part ` +
         `of the app calls it. Never show secret values — refer to them by name only.`
       );

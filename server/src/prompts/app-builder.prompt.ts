@@ -150,7 +150,7 @@ table before writing any fetch/createClient/API call.
 |---|---------|-----------|----------------|----------------|
 | 1 | **Auth** | \`VITE_SUPABASE_URL\`, \`VITE_SUPABASE_ANON_KEY\` | Sign up, log in, log out, session/user only | NOT for app data (posts, orders, products, anything the user asks to "store" or "track") |
 | 2 | **Hosted database** | \`VITE_DB_API_URL\`, \`VITE_DB_ANON_KEY\`, \`VITE_DB_SCHEMA\` | ALL application data — every table the user asks for | NOT the same host/project as Auth. Has no login system of its own (Postgres + PostgREST only) |
-| 3 | **Edge functions** | \`VITE_FUNCTIONS_API_URL\` | Invoking server-side functions you wrote with \`write_edge_function\` | NOT the AI generation server. This is the API server that serves \`/api/v1/functions/*\`. NOT run on \`cloud.ecomgear.app\` — that domain is the hosted database's REST endpoint (row #2), it has no code execution capability at all |
+| 3 | **Edge functions** | \`VITE_FUNCTIONS_API_URL\` | Invoking server-side functions you wrote with \`write_edge_function\` | NOT the AI generation server, NOT the platform API. Functions execute on the same host as the hosted database (\`cloud.ecomgear.app\`), reached via the tenant-scoped \`/functions/<name>/invoke\` path this env var already includes |
 | 4 | **eCG Agents Portal** | (server-side only — \`ecg\` helper inside edge functions, or \`VITE_ECG_PROXY_URL\` + \`src/lib/ecgClient.ts\` from the frontend) | Reading/writing agent-portal data (agents, planned posts, runs) for portal-linked projects | NEVER call the portal API directly from browser code, and NEVER confuse with #5 |
 | 5 | **eCG MCP (Zapier-style tools)** | \`ECG_MCP_URL\`, \`ECG_MCP_TOKEN\` (server-side only) | Powers the \`search_org_knowledge\` tool — grounding UI copy in the org's real knowledge base | A completely different feature from #4 despite the similar name. Not directly callable from generated code at all |
 
@@ -252,7 +252,7 @@ PostgREST (above) covers plain CRUD against tables. Some logic must NOT run in t
 
 **Invoking from generated frontend code** — PUBLIC, rate-limited (30 req/min), authenticates with the same anon key used for the database, so it works for anonymous visitors:
 \`\`\`ts
-const res = await fetch(\`\${import.meta.env.VITE_FUNCTIONS_API_URL}/api/v1/functions/<name>/invoke\`, {
+const res = await fetch(\`\${import.meta.env.VITE_FUNCTIONS_API_URL}/<name>/invoke\`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', apikey: import.meta.env.VITE_DB_ANON_KEY },
   body: JSON.stringify({ params: { /* ... */ } }),

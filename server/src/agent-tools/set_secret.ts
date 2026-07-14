@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { ToolDefinition, AgentContext } from './types.js';
 import { supabase } from '../config/database.js';
+import { databaseService } from '../services/database.service.js';
 import { logger } from '../utils/logger.js';
 
 const schema = z.object({
@@ -71,6 +72,30 @@ export const setSecretTool: ToolDefinition<z.infer<typeof schema>> = {
         });
       } catch (syncErr) {
         logger.warn('[set_secret] preview sync failed (secret is still saved)', syncErr);
+      }
+
+      // Also push the full secret set to VPS5 — edge functions execute there
+      // and read `secrets.KEY_NAME` from a local copy, never by calling back
+      // to the platform API.
+      try {
+        const dbStatus = ctx.userId ? await databaseService.getStatus(ctx.userId, ctx.projectId) : null;
+        const internalSecret = process.env.FUNCTIONS_INTERNAL_SECRET;
+        if (dbStatus?.status === 'active' && internalSecret && ctx.userId) {
+          const creds = await databaseService.getCredentials(ctx.userId, ctx.projectId);
+          if (creds) {
+            const { data: allSecrets } = await supabase
+              .from('project_secrets')
+              .select('key_name, key_value')
+              .eq('project_id', ctx.projectId);
+            await fetch(`${creds.api_url}/secrets/_sync`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': internalSecret },
+              body: JSON.stringify({ secrets: allSecrets ?? [] }),
+            });
+          }
+        }
+      } catch (syncErr) {
+        logger.warn('[set_secret] VPS5 secrets sync failed (secret is still saved)', syncErr);
       }
 
       ctx.onXmlComplete?.(

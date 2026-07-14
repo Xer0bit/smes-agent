@@ -83,7 +83,7 @@ async function testDeepSeek(apiKey: string): Promise<{ ok: boolean; reason: stri
 async function testGemini(apiKey: string): Promise<{ ok: boolean; reason: string }> {
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

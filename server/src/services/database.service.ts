@@ -211,7 +211,12 @@ export async function buildProjectEnvSecrets(userId: string, projectId: string):
   // database, and already upserts these same rows into project_secrets.
   const dbCreds = await databaseService.getCredentials(userId, projectId);
   if (dbCreds) {
-    const functionsApiUrl = (process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.dev').replace(/\/$/, '');
+    // Edge functions execute on VPS5, next to the tenant database — never on
+    // api.ecomgear.dev, which is reserved for EcomGear's own platform API.
+    // dbCreds.api_url already carries the tenant schema segment
+    // (https://cloud.ecomgear.app/tenant_xxxx), so /functions lands on the
+    // same nginx-routed path the function-runner (vps5-functions-runner/) serves.
+    const functionsApiUrl = `${dbCreds.api_url}/functions`;
     derived.push({ key_name: 'VITE_DB_API_URL', key_value: dbCreds.api_url });
     derived.push({ key_name: 'VITE_DB_ANON_KEY', key_value: dbCreds.anon_key });
     derived.push({ key_name: 'VITE_DB_SCHEMA', key_value: dbCreds.schema });
@@ -295,11 +300,12 @@ export const databaseService = {
     // frontend code (import.meta.env.VITE_DB_*) always resolves to this one
     // hosted DB instead of the agent falling back to inventing a separate one.
     if (projectId) {
-      // VITE_FUNCTIONS_API_URL: edge functions are served by the API server
-      // (/api/v1/functions on VPS1), NOT the gen server and NOT the tenant DB
-      // host. Synced here so the env var the system prompt tells the agent to
-      // use actually exists — without it the model invents hardcoded fallbacks.
-      const functionsApiUrl = (process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.dev').replace(/\/$/, '');
+      // VITE_FUNCTIONS_API_URL: edge functions execute on VPS5 (the
+      // function-runner in vps5-functions-runner/), reached through the same
+      // tenant-scoped cloud.ecomgear.app path as the DB — never api.ecomgear.dev,
+      // which stays reserved for EcomGear's own platform API. Synced here so
+      // the env var the system prompt tells the agent to use actually exists.
+      const functionsApiUrl = `${creds.api_url}/functions`;
       supabase.from('project_secrets').upsert(
         [
           { project_id: projectId, key_name: 'VITE_DB_API_URL', key_value: creds.api_url },

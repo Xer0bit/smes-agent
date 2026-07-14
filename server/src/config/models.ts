@@ -24,7 +24,7 @@ export const CANONICAL_MODELS: ModelDef[] = [
   // ── Gemini ────────────────────────────────────────────────────────────────
   { id: 'gemini-3.1-pro-preview',   provider: 'gemini',    label: 'Gemini 3.1 Pro (Advanced)' },
   { id: 'gemini-2.5-pro',           provider: 'gemini',    label: 'Gemini 2.5 Pro' },
-  { id: 'gemini-2.5-flash',         provider: 'gemini',    label: 'Gemini 2.5 Flash (Fast)' },
+  { id: 'gemini-flash-latest',      provider: 'gemini',    label: 'Gemini Flash (Fast, latest)' },
   // ── Anthropic ─────────────────────────────────────────────────────────────
   { id: 'claude-sonnet-4-6',        provider: 'anthropic', label: 'Claude Sonnet 4.6' },
   // ── GLM / z.ai (free tier) ────────────────────────────────────────────────
@@ -41,7 +41,7 @@ export const CANONICAL_MODELS: ModelDef[] = [
 
 export const DEFAULT_PRIMARY_MODEL = 'gemini-3.1-pro-preview';
 export const DEFAULT_FREE_MODEL = 'glm-4.5-flash';
-export const DEFAULT_FALLBACK_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_FALLBACK_MODEL = 'gemini-flash-latest';
 
 /**
  * IDs that are valid but not shown in the picker.
@@ -55,11 +55,12 @@ const VALID_IDS = new Set<string>([
 
 /** Known-stale or invalid IDs → their canonical replacement. */
 const STALE_ID_MAP: Record<string, string> = {
-  'gemini-2.5-flash-preview':          'gemini-2.5-flash',
-  'gemini-3-flash-preview':            'gemini-2.5-flash',
-  'gemini-3-flash':                    'gemini-2.5-flash',
+  'gemini-2.5-flash':                  'gemini-flash-latest',
+  'gemini-2.5-flash-preview':          'gemini-flash-latest',
+  'gemini-3-flash-preview':            'gemini-flash-latest',
+  'gemini-3-flash':                    'gemini-flash-latest',
   'gemini-3-pro':                      'gemini-3.1-pro-preview',
-  'gemini-1.5-flash':                  'gemini-2.5-flash',
+  'gemini-1.5-flash':                  'gemini-flash-latest',
   'gemini-1.5-pro':                    'gemini-2.5-pro',
   'claude-3-7-sonnet-latest':          'claude-sonnet-4-6',
   'claude-3-5-sonnet-20241022':        'claude-sonnet-4-6',
@@ -99,7 +100,7 @@ export function canonicalizeModelId(input: unknown, fallback: string = DEFAULT_P
   const lower = id.toLowerCase();
   if (lower.startsWith('glm')) return lower.includes('flash') ? DEFAULT_FREE_MODEL : DEFAULT_PRIMARY_MODEL;
   if (lower.includes('gemini')) {
-    return lower.includes('flash') ? 'gemini-2.5-flash' : 'gemini-3.1-pro-preview';
+    return lower.includes('flash') ? 'gemini-flash-latest' : 'gemini-3.1-pro-preview';
   }
   if (lower.includes('deepseek')) return 'deepseek-chat';
   if (lower.includes('claude') || lower.includes('sonnet') || lower.includes('haiku') || lower.includes('opus')) {

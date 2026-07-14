@@ -1,4 +1,5 @@
 import vm from 'node:vm';
+import { webcrypto } from 'node:crypto';
 import { logger } from '../utils/logger.js';
 
 export interface FunctionContext {
@@ -40,6 +41,24 @@ function buildNoDbHelper() {
 // still sent for defense in depth, but VPS5's nginx derives the real schema
 // from the URL path itself and overrides these headers regardless — the path
 // is the source of truth, not the header.
+// Accepts either a raw PostgREST query string ("email=eq.x&role=eq.buyer",
+// passed through unchanged) or a plain filter object ({ email: 'x' }),
+// converted to the equivalent eq-filter query string. Every generated
+// function this session used the object form — db.select('table', { email })
+// — expecting simple equality filtering, but the helper only ever accepted a
+// raw string, so `${query}` on an object silently coerced to "[object Object]",
+// PostgREST ignored the garbage filter, and select() returned EVERY row in
+// the table. That produced two real bugs at once: signup always claimed
+// "email already exists" (since existing.length was really "row count > 0"),
+// and login compared against an arbitrary row instead of the actual user.
+function toQueryString(query: string | Record<string, unknown>): string {
+  if (typeof query === 'string') return query;
+  if (!query || typeof query !== 'object') return '';
+  return Object.entries(query)
+    .map(([key, value]) => `${encodeURIComponent(key)}=eq.${encodeURIComponent(String(value))}`)
+    .join('&');
+}
+
 function buildDbHelper(ctx: FunctionContext) {
   const base = `${ctx.apiUrl}/rest/v1`;
   const headers = {
@@ -51,8 +70,9 @@ function buildDbHelper(ctx: FunctionContext) {
   };
 
   return {
-    async select(table: string, query = '') {
-      const url = `${base}/${table}${query ? `?${query}` : ''}`;
+    async select(table: string, query: string | Record<string, unknown> = '') {
+      const qs = toQueryString(query);
+      const url = `${base}/${table}${qs ? `?${qs}` : ''}`;
       const res = await fetch(url, { headers });
       if (!res.ok) throw new Error(`db.select failed: ${res.status} ${await res.text()}`);
       return res.json();
@@ -66,8 +86,9 @@ function buildDbHelper(ctx: FunctionContext) {
       if (!res.ok) throw new Error(`db.insert failed: ${res.status} ${await res.text()}`);
       return res.json();
     },
-    async update(table: string, data: unknown, query: string) {
-      const res = await fetch(`${base}/${table}?${query}`, {
+    async update(table: string, data: unknown, query: string | Record<string, unknown>) {
+      const qs = toQueryString(query);
+      const res = await fetch(`${base}/${table}?${qs}`, {
         method: 'PATCH',
         headers: { ...headers, 'Prefer': 'return=representation' },
         body: JSON.stringify(data),
@@ -75,8 +96,9 @@ function buildDbHelper(ctx: FunctionContext) {
       if (!res.ok) throw new Error(`db.update failed: ${res.status} ${await res.text()}`);
       return res.json();
     },
-    async delete(table: string, query: string) {
-      const res = await fetch(`${base}/${table}?${query}`, {
+    async delete(table: string, query: string | Record<string, unknown>) {
+      const qs = toQueryString(query);
+      const res = await fetch(`${base}/${table}?${qs}`, {
         method: 'DELETE',
         headers,
       });
@@ -197,6 +219,14 @@ export async function runEdgeFunction(
     decodeURIComponent,
     btoa,
     atob,
+    // Hashing (password hashing, UUIDs) is a near-universal need in generated
+    // auth functions — without these, any function calling `new TextEncoder()`
+    // or `crypto.subtle.digest(...)`/`crypto.randomUUID()` crashed with
+    // "TextEncoder is not defined", since vm.createContext() only includes
+    // ECMAScript intrinsics, not Node's WHATWG globals, unless explicitly injected.
+    TextEncoder,
+    TextDecoder,
+    crypto: webcrypto,
   });
 
   // Wrap the user code so they can write top-level await
