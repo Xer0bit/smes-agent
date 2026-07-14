@@ -1486,6 +1486,15 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // circuitBreakerNote.
   let stepsSinceLastWrite = 0;
   const STUCK_ANALYSIS_THRESHOLD = 6;
+  // Lighter, earlier nudge than the full stuck-analysis detector below: fires
+  // the moment the model calls `think` twice in a row with no other tool in
+  // between (re-reasoning about the same thing instead of acting), instead of
+  // waiting for 6 unproductive steps to accumulate. Directly addresses "why
+  // is it thinking so much" — most of that is redundant re-analysis the model
+  // could skip by either acting on what it already figured out, or persisting
+  // the key fact via save_memory so it doesn't re-derive it next step.
+  let consecutiveThinkOnlySteps = 0;
+  let thinkStreakNoteFiredAt = -1;
   let stuckAnalysisNoteFiredAt = -1; // step number of last firing, so it can re-fire later in a long run
   // A soft nudge alone isn't enough — a real incident (2026-07-12) showed the
   // model ignore it 3 times in a row (fired at steps 6, 12, 18) and burn the
@@ -2489,7 +2498,16 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           : {}),
         maxOutputTokens: outputLimit,
         maxRetries: 0, // We handle retries + fallback ourselves
-        stopWhen: stepCountIs(MAX_STEPS),
+        // stuckAnalysisAbortReason is a closure over a `let` set inside
+        // onStepFinish — checking it here (SDK's own between-steps stop hook)
+        // is what actually prevents a new step from being dispatched at all.
+        // abortController.abort() alone is NOT enough: it doesn't stop the SDK
+        // from starting one more full (billed) step already in flight, whose
+        // tool call then gets silently discarded once the abort is noticed —
+        // confirmed live 2026-07-14: step 7 called write_file, cost $0.16,
+        // and the run still reported "No file operations — skipping preview
+        // push" because that step's execute() never actually ran.
+        stopWhen: [stepCountIs(MAX_STEPS), () => stuckAnalysisAbortReason !== null],
         abortSignal: abortController.signal,
         // ─── Context window management ─────────────────────────────────
         // Before each step, compact older messages and inject the run's
@@ -2608,6 +2626,24 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             anySuccessfulWriteThisRun = true;
           } else {
             stepsSinceLastWrite++;
+          }
+
+          // ── Think-streak nudge: catch redundant re-reasoning early ─────────
+          const stepToolNames = (toolCalls ?? []).map((tc: any) => tc?.toolName).filter(Boolean);
+          const wasThinkOnlyStep = stepToolNames.length > 0 && stepToolNames.every((n: string) => n === 'think');
+          if (wasThinkOnlyStep) {
+            consecutiveThinkOnlySteps++;
+          } else {
+            consecutiveThinkOnlySteps = 0;
+          }
+          if (consecutiveThinkOnlySteps >= 2 && stepCount - thinkStreakNoteFiredAt >= 2) {
+            thinkStreakNoteFiredAt = stepCount;
+            const thinkStreakNote =
+              `You've called \`think\` ${consecutiveThinkOnlySteps} times in a row with no other tool in between. ` +
+              `If you already worked out what to change, stop reasoning and call write_file/edit_file/etc. now — ` +
+              `don't re-derive the same conclusion again. If you genuinely need to keep exploring across several ` +
+              `steps, call \`save_memory\` with the key facts now so you don't have to re-think them next step.`;
+            circuitBreakerNote = circuitBreakerNote ? `${circuitBreakerNote}\n\n${thinkStreakNote}` : thinkStreakNote;
           }
           // Budget-aware early exit: with prompt caching disabled (cacheR is
           // consistently 0 — see cost audit), every step re-pays for the FULL
