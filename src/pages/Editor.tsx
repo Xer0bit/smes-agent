@@ -886,7 +886,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
         fp = localStorage.getItem('ecg_guest_fp');
         if (!fp) {
           // Generate a new fingerprint if missing
-          fp = Math.random().toString(36).slice(2) + Date.now().toString(36);
+          fp = crypto.randomUUID();
           localStorage.setItem('ecg_guest_fp', fp);
         }
       }

@@ -3,6 +3,7 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middlew
 import { supabase } from '../config/database.js';
 import { projectService } from '../services/project.service.js';
 import { logger } from '../utils/logger.js';
+import { deployProjectToProduction } from '../services/hostingDeploy.service.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -140,8 +141,6 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
     // Trigger production rebuild + redeploy, same flow as SEO sync:
     // VPS2 (preview-service) exports a fresh build → VPS4 (hosting-service) serves it.
     const PREVIEW_BASE = (process.env.VITE_PREVIEW_SERVICE_URL || process.env.PREVIEW_SERVICE_URL || '').replace(/\/$/, '');
-    const HOSTING_BASE  = (process.env.VITE_HOSTING_SERVICE_URL || process.env.HOSTING_SERVICE_URL || '').replace(/\/$/, '');
-    const HOSTING_SECRET = process.env.VITE_HOSTING_SERVICE_SECRET || process.env.HOSTING_SERVICE_SECRET || '';
     const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || '';
 
     if (updated === original) {
@@ -170,57 +169,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
       return;
     }
 
-    let productionDeployed = false;
-    let deployError: string | null = null;
-
-    if (PREVIEW_BASE && HOSTING_BASE) {
-      try {
-        const exportRes = await fetch(`${PREVIEW_BASE}/preview/${projectId}/export`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(120_000),
-        });
-
-        if (exportRes.ok) {
-          const exportData = await exportRes.json() as { success: boolean; files?: { path: string; content: string }[]; error?: string };
-          if (exportData.success && Array.isArray(exportData.files)) {
-            const deployHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-            if (HOSTING_SECRET) deployHeaders['x-deploy-secret'] = HOSTING_SECRET;
-
-            const { data: published } = await supabase
-              .from('published_versions')
-              .select('subdomain')
-              .eq('project_id', projectId)
-              .eq('status', 'published')
-              .order('published_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
-            const deployRes = await fetch(`${HOSTING_BASE}/deploy/${projectId}`, {
-              method: 'POST',
-              headers: deployHeaders,
-              body: JSON.stringify({
-                files: exportData.files,
-                slug: (published as any)?.subdomain,
-              }),
-              signal: AbortSignal.timeout(60_000),
-            });
-
-            productionDeployed = deployRes.ok;
-            if (!deployRes.ok) {
-              const txt = await deployRes.text().catch(() => '');
-              deployError = `Deploy to hosting failed: ${deployRes.status} ${txt}`.slice(0, 200);
-            }
-          } else {
-            deployError = exportData.error || 'Build export returned no files';
-          }
-        } else {
-          deployError = `Build export failed: ${exportRes.status}`;
-        }
-      } catch (deployErr: any) {
-        deployError = deployErr?.message ?? 'Production redeploy error';
-      }
-    }
+    const { productionDeployed, deployError } = await deployProjectToProduction(projectId);
 
     res.json({
       changed: true,

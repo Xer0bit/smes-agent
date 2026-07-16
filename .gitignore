@@ -44,3 +44,4 @@ server/.llm-control.json
 preview-service/projects/
 .claude
 server/.claude-flow
+.agents/skills

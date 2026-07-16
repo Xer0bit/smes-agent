@@ -1100,9 +1100,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 content={msg.content}
                 status={msg.status}
                 attachments={msg.attachments}
-                liveStatus={isGenerating && msg.status === 'streaming' && !msg.content.trim()
-                  ? (statusText || 'Starting…')
-                  : undefined}
               />
 
               {/* Retry button — shown on hover below user messages */}
@@ -1141,78 +1138,84 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               )}
 
               {/* Step-by-step history — live while streaming, survives after completion
-                  (unlike the single-line status ticker above, which is wiped). */}
+                  (unlike the single-line status ticker above, which is wiped). Grouped
+                  into one pill-chip strip per turn, matching the follow-up chip language
+                  below rather than the bare icon+text rows this used to be. */}
               {msg.role === 'assistant' && msg.steps && msg.steps.length > 0 && (
-                <div className="mt-1.5 ml-[30px] flex flex-col gap-0.5">
+                <div className="mt-1.5 ml-[30px] flex flex-wrap gap-1">
                   {msg.steps.map((step, i) => {
                     const cfg: Record<StepEntry['type'], { icon: string; cls: string }> = {
-                      write:      { icon: '✦', cls: 'text-indigo-300'  },
-                      edit:       { icon: '✎', cls: 'text-blue-300'    },
-                      delete:     { icon: '✕', cls: 'text-red-400'     },
-                      rename:     { icon: '↪', cls: 'text-yellow-300'  },
-                      dependency: { icon: '⬡', cls: 'text-emerald-300' },
-                      command:    { icon: '⚡', cls: 'text-orange-300'  },
-                      status:     { icon: '·', cls: 'text-gray-500'    },
+                      write:      { icon: '✦', cls: 'text-indigo-300 border-indigo-500/20 bg-indigo-500/[0.06]'  },
+                      edit:       { icon: '✎', cls: 'text-blue-300 border-blue-500/20 bg-blue-500/[0.06]'        },
+                      delete:     { icon: '✕', cls: 'text-red-300 border-red-500/20 bg-red-500/[0.06]'           },
+                      rename:     { icon: '↪', cls: 'text-yellow-300 border-yellow-500/20 bg-yellow-500/[0.06]'  },
+                      dependency: { icon: '⬡', cls: 'text-emerald-300 border-emerald-500/20 bg-emerald-500/[0.06]' },
+                      command:    { icon: '⚡', cls: 'text-orange-300 border-orange-500/20 bg-orange-500/[0.06]'  },
+                      status:     { icon: '·', cls: 'text-gray-400 border-white/10 bg-white/[0.03]'              },
                     };
                     const { icon, cls } = cfg[step.type] ?? cfg.status;
                     return (
-                      <div key={i} className={`flex items-center gap-1.5 text-[10px] ${cls}`}>
-                        <span className="w-3 text-center shrink-0">{icon}</span>
+                      <span
+                        key={i}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-medium max-w-[220px] ${cls}`}
+                      >
+                        <span className="shrink-0">{icon}</span>
                         <span className="truncate">{step.label}</span>
-                      </div>
+                      </span>
                     );
                   })}
                 </div>
               )}
 
-              {/* Undo button — only on completed non-plan assistant messages that have a snapshot (hidden for guests) */}
-              {!isGuest && msg.role === 'assistant' && msg.status === 'complete' && !msg.isPlan && msg.snapshotId && (
-                <div className="mt-1.5 ml-[30px]">
-                  <button
-                    disabled={isGenerating || rollingBack}
-                    onClick={async () => {
-                      if (!msg.snapshotId) return;
-                      setRollingBack(true);
-                      try {
-                        const { data: { session } } = await lovableCloud.auth.getSession();
-                        if (!session) throw new Error('Not authenticated');
-                        const resp = await fetch(getGenServerUrl('/api/v1/ai/rollback'), {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            Authorization: `Bearer ${session.access_token}`,
-                          },
-                          body: JSON.stringify({ snapshotId: msg.snapshotId, projectId }),
-                        });
-                        if (!resp.ok) {
-                          const err = await resp.json().catch(() => ({ error: 'Unknown error' }));
-                          throw new Error(err.error ?? 'Rollback failed');
-                        }
-                        // Remove snapshotId from this message so the button disappears
-                        setMessages(prev => prev.map(m =>
-                          m.id === msg.id ? { ...m, snapshotId: undefined } : m
-                        ));
-                        toast.success('Rolled back — project restored to previous state.');
-                      } catch (err: unknown) {
-                        toast.error(err instanceof Error ? err.message : 'Rollback failed');
-                      } finally {
-                        setRollingBack(false);
-                      }
-                    }}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-yellow-500/25 bg-yellow-500/8 text-yellow-300/80 hover:bg-yellow-500/15 text-[10px] font-medium transition-colors disabled:opacity-40"
-                  >
-                    {rollingBack
-                      ? <Loader2 className="w-3 h-3 animate-spin" />
-                      : <RotateCcw className="w-3 h-3" />}
-                    Undo this change
-                  </button>
-                </div>
-              )}
-
-              {/* Preview command buttons — shown when agent suggests restart/refresh/rebuild */}
-              {msg.role === 'assistant' && msg.status === 'complete' && msg.suggestedCommands && msg.suggestedCommands.length > 0 && (
+              {/* Undo + preview-command action chips — one shared row so both read as the
+                  same "message actions" language instead of two separately-spaced blocks;
+                  only the accent color carries semantic meaning (yellow = destructive-ish
+                  undo, indigo = neutral preview command), shape/size/padding match the
+                  follow-up chips below. */}
+              {((!isGuest && msg.role === 'assistant' && msg.status === 'complete' && !msg.isPlan && msg.snapshotId) ||
+                (msg.role === 'assistant' && msg.status === 'complete' && msg.suggestedCommands && msg.suggestedCommands.length > 0)) && (
                 <div className="mt-1.5 ml-[30px] flex flex-wrap gap-1.5">
-                  {msg.suggestedCommands.map((cmd) => {
+                  {!isGuest && !msg.isPlan && msg.snapshotId && (
+                    <button
+                      disabled={isGenerating || rollingBack}
+                      onClick={async () => {
+                        if (!msg.snapshotId) return;
+                        setRollingBack(true);
+                        try {
+                          const { data: { session } } = await lovableCloud.auth.getSession();
+                          if (!session) throw new Error('Not authenticated');
+                          const resp = await fetch(getGenServerUrl('/api/v1/ai/rollback'), {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              Authorization: `Bearer ${session.access_token}`,
+                            },
+                            body: JSON.stringify({ snapshotId: msg.snapshotId, projectId }),
+                          });
+                          if (!resp.ok) {
+                            const err = await resp.json().catch(() => ({ error: 'Unknown error' }));
+                            throw new Error(err.error ?? 'Rollback failed');
+                          }
+                          // Remove snapshotId from this message so the button disappears
+                          setMessages(prev => prev.map(m =>
+                            m.id === msg.id ? { ...m, snapshotId: undefined } : m
+                          ));
+                          toast.success('Rolled back — project restored to previous state.');
+                        } catch (err: unknown) {
+                          toast.error(err instanceof Error ? err.message : 'Rollback failed');
+                        } finally {
+                          setRollingBack(false);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-yellow-500/25 bg-yellow-500/[0.08] text-yellow-300/80 hover:bg-yellow-500/15 text-[11px] font-medium transition-colors disabled:opacity-40"
+                    >
+                      {rollingBack
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <RotateCcw className="w-3 h-3" />}
+                      Undo this change
+                    </button>
+                  )}
+                  {msg.suggestedCommands?.map((cmd) => {
                     const labels: Record<string, string> = { restart: 'Restart', refresh: 'Refresh', rebuild: 'Rebuild' };
                     const label = labels[cmd] ?? cmd;
                     return (
@@ -1220,7 +1223,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                         key={cmd}
                         disabled={isGenerating}
                         onClick={() => onPreviewCommand?.(cmd)}
-                        className="flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-600/15 hover:bg-indigo-600/25 border border-indigo-500/25 text-indigo-300/80 hover:text-indigo-200 text-[10px] font-medium transition-colors disabled:opacity-40"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-indigo-600/15 hover:bg-indigo-600/25 border border-indigo-500/25 text-indigo-300/80 hover:text-indigo-200 text-[11px] font-medium transition-colors disabled:opacity-40"
                       >
                         <RotateCcw className="w-2.5 h-2.5" /> {label}
                       </button>

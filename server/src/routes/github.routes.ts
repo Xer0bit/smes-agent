@@ -340,39 +340,51 @@ router.post('/:projectId/create-repo', authMiddleware, async (req: Authenticated
 
 // ── POST /api/v1/github/:projectId/push ─────────────────────────────────────
 // Pushes the project's current files as a single commit to the linked repo/branch.
-router.post('/:projectId/push', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  const { projectId } = req.params;
-  // Files come from the client, which already has the current revision's
-  // full file set resolved (via revisionService.getRevisionFilesForExport) —
-  // the project's real content lives in Supabase Storage / the revisions
-  // table, not on this server's local disk, so there's nothing to walk here.
-  const files = req.body?.files as { path: string; content: string; encoding?: 'base64' }[] | undefined;
-  if (!files || files.length === 0) { res.status(400).json({ error: 'No files provided to push.' }); return; }
+export interface PushToGithubResult {
+  success: boolean;
+  filesPushed?: number;
+  commitUrl?: string;
+  error?: string;
+  /** HTTP-style status for route callers; agent-tool callers can ignore it. */
+  status?: number;
+}
+
+/**
+ * Core push logic: one commit (blob → tree → commit → ref update) to the
+ * repo linked to this project. Shared by the /push route (browser-driven,
+ * files from the client's resolved revision) and the push_to_github agent
+ * tool (files read straight off disk mid-run).
+ */
+export async function pushFilesToGithub(
+  userId: string,
+  projectId: string,
+  files: { path: string; content: string; encoding?: 'base64' }[],
+): Promise<PushToGithubResult> {
+  if (files.length === 0) return { success: false, error: 'No files provided to push.', status: 400 };
 
   try {
-    try {
-      await projectService.getProject(projectId, req.user!.id);
-    } catch {
-      res.status(404).json({ error: 'Project not found or access denied.' });
-      return;
-    }
+    await projectService.getProject(projectId, userId);
+  } catch {
+    return { success: false, error: 'Project not found or access denied.', status: 404 };
+  }
 
-    const conn = await getConnection(req.user!.id);
-    if (!conn) { res.status(403).json({ error: 'GitHub account not connected.' }); return; }
+  const conn = await getConnection(userId);
+  if (!conn) return { success: false, error: 'GitHub account not connected.', status: 403 };
 
-    const { data: linkRow } = await supabase
-      .from('project_settings')
-      .select('setting_value')
-      .eq('project_id', projectId)
-      .eq('setting_key', 'github_repo')
-      .maybeSingle();
-    const link = linkRow?.setting_value as { fullName?: string; branch?: string } | undefined;
-    if (!link?.fullName) { res.status(400).json({ error: 'No GitHub repo linked to this project yet.' }); return; }
+  const { data: linkRow } = await supabase
+    .from('project_settings')
+    .select('setting_value')
+    .eq('project_id', projectId)
+    .eq('setting_key', 'github_repo')
+    .maybeSingle();
+  const link = linkRow?.setting_value as { fullName?: string; branch?: string } | undefined;
+  if (!link?.fullName) return { success: false, error: 'No GitHub repo linked to this project yet.', status: 400 };
 
-    const [owner, repo] = link.fullName.split('/');
-    const branch = link.branch || 'main';
-    const headers = ghHeaders(conn.access_token);
+  const [owner, repo] = link.fullName.split('/');
+  const branch = link.branch || 'main';
+  const headers = ghHeaders(conn.access_token);
 
+  try {
     // Preflight: confirm the linked repo still exists before doing any blob
     // work — a clearer failure than a mid-push 404, and self-heals a stale
     // link (e.g. the repo was deleted on GitHub after linking).
@@ -381,11 +393,9 @@ router.post('/:projectId/push', authMiddleware, async (req: AuthenticatedRequest
       if (repoCheckRes.status === 404) {
         await supabase.from('project_settings').delete()
           .eq('project_id', projectId).eq('setting_key', 'github_repo');
-        res.status(404).json({ error: `Repository ${link.fullName} no longer exists on GitHub — create a new one.` });
-        return;
+        return { success: false, error: `Repository ${link.fullName} no longer exists on GitHub — create a new one.`, status: 404 };
       }
-      res.status(repoCheckRes.status).json({ error: `Could not access ${link.fullName} on GitHub (${repoCheckRes.status}).` });
-      return;
+      return { success: false, error: `Could not access ${link.fullName} on GitHub (${repoCheckRes.status}).`, status: repoCheckRes.status };
     }
 
     // Resolve current branch tip (may not exist yet on an empty repo).
@@ -445,11 +455,24 @@ router.post('/:projectId/push', authMiddleware, async (req: AuthenticatedRequest
     });
     if (!updateRefRes.ok) throw new Error(`Failed to update ref: ${await ghErrorDetail(updateRefRes)}`);
 
-    res.json({ success: true, filesPushed: files.length, commitUrl: `https://github.com/${owner}/${repo}/commit/${commit.sha}` });
+    return { success: true, filesPushed: files.length, commitUrl: `https://github.com/${owner}/${repo}/commit/${commit.sha}` };
   } catch (err) {
     logger.error('[GitHub push] error', err);
-    res.status(500).json({ error: (err as Error).message });
+    return { success: false, error: (err as Error).message, status: 500 };
   }
+}
+
+router.post('/:projectId/push', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { projectId } = req.params;
+  // Files come from the client, which already has the current revision's
+  // full file set resolved (via revisionService.getRevisionFilesForExport) —
+  // the project's real content lives in Supabase Storage / the revisions
+  // table, not on this server's local disk, so there's nothing to walk here.
+  const files = req.body?.files as { path: string; content: string; encoding?: 'base64' }[] | undefined;
+  if (!files || files.length === 0) { res.status(400).json({ error: 'No files provided to push.' }); return; }
+
+  const result = await pushFilesToGithub(req.user!.id, projectId, files);
+  res.status(result.success ? 200 : (result.status ?? 500)).json(result);
 });
 
 export default router;

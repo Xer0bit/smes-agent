@@ -22,7 +22,7 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.dyad', '.v
 const BINARY_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.webp', '.mp4', '.mp3', '.pdf', '.zip']);
 const SKIP_FILES = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production']);
 
-function collectWorkspaceFiles(root: string): WorkspaceFile[] {
+export function collectWorkspaceFiles(root: string): WorkspaceFile[] {
   const out: WorkspaceFile[] = [];
   const walk = (dir: string) => {
     let entries: fs.Dirent[];

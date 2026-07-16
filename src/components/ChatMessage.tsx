@@ -82,12 +82,11 @@ interface ChatMessageProps {
   content: string;
   status?: 'pending' | 'streaming' | 'complete' | 'error';
   attachments?: MessageAttachment[];
-  liveStatus?: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status, attachments, liveStatus }) => {
+export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status, attachments }) => {
 
   // ── User bubble ──────────────────────────────────────────────────────────────
   if (role === 'user') {
@@ -160,8 +159,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
 
   // ── Assistant streaming / complete ────────────────────────────────────────────
   const isStreaming = status === 'streaming';
-  // Show liveStatus inside the bubble when the agent is working but hasn't written text yet
-  const showLiveStatus = isStreaming && !content.trim() && liveStatus;
+  // Before any text has arrived, show the same three-dot "thinking" language as the
+  // pending state instead of a second, differently-worded status line — the detailed
+  // headline (what file, how long) lives once, in AgentChatPanel's status ticker below.
+  const showThinkingDots = isStreaming && !content.trim();
 
   return (
     <div className="flex items-start gap-2 animate-msg-appear">
@@ -180,8 +181,12 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
 
       <div className="flex-1 min-w-0 relative">
         <div className={isStreaming ? 'animate-fade-in-stream' : ''}>
-          {showLiveStatus ? (
-            <p className="m-0 text-[12px] text-white/30 italic leading-relaxed">{liveStatus}</p>
+          {showThinkingDots ? (
+            <div className="flex items-center gap-1 h-6 px-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400/60 animate-thinking-1" />
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400/60 animate-thinking-2" />
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400/60 animate-thinking-3" />
+            </div>
           ) : (
             <MarkdownBody content={content} />
           )}
@@ -224,7 +229,7 @@ function AvatarBadge({ error = false, streaming = false, thinking = false }: {
   );
 }
 
-function MarkdownBody({ content, error = false }: { content: string; error?: boolean }) {
+function MarkdownBody({ content }: { content: string }) {
   return (
     <div
       className={`
@@ -248,7 +253,6 @@ function MarkdownBody({ content, error = false }: { content: string; error?: boo
         prose-td:text-gray-300 prose-td:text-[11px]
         prose-thead:border-b prose-thead:border-white/[0.07]
         prose-tr:border-b prose-tr:border-white/[0.04]
-        ${error ? 'prose-p:text-red-400/80' : ''}
       `}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={mdComponents}>

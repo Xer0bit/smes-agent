@@ -3,6 +3,7 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middlew
 import { supabase } from '../config/database.js';
 import { projectService } from '../services/project.service.js';
 import { logger } from '../utils/logger.js';
+import { deployProjectToProduction } from '../services/hostingDeploy.service.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -129,8 +130,6 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
     const updated = applySeoToHtml(original, seo, projectUrl);
 
     const PREVIEW_BASE = (process.env.VITE_PREVIEW_SERVICE_URL || process.env.PREVIEW_SERVICE_URL || '').replace(/\/$/, '');
-    const HOSTING_BASE  = (process.env.VITE_HOSTING_SERVICE_URL || process.env.HOSTING_SERVICE_URL || '').replace(/\/$/, '');
-    const HOSTING_SECRET = process.env.VITE_HOSTING_SERVICE_SECRET || process.env.HOSTING_SERVICE_SECRET || '';
     const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || '';
 
     // 4. Write index.html (+ robots.txt/sitemap.xml, if applicable) into the
@@ -171,63 +170,10 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
       return;
     }
 
-    // 5. Trigger production rebuild + redeploy if hosting is configured.
+    // 5. Trigger production rebuild + redeploy.
     //    Flow: VPS2 (preview-service) → vite build → export built dist/ files
     //          VPS4 (hosting-service) → serve built files at user's domain
-    let productionDeployed = false;
-    let deployError: string | null = null;
-
-    if (PREVIEW_BASE && HOSTING_BASE) {
-      try {
-        // Step A: ask VPS2 to export a fresh production build (runs vite build)
-        const exportRes = await fetch(`${PREVIEW_BASE}/preview/${projectId}/export`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(120_000), // 2 min build timeout
-        });
-
-        if (exportRes.ok) {
-          const exportData = await exportRes.json() as { success: boolean; files?: { path: string; content: string }[]; error?: string };
-          if (exportData.success && Array.isArray(exportData.files)) {
-            // Step B: push the built files to VPS4 (hosting service)
-            const deployHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-            if (HOSTING_SECRET) deployHeaders['x-deploy-secret'] = HOSTING_SECRET;
-
-            // Look up current slug from published_versions
-            const { data: published } = await supabase
-              .from('published_versions')
-              .select('subdomain')
-              .eq('project_id', projectId)
-              .eq('status', 'published')
-              .order('published_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
-            const deployRes = await fetch(`${HOSTING_BASE}/deploy/${projectId}`, {
-              method: 'POST',
-              headers: deployHeaders,
-              body: JSON.stringify({
-                files: exportData.files,
-                slug: (published as any)?.subdomain,
-              }),
-              signal: AbortSignal.timeout(60_000),
-            });
-
-            productionDeployed = deployRes.ok;
-            if (!deployRes.ok) {
-              const txt = await deployRes.text().catch(() => '');
-              deployError = `Deploy to hosting failed: ${deployRes.status} ${txt}`.slice(0, 200);
-            }
-          } else {
-            deployError = exportData.error || 'Build export returned no files';
-          }
-        } else {
-          deployError = `Build export failed: ${exportRes.status}`;
-        }
-      } catch (deployErr: any) {
-        deployError = deployErr?.message ?? 'Production redeploy error';
-      }
-    }
+    const { productionDeployed, deployError } = await deployProjectToProduction(projectId);
 
     res.json({
       changed: true,

@@ -8,7 +8,6 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { Response } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import AdmZip from 'adm-zip';
 import { createRequire } from 'module';
@@ -40,6 +39,8 @@ import { deleteEdgeFunctionTool } from '../agent-tools/delete_edge_function.js';
 import { setSecretTool } from '../agent-tools/set_secret.js';
 import { listSecretsTool } from '../agent-tools/list_secrets.js';
 import { searchOrgKnowledgeTool } from '../agent-tools/search_org_knowledge.js';
+import { pushToGithubTool } from '../agent-tools/push_to_github.js';
+import { publishSiteTool } from '../agent-tools/publish_site.js';
 import { sanitizeFileContent, sanitizeConfigFile } from '../agent-tools/sanitize.js';
 import ts from 'typescript';
 import { getAppBuilderBuildSystemPrompt, getAppBuilderSystemPrompt, MICRO_SYSTEM_PROMPT, getFixSystemPrompt, getEditSystemPrompt } from '../prompts/app-builder.prompt.js';
@@ -258,7 +259,10 @@ function isReferenceScreenshot(analysis: string): boolean {
   // Diagrams, wireframes, and annotated sketches shared to explain a concept/layout are
   // reference-only — the agent should use them as visual context, not embed them as assets.
   const diagramSignals = /\bdiagram\b|\bwireframe\b|\bsketch\b|\bmockup\b|\bflowchart\b|\bannot(?:at|ation)\b|\barchitecture\b|\blayout.*(?:diagram|plan|sketch)\b|\bexplanat/i;
-  const strongAssetSignals = /\b(?:standalone logo|isolated logo|transparent background|brand mark only|icon-only|favicon source|logo file)\b/i;
+  // "standalone asset" is the literal classification term the vision prompt below
+  // asks the model to use (category 3) — it must be recognized here, not just
+  // narrower phrasings a model might not happen to reach for on its own.
+  const strongAssetSignals = /\b(?:standalone logo|isolated logo|transparent background|brand mark only|icon-only|favicon source|logo file|standalone asset)\b/i;
   // Screenshots and diagrams/wireframes are reference context; treat them as such unless
   // the analysis strongly indicates this is a standalone brand asset.
   return (screenshotSignals.test(lower) || diagramSignals.test(lower)) && !strongAssetSignals.test(lower);
@@ -418,11 +422,13 @@ export async function restoreSnapshot(snapshotDir: string, appPath: string): Pro
   await copyDir(snapshotDir, appPath);
 }
 
-// ─── SSE helpers ─────────────────────────────────────────────────────────────
+// ─── Event sink ──────────────────────────────────────────────────────────────
+// The loop doesn't know or care whether it's streamed over SSE, collected in a
+// test array, or piped somewhere else — it just calls sink.emit/heartbeat.
 
-function sseWrite(res: Response, event: string, data: unknown): void {
-  if (res.writableEnded) return;
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+export interface AgentEventSink {
+  emit(event: string, data: unknown): void;
+  heartbeat(): void;
 }
 
 // ─── Build AI SDK tool set from our ToolDefinition array ─────────────────────
@@ -564,11 +570,11 @@ function compactStepMessages(
   if (stepNumber < COMPACT_AFTER_STEP && brainMemory.length === 0) return messages;
 
   // Deep clone to avoid mutating SDK internal state
-  const msgs: Array<any> = JSON.parse(JSON.stringify(messages));
+  const msgs: Array<any> = structuredClone(messages);
 
-  // Sanitize: JSON.stringify drops `undefined` values, so tool-call args can
-  // become missing after the deep clone.  Anthropic rejects tool_use.input that
-  // is not an object, so ensure args is always at least {}.
+  // Sanitize: tool-call args can be missing/undefined from the SDK itself.
+  // Anthropic rejects tool_use.input that is not an object, so ensure args
+  // is always at least {}.
   for (const msg of msgs) {
     if (msg.role === 'assistant' && Array.isArray(msg.content)) {
       for (const part of msg.content) {
@@ -775,6 +781,7 @@ function buildMinimalSearchReplace(before: string, after: string): string | null
 const MICRO_EXCLUDED_TOOLS = new Set([
   'run_command', 'get_database_schema', 'query_database', 'provision_database',
   'write_edge_function', 'delete_edge_function', 'set_secret', 'list_secrets',
+  'push_to_github', 'publish_site',
 ]);
 
 function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: string): ToolSet {
@@ -800,6 +807,8 @@ function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: string): 
     deleteEdgeFunctionTool,
     setSecretTool,
     listSecretsTool,
+    pushToGithubTool,
+    publishSiteTool,
     ...(ctx.ecgMcp ? [searchOrgKnowledgeTool] : []),
   ].filter((def) => tier !== 'micro' || !MICRO_EXCLUDED_TOOLS.has(def.name));
 
@@ -1039,8 +1048,8 @@ export interface AgentRunParams {
   };
   /** Project secrets — injected as env var hints for the agent, never echoed to user */
   projectSecrets?: Array<{ key_name: string; key_value: string }>;
-  /** Express response object for SSE streaming */
-  res: Response;
+  /** Event sink the run streams progress through (production: SSE over Express; tests: an in-memory collector) */
+  sink: AgentEventSink;
   /** Authenticated user ID for tracking */
   userId?: string;
   /** Optional external abort signal (e.g. client disconnected) */
@@ -1396,7 +1405,7 @@ function resolveProviderWithFallback(requestedModelId: string): { provider: any;
 
 
 export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResult> {
-  const { prompt, projectId, appPath, model, mode, existingFiles, history, olderSummary, promptIntent, attachments, res, userId, abortSignal } = params;
+  const { projectId } = params;
 
   // ── Per-project mutex: prevent interleaved file writes from concurrent runs ──
   const lock = acquireProjectLock(projectId);
@@ -1416,7 +1425,7 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
 }
 
 async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResult> {
-  const { prompt, projectId, appPath, model, mode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, res, userId, abortSignal, agentLockToken } = params;
+  const { prompt, projectId, appPath, model, mode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, sink, userId, abortSignal, agentLockToken } = params;
 
   // Start a narration context for this run so the narrator can ground its
   // real-time descriptions in the agent's think() reasoning + user intent.
@@ -1624,7 +1633,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       // Parse completed XML tags and record operations
       parseXmlOperation(xml, { filesToWrite, filesEdited, filesToDelete, renames, dependencies });
       // Stream the XML to the frontend
-      sseWrite(res, 'tool-output', { xml });
+      sink.emit('tool-output', { xml });
     },
     getDeclaredDependencies: () => [...dependencies],
   };
@@ -1951,7 +1960,10 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
             inlineAnalysis = await analyzeImageWithVision(
               imgBytes.toString('base64'), att.type, att.name, aiProvider, abortSignal,
             );
-            isRefScreenshot = isReferenceScreenshot(inlineAnalysis);
+            // The user's own explicit words ("use this as my logo") win over an
+            // ambiguous vision read — vision classifies what the image IS, not
+            // what the user wants done with it.
+            isRefScreenshot = isReferenceScreenshot(inlineAnalysis) && !hasEmbedIntent(prompt);
           } else if (!visionCapable) {
             // No vision — fall back to filename heuristic + prompt intent
             if (isScreenshotFilename(att.name) || !hasEmbedIntent(prompt)) {
@@ -2484,7 +2496,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       }
 
       if (salvageFiles.length > 0) {
-        sseWrite(res, 'done', {
+        sink.emit('done', {
           filesToWrite: runtimeMode === 'plan' ? [] : salvageFiles,
           filesToDelete: [],
           renames: [],
@@ -2510,9 +2522,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // Heartbeat: keep SSE connection alive and let the frontend detect dead connections.
   const HEARTBEAT_INTERVAL_MS = 15_000;
   const heartbeatId = setInterval(() => {
-    if (!res.writableEnded) {
-      res.write(': heartbeat\n\n');
-    }
+    sink.heartbeat();
   }, HEARTBEAT_INTERVAL_MS);
 
   try {
@@ -2827,7 +2837,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               console.warn(`[AgentLoop] Stuck-analysis hard stop: ${stepsSinceLastWrite} steps with no successful write/edit${stuckAndBudgetCritical ? ` (budget-critical: ${runTokens.total}/${RUN_TOKEN_CAP} tokens used)` : ` after ${stuckAnalysisFireCount - 1} ignored nudges`} (user=${userId ?? 'unknown'})`);
               stuckAnalysisAbortReason = `stuck analyzing without making a change for ${stepsSinceLastWrite} steps`;
               generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
-                if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
+                if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
               }).catch(() => {});
               abortController.abort();
             } else {
@@ -2852,7 +2862,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // the saved chat transcript.
           for (const tc of (toolCalls ?? []) as any[]) {
             if (tc?.toolName === 'think' && tc?.input?.thought) {
-              sseWrite(res, 'agent-thinking', { step: stepCount, thought: String(tc.input.thought) });
+              sink.emit('agent-thinking', { step: stepCount, thought: String(tc.input.thought) });
             }
           }
           // Native Anthropic extended-thinking text (see anthropicProviderOptions
@@ -2860,7 +2870,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // changes to display it. Only present on steps where Claude actually
           // used native reasoning in place of (or alongside) a think tool call.
           if (typeof reasoningText === 'string' && reasoningText.trim()) {
-            sseWrite(res, 'agent-thinking', { step: stepCount, thought: reasoningText.trim() });
+            sink.emit('agent-thinking', { step: stepCount, thought: reasoningText.trim() });
           }
 
           // ── Token accounting for this step ────────────────────────────
@@ -2895,7 +2905,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // handler in consumeResultStream. The step-finish event below carries
           // token accounting only; no canned status string is emitted here.
 
-          sseWrite(res, 'step-finish', {
+          sink.emit('step-finish', {
             step: stepCount,
             hasText: !!text,
             toolCount: toolNames.length,
@@ -2929,7 +2939,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             console.warn(`[AgentLoop] Run aborted — ${reason} (user=${userId ?? 'unknown'})`);
             budgetAbortReason = reason;
             generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
-              if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
+              if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
             }).catch(() => {});
             abortController.abort();
           }
@@ -2947,7 +2957,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             textBuffer += part.text;
             const safeText = sanitizeUserFacingDelta(part.text);
             if (safeText) {
-              sseWrite(res, 'text-delta', { text: safeText });
+              sink.emit('text-delta', { text: safeText });
             }
           } else if (part.type === 'tool-call') {
             // ── Real-time narration microservice ──────────────────────────
@@ -2962,8 +2972,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             }
             if (!abortController.signal.aborted) {
               generateStatus(projectId, { kind: 'tool', toolName: tcName, args: tcArgs }).then((status) => {
-                if (status && !abortController.signal.aborted && !res.writableEnded) {
-                  sseWrite(res, 'agent-narration', { narration: status });
+                if (status && !abortController.signal.aborted) {
+                  sink.emit('agent-narration', { narration: status });
                 }
               }).catch(() => { /* status service must never break the run */ });
             }
@@ -3026,7 +3036,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         if (providerName === 'anthropic' && isRateLimitError(err)) {
           console.warn('[AgentLoop] Anthropic rate-limited — skipping same-provider retries and switching to fallback');
           generateStatus(projectId, { kind: 'lifecycle', phase: 'provider-fallback' }).then((s) => {
-            if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+            if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
           }).catch(() => {});
           break;
         }
@@ -3056,7 +3066,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         console.warn(`[AgentLoop] Retryable error (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${err?.message ?? err}. Retrying in ${delay}ms...`);
         // Show retry status in activity log, NOT in the chat text
         generateStatus(projectId, { kind: 'lifecycle', phase: 'rate-limit-retry', detail: `${Math.round(delay / 1000)}s` }).then((s) => {
-          if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+          if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
         }).catch(() => {});
         await new Promise<void>(r => setTimeout(r, delay));
       }
@@ -3079,7 +3089,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // Keep fallback behavior, but optionally suppress recovery UI noise.
         if (!SUPPRESS_RECOVERY_UI) {
           generateStatus(projectId, { kind: 'lifecycle', phase: 'provider-fallback', detail: fallbackInfo.providerName }).then((s) => {
-            if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+            if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
           }).catch(() => {});
         }
         try {
@@ -3126,7 +3136,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         const statusMsg = isAuthOrBillingError(streamError)
           ? 'Provider billing issue. Switching to backup model...'
           : 'Connection interrupted. Recovering with backup model...';
-        sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: statusMsg });
+        sink.emit('step-finish', { step: 0, toolCount: 0, status: statusMsg });
       }
 
       const recoveryCandidates = buildFallbackCandidates(providerName, modelId);
@@ -3179,7 +3189,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         && stepsRemaining >= 3 && !abortController.signal.aborted) {
       console.warn(`[AgentLoop] Hallucinated completion claim detected (zero writes, text claims a change) — forcing corrective continuation. user=${userId ?? 'unknown'}`);
       generateStatus(projectId, { kind: 'lifecycle', phase: 'post-gen-verify' }).then((s) => {
-        if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
+        if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
       }).catch(() => {});
 
       conversationMessages = [
@@ -3303,7 +3313,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       if (newPageFiles.length > 0 && !appTsxWasUpdated) {
         console.log(`[AgentLoop] Post-gen validation: ${newPageFiles.length} page(s) written but App.tsx not updated — codegenerating App.tsx`);
         generateStatus(projectId, { kind: 'lifecycle', phase: 'router-wiring', detail: `${newPageFiles.length} ${newPageFiles.length === 1 ? 'page' : 'pages'}` }).then((s) => {
-          if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+          if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
         }).catch(() => {});
 
         let allPagesOnDisk: string[] = [];
@@ -3519,7 +3529,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     let previewPushOk = false;
     if (runtimeMode === 'build' && agentWroteFiles) {
       generateStatus(projectId, { kind: 'lifecycle', phase: 'preview-sync' }).then((s) => {
-        if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+        if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
       }).catch(() => {});
       try {
       const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001';
@@ -3688,7 +3698,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
       if (previewPushOk) {
         generateStatus(projectId, { kind: 'lifecycle', phase: 'build-check' }).then((s) => {
-          if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+          if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
         }).catch(() => {});
         await new Promise<void>(r => setTimeout(r, 600));
         let status = await getPreviewStatus();
@@ -3713,7 +3723,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         const isRuntimeRepair = repairDiagnosticKind === 'runtime';
         if (!SUPPRESS_RECOVERY_UI) {
           generateStatus(projectId, { kind: 'lifecycle', phase: 'repair', detail: isRuntimeRepair ? 'runtime' : 'build' }).then((s) => {
-            if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+            if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
           }).catch(() => {});
         }
         // Skip all repair attempts if already over token budget
@@ -3803,7 +3813,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           console.log(`[AgentLoop] Auto-repair attempt ${repairAttempt + 1}: ${errors.length} ${currentKind} error(s) in ${brokenFileLocations.size} file(s)`);
           if (!SUPPRESS_RECOVERY_UI) {
             generateStatus(projectId, { kind: 'lifecycle', phase: 'repair', detail: `${currentKind}, attempt ${repairAttempt + 1}` }).then((s) => {
-              if (s && !res.writableEnded) sseWrite(res, 'step-finish', { step: 0, toolCount: 0, status: s });
+              if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
             }).catch(() => {});
           }
 
@@ -3932,7 +3942,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             previewServiceUrl: ctx.previewServiceUrl,
             onXmlComplete: (xml: string) => {
               parseXmlOperation(xml, { filesToWrite: repairFilesToWrite, filesEdited: [], filesToDelete: [], renames: [], dependencies: [] });
-              sseWrite(res, 'tool-output', { xml });
+              sink.emit('tool-output', { xml });
             },
           };
           const repairToolSet = buildToolSet(repairCtx, []);
@@ -4069,7 +4079,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
           // Notify frontend so it can show the Auto-fix button
           if (lastRepairErrors.length > 0) {
-            sseWrite(res, 'repair-failed', { errors: lastRepairErrors.slice(0, 5) });
+            sink.emit('repair-failed', { errors: lastRepairErrors.slice(0, 5) });
           }
 
           if (preAgentDiskSnapshot.size > 0) {
@@ -4125,7 +4135,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               console.log(`[AgentLoop] Pre-agent state restored to preview (${preAgentFiles.length} files)`);
             } else {
               console.error(`[AgentLoop] Pre-agent restore push FAILED after 3 attempts (last status: ${lastRestoreStatus ?? 'none'}) — live preview may still show broken code for project=${projectId}`);
-              sseWrite(res, 'repair-failed', {
+              sink.emit('repair-failed', {
                 errors: ['Restore to last known-good state failed to reach the preview service — the preview may still show broken code. Try again or manually refresh.'],
               });
             }
@@ -4186,7 +4196,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         const text = genuinelyOutOfSteps
           ? '\n\n> I ran out of steps before completing the changes. Please send your request again and I\'ll continue from where I left off.'
           : `\n\n> I stopped without finishing this change (after ${stepCount} step${stepCount === 1 ? '' : 's'}) — this wasn't a budget limit, something interrupted the run partway through, sometimes a fallback AI provider being used during high load. Nothing was changed. Please send your request again.`;
-        sseWrite(res, 'text-delta', { text });
+        sink.emit('text-delta', { text });
       }
     }
 
@@ -4202,13 +4212,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     if (unsupportedPreviewDependencies.length > 0) {
       // Legacy XML-declared packages not in the pre-installed set — these should now
       // be installed via run_command by the agent. Show a mild warning for visibility.
-      sseWrite(res, 'text-delta', {
+      sink.emit('text-delta', {
         text: `\n> *Note: ${unsupportedPreviewDependencies.join(', ')} ${unsupportedPreviewDependencies.length === 1 ? 'was' : 'were'} declared via legacy <ecomgear-add-dependency>. In future runs, use \`run_command\` to install packages directly.*\n\n`,
       });
     }
 
     // NOW send 'done' — preview is synced, frontend shows correct state
-    sseWrite(res, 'done', {
+    sink.emit('done', {
       ghostRun: runtimeMode === 'build' && !agentWroteFiles,
       filesToWrite: doneFilesToWrite,
       filesToDelete: doneFilesToDelete,
@@ -4239,7 +4249,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       const finalCost = calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens);
 
       if (tokensUsed > 0) {
-        sseWrite(res, 'usage', {
+        sink.emit('usage', {
           tokensUsed,
           breakdown: {
             input:       runTokens.inputTokens,
@@ -4407,7 +4417,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       }
     }
 
-    sseWrite(res, 'error', { message: errorMessage });
+    sink.emit('error', { message: errorMessage });
     if (err && typeof err === 'object') {
       (err as { sseErrorEmitted?: boolean }).sseErrorEmitted = true;
     }

@@ -1031,7 +1031,10 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 isWebsiteBuild: requestTier === 'build',
                 hasIntegrationRequest: /\b(database|supabase|api|connect|integration|webhook|backend)\b/i.test(prompt),
             },
-            res,
+            sink: {
+                emit: (event, data) => sseWrite(res, event, data),
+                heartbeat: () => { if (!res.writableEnded) res.write(': heartbeat\n\n'); },
+            },
             userId,
             abortSignal: routeAbortController.signal,
             agentLockToken,

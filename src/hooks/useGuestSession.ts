@@ -8,7 +8,7 @@ const GUEST_MAX_REQUESTS = 3;
 function getBrowserFingerprint(): string {
   let fp = localStorage.getItem(GUEST_FP_KEY);
   if (!fp) {
-    fp = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    fp = crypto.randomUUID();
     localStorage.setItem(GUEST_FP_KEY, fp);
   }
   return fp;
@@ -52,7 +52,6 @@ export function useGuestSession() {
         }
         setLoading(false);
       })
-      .catch(() => setLoading(false));
   }, []);
 
   /** Check without side-effects whether this guest can still create a project. */
