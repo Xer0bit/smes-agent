@@ -18,6 +18,24 @@ const PREVIEW_BASE = rawPreviewUrl.replace(/\/$/, '');
 const rawHostingUrl = import.meta.env.VITE_HOSTING_SERVICE_URL || '';
 const HOSTING_BASE = rawHostingUrl.replace(/\/$/, '');
 
+// Domain/deploy operations that need VITE_HOSTING_SERVICE_SECRET now go through
+// the API server's /api/v1/hosting proxy instead of hitting HOSTING_BASE
+// directly — Vite bundles VITE_-prefixed vars into the public JS, so the
+// secret used to be extractable from the built output. The proxy holds the
+// secret server-side and checks project ownership / admin role instead.
+async function apiAuthHeaders(): Promise<HeadersInit> {
+  const { lovableCloud } = await import('@/integrations/supabase/client');
+  const { data: { session } } = await lovableCloud.auth.getSession();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (session) headers['Authorization'] = `Bearer ${session.access_token}`;
+  return headers;
+}
+
+async function hostingProxyUrl(path: string): Promise<string> {
+  const { getGenServerUrl } = await import('@/config/external-api');
+  return getGenServerUrl(`/api/v1/hosting${path}`);
+}
+
 // Hosting node IP is fetched dynamically from the hosting-service /config endpoint.
 // Cached after first fetch so the DNS config UI doesn't need repeated calls.
 let _hostingPublicIp: string | null = null;
@@ -39,13 +57,6 @@ async function getHostingPublicIp(): Promise<string> {
 
 function stripProtocol(url: string): string {
   return url.replace(/^https?:\/\//, '');
-}
-
-function authHeaders(): HeadersInit {
-  const secret = (import.meta.env.VITE_HOSTING_SERVICE_SECRET as string) || '';
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (secret) headers['x-deploy-secret'] = secret;
-  return headers;
 }
 
 function previewHeaders(): HeadersInit {
@@ -102,7 +113,7 @@ class DomainService {
    * Verify domain DNS records via the VPS4 hosting service.
    * Returns detailed per-record check results so the UI can show exactly what's missing.
    */
-  async verifyDomainDNS(domain: string): Promise<{
+  async verifyDomainDNS(projectId: string, domain: string): Promise<{
     verified: boolean;
     status: DomainStatus;
     pointingOk?: boolean;
@@ -117,9 +128,9 @@ class DomainService {
   }> {
     if (!HOSTING_BASE) return { verified: false, status: 'pending_dns', error: 'Hosting service not configured' };
     try {
-      const res = await fetch(`${HOSTING_BASE}/domains/verify`, {
+      const res = await fetch(await hostingProxyUrl(`/${projectId}/verify-domain`), {
         method: 'POST',
-        headers: authHeaders(),
+        headers: await apiAuthHeaders(),
         body: JSON.stringify({ domain }),
       });
       if (!res.ok) return { verified: false, status: 'pending_dns', error: `Hosting service error ${res.status}` };
@@ -305,10 +316,11 @@ class DomainService {
         return { success: false, error: exportData.error || 'Export returned no files' };
       }
 
-      // Step 2: Deploy the built files to VPS4 (hosting service)
-      const res = await fetch(`${HOSTING_BASE}/deploy/${projectId}`, {
+      // Step 2: Deploy the built files to VPS4 (hosting service), via the API
+      // server's proxy so the deploy secret never reaches the browser.
+      const res = await fetch(await hostingProxyUrl(`/${projectId}/deploy`), {
         method: 'POST',
-        headers: authHeaders(),
+        headers: await apiAuthHeaders(),
         body: JSON.stringify({ files: exportData.files, slug }),
       });
       if (!res.ok) {
@@ -316,7 +328,7 @@ class DomainService {
         return { success: false, error: `Deploy failed: ${res.status} ${text}` };
       }
       const data = await res.json();
-      return { success: true, hostingUrl: data.siteUrl || undefined };
+      return { success: true, hostingUrl: data.hostingUrl || undefined };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : 'Deploy error' };
     }
@@ -331,10 +343,10 @@ class DomainService {
   ): Promise<{ success: boolean; error?: string }> {
     if (!HOSTING_BASE) return { success: false, error: 'Hosting service URL not configured' };
     try {
-      const res = await fetch(`${HOSTING_BASE}/domains/activate`, {
+      const res = await fetch(await hostingProxyUrl(`/${projectId}/activate-domain`), {
         method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ domain, projectId }),
+        headers: await apiAuthHeaders(),
+        body: JSON.stringify({ domain }),
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
@@ -347,7 +359,7 @@ class DomainService {
   }
 
   /**
-   * Get hosting service health + config (for admin panel).
+   * Get hosting service health + config (admin panel only).
    */
   async getHostingHealth(): Promise<{
     status: string;
@@ -359,7 +371,7 @@ class DomainService {
   } | null> {
     if (!HOSTING_BASE) return null;
     try {
-      const res = await fetch(`${HOSTING_BASE}/health`);
+      const res = await fetch(await hostingProxyUrl('/admin/health'), { headers: await apiAuthHeaders() });
       if (!res.ok) return null;
       return res.json();
     } catch {
@@ -368,37 +380,34 @@ class DomainService {
   }
 
   /**
-   * List all active domain mappings from the hosting service (admin).
-   * Distinguishes auth failures (misconfigured VITE_HOSTING_SERVICE_SECRET)
-   * from a genuinely empty list, so the caller can surface a real error
-   * instead of silently rendering "no domains".
+   * List all active domain mappings from the hosting service (admin panel only).
    */
   async listHostingDomains(): Promise<{ domains: { domain: string; projectId: string }[]; error?: string }> {
     if (!HOSTING_BASE) return { domains: [], error: 'Hosting service URL not configured' };
     try {
-      const res = await fetch(`${HOSTING_BASE}/domains/list`, { headers: authHeaders() });
+      const res = await fetch(await hostingProxyUrl('/admin/domains'), { headers: await apiAuthHeaders() });
       if (res.status === 401 || res.status === 403) {
-        return { domains: [], error: 'Hosting service rejected credentials (check VITE_HOSTING_SERVICE_SECRET)' };
+        return { domains: [], error: 'Not authorized as admin.' };
       }
       if (!res.ok) {
         return { domains: [], error: `Hosting service error: ${res.status}` };
       }
       const data = await res.json();
-      return { domains: data.domains || [] };
+      return { domains: data.domains || [], error: data.error };
     } catch (e: any) {
       return { domains: [], error: e?.message || 'Failed to reach hosting service' };
     }
   }
 
   /**
-   * Remove a domain from the hosting service (admin).
+   * Remove a domain from a project's own custom-domain list (project owner only).
    */
-  async removeHostingDomain(domain: string): Promise<{ success: boolean; error?: string }> {
+  async removeHostingDomain(projectId: string, domain: string): Promise<{ success: boolean; error?: string }> {
     if (!HOSTING_BASE) return { success: false, error: 'Hosting service URL not configured' };
     try {
-      const res = await fetch(`${HOSTING_BASE}/domains/${encodeURIComponent(domain)}`, {
+      const res = await fetch(await hostingProxyUrl(`/${projectId}/domain/${encodeURIComponent(domain)}`), {
         method: 'DELETE',
-        headers: authHeaders(),
+        headers: await apiAuthHeaders(),
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
@@ -411,14 +420,36 @@ class DomainService {
   }
 
   /**
-   * Remove a deployed project from the hosting service (admin).
+   * Remove any domain mapping from the hosting service (admin panel only —
+   * no project-ownership check, gated by admin role server-side instead).
+   */
+  async adminRemoveHostingDomain(domain: string): Promise<{ success: boolean; error?: string }> {
+    if (!HOSTING_BASE) return { success: false, error: 'Hosting service URL not configured' };
+    try {
+      const res = await fetch(await hostingProxyUrl(`/admin/domains/${encodeURIComponent(domain)}`), {
+        method: 'DELETE',
+        headers: await apiAuthHeaders(),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        return { success: false, error: `Remove failed: ${res.status} ${text}` };
+      }
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : 'Remove error' };
+    }
+  }
+
+  /**
+   * Remove a deployed project from the hosting service (admin panel only —
+   * no project-ownership check, gated by admin role server-side instead).
    */
   async removeHostingDeployment(projectId: string): Promise<{ success: boolean; error?: string }> {
     if (!HOSTING_BASE) return { success: false, error: 'Hosting service URL not configured' };
     try {
-      const res = await fetch(`${HOSTING_BASE}/deploy/${projectId}`, {
+      const res = await fetch(await hostingProxyUrl(`/admin/deployment/${projectId}`), {
         method: 'DELETE',
-        headers: authHeaders(),
+        headers: await apiAuthHeaders(),
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');

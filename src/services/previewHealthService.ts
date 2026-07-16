@@ -5,10 +5,6 @@ const rawPreviewUrl =
     (import.meta.env.PROD ? 'https://preview.ecomgear.app' : 'http://localhost:3001');
 const DOCKER_PREVIEW_URL = rawPreviewUrl.replace(/\/preview\/?$/, '');
 
-// Shared secret for the /update endpoint. Set VITE_PREVIEW_UPDATE_SECRET in .env
-// to match PREVIEW_UPDATE_SECRET on the preview service. In local dev both are
-// empty and the endpoint runs without auth.
-const PREVIEW_UPDATE_SECRET = import.meta.env.VITE_PREVIEW_UPDATE_SECRET || '';
 const HEALTH_CHECK_TIMEOUT_MS = 8000;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -236,17 +232,21 @@ export async function updateDockerPreview(projectId: string, files: { path: stri
             // Increase timeout to 30s for large payloads or slow parsing
             timeoutId = setTimeout(() => controller.abort(), 30000);
 
-            const baseUrl = DOCKER_PREVIEW_URL.endsWith('/') ? DOCKER_PREVIEW_URL.slice(0, -1) : DOCKER_PREVIEW_URL;
-            const updateUrl = `${baseUrl}/preview/${projectId}/update`;
-
             if (attempt === 1) console.log(`[PreviewHealth] Updating preview for ${projectId} (Attempt ${attempt})...`);
 
-            const updateHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-            if (PREVIEW_UPDATE_SECRET) updateHeaders['x-update-secret'] = PREVIEW_UPDATE_SECRET;
+            // Proxied through the API server (holds PREVIEW_UPDATE_SECRET server-side)
+            // instead of calling the preview service directly with a client-bundled
+            // secret — see server/src/routes/database.routes.ts's /preview-update.
+            const { getGenServerUrl } = await import('@/config/external-api');
+            const { lovableCloud } = await import('@/integrations/supabase/client');
+            const { data: { session } } = await lovableCloud.auth.getSession();
 
-            const response = await fetch(updateUrl, {
+            const response = await fetch(getGenServerUrl(`/api/v1/database/preview-update?project_id=${encodeURIComponent(projectId)}`), {
                 method: 'POST',
-                headers: updateHeaders,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
+                },
                 body: JSON.stringify({ files, fullSync }),
                 signal: controller.signal,
             });
@@ -312,56 +312,6 @@ export async function updateDockerPreview(projectId: string, files: { path: stri
 }
 
 export const PREVIEW_DOCKER_URL = DOCKER_PREVIEW_URL;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PUBLISH TO CHINA  (paid users only)
-// The calling code must gate this behind a plan-tier check before calling.
-// The China server validates the PUBLISH_SECRET header server-side.
-// ─────────────────────────────────────────────────────────────────────────────
-const CHINA_PREVIEW_URL = (import.meta.env.VITE_CHINA_PREVIEW_URL || '').replace(/\/$/, '');
-
-/**
- * Publish a project to the China server (produces a permanent static build).
- * Only callable on the China server (ENABLE_PUBLISH=true).
- * Pass the PUBLISH_SECRET via VITE_CHINA_PUBLISH_SECRET env var (injected at build
- * time on the US server — it never gets exposed to end users because this function
- * runs in a Supabase Edge Function, not in the browser).
- *
- * @returns The published URL path, e.g. "/published/<projectId>/"
- */
-export async function publishToChina(
-    projectId: string,
-    files: { path: string; content: string }[]
-): Promise<{ success: boolean; publishedUrl?: string; error?: string }> {
-    const publishSecret = import.meta.env.VITE_CHINA_PUBLISH_SECRET || '';
-    if (!CHINA_PREVIEW_URL) {
-        return { success: false, error: 'VITE_CHINA_PREVIEW_URL is not configured' };
-    }
-
-    try {
-        const res = await fetch(`${CHINA_PREVIEW_URL}/publish/${projectId}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                ...(publishSecret ? { 'Authorization': `Bearer ${publishSecret}` } : {}),
-            },
-            body: JSON.stringify({ files }),
-        });
-
-        if (!res.ok) {
-            const text = await res.text().catch(() => '');
-            return { success: false, error: `HTTP ${res.status}: ${text}` };
-        }
-
-        const data = await res.json();
-        const publishedUrl = data.publishedUrl
-            ? `${CHINA_PREVIEW_URL}${data.publishedUrl}`
-            : undefined;
-        return { success: true, publishedUrl };
-    } catch (e) {
-        return { success: false, error: e instanceof Error ? e.message : 'Publish failed' };
-    }
-}
 
 /** Returns session info for a project — useful for UI countdown timers. */
 export function getSessionInfo(projectId: string): SessionInfo | null {

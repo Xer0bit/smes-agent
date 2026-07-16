@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { SettingsSidebar } from "./SettingsSidebar";
 import { SettingsContent } from "./SettingsContent";
@@ -19,10 +20,23 @@ export const SettingsDialog = ({
   workspaceFiles = [],
 }: SettingsDialogProps) => {
   const [activeSection, setActiveSection] = useState(defaultSection);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (open) setActiveSection(defaultSection);
   }, [open, defaultSection]);
+
+  // SEO lives on its own dedicated page (route detection + per-page editor) —
+  // SettingsContent has no in-dialog case for it, so route there directly
+  // instead of falling through to the "coming soon" placeholder.
+  const handleSectionChange = (next: string) => {
+    if (next === "project-seo" && projectId) {
+      onOpenChange(false);
+      navigate(`/project/${projectId}/seo`);
+      return;
+    }
+    setActiveSection(next);
+  };
 
   // Close on Escape
   useEffect(() => {
@@ -57,7 +71,7 @@ export const SettingsDialog = ({
 
       {/* Body */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <SettingsSidebar activeSection={activeSection} onSectionChange={setActiveSection} />
+        <SettingsSidebar activeSection={activeSection} onSectionChange={handleSectionChange} />
         <div className="flex-1 min-w-0 h-full overflow-hidden">
           <SettingsContent activeSection={activeSection} projectId={projectId} workspaceFiles={workspaceFiles} />
         </div>

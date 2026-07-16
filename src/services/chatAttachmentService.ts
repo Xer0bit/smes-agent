@@ -108,23 +108,27 @@ export async function uploadChatAttachment(
   // RLS on this bucket requires the path to start with the uploader's own
   // auth.uid() (see supabase/migrations/20260402120000_chat_attachments_bucket.sql).
   // Falls back to the local blob URL if storage upload fails — the chat works
-  // for the current session, but the attachment won't survive reload.
+  // for the current session, but the attachment won't survive reload (a
+  // message with no publicUrl gets dropped when saved, see AgentChatPanel.tsx).
   const storagePath = `${userId}/${projectId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
   let publicUrl = '';
   try {
     const { error: uploadError } = await supabase.storage
       .from('chat-attachments')
       .upload(storagePath, file, { upsert: false, contentType: file.type });
-    if (!uploadError) {
+    if (uploadError) {
+      console.error('Chat attachment storage upload failed — image will not persist after reload:', uploadError);
+    } else {
       // Bucket is private — a public URL 403s. Sign it for 5 years, effectively
       // permanent for chat history purposes.
-      const { data: signedData } = await supabase.storage
+      const { data: signedData, error: signError } = await supabase.storage
         .from('chat-attachments')
         .createSignedUrl(storagePath, 60 * 60 * 24 * 365 * 5);
+      if (signError) console.error('Chat attachment signed URL failed:', signError);
       publicUrl = signedData?.signedUrl ?? '';
     }
-  } catch {
-    // Non-fatal — temp path still works for this session
+  } catch (err) {
+    console.error('Chat attachment storage upload threw — image will not persist after reload:', err);
   }
 
   return {

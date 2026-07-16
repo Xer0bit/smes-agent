@@ -14,6 +14,7 @@ import systemRoutes from './routes/system.routes.js';
 import runtimeRoutes from './routes/runtime.routes.js';
 import databaseRoutes from './routes/database.routes.js';
 import adminDatabaseRoutes from './routes/admin-database.routes.js';
+import hostingRoutes from './routes/hosting.routes.js';
 import seoRoutes from './routes/seo.routes.js';
 import headerIntegrationsRoutes from './routes/header-integrations.routes.js';
 import githubRoutes from './routes/github.routes.js';
@@ -164,6 +165,7 @@ if (servesApi) {
     app.use('/api/v1/runtime', runtimeRoutes);
     app.use('/api/v1/database', databaseRoutes);
     app.use('/api/v1/admin/database', adminDatabaseRoutes);
+    app.use('/api/v1/hosting', hostingRoutes);
     app.use('/api/v1/seo', seoRoutes);
     app.use('/api/v1/header-integrations', headerIntegrationsRoutes);
     app.use('/api/v1/github', githubRoutes);

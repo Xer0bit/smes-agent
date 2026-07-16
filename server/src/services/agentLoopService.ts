@@ -1488,6 +1488,12 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const aiProvider = resolvedModel.provider;
   const providerName = resolvedModel.providerName;
   const modelId = resolvedModel.modelId;
+  // Tracks whether this run ends up on a different provider/model than requested
+  // (either right away, e.g. a billing circuit already open, or mid-stream via the
+  // recovery paths below). Used to give an honest reason when a run stops early
+  // with few steps — a real mid-run failover vs. simply the intentionally-assigned
+  // tier model (e.g. glm-4.5-flash on the micro tier) not being capable enough.
+  let providerFellBackThisRun = modelId !== requestedModelId;
 
   // Whether this model can accept image content parts in messages
   const visionCapable = supportsVision(providerName, modelId);
@@ -3095,6 +3101,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         try {
           result = await attemptStream(fallbackInfo.provider, 0, fallbackInfo.providerName);
           lastStreamError = null;
+          providerFellBackThisRun = true;
           break; // fallback succeeded
         } catch (fallbackErr: any) {
           console.warn(`[AgentLoop] Fallback ${fallbackInfo.providerName} also failed: ${fallbackErr?.message}`);
@@ -3150,6 +3157,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           if (!recoveredConsume.err) {
             accumulatedText += recoveredConsume.text;
             streamError = null;
+            providerFellBackThisRun = true;
             console.log(`[AgentLoop] Stream recovery succeeded via ${fallbackInfo.providerName}/${fallbackModelId}`);
             break;
           }
@@ -4193,9 +4201,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         //    user's trust and points them at the wrong fix ("just resend")
         //    when the real issue is a degraded model, not a budget limit.
         const genuinelyOutOfSteps = stepCount >= MAX_STEPS - 1;
+        // Only blame "a fallback provider" when one actually ran this turn
+        // (providerFellBackThisRun) — otherwise this was the tier-assigned model
+        // (e.g. glm-4.5-flash on the micro tier, max 8 steps) simply not finishing
+        // on its own, which is a different, honest thing to tell the user.
         const text = genuinelyOutOfSteps
           ? '\n\n> I ran out of steps before completing the changes. Please send your request again and I\'ll continue from where I left off.'
-          : `\n\n> I stopped without finishing this change (after ${stepCount} step${stepCount === 1 ? '' : 's'}) — this wasn't a budget limit, something interrupted the run partway through, sometimes a fallback AI provider being used during high load. Nothing was changed. Please send your request again.`;
+          : providerFellBackThisRun
+          ? `\n\n> I stopped without finishing this change (after ${stepCount} step${stepCount === 1 ? '' : 's'}) — a backup AI provider took over partway through this run and didn't complete the change. Nothing was changed. Please send your request again.`
+          : `\n\n> I stopped without finishing this change (after ${stepCount} step${stepCount === 1 ? '' : 's'} of ${MAX_STEPS}) — the assigned model gave up early rather than running out of budget. Nothing was changed. Please send your request again; a more detailed request sometimes routes to a stronger model.`;
         sink.emit('text-delta', { text });
       }
     }

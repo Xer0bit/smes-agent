@@ -2064,7 +2064,7 @@ export default defineConfig({
     if (!normalizedDomain) return;
     setIsCheckingDns(true);
     try {
-      const result = await domainService.verifyDomainDNS(normalizedDomain);
+      const result = await domainService.verifyDomainDNS(projectId, normalizedDomain);
       setDnsCheckResult({
         pointingOk: result.pointingOk ?? false,
         txtOk: result.txtOk ?? false,

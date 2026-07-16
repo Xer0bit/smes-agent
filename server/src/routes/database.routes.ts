@@ -4,6 +4,7 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middlew
 import { databaseService, buildProjectEnvSecrets } from '../services/database.service.js';
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
+import { projectService } from '../services/project.service.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -112,6 +113,52 @@ router.post('/sync-secrets', async (req: AuthenticatedRequest, res: Response) =>
   } catch (err) {
     logger.error('sync-secrets error', err);
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── POST /api/v1/database/preview-update ────────────────────────────────────
+// Proxies a file push to the preview service so the browser never has to hold
+// PREVIEW_UPDATE_SECRET. Previously src/services/previewHealthService.ts sent
+// this secret straight from the client as VITE_PREVIEW_UPDATE_SECRET, which
+// Vite bundles into the public JS — anyone could pull it out of the built
+// output and hit the preview service's /update endpoint directly. The secret
+// stays server-side now; the client just needs to be an authenticated owner
+// of the project.
+router.post('/preview-update', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const projectId = getProjectId(req);
+    if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
+    const files = req.body?.files;
+    if (!Array.isArray(files)) { res.status(400).json({ error: 'files array is required.' }); return; }
+    const fullSync = req.body?.fullSync !== false;
+
+    try {
+      await projectService.getProject(projectId, req.user!.id);
+    } catch {
+      res.status(404).json({ error: 'Project not found or access denied.' });
+      return;
+    }
+
+    const previewBase = (process.env.PREVIEW_SERVICE_URL || process.env.VITE_PREVIEW_SERVICE_URL || 'http://localhost:3001').replace(/\/$/, '');
+    const previewRes = await fetch(`${previewBase}/preview/${projectId}/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.PREVIEW_UPDATE_SECRET ? { 'x-update-secret': process.env.PREVIEW_UPDATE_SECRET } : {}),
+      },
+      body: JSON.stringify({ files, fullSync }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!previewRes.ok) {
+      const text = await previewRes.text().catch(() => '');
+      res.status(502).json({ success: false, error: `Preview service error ${previewRes.status}: ${text}` });
+      return;
+    }
+    const data = await previewRes.json().catch(() => ({}));
+    res.json({ success: true, session: (data as any)?.session });
+  } catch (err) {
+    logger.error('preview-update error', err);
+    res.status(500).json({ success: false, error: (err as Error).message });
   }
 });
 

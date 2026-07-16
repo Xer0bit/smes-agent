@@ -107,7 +107,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
     const intervalId = setInterval(async () => {
       for (const domain of pendingDomains) {
         try {
-          const result = await domainService.verifyDomainDNS(domain.domain);
+          const result = await domainService.verifyDomainDNS(projectId, domain.domain);
           setDnsCheckResults(prev => ({
             ...prev,
             [domain.id]: {
@@ -531,7 +531,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
     setRemovingDomain(domainId);
     try {
       // Remove from hosting service (best-effort — may not be activated yet)
-      await domainService.removeHostingDomain(domainName);
+      await domainService.removeHostingDomain(projectId, domainName);
       // Remove from DB
       const { error } = await supabase
         .from('project_custom_domains')

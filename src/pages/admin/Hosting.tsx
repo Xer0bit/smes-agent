@@ -319,7 +319,7 @@ export default function AdminHosting() {
   const handleRemoveDomain = async (domain: string) => {
     setRemovingDomain(domain);
     try {
-      const result = await domainService.removeHostingDomain(domain);
+      const result = await domainService.adminRemoveHostingDomain(domain);
       if (!result.success) throw new Error(result.error);
       toast.success(`Domain ${domain} removed from hosting`);
       await loadLiveSites();
