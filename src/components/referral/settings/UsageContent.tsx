@@ -38,7 +38,7 @@ export const UsageContent = () => {
       </div>
 
       {/* Current Usage Card */}
-      <Card className="bg-[#0f0f12] border-indigo-500/15">
+      <Card className="bg-workspace-surface border-indigo-500/15">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <TrendingUp className="h-5 w-5 text-primary" />
@@ -116,7 +116,7 @@ export const UsageContent = () => {
 
       {/* Publish Lines Card */}
       {limits && (
-        <Card className="bg-[#0f0f12] border-indigo-500/15">
+        <Card className="bg-workspace-surface border-indigo-500/15">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Send className="h-5 w-5 text-primary" />
@@ -183,7 +183,7 @@ export const UsageContent = () => {
       )}
 
       {/* Usage Tiers Info */}
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle className="text-lg">Eco Limits by Plan</CardTitle>
         </CardHeader>
@@ -215,7 +215,7 @@ export const UsageContent = () => {
       </Card>
 
       {usageRecord && (
-        <Card className="bg-[#0f0f12] border-white/[0.07]">
+        <Card className="bg-workspace-surface border-white/[0.07]">
           <CardHeader>
             <CardTitle className="text-lg">Current Plan</CardTitle>
           </CardHeader>

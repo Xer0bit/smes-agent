@@ -111,7 +111,7 @@ export function SecretsSettings({ projectId }: SecretsSettingsProps) {
         </p>
       </div>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <KeyRound className="h-4 w-4 text-primary" />

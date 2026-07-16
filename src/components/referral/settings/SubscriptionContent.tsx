@@ -72,7 +72,7 @@ export const SubscriptionContent = () => {
           <p className="text-white/45">Manage your subscription and billing</p>
         </div>
 
-        <Card className="bg-[#0f0f12] border-indigo-500/30">
+        <Card className="bg-workspace-surface border-indigo-500/30">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Building2 className="h-5 w-5 text-primary" />
@@ -106,7 +106,7 @@ export const SubscriptionContent = () => {
         <p className="text-white/45">Billing and plan management are handled at the organization level.</p>
       </div>
 
-      <Card className="bg-[#0f0f12] border-indigo-500/30">
+      <Card className="bg-workspace-surface border-indigo-500/30">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <CheckCircle2 className="h-5 w-5 text-primary" />
@@ -162,7 +162,7 @@ export const SubscriptionContent = () => {
         </Card>
       )}
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle>Need Help?</CardTitle>
           <CardDescription>

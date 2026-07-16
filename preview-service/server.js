@@ -3093,6 +3093,137 @@ async function startMainServer() {
     // The frontend calls this before deploying to the hosting service.
     const BINARY_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp', '.avif',
         '.woff', '.woff2', '.ttf', '.eot', '.otf', '.mp3', '.mp4', '.webm', '.ogg', '.pdf']);
+    // ── Per-route static SEO shells ──────────────────────────────────────────
+    // Generates {route}/index.html copies of the built SPA shell, each with that
+    // route's own <title>/meta/OG/canonical/structured-data injected — for pages
+    // that have an override saved in project_seo_routes (server/src/routes/seo.routes.ts
+    // owns the CRUD API for that table; this is the consumer side, at publish time).
+    //
+    // Scoped to STATIC routes only (no ":" params) — a route like "/product/:id"
+    // has no single concrete URL to generate without knowing which product, which
+    // needs the project's actual data (product catalog), a separate, bigger piece.
+    // Every generated app uses HashRouter for live preview/editing (pinned
+    // deliberately — BrowserRouter breaks the shared preview-service's own
+    // routing), so this does NOT change how the app navigates internally. It only
+    // adds extra static entry points a crawler or social-share bot hits on a
+    // fresh page load — real URLs like /about, not hash fragments, which crawlers
+    // and OG scrapers (that never execute JS) can actually read.
+    function injectSeoMetaJs(html, seo, pageUrl) {
+        let out = html;
+        const setTitle = (h, title) => /<title>/i.test(h)
+            ? h.replace(/<title>[^<]*<\/title>/i, `<title>${title}</title>`)
+            : h.replace('</head>', `  <title>${title}</title>\n</head>`);
+        const setMeta = (h, attrs, content) => {
+            const key = (attrs.match(/name="([^"]+)"/) || attrs.match(/property="([^"]+)"/))?.[1];
+            if (key) {
+                const re = new RegExp(`<meta\\s[^>]*(name|property)=["']${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["'][^>]*>`, 'i');
+                if (re.test(h)) return h.replace(re, `<meta ${attrs} content="${content}">`);
+            }
+            return h.replace('</head>', `  <meta ${attrs} content="${content}">\n</head>`);
+        };
+        const esc = (s) => String(s).replace(/"/g, '&quot;');
+
+        if (seo.title) out = setTitle(out, esc(seo.title));
+        if (seo.description) out = setMeta(out, 'name="description"', esc(seo.description));
+        if (seo.robots) out = setMeta(out, 'name="robots"', esc(seo.robots));
+        const canonical = seo.canonical_url || pageUrl;
+        if (canonical) {
+            out = /<link[^>]+rel=["']canonical["'][^>]*>/i.test(out)
+                ? out.replace(/<link[^>]+rel=["']canonical["'][^>]*>/i, `<link rel="canonical" href="${esc(canonical)}">`)
+                : out.replace('</head>', `  <link rel="canonical" href="${esc(canonical)}">\n</head>`);
+        }
+        const ogTitle = seo.og_title || seo.title;
+        const ogDesc = seo.og_description || seo.description;
+        if (ogTitle) out = setMeta(out, 'property="og:title"', esc(ogTitle));
+        if (ogDesc) out = setMeta(out, 'property="og:description"', esc(ogDesc));
+        if (seo.og_image) out = setMeta(out, 'property="og:image"', esc(seo.og_image));
+        if (pageUrl) out = setMeta(out, 'property="og:url"', esc(pageUrl));
+        if (ogTitle) {
+            out = setMeta(out, 'name="twitter:card"', 'summary_large_image');
+            out = setMeta(out, 'name="twitter:title"', esc(ogTitle));
+        }
+        if (ogDesc) out = setMeta(out, 'name="twitter:description"', esc(ogDesc));
+        if (seo.og_image) out = setMeta(out, 'name="twitter:image"', esc(seo.og_image));
+
+        const type = seo.structured_data_type || 'WebSite';
+        const schema = { '@context': 'https://schema.org', '@type': type, ...(seo.structured_data || {}) };
+        if (seo.title) schema.name = seo.title;
+        if (seo.description) schema.description = seo.description;
+        if (pageUrl) schema.url = pageUrl;
+        const script = `<script type="application/ld+json" id="ecomgear-route-structured-data">${JSON.stringify(schema)}</script>`;
+        out = out.replace('</head>', `  ${script}\n</head>`);
+
+        return out;
+    }
+
+    async function fetchRouteSeoOverrides(projectId) {
+        if (!SUPABASE_SERVICE_KEY) return [];
+        try {
+            const url = `${SUPABASE_REST_URL}/rest/v1/project_seo_routes?project_id=eq.${encodeURIComponent(projectId)}&select=*`;
+            const r = await fetch(url, { headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` } });
+            if (!r.ok) return [];
+            return await r.json();
+        } catch {
+            return [];
+        }
+    }
+
+    async function fetchProjectPublicUrl(projectId) {
+        if (!SUPABASE_SERVICE_KEY) return '';
+        try {
+            const url = `${SUPABASE_REST_URL}/rest/v1/projects?id=eq.${encodeURIComponent(projectId)}&select=published_subdomain,published_url`;
+            const r = await fetch(url, { headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` } });
+            if (!r.ok) return '';
+            const rows = await r.json();
+            const p = rows[0];
+            if (!p) return '';
+            if (p.published_url && !String(p.published_url).includes('ecomgear.app')) {
+                return `https://${String(p.published_url).replace(/^https?:\/\//, '')}`;
+            }
+            return p.published_subdomain ? `https://${p.published_subdomain}.ecomgear.app` : '';
+        } catch {
+            return '';
+        }
+    }
+
+    // Adds {route}/index.html files (static routes only) + a real sitemap.xml,
+    // built from indexHtml (the just-built SPA shell) + saved per-route overrides.
+    async function appendRouteSeoFiles(files, projectId, indexHtml) {
+        const overrides = await fetchRouteSeoOverrides(projectId);
+        const staticOverrides = overrides.filter(o => o.route_path && !o.route_path.includes(':'));
+        if (staticOverrides.length === 0) return;
+
+        const projectUrl = await fetchProjectPublicUrl(projectId);
+        const sitemapUrls = [];
+        if (projectUrl) sitemapUrls.push(projectUrl);
+
+        for (const o of staticOverrides) {
+            const routePath = o.route_path === '/' ? '' : o.route_path.replace(/^\/+|\/+$/g, '');
+            const pageUrl = projectUrl ? (routePath ? `${projectUrl}/${routePath}` : projectUrl) : '';
+            const html = injectSeoMetaJs(indexHtml, o, pageUrl);
+            if (!routePath) {
+                // Root override — apply directly to the existing index.html instead of
+                // generating a duplicate. Takes priority over the global project_settings
+                // SEO (seo.routes.ts /sync) since it's the more specific, later-applied write.
+                const idx = files.findIndex(f => f.path === 'index.html');
+                if (idx >= 0) files[idx] = { path: 'index.html', content: html };
+            } else {
+                files.push({ path: `${routePath}/index.html`, content: html });
+            }
+            if (pageUrl) sitemapUrls.push(pageUrl);
+        }
+
+        if (sitemapUrls.length > 0) {
+            const today = new Date().toISOString().slice(0, 10);
+            const urlEntries = sitemapUrls.map(u => `  <url>\n    <loc>${u}</loc>\n    <lastmod>${today}</lastmod>\n  </url>`).join('\n');
+            const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urlEntries}\n</urlset>\n`;
+            // Replace any sitemap.xml already in the build (e.g. from public/sitemap.xml) with the real, route-aware one.
+            const existingIdx = files.findIndex(f => f.path === 'sitemap.xml');
+            if (existingIdx >= 0) files[existingIdx] = { path: 'sitemap.xml', content: sitemapXml };
+            else files.push({ path: 'sitemap.xml', content: sitemapXml });
+        }
+    }
+
     app.options('/preview/:projectId/export', cors(corsOptions));
     app.post('/preview/:projectId/export', async (req, res) => {
         const { projectId } = req.params;
@@ -3163,6 +3294,16 @@ async function startMainServer() {
             }
             readBuildDir(buildDir, '');
             fs.rmSync(buildDir, { recursive: true, force: true });
+
+            const builtIndexHtml = files.find(f => f.path === 'index.html')?.content;
+            if (builtIndexHtml) {
+                try {
+                    await appendRouteSeoFiles(files, projectId, builtIndexHtml);
+                } catch (seoErr) {
+                    console.warn(`[Export] ${projectId} — per-route SEO generation failed (non-fatal):`, seoErr.message);
+                }
+            }
+
             console.log(`[Export] ${projectId} — ${files.length} built files`);
             res.json({ success: true, files });
         } catch (e) {

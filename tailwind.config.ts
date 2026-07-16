@@ -58,6 +58,10 @@ export default {
           2: "hsl(var(--surface-2))",
           3: "hsl(var(--surface-3))",
         },
+        workspace: {
+          surface: "hsl(var(--workspace-surface))",
+          "surface-recessed": "hsl(var(--workspace-surface-recessed))",
+        },
         text: {
           strong: "hsl(var(--text-strong))",
           muted: "hsl(var(--text-muted))",
@@ -87,8 +91,18 @@ export default {
         'elev1': 'var(--elev-1)',
         'elev2': 'var(--elev-2)',
       },
-      transitionProperty: {
-        'smooth': 'var(--transition-smooth)',
+      // 'smooth' used to live under transitionProperty mapped straight to the
+      // --transition-smooth CSS var, whose value is a full shorthand ("all 0.3s
+      // cubic-bezier(...)") — invalid for transition-property, which only takes
+      // property names. That produced `transition-property: var(--transition-smooth)`
+      // (a malformed value) plus Tailwind's own default 150ms duration, so the
+      // class silently never gave the intended 300ms — confirmed by compiling it
+      // directly and inspecting the output. Never used anywhere in the app, so
+      // this had never been caught. Tailwind's default transitionTimingFunction
+      // (cubic-bezier(0.4,0,0.2,1)) already matches what --transition-smooth
+      // intended, so only the duration needed a real token.
+      transitionDuration: {
+        smooth: '300ms',
       },
       borderRadius: {
         lg: "var(--radius)",

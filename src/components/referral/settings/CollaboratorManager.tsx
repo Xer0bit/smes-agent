@@ -335,7 +335,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
 
       {/* Upgrade nudges */}
       {canManage && !isSuperAdmin && !canAddCollaborators && (
-        <Card className="bg-[#0f0f12] border-indigo-500/30">
+        <Card className="bg-workspace-surface border-indigo-500/30">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Shield className="h-4 w-4 text-primary" />
@@ -354,7 +354,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
       )}
 
       {canManage && !isSuperAdmin && canAddCollaborators && !seatStatus.allowed && (
-        <Card className="bg-[#0f0f12] border-indigo-500/30">
+        <Card className="bg-workspace-surface border-indigo-500/30">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Shield className="h-4 w-4 text-primary" />
@@ -374,7 +374,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
 
       {/* Invite form */}
       {canManage && canAddCollaborators && (
-        <Card className="bg-[#0f0f12] border-white/[0.07]">
+        <Card className="bg-workspace-surface border-white/[0.07]">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <UserPlus className="h-4 w-4" />
@@ -426,7 +426,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
 
       {/* Pending invitations */}
       {pendingInvites.length > 0 && (
-        <Card className="bg-[#0f0f12] border-white/[0.07]">
+        <Card className="bg-workspace-surface border-white/[0.07]">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Clock className="h-4 w-4 text-amber-500" />
@@ -488,7 +488,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
       )}
 
       {/* Accepted collaborators */}
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Shield className="h-4 w-4" />

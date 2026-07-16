@@ -35,9 +35,9 @@ export const SettingsDialog = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] flex flex-col bg-[#09090b] animate-page-enter">
+    <div className="fixed inset-0 z-[200] flex flex-col bg-workspace-surface-recessed animate-page-enter">
       {/* Top bar */}
-      <div className="h-10 flex items-center justify-between px-5 border-b border-white/[0.06] bg-[#0d0d0f] flex-shrink-0">
+      <div className="h-10 flex items-center justify-between px-5 border-b border-white/[0.07] bg-workspace-surface flex-shrink-0">
         <div className="flex items-center gap-3">
           <span className="text-[13px] font-semibold text-white/90 tracking-tight">Settings</span>
           <div className="h-3 w-px bg-white/[0.08]" />
@@ -47,7 +47,7 @@ export const SettingsDialog = ({
         </div>
         <button
           onClick={() => onOpenChange(false)}
-          className="flex items-center gap-1.5 h-7 px-2.5 rounded-md text-white/60 hover:text-white/90 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-[11px] font-medium transition-colors"
+          className="flex items-center gap-1.5 h-7 px-2.5 rounded-md text-white/60 hover:text-white/90 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.07] text-[11px] font-medium transition-colors duration-smooth"
           title="Back to project (Esc)"
         >
           <ArrowLeft className="h-3 w-3" />

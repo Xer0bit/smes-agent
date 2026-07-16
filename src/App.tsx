@@ -13,6 +13,7 @@ import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
 import EditorWithWorkspace from "./pages/EditorWithWorkspace";
 import ProjectSettings from "./pages/ProjectSettings";
+import SeoManager from "./pages/SeoManager";
 import BatchValidate from "./pages/BatchValidate";
 import { DashboardLayout } from "./pages/Dashboard";
 import DashboardHome from "./pages/dashboard/Home";
@@ -121,6 +122,7 @@ const App = () => (
                 <Route path="/auth/callback" element={<AuthCallback />} />
                 <Route path="/project/:projectId" element={<EditorWithWorkspace />} />
                 <Route path="/project/:projectId/settings" element={<RequireAuth><ProjectSettings /></RequireAuth>} />
+                <Route path="/project/:projectId/seo" element={<RequireAuth><SeoManager /></RequireAuth>} />
                 <Route path="/dashboard" element={<RequireAuth><DashboardLayout /></RequireAuth>}>
                   <Route index element={<DashboardHome />} />
                   <Route path="organizations" element={<DashboardOrganizations />} />

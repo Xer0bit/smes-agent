@@ -98,7 +98,7 @@ export function ReferralContent() {
         </p>
       </div>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Gift className="h-5 w-5 text-primary" />
@@ -119,7 +119,7 @@ export function ReferralContent() {
         </CardContent>
       </Card>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle>Your Referral Link</CardTitle>
           <CardDescription>Share this link to invite friends</CardDescription>
@@ -147,7 +147,7 @@ export function ReferralContent() {
       </Card>
 
       {rewards.length > 0 && (
-        <Card className="bg-[#0f0f12] border-white/[0.07]">
+        <Card className="bg-workspace-surface border-white/[0.07]">
           <CardHeader>
             <CardTitle>Referral History</CardTitle>
           </CardHeader>

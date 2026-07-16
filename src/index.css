@@ -62,6 +62,26 @@
     --interactive-active: 210 24% 28%;
     --elev-1: 0 8px 24px hsl(220 45% 5% / 0.24);
     --elev-2: 0 18px 44px hsl(220 45% 5% / 0.30);
+
+    /* ── Workspace tokens (editor, settings, in-app chrome) ──────────────────
+     * Deliberately separate from the --surface and --background tokens above: those serve
+     * the marketing/dashboard zone's lighter blue-dark theme (Auth, CTA,
+     * dashboard pages). The editor/settings zone uses its own darker, neutral
+     * palette — closer to an IDE than a marketing page — which is correct as
+     * a distinct visual zone, but had drifted into 6 near-identical hardcoded
+     * hex shades across ~20 files (#0f0f12, #0a0a0d, #0b0b0d, #111318,
+     * #0d0d0f, #09090b) instead of one formalized pair. These ARE the measured
+     * dominant shades already in use (#0f0f12 = 70 uses, #0a0a0d = 19 uses —
+     * not invented), just consolidated into named colors.
+     *
+     * Text (text-white/85, /60, /30) and borders (border-white/[0.07]) don't
+     * need new tokens — Tailwind's built-in white + opacity already covers
+     * them. Their drift is inconsistent VALUES (60 vs 70 vs 50, 0.07 vs 0.08),
+     * not a missing token — fixed by standardizing on 85/60/30 and 0.07 as the
+     * canonical values during the sweep, not by adding more CSS variables.
+     */
+    --workspace-surface: 240 9% 6%;          /* card/panel bg — was #0f0f12 */
+    --workspace-surface-recessed: 240 13% 4%; /* input/nested bg — was #0a0a0d */
   }
 }
 

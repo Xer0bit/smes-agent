@@ -98,7 +98,7 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
           <h2 className="text-xl font-semibold text-white/85 mb-1">Edge Functions</h2>
           <p className="text-sm text-white/45">Serverless functions your AI agent writes and your app can invoke — no database required.</p>
         </div>
-        <Card className="bg-[#0f0f12] border-indigo-500/25">
+        <Card className="bg-workspace-surface border-indigo-500/25">
           <CardHeader>
             <div className="flex items-center gap-2">
               <Lock className="h-4 w-4 text-primary" />
@@ -120,7 +120,7 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
         <p className="text-sm text-white/45">Serverless functions your AI agent writes and your app can invoke — no database required.</p>
       </div>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base text-white/85">
             <FunctionSquare className="h-4 w-4 text-primary" />
@@ -139,7 +139,7 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
                     key={fn.id}
                     onClick={() => { setSelected(fn); setResult(null); }}
                     className={cn(
-                      "text-left text-xs px-2 py-1.5 rounded-md transition-colors flex items-center gap-1.5 truncate",
+                      "text-left text-xs px-2 py-1.5 rounded-md transition-colors duration-smooth flex items-center gap-1.5 truncate",
                       selected?.id === fn.id ? "bg-primary/15 text-primary" : "text-white/60 hover:text-white/85 hover:bg-white/[0.04]"
                     )}
                   >
@@ -156,7 +156,7 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
                       <FunctionSquare className="h-4 w-4 text-primary shrink-0" />
                       <span className="font-mono text-sm font-medium truncate">{selected.name}</span>
                       {selected.description && (
-                        <span className="text-xs text-white/40 truncate">{selected.description}</span>
+                        <span className="text-xs text-white/30 truncate">{selected.description}</span>
                       )}
                     </div>
                   </div>
@@ -165,11 +165,11 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-white/45 font-medium">Source (read-only — ask the agent to change it)</span>
                     </div>
-                    <div className="rounded-lg border border-white/[0.08] bg-black/40 max-h-56 overflow-y-auto">
+                    <div className="rounded-lg border border-white/[0.07] bg-black/40 max-h-56 overflow-y-auto">
                       {codeLoading ? (
                         <p className="text-xs text-white/30 p-3">Loading…</p>
                       ) : (
-                        <pre className="text-xs font-mono text-white/70 p-3 whitespace-pre-wrap break-all">{code || '(empty)'}</pre>
+                        <pre className="text-xs font-mono text-white/60 p-3 whitespace-pre-wrap break-all">{code || '(empty)'}</pre>
                       )}
                     </div>
                   </div>
@@ -179,7 +179,7 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
                       value={params}
                       onChange={e => setParams(e.target.value)}
                       placeholder='{"key": "value"}'
-                      className="text-xs font-mono bg-white/[0.04] border-white/[0.10] flex-1 min-h-[60px] resize-none"
+                      className="text-xs font-mono bg-white/[0.04] border-white/[0.07] flex-1 min-h-[60px] resize-none"
                     />
                     <Button size="sm" className="h-9 text-xs shrink-0 gap-1" onClick={invoke} disabled={invoking}>
                       <Play className="h-3 w-3" />{invoking ? 'Running…' : 'Run'}

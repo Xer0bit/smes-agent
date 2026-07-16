@@ -80,8 +80,8 @@ export const ICPFilingForm = () => {
           <div
             onClick={() => setFilingType("enterprise")}
             className={cn(
-              "cursor-pointer rounded-lg border-2 p-6 transition-all hover:border-primary/50",
-              filingType === "enterprise" ? "border-primary bg-primary/5" : "border-white/[0.07] bg-[#0f0f12]"
+              "cursor-pointer rounded-lg border-2 p-6 transition-all duration-smooth hover:border-primary/50",
+              filingType === "enterprise" ? "border-primary bg-primary/5" : "border-white/[0.07] bg-workspace-surface"
             )}
           >
             <div className="flex items-start gap-4">
@@ -101,8 +101,8 @@ export const ICPFilingForm = () => {
           <div
             onClick={() => setFilingType("individual")}
             className={cn(
-              "cursor-pointer rounded-lg border-2 p-6 transition-all hover:border-primary/50",
-              filingType === "individual" ? "border-primary bg-primary/5" : "border-white/[0.07] bg-[#0f0f12]"
+              "cursor-pointer rounded-lg border-2 p-6 transition-all duration-smooth hover:border-primary/50",
+              filingType === "individual" ? "border-primary bg-primary/5" : "border-white/[0.07] bg-workspace-surface"
             )}
           >
             <div className="flex items-start gap-4">
@@ -146,7 +146,7 @@ export const ICPFilingForm = () => {
       </div>
 
       {filingType === "enterprise" && (
-        <Card className="bg-[#0f0f12] border-white/[0.07]">
+        <Card className="bg-workspace-surface border-white/[0.07]">
           <CardHeader>
             <CardTitle className="text-lg">Enterprise Details</CardTitle>
             <CardDescription>Business license information</CardDescription>
@@ -182,7 +182,7 @@ export const ICPFilingForm = () => {
                   </div>
                 ) : (
                   <label className="flex-1 cursor-pointer">
-                    <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-4 hover:border-primary/50 transition-colors bg-[#0f0f12]">
+                    <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-4 hover:border-primary/50 transition-colors duration-smooth bg-workspace-surface">
                       <div className="flex items-center justify-center gap-2 text-white/45">
                         <Upload className="h-5 w-5" />
                         <span className="text-sm">Click to upload (JPG, PNG, PDF • Max 5MB)</span>
@@ -203,7 +203,7 @@ export const ICPFilingForm = () => {
         </Card>
       )}
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle className="text-lg">Principal Information (负责人信息)</CardTitle>
           <CardDescription>
@@ -265,7 +265,7 @@ export const ICPFilingForm = () => {
                 </div>
               ) : (
                 <label className="cursor-pointer block">
-                  <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-4 hover:border-primary/50 transition-colors bg-[#0f0f12]">
+                  <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-4 hover:border-primary/50 transition-colors duration-smooth bg-workspace-surface">
                     <div className="flex items-center justify-center gap-2 text-white/45">
                       <Upload className="h-4 w-4" />
                       <span className="text-xs">Upload</span>
@@ -295,7 +295,7 @@ export const ICPFilingForm = () => {
                 </div>
               ) : (
                 <label className="cursor-pointer block">
-                  <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-4 hover:border-primary/50 transition-colors bg-[#0f0f12]">
+                  <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-4 hover:border-primary/50 transition-colors duration-smooth bg-workspace-surface">
                     <div className="flex items-center justify-center gap-2 text-white/45">
                       <Upload className="h-4 w-4" />
                       <span className="text-xs">Upload</span>
@@ -323,7 +323,7 @@ export const ICPFilingForm = () => {
         <p className="text-white/45 mb-6">Configure your domain and website details for ICP filing.</p>
       </div>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle className="text-lg">Province Selection</CardTitle>
           <CardDescription>Choose the province where your server is located</CardDescription>
@@ -345,7 +345,7 @@ export const ICPFilingForm = () => {
         </CardContent>
       </Card>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle className="text-lg">Domain List</CardTitle>
           <CardDescription>Add all domains that need ICP filing (must be real-name verified)</CardDescription>
@@ -381,7 +381,7 @@ export const ICPFilingForm = () => {
         </CardContent>
       </Card>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle className="text-lg">Website Information</CardTitle>
           <CardDescription>Details about your website content and purpose</CardDescription>
@@ -421,7 +421,7 @@ export const ICPFilingForm = () => {
         <p className="text-white/45 mb-6">Upload required documents based on your filing province.</p>
       </div>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle className="text-lg">Required Documents</CardTitle>
           <CardDescription>Province-specific document requirements</CardDescription>
@@ -444,7 +444,7 @@ export const ICPFilingForm = () => {
               </div>
             ) : (
               <label className="cursor-pointer block">
-                <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-6 hover:border-primary/50 transition-colors bg-[#0f0f12]">
+                <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-6 hover:border-primary/50 transition-colors duration-smooth bg-workspace-surface">
                   <div className="flex flex-col items-center justify-center gap-2 text-white/45">
                     <Upload className="h-6 w-6" />
                     <span className="text-sm">Click to upload (DOC, DOCX, PDF • Max 10MB)</span>
@@ -480,7 +480,7 @@ export const ICPFilingForm = () => {
               </div>
             ) : (
               <label className="cursor-pointer block">
-                <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-6 hover:border-primary/50 transition-colors bg-[#0f0f12]">
+                <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-6 hover:border-primary/50 transition-colors duration-smooth bg-workspace-surface">
                   <div className="flex flex-col items-center justify-center gap-2 text-white/45">
                     <Upload className="h-6 w-6" />
                     <span className="text-sm">Click to upload (JPG, PNG • Max 5MB)</span>
@@ -510,7 +510,7 @@ export const ICPFilingForm = () => {
               </div>
             ) : (
               <label className="cursor-pointer block">
-                <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-6 hover:border-primary/50 transition-colors bg-[#0f0f12]">
+                <div className="border-2 border-dashed border-white/[0.07] rounded-lg p-6 hover:border-primary/50 transition-colors duration-smooth bg-workspace-surface">
                   <div className="flex flex-col items-center justify-center gap-2 text-white/45">
                     <Upload className="h-6 w-6" />
                     <span className="text-sm">Click to upload (PDF • Max 5MB)</span>
@@ -553,7 +553,7 @@ export const ICPFilingForm = () => {
         <p className="text-white/45 mb-6">Please review your application before submitting.</p>
       </div>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle className="text-lg">Application Summary</CardTitle>
         </CardHeader>
@@ -645,10 +645,10 @@ export const ICPFilingForm = () => {
               <div key={step.id} className="flex flex-col items-center flex-1 relative">
                 <div
                   className={cn(
-                    "w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all relative z-10 bg-[#0b0b0d]",
+                    "w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all duration-smooth relative z-10 bg-workspace-surface",
                     isActive && "border-primary bg-primary/10",
                     isCompleted && "border-primary bg-primary text-primary-foreground",
-                    !isActive && !isCompleted && "border-white/[0.07] bg-[#0f0f12]"
+                    !isActive && !isCompleted && "border-white/[0.07] bg-workspace-surface"
                   )}
                 >
                   {isCompleted ? (

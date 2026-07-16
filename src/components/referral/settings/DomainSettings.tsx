@@ -559,7 +559,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
   if (!canUseHosting) {
     return (
       <div className="space-y-6">
-        <Card className="bg-[#0f0f12] border-indigo-500/30">
+        <Card className="bg-workspace-surface border-indigo-500/30">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               Domain Management — Plan Upgrade Required
@@ -582,7 +582,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
     <>
     <div className="space-y-6">
       {/* Subdomain Section */}
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Globe className="h-5 w-5" />
@@ -644,7 +644,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
       </Card>
 
       {/* Custom Domain Section */}
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             Custom Domain
@@ -687,7 +687,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
                       const Icon = cfg.icon;
                       const isAttaching = attachingDomain === od.domain;
                       return (
-                        <div key={od.id} className="flex items-center justify-between gap-3 bg-[#0b0b0d] rounded-md px-3 py-2 border">
+                        <div key={od.id} className="flex items-center justify-between gap-3 bg-workspace-surface rounded-md px-3 py-2 border">
                           <div className="min-w-0">
                             <p className="text-sm font-mono truncate">{od.domain}</p>
                             <div className="flex items-center gap-2 mt-0.5">
@@ -817,7 +817,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
                                     </Button>
                                   </div>
                                   <div className="flex items-center gap-2">
-                                    <code className="bg-[#0b0b0d] px-2 py-1 rounded text-xs truncate max-w-[200px]">
+                                    <code className="bg-workspace-surface px-2 py-1 rounded text-xs truncate max-w-[200px]">
                                       {hostingIp || domain.dns_a_record}
                                     </code>
                                     <Button
@@ -872,7 +872,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
                                     </Button>
                                   </div>
                                   <div className="flex items-center gap-2">
-                                    <code className="bg-[#0b0b0d] px-2 py-1 rounded text-xs truncate max-w-[200px]">{domain.dns_txt_record}</code>
+                                    <code className="bg-workspace-surface px-2 py-1 rounded text-xs truncate max-w-[200px]">{domain.dns_txt_record}</code>
                                     <Button size="sm" variant="ghost" onClick={() => copyToClipboard(domain.dns_txt_record || '')}>
                                       <Copy className="h-3 w-3" />
                                     </Button>

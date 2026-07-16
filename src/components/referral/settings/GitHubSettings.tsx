@@ -155,7 +155,7 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
         <p className="text-sm text-white/45">Connect a GitHub account and push this project's code to a repository created just for it.</p>
       </div>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-2">
           <div className="flex items-center gap-2">
             <GitBranch className="h-4 w-4 text-indigo-400" />
@@ -185,7 +185,7 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
       </Card>
 
       {connected && (
-        <Card className="bg-[#0f0f12] border-white/[0.07]">
+        <Card className="bg-workspace-surface border-white/[0.07]">
           <CardHeader className="pb-2">
             <CardTitle className="text-base text-white/85">Repository</CardTitle>
             <CardDescription className="text-white/45 text-xs">
@@ -196,7 +196,7 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
             {linked ? (
               <div className="flex items-center justify-between">
                 <p className="text-[12px] text-white/45">
-                  Linked to <strong className="text-white/70">{linked.fullName}</strong> ({linked.branch})
+                  Linked to <strong className="text-white/60">{linked.fullName}</strong> ({linked.branch})
                 </p>
                 <Button size="sm" onClick={handlePush} disabled={pushing} className="h-7 px-3 text-[11px] gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white">
                   <RefreshCw className={`h-3 w-3 ${pushing ? 'animate-spin' : ''}`} />
@@ -212,13 +212,13 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
                     onChange={e => setNewRepoName(e.target.value)}
                     placeholder="my-project-name"
                     autoFocus
-                    className="bg-[#0a0a0d] border-white/[0.08] text-white/85 h-8 text-[13px]"
+                    className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 h-8 text-[13px]"
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-white/60 text-xs">Visibility</Label>
                   <Select value={visibility} onValueChange={(v) => setVisibility(v as "private" | "public")}>
-                    <SelectTrigger className="bg-[#0a0a0d] border-white/[0.08] text-white/70 h-8 text-[13px]">
+                    <SelectTrigger className="bg-workspace-surface-recessed border-white/[0.07] text-white/60 h-8 text-[13px]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

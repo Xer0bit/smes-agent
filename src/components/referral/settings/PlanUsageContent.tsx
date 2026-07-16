@@ -136,7 +136,7 @@ export const PlanUsageContent = () => {
       {/* ── Usage Meters ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Eco Usage */}
-        <Card className="bg-[#0f0f12] border-white/[0.07]">
+        <Card className="bg-workspace-surface border-white/[0.07]">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <Zap className="h-4 w-4 text-yellow-500" />
@@ -168,7 +168,7 @@ export const PlanUsageContent = () => {
         </Card>
 
         {/* Publish Lines */}
-        <Card className="bg-[#0f0f12] border-white/[0.07]">
+        <Card className="bg-workspace-surface border-white/[0.07]">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <Send className="h-4 w-4 text-blue-500" />
@@ -196,7 +196,7 @@ export const PlanUsageContent = () => {
       </div>
 
       {/* ── Resource Summary ────────────────────────────────────────────── */}
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-medium">Resource Summary</CardTitle>
         </CardHeader>
@@ -239,7 +239,7 @@ export const PlanUsageContent = () => {
       </Card>
 
       {/* ── Feature Availability ────────────────────────────────────────── */}
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-medium">Feature Access</CardTitle>
         </CardHeader>

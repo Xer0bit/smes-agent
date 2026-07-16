@@ -150,7 +150,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
           {syncStatus === 'live' && <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3 w-3" />Live on site</span>}
           {syncStatus === 'synced' && <span className="flex items-center gap-1 text-amber-400"><CheckCircle2 className="h-3 w-3" />Saved — re-publish to go live</span>}
           {syncStatus === 'error' && <span className="flex items-center gap-1 text-red-400"><AlertCircle className="h-3 w-3" />Sync failed</span>}
-          {(syncStatus === 'idle' || saving) && <span className="text-white/25">{saving ? 'Saving…' : 'Changes auto-save'}</span>}
+          {(syncStatus === 'idle' || saving) && <span className="text-white/30">{saving ? 'Saving…' : 'Changes auto-save'}</span>}
         </div>
         <Button
           size="sm"
@@ -164,7 +164,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
       </div>
 
       {/* ── Analytics & Pixels ──────────────────────────────── */}
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-2">
           <div className="flex items-center gap-2">
             <BarChart3 className="h-4 w-4 text-indigo-400" />
@@ -177,27 +177,27 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
             <Label htmlFor="ga-id" className="text-white/60 text-xs">Google Analytics — Measurement ID</Label>
             <Input id="ga-id" value={data.ga_measurement_id} onChange={set("ga_measurement_id")}
               placeholder="G-XXXXXXXXXX"
-              className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
+              className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
           </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="gtm-id" className="text-white/60 text-xs">Google Tag Manager — Container ID</Label>
             <Input id="gtm-id" value={data.gtm_container_id} onChange={set("gtm_container_id")}
               placeholder="GTM-XXXXXXX"
-              className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
+              className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
           </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="pixel-id" className="text-white/60 text-xs">Meta (Facebook) Pixel ID</Label>
             <Input id="pixel-id" value={data.meta_pixel_id} onChange={set("meta_pixel_id")}
               placeholder="123456789012345"
-              className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
+              className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
           </div>
         </CardContent>
       </Card>
 
       {/* ── WhatsApp ─────────────────────────────────────────── */}
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-2">
           <div className="flex items-center gap-2">
             <MessageCircle className="h-4 w-4 text-emerald-400" />
@@ -210,7 +210,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
             <Label htmlFor="wa-number" className="text-white/60 text-xs">WhatsApp Number (with country code)</Label>
             <Input id="wa-number" value={data.whatsapp_number} onChange={set("whatsapp_number")}
               placeholder="15551234567"
-              className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
+              className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
             <p className="text-[11px] text-white/30">Digits only, no + or spaces. Leave blank to hide the button.</p>
           </div>
 
@@ -218,13 +218,13 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
             <Label htmlFor="wa-message" className="text-white/60 text-xs">Pre-filled Message</Label>
             <Input id="wa-message" value={data.whatsapp_message} onChange={set("whatsapp_message")}
               placeholder="Hi! I have a question."
-              className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
+              className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
           </div>
         </CardContent>
       </Card>
 
       {/* ── Custom Code ──────────────────────────────────────── */}
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-2">
           <div className="flex items-center gap-2">
             <Code2 className="h-4 w-4 text-indigo-400" />
@@ -237,7 +237,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
             <Label htmlFor="head-code" className="text-white/60 text-xs">Head Code</Label>
             <Textarea id="head-code" value={data.custom_head_code} onChange={set("custom_head_code")} rows={4}
               placeholder="<script>...</script>"
-              className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 text-[13px] font-mono resize-none" />
+              className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 text-[13px] font-mono resize-none" />
             <p className="text-[11px] text-white/30">Injected just before &lt;/head&gt; on every page</p>
           </div>
 
@@ -245,7 +245,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
             <Label htmlFor="body-code" className="text-white/60 text-xs">Body Code (Footer)</Label>
             <Textarea id="body-code" value={data.custom_body_code} onChange={set("custom_body_code")} rows={4}
               placeholder="<script>...</script>"
-              className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 text-[13px] font-mono resize-none" />
+              className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 text-[13px] font-mono resize-none" />
             <p className="text-[11px] text-white/30">Injected just before &lt;/body&gt; on every page</p>
           </div>
         </CardContent>

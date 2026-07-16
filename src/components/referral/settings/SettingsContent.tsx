@@ -13,7 +13,6 @@ import { PlanUsageContent } from "./PlanUsageContent";
 import { CollaboratorManager } from "./CollaboratorManager";
 import { ReferralContent } from "./ReferralContent";
 import { DomainSettings } from "./DomainSettings";
-import { SeoSettings } from "./SeoSettings";
 import { HeaderIntegrationsSettings } from "./HeaderIntegrationsSettings";
 import { GitHubSettings } from "./GitHubSettings";
 import { DatabaseSettings } from "./DatabaseSettings";
@@ -117,7 +116,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
       const enabled = hasFeature(featureKey);
       if (enabled) {
         return (
-          <Card className="bg-[#0f0f12] border-white/[0.07]">
+          <Card className="bg-workspace-surface border-white/[0.07]">
             <CardContent className="p-6">
               <p className="text-sm text-white/45">{title} configuration coming soon...</p>
             </CardContent>
@@ -126,7 +125,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
       }
 
       return (
-        <Card className="bg-[#0f0f12] border-indigo-500/30">
+        <Card className="bg-workspace-surface border-indigo-500/30">
           <CardHeader>
             <CardTitle className="text-base text-white/85">{title} — Paid Plan Feature</CardTitle>
             <CardDescription className="text-xs text-white/45">
@@ -156,7 +155,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
               <h2 className="text-xl font-semibold text-white/85 mb-1">LLM</h2>
               <p className="text-sm text-white/45">Configure large language model settings</p>
             </div>
-            <Card className="bg-[#0f0f12] border-white/[0.07]">
+            <Card className="bg-workspace-surface border-white/[0.07]">
               <CardContent className="p-6">
                 <p className="text-sm text-white/45">LLM configuration coming soon...</p>
               </CardContent>
@@ -223,9 +222,6 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
       case "workspace-referrals":
         return <ReferralContent />;
         
-      case "project-seo":
-        return <SeoSettings projectId={projectId} />;
-
       case "project-integrations":
         return <HeaderIntegrationsSettings projectId={projectId} />;
 
@@ -251,7 +247,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
 
             <div className="grid gap-4">
               {/* ICP Filing */}
-              <Card className="bg-[#0f0f12] border-white/[0.07]">
+              <Card className="bg-workspace-surface border-white/[0.07]">
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2">
@@ -278,7 +274,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
               </Card>
 
               {/* QQ Authentication */}
-              <Card className="bg-[#0f0f12] border-white/[0.07] opacity-60">
+              <Card className="bg-workspace-surface border-white/[0.07] opacity-60">
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <CardTitle className="text-base text-white/85">QQ Authentication</CardTitle>
@@ -296,7 +292,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
               </Card>
 
               {/* Payment Integration */}
-              <Card className="bg-[#0f0f12] border-white/[0.07] opacity-60">
+              <Card className="bg-workspace-surface border-white/[0.07] opacity-60">
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2">
@@ -321,7 +317,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
             <div className="mt-8">
               <h3 className="text-lg font-semibold text-white/85 mb-3">Hong Kong Ecosystem</h3>
               <div className="grid gap-4">
-                <Card className="bg-[#0f0f12] border-white/[0.07] opacity-60">
+                <Card className="bg-workspace-surface border-white/[0.07] opacity-60">
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-2">
@@ -341,7 +337,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
                   </CardContent>
                 </Card>
 
-                <Card className="bg-[#0f0f12] border-white/[0.07] opacity-60">
+                <Card className="bg-workspace-surface border-white/[0.07] opacity-60">
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-2">
@@ -373,7 +369,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
               <p className="text-sm text-white/45">Manage your project details, visibility, and preferences.</p>
             </div>
 
-            <Card className="bg-[#0f0f12] border-white/[0.07]">
+            <Card className="bg-workspace-surface border-white/[0.07]">
               <CardHeader>
                 <CardTitle className="text-base text-white/85">Overview</CardTitle>
               </CardHeader>
@@ -425,7 +421,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
               </CardContent>
             </Card>
 
-            <Card className="bg-[#0f0f12] border-white/[0.07]">
+            <Card className="bg-workspace-surface border-white/[0.07]">
               <CardHeader>
                 <CardTitle className="text-base text-white/85">Project Visibility</CardTitle>
                 <CardDescription className="text-xs text-white/45">
@@ -482,7 +478,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
                 { label: 'Airwallex', desc: 'Global payments and treasury.' },
                 { label: 'Zapier', desc: 'Give your project\'s AI chat access to thousands of Zapier-connected tools.' },
               ].map(item => (
-                <Card key={item.label} className="bg-[#0f0f12] border-white/[0.07]">
+                <Card key={item.label} className="bg-workspace-surface border-white/[0.07]">
                   <CardContent className="p-4">
                     <p className="text-sm font-medium text-white/85">{item.label}</p>
                     <p className="text-xs text-white/45 mt-0.5">{item.desc}</p>
@@ -550,7 +546,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
               <h2 className="text-xl font-semibold text-white/85 mb-1">Settings</h2>
               <p className="text-sm text-white/45">Select a section from the sidebar.</p>
             </div>
-            <Card className="bg-[#0f0f12] border-white/[0.07]">
+            <Card className="bg-workspace-surface border-white/[0.07]">
               <CardContent className="p-6">
                 <p className="text-sm text-white/45">Content for this section coming soon...</p>
               </CardContent>

@@ -140,7 +140,7 @@ export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps)
         <p className="text-sm text-white/45">Accept payments and manage subscriptions via Stripe.</p>
       </div>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base text-white/85">
             <CreditCard className="h-4 w-4 text-indigo-400" />
@@ -153,15 +153,15 @@ export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps)
               In Stripe, go to <strong className="text-white/80">Developers → API keys</strong>.
             </li>
             <li>
-              Copy the <strong className="text-white/80">Publishable key</strong> (starts <code className="bg-[#0a0a0d] px-1 py-0.5 rounded text-[11px]">pk_</code>) and the
-              {" "}<strong className="text-white/80">Secret key</strong> (starts <code className="bg-[#0a0a0d] px-1 py-0.5 rounded text-[11px]">sk_</code>).
+              Copy the <strong className="text-white/80">Publishable key</strong> (starts <code className="bg-workspace-surface-recessed px-1 py-0.5 rounded text-[11px]">pk_</code>) and the
+              {" "}<strong className="text-white/80">Secret key</strong> (starts <code className="bg-workspace-surface-recessed px-1 py-0.5 rounded text-[11px]">sk_</code>).
             </li>
             <li>Paste both into the fields below and click <strong className="text-white/80">Save Keys</strong>.</li>
             <li>Click <strong className="text-white/80">Test Connection</strong> to confirm Stripe accepts the key and see which account/mode (test or live) it's connected to.</li>
             <li>
               <em>Optional</em> — for the Webhook Signing Secret: in Stripe go to <strong className="text-white/80">Developers → Webhooks</strong>, click
               {" "}<strong className="text-white/80">Add endpoint</strong>, enter your webhook URL and pick the events to send, then open that endpoint and reveal its
-              {" "}<strong className="text-white/80">Signing secret</strong> (starts <code className="bg-[#0a0a0d] px-1 py-0.5 rounded text-[11px]">whsec_</code>).
+              {" "}<strong className="text-white/80">Signing secret</strong> (starts <code className="bg-workspace-surface-recessed px-1 py-0.5 rounded text-[11px]">whsec_</code>).
             </li>
           </ol>
           <p className="text-[11px] text-white/35 pt-1">
@@ -175,7 +175,7 @@ export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps)
         </CardContent>
       </Card>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2 text-base text-white/85">
@@ -204,7 +204,7 @@ export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps)
                   value={f.value}
                   onChange={e => setValue(f.keyName, e.target.value)}
                   placeholder={f.preview ? "Leave blank to keep current value" : f.placeholder}
-                  className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 h-8 text-[13px] font-mono pr-8"
+                  className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px] font-mono pr-8"
                 />
                 {f.sensitive && (
                   <button

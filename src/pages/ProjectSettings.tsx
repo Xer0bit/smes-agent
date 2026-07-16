@@ -25,11 +25,17 @@ export default function ProjectSettings() {
 
   const handleSectionChange = useCallback(
     (next: string) => {
+      // SEO now lives entirely on its own dedicated page (route detection +
+      // per-page editor) — no in-place section to render here anymore.
+      if (next === "project-seo") {
+        if (projectId) navigate(`/project/${projectId}/seo`);
+        return;
+      }
       const p = new URLSearchParams(searchParams);
       p.set("section", next);
       setSearchParams(p, { replace: true });
     },
-    [searchParams, setSearchParams]
+    [searchParams, setSearchParams, projectId, navigate]
   );
 
   const handleBack = () => navigate(`/project/${projectId}`);

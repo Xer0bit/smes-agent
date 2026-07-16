@@ -87,7 +87,7 @@ function DbInfoPanel({ schemaName }: { schemaName: string }) {
         <span className="text-xs text-white/45">Name</span>
         <code className="text-xs font-mono bg-white/[0.06] px-2 py-0.5 rounded text-white/85">{schemaName}</code>
       </div>
-      <p className="text-xs text-white/40">
+      <p className="text-xs text-white/30">
         Your database is active and accessible to the AI agent. Connection details are managed securely by the agent and are not displayed here.
       </p>
     </div>
@@ -109,7 +109,7 @@ function SchemaBrowser({ tables, loading, onRefresh, onSelectTable, selectedTabl
     <div className="space-y-1">
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs text-white/45">{tables.length} table{tables.length !== 1 ? 's' : ''}</span>
-        <button onClick={onRefresh} className="text-xs text-white/45 hover:text-white/85 flex items-center gap-1 transition-colors">
+        <button onClick={onRefresh} className="text-xs text-white/45 hover:text-white/85 flex items-center gap-1 transition-colors duration-smooth">
           <RefreshCw className="h-3 w-3" /> Refresh
         </button>
       </div>
@@ -118,7 +118,7 @@ function SchemaBrowser({ tables, loading, onRefresh, onSelectTable, selectedTabl
           key={t.name}
           onClick={() => onSelectTable(t)}
           className={cn(
-            "w-full text-left rounded-lg border p-3 transition-colors",
+            "w-full text-left rounded-lg border p-3 transition-colors duration-smooth",
             selectedTable === t.name
               ? "border-primary/50 bg-primary/5"
               : "border-white/[0.07] bg-white/[0.04]/20 hover:bg-white/[0.04]/40"
@@ -188,7 +188,7 @@ function TableViewer({ tableName, userId, projectId }: { tableName: string; user
           </thead>
           <tbody className="divide-y divide-border">
             {data.rows.map((row, i) => (
-              <tr key={i} className="hover:bg-white/[0.04]/20 transition-colors">
+              <tr key={i} className="hover:bg-white/[0.04]/20 transition-colors duration-smooth">
                 {cols.map(c => (
                   <td key={c} className="px-3 py-2 font-mono text-xs whitespace-nowrap max-w-[200px] truncate">
                     {JSON.stringify((row as any)[c])}
@@ -236,11 +236,11 @@ function SqlEditor({ projectId }: { projectId?: string | null }) {
         <span className="text-xs text-white/45">Role:</span>
         <button
           onClick={() => setRole('anon')}
-          className={cn("text-xs px-2 py-1 rounded border transition-colors", role === 'anon' ? "border-primary text-primary bg-primary/10" : "border-white/[0.07] text-white/45")}
+          className={cn("text-xs px-2 py-1 rounded border transition-colors duration-smooth", role === 'anon' ? "border-primary text-primary bg-primary/10" : "border-white/[0.07] text-white/45")}
         >anon (read-only)</button>
         <button
           onClick={() => setRole('service')}
-          className={cn("text-xs px-2 py-1 rounded border transition-colors", role === 'service' ? "border-primary text-primary bg-primary/10" : "border-white/[0.07] text-white/45")}
+          className={cn("text-xs px-2 py-1 rounded border transition-colors duration-smooth", role === 'service' ? "border-primary text-primary bg-primary/10" : "border-white/[0.07] text-white/45")}
         >service (full access)</button>
       </div>
       <Textarea
@@ -415,7 +415,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
         <h2 className="text-xl font-semibold mb-1">ECG CLAUDE DB</h2>
         <p className="text-sm text-white/45">Dedicated PostgreSQL database with REST API and agent access</p>
       </div>
-      <Card className="bg-[#0f0f12] border-indigo-500/25">
+      <Card className="bg-workspace-surface border-indigo-500/25">
         <CardHeader>
           <div className="flex items-center gap-2">
             <Lock className="h-4 w-4 text-primary" />
@@ -481,16 +481,16 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
     <div className="w-full max-w-full overflow-hidden">
       <div className="mb-5">
         <h2 className="text-xl font-semibold mb-1">ECG CLAUDE DB</h2>
-        <p className="text-sm text-white/40">Isolated PostgreSQL schema with REST API and AI agent access</p>
+        <p className="text-sm text-white/30">Isolated PostgreSQL schema with REST API and AI agent access</p>
       </div>
-      <div className="rounded-xl border border-white/[0.07] bg-[#0f0f12] p-5 flex items-center justify-between gap-4">
+      <div className="rounded-xl border border-white/[0.07] bg-workspace-surface p-5 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
           <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
             <Database className="h-4 w-4 text-primary" />
           </div>
           <div className="min-w-0">
             <p className="text-sm font-medium text-white/85">No database yet</p>
-            <p className="text-xs text-white/40 truncate">Click to provision your dedicated schema</p>
+            <p className="text-xs text-white/30 truncate">Click to provision your dedicated schema</p>
           </div>
         </div>
         <Button
@@ -510,7 +510,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
   if (db.status === 'error') return (
     <div className="space-y-6 w-full max-w-full overflow-hidden">
       <div><h2 className="text-xl font-semibold mb-1">ECG CLAUDE DB</h2></div>
-      <Card className="bg-[#0f0f12] border-red-500/25">
+      <Card className="bg-workspace-surface border-red-500/25">
         <CardHeader>
           <div className="flex items-center gap-2">
             <AlertCircle className="h-4 w-4 text-red-400" />
@@ -563,25 +563,25 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
           </Button>
 
           <Dialog open={deleteDialogOpen} onOpenChange={(o) => { if (!deprovisioning) { setDeleteDialogOpen(o); setDeleteConfirmText(''); } }}>
-            <DialogContent className="bg-[#111318] border-white/10 max-w-md">
+            <DialogContent className="bg-workspace-surface border-white/10 max-w-md">
               <DialogHeader>
                 <DialogTitle className="text-white flex items-center gap-2">
                   <Trash2 className="h-4 w-4 text-red-400" />
                   Delete database
                 </DialogTitle>
-                <DialogDescription className="text-white/50">
+                <DialogDescription className="text-white/60">
                   This permanently deletes <span className="font-mono text-white/75">{db.schema_name}</span> and all its data. This cannot be undone.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-3 py-1">
-                <p className="text-xs text-white/50">
+                <p className="text-xs text-white/60">
                   Type <span className="font-mono text-white/80 bg-white/[0.06] px-1.5 py-0.5 rounded">delete my database</span> to confirm.
                 </p>
                 <Input
                   value={deleteConfirmText}
                   onChange={e => setDeleteConfirmText(e.target.value)}
                   placeholder="delete my database"
-                  className="bg-white/[0.04] border-white/[0.10] text-white placeholder:text-white/25 font-mono text-sm"
+                  className="bg-white/[0.04] border-white/[0.07] text-white placeholder:text-white/30 font-mono text-sm"
                   onKeyDown={e => {
                     if (e.key === 'Enter' && deleteConfirmText.trim().toLowerCase() === 'delete my database' && !deprovisioning) {
                       setDeleteDialogOpen(false);
@@ -592,7 +592,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
                 />
               </div>
               <DialogFooter className="gap-2">
-                <Button variant="ghost" onClick={() => { setDeleteDialogOpen(false); setDeleteConfirmText(''); }} disabled={deprovisioning} className="text-white/50">
+                <Button variant="ghost" onClick={() => { setDeleteDialogOpen(false); setDeleteConfirmText(''); }} disabled={deprovisioning} className="text-white/60">
                   Cancel
                 </Button>
                 <Button
@@ -625,7 +625,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
         <TabsContent value="tables" className="mt-4">
           {activeTable ? (
             <div className="space-y-3">
-              <button onClick={() => setSelectedTable(null)} className="text-xs text-white/45 hover:text-white/85 flex items-center gap-1 transition-colors">
+              <button onClick={() => setSelectedTable(null)} className="text-xs text-white/45 hover:text-white/85 flex items-center gap-1 transition-colors duration-smooth">
                 ← Back to tables
               </button>
               <h3 className="font-mono text-sm font-medium">{activeTable.name}</h3>

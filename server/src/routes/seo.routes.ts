@@ -7,15 +7,16 @@ import { logger } from '../utils/logger.js';
 const router = Router();
 router.use(authMiddleware);
 
+// title/description/keywords/robots/OG/structured-data are now owned entirely by
+// the per-route system (project_seo_routes, including the "/" root entry — see
+// preview-service/server.js's appendRouteSeoFiles/injectSeoMetaJs, applied at
+// publish/export time). Keeping them here too would mean two independent code
+// paths (this /sync endpoint vs. the export pipeline) both writing index.html's
+// <title>/meta tags on different triggers, silently overwriting each other
+// depending on which ran last. Only favicon and Google verification stay here —
+// genuinely site-wide, not meaningfully "per-page".
 interface SeoData {
-  title?: string;
-  description?: string;
-  keywords?: string;
   favicon?: string;
-  og_title?: string;
-  og_description?: string;
-  og_image?: string;
-  robots?: string;
   google_verification?: string;
 }
 
@@ -39,14 +40,6 @@ function injectMeta(html: string, attrs: string, content: string): string {
   return html.replace('</head>', `  <meta ${attrs} content="${content}">\n</head>`);
 }
 
-/** Inject or replace <title> */
-function injectTitle(html: string, title: string): string {
-  if (/<title>/i.test(html)) {
-    return html.replace(/<title>[^<]*<\/title>/i, `<title>${title}</title>`);
-  }
-  return html.replace('</head>', `  <title>${title}</title>\n</head>`);
-}
-
 /** Inject or replace <link rel="icon"> */
 function injectFavicon(html: string, href: string): string {
   if (/<link[^>]+rel=["']icon["'][^>]*>/i.test(html)) {
@@ -60,48 +53,10 @@ function injectGoogleVerification(html: string, content: string): string {
   return injectMeta(html, 'name="google-site-verification"', content);
 }
 
-const STRUCTURED_DATA_ID = 'ecomgear-structured-data';
-
-/** Inject or replace a JSON-LD WebSite schema block, keyed by a stable id so re-syncing replaces instead of duplicating. */
-function injectStructuredData(html: string, seo: SeoData, projectUrl: string): string {
-  const schema: Record<string, string> = { '@context': 'https://schema.org', '@type': 'WebSite' };
-  if (seo.title) schema.name = seo.title;
-  if (seo.description) schema.description = seo.description;
-  if (projectUrl) schema.url = projectUrl;
-
-  const script = `<script type="application/ld+json" id="${STRUCTURED_DATA_ID}">${JSON.stringify(schema)}</script>`;
-  const existingRe = new RegExp(`<script[^>]+id=["']${STRUCTURED_DATA_ID}["'][^>]*>[\\s\\S]*?<\\/script>`, 'i');
-  if (existingRe.test(html)) return html.replace(existingRe, script);
-  return html.replace('</head>', `  ${script}\n</head>`);
-}
-
-export function applySeoToHtml(html: string, seo: SeoData, projectUrl = ''): string {
+export function applySeoToHtml(html: string, seo: SeoData, _projectUrl = ''): string {
   let out = html;
-
-  if (seo.title)               out = injectTitle(out, seo.title);
-  if (seo.description)         out = injectMeta(out, 'name="description"', seo.description);
-  if (seo.keywords)            out = injectMeta(out, 'name="keywords"', seo.keywords);
-  if (seo.robots)              out = injectMeta(out, 'name="robots"', seo.robots);
   if (seo.favicon)             out = injectFavicon(out, seo.favicon);
   if (seo.google_verification) out = injectGoogleVerification(out, seo.google_verification);
-
-  // Open Graph
-  const ogTitle = seo.og_title || seo.title;
-  const ogDesc  = seo.og_description || seo.description;
-  if (ogTitle)      out = injectMeta(out, 'property="og:title"', ogTitle);
-  if (ogDesc)       out = injectMeta(out, 'property="og:description"', ogDesc);
-  if (seo.og_image) out = injectMeta(out, 'property="og:image"', seo.og_image);
-  if (projectUrl)   out = injectMeta(out, 'property="og:url"', projectUrl);
-
-  // Twitter Card
-  if (ogTitle)      out = injectMeta(out, 'name="twitter:card"', 'summary_large_image');
-  if (ogTitle)      out = injectMeta(out, 'name="twitter:title"', ogTitle);
-  if (ogDesc)       out = injectMeta(out, 'name="twitter:description"', ogDesc);
-  if (seo.og_image) out = injectMeta(out, 'name="twitter:image"', seo.og_image);
-
-  // Structured data (JSON-LD)
-  if (seo.title || projectUrl) out = injectStructuredData(out, seo, projectUrl);
-
   return out;
 }
 
@@ -151,14 +106,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
 
     const saved = (setting?.setting_value as SeoData) ?? {};
     const seo: SeoData = {
-      title:              saved.title              || (projectFull as any)?.name        || '',
-      description:        saved.description        || (projectFull as any)?.description || '',
-      keywords:           saved.keywords           || '',
-      favicon:            saved.favicon            || '',
-      og_title:           saved.og_title           || '',
-      og_description:     saved.og_description     || '',
-      og_image:           saved.og_image           || '',
-      robots:             saved.robots             || 'index, follow',
+      favicon:             saved.favicon             || '',
       google_verification: saved.google_verification || '',
     };
 
@@ -192,12 +140,9 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
     // files, not something index.html-diffing alone would catch).
     const filesToWrite: { path: string; content: string }[] = [];
     if (updated !== original) filesToWrite.push({ path: 'index.html', content: updated });
-    if (seo.robots) {
-      const robotsContent = seo.robots.includes('noindex')
-        ? `User-agent: *\nDisallow: /\n`
-        : `User-agent: *\nAllow: /\nSitemap: /sitemap.xml\n`;
-      filesToWrite.push({ path: 'public/robots.txt', content: robotsContent });
-    }
+    // Per-page robots directives live on each route's own entry now (including
+    // "/") — this file-level robots.txt is just the crawl-wide default.
+    filesToWrite.push({ path: 'public/robots.txt', content: `User-agent: *\nAllow: /\nSitemap: /sitemap.xml\n` });
     if (projectUrl) {
       filesToWrite.push({ path: 'public/sitemap.xml', content: buildSitemapXml(projectUrl) });
     }
@@ -298,6 +243,145 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
+});
+
+// ── Per-route SEO overrides + redirects (project_seo_routes / project_redirects) ──
+// Same access pattern as /sync above: verify project access explicitly here rather
+// than relying solely on RLS, since this server's supabase client uses the service
+// role key (bypasses RLS) — RLS on these tables only protects direct client-side
+// Supabase calls, not this API path.
+
+async function requireProjectAccess(req: AuthenticatedRequest, res: Response, projectId: string): Promise<boolean> {
+  try {
+    await projectService.getProject(projectId, req.user!.id);
+    return true;
+  } catch (err) {
+    logger.warn('[SEO routes] access check failed', { projectId, userId: req.user!.id, error: (err as Error).message });
+    res.status(404).json({ error: 'Project not found or access denied.' });
+    return false;
+  }
+}
+
+// GET /api/v1/seo/:projectId/routes — list all per-route SEO overrides
+router.get('/:projectId/routes', async (req: AuthenticatedRequest, res: Response) => {
+  const { projectId } = req.params;
+  if (!(await requireProjectAccess(req, res, projectId))) return;
+  const { data, error } = await supabase
+    .from('project_seo_routes')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('route_path', { ascending: true });
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ routes: data ?? [] });
+});
+
+// PUT /api/v1/seo/:projectId/routes — upsert one route's SEO (keyed by route_path)
+router.put('/:projectId/routes', async (req: AuthenticatedRequest, res: Response) => {
+  const { projectId } = req.params;
+  if (!(await requireProjectAccess(req, res, projectId))) return;
+  const { route_path } = req.body ?? {};
+  if (!route_path || typeof route_path !== 'string') {
+    res.status(400).json({ error: 'route_path is required.' });
+    return;
+  }
+  const allowedFields = [
+    'title', 'description', 'keywords', 'og_title', 'og_description', 'og_image',
+    'canonical_url', 'robots', 'structured_data_type', 'structured_data',
+  ] as const;
+  const payload: Record<string, unknown> = { project_id: projectId, route_path, updated_at: new Date().toISOString() };
+  for (const f of allowedFields) if (f in (req.body ?? {})) payload[f] = req.body[f];
+
+  const { data, error } = await supabase
+    .from('project_seo_routes')
+    .upsert(payload, { onConflict: 'project_id,route_path' })
+    .select()
+    .single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ route: data });
+});
+
+// DELETE /api/v1/seo/:projectId/routes/:routeId
+router.delete('/:projectId/routes/:routeId', async (req: AuthenticatedRequest, res: Response) => {
+  const { projectId, routeId } = req.params;
+  if (!(await requireProjectAccess(req, res, projectId))) return;
+  const { error } = await supabase
+    .from('project_seo_routes')
+    .delete()
+    .eq('id', routeId)
+    .eq('project_id', projectId);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ success: true });
+});
+
+// GET /api/v1/seo/:projectId/redirects
+router.get('/:projectId/redirects', async (req: AuthenticatedRequest, res: Response) => {
+  const { projectId } = req.params;
+  if (!(await requireProjectAccess(req, res, projectId))) return;
+  const { data, error } = await supabase
+    .from('project_redirects')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('from_path', { ascending: true });
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ redirects: data ?? [] });
+});
+
+// POST /api/v1/seo/:projectId/redirects — create a redirect rule
+router.post('/:projectId/redirects', async (req: AuthenticatedRequest, res: Response) => {
+  const { projectId } = req.params;
+  if (!(await requireProjectAccess(req, res, projectId))) return;
+  const { from_path, to_path, status_code } = req.body ?? {};
+  if (!from_path || typeof from_path !== 'string' || !to_path || typeof to_path !== 'string') {
+    res.status(400).json({ error: 'from_path and to_path are required.' });
+    return;
+  }
+  const code = status_code === 302 ? 302 : 301;
+  const { data, error } = await supabase
+    .from('project_redirects')
+    .insert({ project_id: projectId, from_path, to_path, status_code: code })
+    .select()
+    .single();
+  if (error) {
+    // Unique constraint on (project_id, from_path)
+    const status = (error as any).code === '23505' ? 409 : 500;
+    res.status(status).json({ error: status === 409 ? `A redirect from "${from_path}" already exists.` : error.message });
+    return;
+  }
+  res.json({ redirect: data });
+});
+
+// PUT /api/v1/seo/:projectId/redirects/:redirectId — update a redirect rule
+router.put('/:projectId/redirects/:redirectId', async (req: AuthenticatedRequest, res: Response) => {
+  const { projectId, redirectId } = req.params;
+  if (!(await requireProjectAccess(req, res, projectId))) return;
+  const { from_path, to_path, status_code } = req.body ?? {};
+  const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (typeof from_path === 'string') payload.from_path = from_path;
+  if (typeof to_path === 'string') payload.to_path = to_path;
+  if (status_code === 301 || status_code === 302) payload.status_code = status_code;
+
+  const { data, error } = await supabase
+    .from('project_redirects')
+    .update(payload)
+    .eq('id', redirectId)
+    .eq('project_id', projectId)
+    .select()
+    .single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ redirect: data });
+});
+
+// DELETE /api/v1/seo/:projectId/redirects/:redirectId
+router.delete('/:projectId/redirects/:redirectId', async (req: AuthenticatedRequest, res: Response) => {
+  const { projectId, redirectId } = req.params;
+  if (!(await requireProjectAccess(req, res, projectId))) return;
+  const { error } = await supabase
+    .from('project_redirects')
+    .delete()
+    .eq('id', redirectId)
+    .eq('project_id', projectId);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ success: true });
 });
 
 export default router;

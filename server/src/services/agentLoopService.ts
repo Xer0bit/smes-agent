@@ -26,6 +26,8 @@ import { listFilesTool } from '../agent-tools/list_files.js';
 import { deleteFileTool } from '../agent-tools/delete_file.js';
 import { renameFileTool } from '../agent-tools/rename_file.js';
 import { grepTool } from '../agent-tools/grep.js';
+import { searchCodebaseTool } from '../agent-tools/search_codebase.js';
+import { findSymbolUsagesTool } from '../agent-tools/find_symbol_usages.js';
 import { editFileTool } from '../agent-tools/edit_file.js';
 import { getBuildErrorsTool } from '../agent-tools/get_build_errors.js';
 import { runCommandTool } from '../agent-tools/run_command.js';
@@ -85,25 +87,62 @@ async function backfillEdgeFunctionMirrors(appPath: string, projectId: string): 
   } catch { /* best-effort — DB unavailable shouldn't block the run */ }
 }
 
-// Circuit breaker: providers that returned a credit/billing error this server session.
-// Avoids retrying a dead provider on every subsequent run until restart.
-const billingFailedProviders = new Set<string>();
+// Circuit breaker: providers that returned a credit/billing error recently.
+// Avoids hammering a provider that's genuinely out of quota — but MUST expire,
+// not block forever. Confirmed live 2026-07-14: a single transient Gemini 429
+// tripped this, and with no expiry Gemini stayed permanently disabled for the
+// rest of the process's uptime even though a direct call moments later (and
+// the account's own $0.82/$42 spend dashboard) confirmed real quota was
+// available the whole time — same lazy-expiry pattern as knowledgebase/
+// embedder.ts's isGoogleCircuitOpen/tripGoogleCircuit (30 min TTL).
+const BILLING_CIRCUIT_TTL_MS = 15 * 60 * 1000; // shorter than the embedder's 30min — this blocks a whole model, not just embeddings
+const billingFailedProviders = new Map<string, number>(); // provider -> resetAt timestamp
+function isBillingCircuitOpen(provider: string): boolean {
+  const resetAt = billingFailedProviders.get(provider);
+  if (resetAt === undefined) return false;
+  if (Date.now() > resetAt) {
+    billingFailedProviders.delete(provider);
+    return false;
+  }
+  return true;
+}
+function tripBillingCircuit(provider: string): void {
+  billingFailedProviders.set(provider, Date.now() + BILLING_CIRCUIT_TTL_MS);
+}
 
-// Reads Anthropic prompt-cache usage out of AI SDK v6's providerMetadata shape.
-// `providerMetadata.anthropic.usage` is the RAW Anthropic API response (snake_case
-// JSON passed through as-is), while `cacheCreationInputTokens` is also exposed as a
-// separate camelCase convenience field one level up — read both to be safe, since
-// a prior bug here (reading a nonexistent `experimental_providerMetadata` field,
-// then reading camelCase names out of the raw snake_case `usage` object) silently
-// made every step log cacheR=0/cacheW=0 regardless of whether caching actually ran.
-function extractAnthropicCacheUsage(providerMetadata: any): { cacheRead: number; cacheWrite: number } {
+// Reads prompt-cache usage out of AI SDK v6's providerMetadata shape, for
+// whichever provider actually served this step. Was Anthropic-only (a prior
+// bug there — reading a nonexistent `experimental_providerMetadata` field —
+// made every step log cacheR=0/cacheW=0 regardless of whether caching ran).
+// Extended to Google/Gemini: `providerMetadata.google.usageMetadata.
+// cachedContentTokenCount` is a real field (@ai-sdk/google's
+// GoogleGenerativeAIProviderMetadata) we never read — meaning if Gemini's
+// automatic *implicit* caching (on by default for 2.5+ models, zero config
+// needed, distinct from the explicit `cachedContents` API disabled elsewhere
+// in this file) has been triggering, we had zero visibility into it and were
+// crediting it $0 savings in every cost estimate.
+function extractCacheUsage(providerMetadata: any): { cacheRead: number; cacheWrite: number } {
+  // Detect from the shape of providerMetadata itself, not an external
+  // providerName variable — a run can fall back between providers mid-stream,
+  // and this must reflect whichever provider actually served THIS step.
   const anth = providerMetadata?.anthropic;
-  const rawUsage = anth?.usage ?? {};
-  const cacheRead = Number(rawUsage.cache_read_input_tokens ?? rawUsage.cacheReadInputTokens ?? 0) || 0;
-  const cacheWrite = Number(
-    anth?.cacheCreationInputTokens ?? rawUsage.cache_creation_input_tokens ?? rawUsage.cacheCreationInputTokens ?? 0
-  ) || 0;
-  return { cacheRead, cacheWrite };
+  if (anth) {
+    const rawUsage = anth.usage ?? {};
+    const cacheRead = Number(rawUsage.cache_read_input_tokens ?? rawUsage.cacheReadInputTokens ?? 0) || 0;
+    const cacheWrite = Number(
+      anth.cacheCreationInputTokens ?? rawUsage.cache_creation_input_tokens ?? rawUsage.cacheCreationInputTokens ?? 0
+    ) || 0;
+    return { cacheRead, cacheWrite };
+  }
+  const google = providerMetadata?.google;
+  if (google) {
+    const cacheRead = Number(google?.usageMetadata?.cachedContentTokenCount ?? 0) || 0;
+    // Gemini's implicit caching has no separate "cache write" concept billed
+    // to the caller — cache population is Google-side and free; only reads
+    // (cachedContentTokenCount) show up as a real discount.
+    return { cacheRead, cacheWrite: 0 };
+  }
+  return { cacheRead: 0, cacheWrite: 0 };
 }
 const MAX_PROMPT_CHARS = 8_000;
 const MAX_OLDER_SUMMARY_CHARS = 6_000;
@@ -726,7 +765,19 @@ function buildMinimalSearchReplace(before: string, after: string): string | null
   return `<<<<<<< SEARCH\n${searchText}\n=======\n${replaceText}\n>>>>>>> REPLACE`;
 }
 
-function buildToolSet(ctx: AgentContext, brainMemory: string[]): ToolSet {
+// Tools irrelevant to a single-file, single-property "micro" change (color/text/
+// one-line fixes — see MICRO_SYSTEM_PROMPT). Every tool schema sent costs real
+// input tokens on EVERY step regardless of whether it's ever called — sending the
+// full ~20-tool backend/infra set (query_database, write_edge_function, etc.) for
+// a text tweak is pure fixed overhead. Micro tier's own prompt already scopes the
+// task this narrowly; scoping the tool list to match is the same idea applied to
+// the request payload, not just the instructions.
+const MICRO_EXCLUDED_TOOLS = new Set([
+  'run_command', 'get_database_schema', 'query_database', 'provision_database',
+  'write_edge_function', 'delete_edge_function', 'set_secret', 'list_secrets',
+]);
+
+function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: string): ToolSet {
   const defs = [
     thinkTool,
     getBuildErrorsTool,
@@ -738,6 +789,8 @@ function buildToolSet(ctx: AgentContext, brainMemory: string[]): ToolSet {
     renameFileTool,
     placeAssetTool,
     grepTool,
+    searchCodebaseTool,
+    findSymbolUsagesTool,
     editFileTool,
     runCommandTool, // npm install/uninstall only — whitelist enforced inside the tool
     getDatabaseSchemaTool,
@@ -748,7 +801,7 @@ function buildToolSet(ctx: AgentContext, brainMemory: string[]): ToolSet {
     setSecretTool,
     listSecretsTool,
     ...(ctx.ecgMcp ? [searchOrgKnowledgeTool] : []),
-  ];
+  ].filter((def) => tier !== 'micro' || !MICRO_EXCLUDED_TOOLS.has(def.name));
 
   const toolSet: ToolSet = {};
   for (const def of defs) {
@@ -1235,22 +1288,22 @@ function buildFallbackCandidates(primaryProviderName: string, primaryModelId?: s
       // Allow GLM-to-GLM fallback for transient errors — but not if ZAI is billing-failed
       return Boolean(process.env.ZAI_API_KEY)
         && process.env.AI_DISABLE_ZAI !== '1'
-        && !billingFailedProviders.has('zai');
+        && !isBillingCircuitOpen('zai');
     }
     if (mid.includes('deepseek')) {
       return Boolean(process.env.DEEPSEEK_API_KEY)
         && process.env.AI_DISABLE_DEEPSEEK !== '1'
         && primaryProviderName !== 'deepseek'
-        && !billingFailedProviders.has('deepseek');
+        && !isBillingCircuitOpen('deepseek');
     }
     if (mid.includes('gemini')) {
       // Allow same-provider (gemini) fallback to a different model — e.g. 2.5-pro → 2.0-flash
       return Boolean(process.env.GEMINI_API_KEY)
         && process.env.AI_DISABLE_GEMINI !== '1'
-        && !billingFailedProviders.has('gemini');
+        && !isBillingCircuitOpen('gemini');
     }
     const hasAnthropic = Boolean(process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY) && process.env.AI_DISABLE_ANTHROPIC !== '1';
-    return hasAnthropic && primaryProviderName !== 'anthropic' && !billingFailedProviders.has('anthropic');
+    return hasAnthropic && primaryProviderName !== 'anthropic' && !isBillingCircuitOpen('anthropic');
   });
 }
 
@@ -1309,7 +1362,7 @@ function resolveProviderWithFallback(requestedModelId: string): { provider: any;
       : candidate.includes('deepseek') ? 'deepseek'
       : candidate.includes('gemini') ? 'gemini' : 'anthropic';
     // Skip providers circuit-broken by a billing/credit error this session
-    if (billingFailedProviders.has(providerGuess)) {
+    if (isBillingCircuitOpen(providerGuess)) {
       console.warn(`[AgentLoop] Skipping ${providerGuess} (billing circuit open) — trying next candidate`);
       continue;
     }
@@ -1388,11 +1441,24 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // These limits just prevent runaway loops — they must be high enough that
   // the final response step is never cut off (agent does work then goes silent).
   // Observed abort patterns: fix hits 124-130K, edit hits 239K → raised accordingly.
-  const TIER_TOKEN_CAP = _tier === 'micro'   ?  80_000
-                       : _tier === 'fix'     ? 350_000
-                       : _tier === 'edit'    ? 450_000
-                       : _tier === 'feature' ? 600_000
-                       : /* build / legacy */  800_000;
+  //
+  // Doubled 2026-07-15: these counts are RAW tokens (input+output+cacheRead+
+  // cacheWrite) — cacheRead counts fully even though it bills at ~10% of a
+  // fresh token. Once the mid-run Anthropic cache-breakpoint fix landed, a
+  // real edit-tier run got killed at 536K raw tokens while only costing
+  // $0.4691 — 31% of the $1.50 cost cap, nowhere near the "ultimate backstop"
+  // this comment describes. The original values were tuned when caching was
+  // effectively zero (raw tokens ≈ cost 1:1); now that caching works, they
+  // fire before the cost cap ever does, on exactly the cheap/well-cached runs
+  // that should be allowed to keep going. Doubling restores the original
+  // intent — cost governs, this is just the runaway-loop backstop again. An
+  // uncached run would still hit the $1.50 cost cap well before these new
+  // ceilings, so this doesn't loosen the actual worst-case protection.
+  const TIER_TOKEN_CAP = _tier === 'micro'   ?  160_000
+                       : _tier === 'fix'     ?  700_000
+                       : _tier === 'edit'    ?  900_000
+                       : _tier === 'feature' ? 1_200_000
+                       : /* build / legacy */  1_600_000;
   const RUN_TOKEN_CAP = process.env.AGENT_TOKEN_CAP
     ? Math.min(parseInt(process.env.AGENT_TOKEN_CAP, 10), TIER_TOKEN_CAP)
     : TIER_TOKEN_CAP;
@@ -1485,7 +1551,13 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // to an action or say you're stuck" directive, same delivery mechanism as
   // circuitBreakerNote.
   let stepsSinceLastWrite = 0;
-  const STUCK_ANALYSIS_THRESHOLD = 6;
+  // Lowered from 6 → 4 (2026-07-15): confirmed live that a full 6-step stuck
+  // cycle on an expensive model (Claude Sonnet fallback, ~$0.15-0.17/step) costs
+  // real money before the nudge even has a chance to fire — one run spent $0.82
+  // across 6 unproductive steps before the first nudge landed. Firing 2 steps
+  // earlier gives the model more budget-relative chances to course-correct
+  // before either the nudge-ignored hard stop or the token cap kicks in.
+  const STUCK_ANALYSIS_THRESHOLD = 4;
   // Lighter, earlier nudge than the full stuck-analysis detector below: fires
   // the moment the model calls `think` twice in a row with no other tool in
   // between (re-reasoning about the same thing instead of acting), instead of
@@ -2272,7 +2344,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // Per-run brain memory — survives context compaction across steps.
   // Hoisted above the Gemini cache block because buildToolSet needs it.
   const brainMemory: string[] = [];
-  const toolSet = runtimeMode === 'plan' ? undefined : buildToolSet(ctx, brainMemory);
+  const toolSet = runtimeMode === 'plan' ? undefined : buildToolSet(ctx, brainMemory, _tier);
 
   // ── Gemini run-level context cache ───────────────────────────────────────
   // Plan mode has no tools — cache just the system prompt (createGeminiRunCache).
@@ -2308,8 +2380,16 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     : aiProvider;
 
   const isAnthropicModel = providerName === 'anthropic';
-  const systemMessages: Array<{ role: 'system'; content: string; providerOptions?: Record<string, any> }> = isAnthropicModel
-    ? [
+  // Built as a function of the ACTUAL provider serving a given attempt, not
+  // frozen once for the originally-requested provider. Bug found live
+  // 2026-07-14: a Gemini→Claude fallback (happening on most runs while
+  // Gemini's billing circuit trips) reused the Gemini-shaped system message
+  // (no cacheControl) even though Claude was the one actually executing —
+  // every fallback-to-Claude run paid full price with zero cache hits,
+  // silently, for however long this had been wrong.
+  function buildSystemMessagesFor(pName: string): Array<{ role: 'system'; content: string; providerOptions?: Record<string, any> }> {
+    if (pName === 'anthropic') {
+      return [
         // Static part — cached by Anthropic (identical across all requests)
         {
           role: 'system' as const,
@@ -2319,10 +2399,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // Dynamic part — changes per request (file tree, project files, attachments)
         // Also cached: it's stable across all steps of this run, so subsequent steps are cache hits.
         ...(dynamicContext.trim() ? [{ role: 'system' as const, content: dynamicContext, providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } }] : []),
-      ]
-    : geminiRunCacheName
+      ];
+    }
+    return geminiRunCacheName
       ? [] // plan mode: the FULL system prompt lives in the cache — sending it again would conflict
       : [{ role: 'system' as const, content: systemPrompt }];
+  }
+  const systemMessages = buildSystemMessagesFor(providerName);
 
   // Use a real default timeout so upstream stalls do not leave the frontend
   // waiting indefinitely. Anthropic gets a shorter cutoff because it is the
@@ -2485,16 +2568,49 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const MAX_RETRIES = 2;
     let lastStreamError: any = null;
 
+    // Native extended thinking for Anthropic (2026-07-15): lets Claude reason
+    // WITHIN the same step/response as its tool call, instead of the current
+    // pattern of a full separate `think` tool-call round-trip (a full billed
+    // step producing nothing but reasoning) followed by a SECOND step to act
+    // on it. Confirmed live: `think` accounted for ~49% of all tool calls
+    // across recent runs, some individual calls running 9x over their own
+    // stated word budget. `clear_thinking_20251015` uses Anthropic's own
+    // server-side context management to drop old thinking turns instead of
+    // them accumulating in history forever — deliberately NOT touching the
+    // existing compactStepMessages/tool-use compaction in this pass; mixing
+    // native and hand-rolled compaction in the same change is a separate,
+    // riskier step. The `think` TOOL stays in the toolset (used by non-
+    // Anthropic providers, and as a fallback) — this is additive, not a
+    // removal, so a mid-run provider fallback away from Anthropic loses
+    // nothing.
+    const anthropicProviderOptions = {
+      thinking: { type: 'adaptive' as const },
+      contextManagement: {
+        edits: [
+          { type: 'clear_thinking_20251015' as const, keep: { type: 'thinking_turns' as const, value: 2 } },
+        ],
+      },
+    };
+
     const attemptStream = async (provider: any, attempt: number, pName = providerName): Promise<ReturnType<typeof streamText>> => {
-      // DeepSeek caps max_tokens at 8192; other providers can handle 16384+
-      const outputLimit = pName === 'deepseek' ? 8192 : 16384;
+      // DeepSeek caps max_tokens at 8192; other providers can handle 16384+.
+      // Anthropic gets extra headroom when native thinking is active — thinking
+      // and the actual response (tool calls, file content) share the same
+      // maxOutputTokens ceiling, and a large write_file competing with thinking
+      // for the same 16384-token budget raises real truncation risk on exactly
+      // the large-file writes already suspected (unconfirmed) of hitting this
+      // ceiling. Extra room costs nothing unless actually used.
+      const outputLimit = pName === 'deepseek' ? 8192 : pName === 'anthropic' ? 32768 : 16384;
       return streamText({
         model: provider,
-        system: systemMessages,
+        system: buildSystemMessagesFor(pName),
         messages: conversationMessages,
         ...(toolSet ? { tools: toolSet } : {}),
         ...((geminiRunCacheName || geminiToolCacheName) && pName === 'gemini'
           ? { providerOptions: { google: { cachedContent: (geminiRunCacheName || geminiToolCacheName) as string } } }
+          : {}),
+        ...(pName === 'anthropic'
+          ? { providerOptions: { anthropic: anthropicProviderOptions } }
           : {}),
         maxOutputTokens: outputLimit,
         maxRetries: 0, // We handle retries + fallback ourselves
@@ -2527,6 +2643,25 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             ? `\n\n⚠️ STEP BUDGET WARNING: You have ${stepsLeft} steps remaining (used ${stepNumber}/${MAX_STEPS}).\n\nIMMEDIATE PRIORITY — check the file tree right now:\n1. If src/App.tsx is still the Welcome stub → write all missing page files THEN write src/App.tsx IMMEDIATELY. Do NOT write more utility or component files first.\n2. If pages exist but App.tsx is missing routes → fix App.tsx NOW.\n3. If App.tsx is complete → continue normal work.\n\nDo NOT let the step limit expire without writing a proper src/App.tsx. A partial build = broken preview.`
             : '';
 
+          // Mark the second-to-last message as an Anthropic cache breakpoint on every
+          // step. Without this, only the pre-run `history` ever got a cache_control
+          // marker (see conversationMessages setup above) — everything this run's OWN
+          // steps add (tool calls, tool results, think text) was resent uncached on
+          // every subsequent step, even once compaction made it byte-stable. Confirmed
+          // live 2026-07-15: Claude-fallback runs showed cacheR flat at the pre-run
+          // history size across all 9 steps of a run, never growing, while `in` climbed
+          // 22k→45k — the run's own history was never once served from cache. Marking
+          // the second-to-last message (not the last — the last is what THIS step is
+          // about to respond to, still being read fresh) lets the next step's request
+          // hit cache for everything up to here, as long as compaction left it unchanged.
+          const markAnthropicBreakpoint = (arr: Array<any>): Array<any> => {
+            if (!isAnthropicModel || arr.length < 2) return arr;
+            const idx = arr.length - 2;
+            const out = arr.slice();
+            out[idx] = { ...out[idx], providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } };
+            return out;
+          };
+
           if (journalBlock || lowStepsWarning || circuitBreakerNote) {
             const base = compacted !== messages ? compacted : [...messages];
             // Append at the very end rather than splicing into the middle of the
@@ -2538,23 +2673,23 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // byte-identical across steps; only this trailing message is new.
             const injectedContent = [journalBlock, lowStepsWarning, circuitBreakerNote].filter(Boolean).join('\n\n');
             circuitBreakerNote = ''; // fire once per detection, not every subsequent step
-            const withInjected = [
+            const withInjected = markAnthropicBreakpoint([
               ...base,
               { role: 'user' as const, content: injectedContent },
-            ];
+            ]);
             return { messages: withInjected };
           }
 
           if (compacted !== messages) {
-            return { messages: compacted };
+            return { messages: markAnthropicBreakpoint(compacted) };
           }
-          return {};
+          return isAnthropicModel ? { messages: markAnthropicBreakpoint(messages) } : {};
         },
         // NOTE: AI SDK v6 renamed `experimental_providerMetadata` to `providerMetadata`
         // (see ai/dist/index.d.ts's StepResult type) — reading the old name here
         // silently always returned undefined, so cache stats (cacheR/cacheW) were
         // always logged as 0 regardless of whether Anthropic actually cached anything.
-        onStepFinish: ({ text, toolCalls, toolResults, usage, providerMetadata }: any) => {
+        onStepFinish: ({ text, toolCalls, toolResults, usage, providerMetadata, reasoningText }: any) => {
           stepCount++;
           runLedger.setStep(stepCount);
           const toolNames = (toolCalls ?? []).map((tc: any) => tc.toolName);
@@ -2645,6 +2780,30 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               `steps, call \`save_memory\` with the key facts now so you don't have to re-think them next step.`;
             circuitBreakerNote = circuitBreakerNote ? `${circuitBreakerNote}\n\n${thinkStreakNote}` : thinkStreakNote;
           }
+
+          // ── Over-budget think nudge ─────────────────────────────────────────
+          // think.ts's own description sets a 60/400-word budget depending on task
+          // size, but that's just prompt text — nothing enforces it. Confirmed live
+          // 2026-07-15: a single think call ran to 4,661 OUTPUT tokens (~3,500+
+          // words), ~9x over even the 400-word ceiling, on a step that produced zero
+          // code. Can't un-bill tokens already generated, but a same-run corrective
+          // nudge measurably shortens the NEXT think call — cheaper than hoping the
+          // static prompt line gets followed, which it evidently isn't.
+          const OVERBUDGET_WORD_THRESHOLD = 600;
+          for (const tc of (toolCalls ?? []) as any[]) {
+            if (tc?.toolName !== 'think') continue;
+            const thought = tc?.input?.thought;
+            if (typeof thought !== 'string') continue;
+            const wordCount = thought.trim().split(/\s+/).filter(Boolean).length;
+            if (wordCount > OVERBUDGET_WORD_THRESHOLD) {
+              const overBudgetNote =
+                `Your last \`think\` call was ~${wordCount} words — way over the 60/400-word budget in that tool's ` +
+                `own instructions. Long reasoning text doesn't improve the outcome and burns real cost. Keep future ` +
+                `think calls to short bullet points, not prose paragraphs.`;
+              circuitBreakerNote = circuitBreakerNote ? `${circuitBreakerNote}\n\n${overBudgetNote}` : overBudgetNote;
+              break; // one nudge per step is enough even if multiple think calls happened
+            }
+          }
           // Budget-aware early exit: with prompt caching disabled (cacheR is
           // consistently 0 — see cost audit), every step re-pays for the FULL
           // context from scratch, so cumulative usage can compound past the
@@ -2696,11 +2855,32 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               sseWrite(res, 'agent-thinking', { step: stepCount, thought: String(tc.input.thought) });
             }
           }
+          // Native Anthropic extended-thinking text (see anthropicProviderOptions
+          // above) — same SSE event as the think tool, so the frontend needs no
+          // changes to display it. Only present on steps where Claude actually
+          // used native reasoning in place of (or alongside) a think tool call.
+          if (typeof reasoningText === 'string' && reasoningText.trim()) {
+            sseWrite(res, 'agent-thinking', { step: stepCount, thought: reasoningText.trim() });
+          }
 
           // ── Token accounting for this step ────────────────────────────
-          const stepInp    = (usage?.promptTokens     ?? usage?.inputTokens     ?? 0) as number;
+          const stepInpRaw = (usage?.promptTokens     ?? usage?.inputTokens     ?? 0) as number;
           const stepOut    = (usage?.completionTokens ?? usage?.outputTokens    ?? 0) as number;
-          const { cacheRead: stepCacheR, cacheWrite: stepCacheW } = extractAnthropicCacheUsage(providerMetadata);
+          const { cacheRead: stepCacheR, cacheWrite: stepCacheW } = extractCacheUsage(providerMetadata);
+          // Gemini reports promptTokens as the FULL prompt (fresh + cached combined) —
+          // cachedContentTokenCount is a SUBSET of it, not an additional amount. Anthropic
+          // is the opposite: input_tokens is fresh-only, cache_read_input_tokens is a
+          // genuinely separate additive count (confirmed against @ai-sdk/anthropic's own
+          // convertAnthropicMessagesUsage — inputTokens = usage.input_tokens directly, no
+          // cache folded in). Adding stepInpRaw AND stepCacheR into the running total
+          // unconditionally double-counted every Gemini cache-read token — confirmed live
+          // 2026-07-15: a run logged cost $1.0018, but recomputing with cache correctly
+          // treated as a subset (not additive) gives $0.4826 — the buggy formula was
+          // inflating Gemini run cost by ~2x, silently, since Gemini caching started
+          // working. This has been true since before today's token-cap change; the cap
+          // increase just made the inflated total visible sooner by letting runs go longer.
+          const isGeminiStep = Boolean(providerMetadata?.google);
+          const stepInp = isGeminiStep ? Math.max(0, stepInpRaw - stepCacheR) : stepInpRaw;
 
           runTokens.inputTokens      += stepInp;
           runTokens.outputTokens     += stepOut;
@@ -2793,7 +2973,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // Final overall finish — log cumulative run totals (onStepFinish already
             // captured per-step detail; this is the authoritative end-of-run summary).
             const u    = (part as any).usage;
-            const finishCache = extractAnthropicCacheUsage((part as any).providerMetadata);
+            const finishCache = extractCacheUsage((part as any).providerMetadata);
             // Prefer values accumulated in runTokens (most complete); fall back to stream finish.
             const totalIn  = runTokens.inputTokens      || (u?.promptTokens     ?? u?.inputTokens     ?? 0);
             const totalOut = runTokens.outputTokens     || (u?.completionTokens ?? u?.outputTokens    ?? 0);
@@ -2857,7 +3037,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         }
         // Auth/billing errors (org disabled, 401, 403) won't resolve with retries — go straight to fallback.
         if (isAuthOrBillingError(err)) {
-          billingFailedProviders.add(providerName);
+          tripBillingCircuit(providerName);
           console.warn(`[AgentLoop] Auth/billing error on ${providerName} — circuit-breaking provider for this session: ${err?.message}`);
           break;
         }
@@ -2939,7 +3119,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // after stream start. Retry once via fallback providers before failing the run.
     if (streamError && !abortController.signal.aborted && (isNetworkError(streamError) || isAuthOrBillingError(streamError))) {
       const isBillingErr = isAuthOrBillingError(streamError);
-      if (isBillingErr) billingFailedProviders.add(providerName);
+      if (isBillingErr) tripBillingCircuit(providerName);
       const recoveryReason = isBillingErr ? 'Billing/auth error mid-stream' : 'Stream interrupted';
       console.warn(`[AgentLoop] ${recoveryReason} (${streamError?.message ?? streamError}). Trying fallback recovery once.`);
       if (!SUPPRESS_RECOVERY_UI) {

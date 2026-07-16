@@ -109,7 +109,7 @@ export const ZapierSettingsContent = ({ projectId }: ZapierSettingsContentProps)
         <p className="text-sm text-white/45">Give your project's AI chat access to the tools you've set up in Zapier.</p>
       </div>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base text-white/85">
             <Zap className="h-4 w-4 text-amber-400" />
@@ -121,7 +121,7 @@ export const ZapierSettingsContent = ({ projectId }: ZapierSettingsContentProps)
             <li>In Zapier, add the tools/actions you want available to your AI agent.</li>
             <li>
               Click the <strong className="text-white/80">Connect</strong> tab at the top — Zapier gives you an MCP URL that
-              looks like <code className="bg-[#0a0a0d] px-1 py-0.5 rounded text-[11px]">https://mcp.zapier.com/mcp/YOUR-SECRET-KEY</code>.
+              looks like <code className="bg-workspace-surface-recessed px-1 py-0.5 rounded text-[11px]">https://mcp.zapier.com/mcp/YOUR-SECRET-KEY</code>.
             </li>
             <li>Copy that URL (treat it like a password — don't share it) and paste it below.</li>
           </ol>
@@ -132,7 +132,7 @@ export const ZapierSettingsContent = ({ projectId }: ZapierSettingsContentProps)
         </CardContent>
       </Card>
 
-      <Card className="bg-[#0f0f12] border-white/[0.07]">
+      <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base text-white/85">Connection</CardTitle>
@@ -155,7 +155,7 @@ export const ZapierSettingsContent = ({ projectId }: ZapierSettingsContentProps)
                   value={f.value}
                   onChange={e => setValue(f.keyName, e.target.value)}
                   placeholder={f.preview ? "Leave blank to keep current value" : f.placeholder}
-                  className="bg-[#0a0a0d] border-white/[0.08] text-white/85 placeholder:text-white/20 h-8 text-[13px] font-mono pr-8"
+                  className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px] font-mono pr-8"
                 />
                 {f.sensitive && (
                   <button

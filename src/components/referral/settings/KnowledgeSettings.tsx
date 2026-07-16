@@ -25,7 +25,7 @@ function PaywallCard() {
                     Configure AI prompt context and knowledge for your project
                 </p>
             </div>
-            <Card className="bg-[#0f0f12] border-indigo-500/30">
+            <Card className="bg-workspace-surface border-indigo-500/30">
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                         Knowledge Configuration — Paid Plan Feature
@@ -142,7 +142,7 @@ export const KnowledgeSettings = ({ projectId }: KnowledgeSettingsProps) => {
             ) : (
                 <>
                     {/* System Prompt */}
-                    <Card className="bg-[#0f0f12] border-white/[0.07]">
+                    <Card className="bg-workspace-surface border-white/[0.07]">
                         <CardHeader>
                             <CardTitle className="text-base flex items-center gap-2">
                                 <BookOpen className="h-4 w-4" />
@@ -177,7 +177,7 @@ export const KnowledgeSettings = ({ projectId }: KnowledgeSettingsProps) => {
                     </Card>
 
                     {/* Context Notes */}
-                    <Card className="bg-[#0f0f12] border-white/[0.07]">
+                    <Card className="bg-workspace-surface border-white/[0.07]">
                         <CardHeader>
                             <CardTitle className="text-base flex items-center gap-2">
                                 <BookOpen className="h-4 w-4" />

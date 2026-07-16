@@ -89,6 +89,14 @@
         "xterm": "^5.3.0",
         "xterm-addon-fit": "^0.8.0",
         "zustand": "^5.0.0",
-        "zod": "^3.25.76"
-    }
+        "zod": "^3.25.76",
+        "@react-three/drei": "^9.122.0",
+        "@react-three/fiber": "^8.18.0",
+        "@stripe/react-stripe-js": "^6.7.0",
+        "@stripe/stripe-js": "^9.9.0",
+        "@types/three": "^0.185.1",
+        "stripe": "^22.3.1",
+        "three": "^0.160.1"
+    },
+    "devDependencies": {}
 }

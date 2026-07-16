@@ -66,7 +66,7 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
     <div className="mb-1">
       <button
         onClick={() => toggleSection(sectionId)}
-        className="w-full flex items-center gap-2 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors"
+        className="w-full flex items-center gap-2 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors duration-smooth"
       >
         {icon}
         <span className="flex-1 text-left">{title}</span>
@@ -82,10 +82,10 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
                   onSectionChange(item.id);
                 }}
                 className={cn(
-                  "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors text-left",
+                  "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors duration-smooth text-left",
                   activeSection === item.id
                     ? "bg-indigo-500/10 text-white font-medium border-l-2 border-indigo-500/60"
-                    : "text-white/40 hover:bg-white/[0.04] hover:text-white/70"
+                    : "text-white/30 hover:bg-white/[0.04] hover:text-white/60"
                 )}
               >
                 {item.id === "china-icp" && (
@@ -109,7 +109,7 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
     <div className="mb-1">
       <button
         onClick={() => toggleSection('ecomgear')}
-        className="w-full flex items-center gap-2 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors"
+        className="w-full flex items-center gap-2 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors duration-smooth"
       >
         <Cloud className="h-4 w-4 text-primary" />
         <span className="flex-1 text-left">eComGear Cloud</span>
@@ -120,10 +120,10 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
           <button
             onClick={() => onSectionChange('ecomgear-database')}
             className={cn(
-              "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors text-left",
+              "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors duration-smooth text-left",
               activeSection === 'ecomgear-database'
                 ? "bg-indigo-500/10 text-white font-medium border-l-2 border-indigo-500/60"
-                : "text-white/40 hover:bg-white/[0.04] hover:text-white/70"
+                : "text-white/30 hover:bg-white/[0.04] hover:text-white/60"
             )}
           >
             <Database className="h-4 w-4" />
@@ -135,10 +135,10 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
           <button
             onClick={() => onSectionChange('ecomgear-llm')}
             className={cn(
-              "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors text-left",
+              "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors duration-smooth text-left",
               activeSection === 'ecomgear-llm'
                 ? "bg-indigo-500/10 text-white font-medium border-l-2 border-indigo-500/60"
-                : "text-white/40 hover:bg-white/[0.04] hover:text-white/70"
+                : "text-white/30 hover:bg-white/[0.04] hover:text-white/60"
             )}
           >
             <Boxes className="h-4 w-4" />
@@ -149,10 +149,10 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
           <button
             onClick={() => onSectionChange('ecomgear-functions')}
             className={cn(
-              "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors text-left",
+              "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors duration-smooth text-left",
               activeSection === 'ecomgear-functions'
                 ? "bg-indigo-500/10 text-white font-medium border-l-2 border-indigo-500/60"
-                : "text-white/40 hover:bg-white/[0.04] hover:text-white/70"
+                : "text-white/30 hover:bg-white/[0.04] hover:text-white/60"
             )}
           >
             <Zap className="h-4 w-4" />
@@ -162,12 +162,12 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
           {/* China Ecosystem Section */}
           <button
             onClick={() => toggleSection('chinaEco')}
-            className="w-full flex items-center gap-2 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors"
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors duration-smooth"
           >
             <Globe className="h-4 w-4" />
             <span className="flex-1 text-left">China Ecosystem</span>
             <ChevronDown className={cn(
-              "h-3 w-3 transition-transform",
+              "h-3 w-3 transition-transform duration-smooth",
               expandedSections['chinaEco'] && "rotate-180"
             )} />
           </button>
@@ -178,10 +178,10 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
                   key={item.id}
                   onClick={() => onSectionChange(item.id)}
                   className={cn(
-                    "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors text-left",
+                    "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors duration-smooth text-left",
                     activeSection === item.id
                       ? "bg-indigo-500/10 text-white font-medium border-l-2 border-indigo-500/60"
-                      : "text-white/40 hover:bg-white/[0.04] hover:text-white/70"
+                      : "text-white/30 hover:bg-white/[0.04] hover:text-white/60"
                   )}
                 >
                   {item.id === "china-icp" && (
@@ -200,7 +200,7 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
   );
 
   return (
-    <div className="w-52 border-r border-white/[0.06] bg-[#0b0b0d] flex flex-col flex-shrink-0">
+    <div className="w-52 border-r border-white/[0.07] bg-workspace-surface flex flex-col flex-shrink-0">
       <ScrollArea className="flex-1 py-2 px-2">
         <nav className="space-y-0.5">
           {renderSection("Project", projectItems, "project", <SettingsIcon className="h-4 w-4" />)}
