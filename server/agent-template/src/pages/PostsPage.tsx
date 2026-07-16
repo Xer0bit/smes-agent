@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle, XCircle, FileText, Plus, Trash2, Pencil, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { CheckCircle, XCircle, FileText, Plus, Trash2, Pencil, X, Sparkles } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import StatusBadge from '../components/StatusBadge';
 
@@ -13,6 +14,7 @@ const PLATFORM_COLORS: Record<string, string> = {
 };
 
 export default function PostsPage() {
+  const navigate = useNavigate();
   const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('pending');
@@ -110,6 +112,14 @@ export default function PostsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <StatusBadge status={p.status} />
+                    <button
+                      onClick={() => navigate(`/posts/${p.id}/visual`)}
+                      className="p-1 rounded hover:opacity-70"
+                      title="Add or edit visual"
+                      style={{ color: 'var(--accent)' }}
+                    >
+                      <Sparkles className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => setDeletingPost(p)}
                       className="p-1 rounded hover:bg-red-50"
