@@ -43,7 +43,7 @@ ${domain} {
   handle {
     root * ${siteDir}
     encode gzip zstd
-    try_files {path} /index.html
+    try_files {path} {path}/index.html /index.html
     file_server
   }
 

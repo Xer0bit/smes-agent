@@ -251,7 +251,7 @@ function writeCaddySiteConfig(domain, projectId) {
   root * ${siteDir}
   encode gzip zstd
   file_server
-  try_files {path} /index.html
+  try_files {path} {path}/index.html /index.html
 
   header {
     X-Frame-Options "SAMEORIGIN"
