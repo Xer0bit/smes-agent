@@ -45,10 +45,15 @@ export function SiteSettingsEditor({ projectId }: { projectId?: string }) {
     },
   });
 
+  // Only hydrate once — a background refetch (e.g. refetchOnWindowFocus)
+  // landing mid-edit would otherwise overwrite an in-progress edit with the
+  // pre-edit DB row before the autosave debounce has committed.
+  const hydrated = useRef(false);
   useEffect(() => {
-    if (!loaded) return;
+    if (hydrated.current || !loaded) return;
     const saved = (loaded.setting_value as Partial<SiteData>) ?? {};
     setData({ favicon: saved.favicon ?? "", google_verification: saved.google_verification ?? "" });
+    hydrated.current = true;
   }, [loaded]);
 
   const saveToDb = useCallback(async (next: SiteData) => {
@@ -77,6 +82,29 @@ export function SiteSettingsEditor({ projectId }: { projectId?: string }) {
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => saveToDb(next), 800);
   };
+
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
+  // Blur/close/hard-refresh flush — see HeaderIntegrationsSettings for why:
+  // without this, an edit sitting in the 800ms debounce window is lost if
+  // the user navigates away or refreshes before it fires.
+  const flushSave = () => {
+    if (autoSaveTimer.current) {
+      clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = null;
+      saveToDb(dataRef.current);
+    }
+  };
+
+  useEffect(() => {
+    const handler = () => { if (autoSaveTimer.current) saveToDb(dataRef.current); };
+    window.addEventListener('beforeunload', handler);
+    return () => {
+      window.removeEventListener('beforeunload', handler);
+      if (autoSaveTimer.current) saveToDb(dataRef.current);
+    };
+  }, [saveToDb]);
 
   const handleFaviconUpload = async (file: File) => {
     if (!projectId) return;
@@ -149,7 +177,7 @@ export function SiteSettingsEditor({ projectId }: { projectId?: string }) {
               <img src={data.favicon} alt="" className="h-6 w-6 rounded object-contain shrink-0 border border-white/[0.07]"
                 onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
             )}
-            <Input value={data.favicon} onChange={(e) => setValue("favicon", e.target.value)}
+            <Input value={data.favicon} onChange={(e) => setValue("favicon", e.target.value)} onBlur={flushSave}
               placeholder="https://example.com/favicon.ico or upload below"
               className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px] flex-1" />
             <input ref={faviconInputRef} type="file" accept="image/png,image/x-icon,image/jpeg,image/webp" className="hidden"
@@ -173,7 +201,7 @@ export function SiteSettingsEditor({ projectId }: { projectId?: string }) {
         </CardHeader>
         <CardContent className="space-y-1.5">
           <Label className="text-white/60 text-xs">Verification Meta Tag Content</Label>
-          <Input value={data.google_verification} onChange={(e) => setValue("google_verification", e.target.value)}
+          <Input value={data.google_verification} onChange={(e) => setValue("google_verification", e.target.value)} onBlur={flushSave}
             placeholder="abc123xyz (content= value only)"
             className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
           <p className="text-[11px] text-white/30">

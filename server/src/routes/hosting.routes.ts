@@ -26,9 +26,12 @@ function hostingHeaders(): Record<string, string> {
   return headers;
 }
 
+// Every route below deploys, activates a domain, or removes one — all writes,
+// so this requires edit access (owner/admin/editor), not just view access.
+// A viewer/client collaborator must not be able to deploy or reconfigure domains.
 async function ownsProject(projectId: string, userId: string): Promise<boolean> {
   try {
-    await projectService.getProject(projectId, userId);
+    await projectService.assertCanEditProject(projectId, userId);
     return true;
   } catch {
     return false;

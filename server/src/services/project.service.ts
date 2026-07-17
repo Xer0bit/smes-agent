@@ -151,6 +151,19 @@ export class ProjectService {
         throw new Error('Unauthorized access to project');
     }
 
+    // Write-gate for settings/deploy endpoints (SEO, header integrations, DB,
+    // hosting/domains) — these previously only called getProject(), which is
+    // the binary "has any access" check above, so a 'viewer' or 'client'
+    // collaborator could inject scripts / edit DB / change domains same as an
+    // owner. Throws the same generic 'Unauthorized' message getProject() uses,
+    // so callers' existing catch-and-404 pattern doesn't need to change.
+    async assertCanEditProject(projectId: string, userId: string): Promise<void> {
+        const role = await this.getUserRole(projectId, userId);
+        if (role === 'viewer' || role === 'client') {
+            throw new Error('Unauthorized access to project');
+        }
+    }
+
     async listProjects(userId: string, limit = 50, offset = 0): Promise<Project[]> {
         // Owned projects
         const { data: owned, error } = await supabase

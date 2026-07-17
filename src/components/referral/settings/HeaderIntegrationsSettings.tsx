@@ -59,9 +59,15 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
     },
   });
 
+  // Only hydrate from the server once — react-query's background refetches
+  // (e.g. refetchOnWindowFocus) would otherwise land mid-edit and stomp
+  // whatever the user just typed with the pre-edit DB row.
+  const hydrated = useRef(false);
   useEffect(() => {
+    if (hydrated.current) return;
     if (row?.setting_value) {
       setData({ ...DEFAULT_DATA, ...(row.setting_value as Partial<HeaderIntegrationsData>) });
+      hydrated.current = true;
     }
   }, [row]);
 
@@ -87,6 +93,9 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
     }
   }, [projectId]);
 
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
   const set = (key: keyof HeaderIntegrationsData) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const next = { ...data, [key]: e.target.value };
     setData(next);
@@ -94,6 +103,28 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => saveToDb(next), 800);
   };
+
+  // Blur (tab to next field, click away, close the settings panel) fires
+  // before most refresh/close paths — flushing here means a debounced edit
+  // isn't still sitting unsaved in the 800ms window when the page reloads.
+  const flushSave = () => {
+    if (autoSaveTimer.current) {
+      clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = null;
+      saveToDb(dataRef.current);
+    }
+  };
+
+  // Covers the hard-refresh/close-tab case blur can't catch (e.g. hitting
+  // Ctrl+R while still focused in the field).
+  useEffect(() => {
+    const handler = () => { if (autoSaveTimer.current) saveToDb(dataRef.current); };
+    window.addEventListener('beforeunload', handler);
+    return () => {
+      window.removeEventListener('beforeunload', handler);
+      if (autoSaveTimer.current) saveToDb(dataRef.current);
+    };
+  }, [saveToDb]);
 
   const handleSync = useCallback(async () => {
     if (!projectId) return;
@@ -175,21 +206,21 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="ga-id" className="text-white/60 text-xs">Google Analytics — Measurement ID</Label>
-            <Input id="ga-id" value={data.ga_measurement_id} onChange={set("ga_measurement_id")}
+            <Input id="ga-id" value={data.ga_measurement_id} onChange={set("ga_measurement_id")} onBlur={flushSave}
               placeholder="G-XXXXXXXXXX"
               className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
           </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="gtm-id" className="text-white/60 text-xs">Google Tag Manager — Container ID</Label>
-            <Input id="gtm-id" value={data.gtm_container_id} onChange={set("gtm_container_id")}
+            <Input id="gtm-id" value={data.gtm_container_id} onChange={set("gtm_container_id")} onBlur={flushSave}
               placeholder="GTM-XXXXXXX"
               className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
           </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="pixel-id" className="text-white/60 text-xs">Meta (Facebook) Pixel ID</Label>
-            <Input id="pixel-id" value={data.meta_pixel_id} onChange={set("meta_pixel_id")}
+            <Input id="pixel-id" value={data.meta_pixel_id} onChange={set("meta_pixel_id")} onBlur={flushSave}
               placeholder="123456789012345"
               className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
           </div>
@@ -208,7 +239,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="wa-number" className="text-white/60 text-xs">WhatsApp Number (with country code)</Label>
-            <Input id="wa-number" value={data.whatsapp_number} onChange={set("whatsapp_number")}
+            <Input id="wa-number" value={data.whatsapp_number} onChange={set("whatsapp_number")} onBlur={flushSave}
               placeholder="15551234567"
               className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
             <p className="text-[11px] text-white/30">Digits only, no + or spaces. Leave blank to hide the button.</p>
@@ -216,7 +247,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
 
           <div className="space-y-1.5">
             <Label htmlFor="wa-message" className="text-white/60 text-xs">Pre-filled Message</Label>
-            <Input id="wa-message" value={data.whatsapp_message} onChange={set("whatsapp_message")}
+            <Input id="wa-message" value={data.whatsapp_message} onChange={set("whatsapp_message")} onBlur={flushSave}
               placeholder="Hi! I have a question."
               className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
           </div>
@@ -235,7 +266,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="head-code" className="text-white/60 text-xs">Head Code</Label>
-            <Textarea id="head-code" value={data.custom_head_code} onChange={set("custom_head_code")} rows={4}
+            <Textarea id="head-code" value={data.custom_head_code} onChange={set("custom_head_code")} onBlur={flushSave} rows={4}
               placeholder="<script>...</script>"
               className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 text-[13px] font-mono resize-none" />
             <p className="text-[11px] text-white/30">Injected just before &lt;/head&gt; on every page</p>
@@ -243,7 +274,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
 
           <div className="space-y-1.5">
             <Label htmlFor="body-code" className="text-white/60 text-xs">Body Code (Footer)</Label>
-            <Textarea id="body-code" value={data.custom_body_code} onChange={set("custom_body_code")} rows={4}
+            <Textarea id="body-code" value={data.custom_body_code} onChange={set("custom_body_code")} onBlur={flushSave} rows={4}
               placeholder="<script>...</script>"
               className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 text-[13px] font-mono resize-none" />
             <p className="text-[11px] text-white/30">Injected just before &lt;/body&gt; on every page</p>

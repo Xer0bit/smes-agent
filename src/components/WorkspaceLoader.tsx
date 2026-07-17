@@ -19,7 +19,6 @@ interface WorkspaceLoaderProps {
   projectName?: string | null;
   fileCount?: number;
   visible: boolean;
-  /** Real loading milestones — drive the step index instead of a fake timer. */
   authResolved?: boolean;
   projectFetched?: boolean;
   filesRestored?: boolean;
@@ -35,8 +34,6 @@ export function WorkspaceLoader({
   filesRestored,
   previewFirstPaint,
 }: WorkspaceLoaderProps) {
-  // Derive the active step index directly from real milestones. Falls back
-  // to a timer only when milestones are not provided (backward compat).
   const milestones = [authResolved, projectFetched, filesRestored, previewFirstPaint, visible === false];
   const useMilestones = milestones.some((m) => m !== undefined);
 
@@ -51,7 +48,6 @@ export function WorkspaceLoader({
   const [timerStep, setTimerStep] = useState(0);
   const [leaving, setLeaving] = useState(false);
 
-  // Fake-progress fallback timer (only when milestones aren't provided)
   useEffect(() => {
     if (useMilestones || !visible) return;
     const id = setInterval(() => {
@@ -62,32 +58,29 @@ export function WorkspaceLoader({
 
   const activeStep = useMilestones ? milestoneStep : timerStep;
 
-  // When workspace finishes loading, jump to final step and fade out
+  // Handles both directions: fade out on hide, and reset so the loader
+  // can be shown again later instead of being permanently unmountable.
   useEffect(() => {
     if (!visible) {
       const t = setTimeout(() => setLeaving(true), 120);
       return () => clearTimeout(t);
     }
+    setLeaving(false);
   }, [visible]);
 
   if (leaving && !visible) return null;
 
-  // Rail fill: line segment covers every *completed* step's midpoint through
-  // the active step's midpoint, so it reads as "progress so far" rather than
-  // stopping short at the last done step.
   const railPercent = STEPS.length > 1 ? (activeStep / (STEPS.length - 1)) * 100 : 0;
 
   return (
     <div
       className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-[hsl(var(--workspace-surface-recessed))] transition-opacity duration-500 ${!visible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
     >
-      {/* Subtle radial background — brand primary/accent, not a generic indigo */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_35%,hsl(var(--primary)/0.07),transparent)]" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_30%_at_50%_85%,hsl(var(--accent)/0.05),transparent)]" />
       </div>
 
-      {/* Grid dot pattern */}
       <div
         className="absolute inset-0 pointer-events-none opacity-[0.018]"
         style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.8) 1px, transparent 1px)', backgroundSize: '28px 28px' }}
@@ -95,11 +88,10 @@ export function WorkspaceLoader({
 
       <div className="relative z-10 flex flex-col items-center w-full max-w-[320px] px-6 gap-9">
 
-        {/* Brand mark */}
+        {/* Brand mark — single static status dot, no ping */}
         <div className="flex flex-col items-center gap-3.5">
           <div className="relative w-12 h-12 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shadow-glow-accent">
             <img src={ecgLogo} alt="eCG" className="w-6 h-6 object-contain" />
-            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[hsl(var(--primary))]/80 animate-ping" />
             <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[hsl(var(--primary))]" />
           </div>
 
@@ -108,12 +100,12 @@ export function WorkspaceLoader({
             {projectName ? (
               <p className="font-['Fraunces'] text-[16px] font-semibold text-white/80 leading-tight truncate max-w-[240px]">{projectName}</p>
             ) : (
-              <div className="h-4 w-28 rounded bg-white/[0.06] animate-pulse mx-auto" />
+              <div className="h-4 w-28 rounded bg-white/[0.06] mx-auto" />
             )}
           </div>
         </div>
 
-        {/* Steps — single connected rail, one progress signal instead of three */}
+        {/* Steps */}
         <div className="relative w-full pl-0.5">
           <div className="absolute left-[5px] top-1.5 bottom-1.5 w-px bg-white/[0.08]" />
           <div
@@ -128,9 +120,9 @@ export function WorkspaceLoader({
 
               return (
                 <div key={step.id} className="relative flex items-center gap-3.5 pl-0.5">
-                  <div className={`relative z-10 shrink-0 w-2.5 h-2.5 rounded-full transition-all duration-300 ${
+                  <div className={`relative z-10 shrink-0 w-2.5 h-2.5 rounded-full transition-colors duration-300 ${
                     done   ? 'bg-[hsl(var(--primary))]' :
-                    active ? 'bg-[hsl(var(--primary))] animate-pulse ring-4 ring-[hsl(var(--primary)/0.15)]' :
+                    active ? 'bg-[hsl(var(--primary))] ring-4 ring-[hsl(var(--primary)/0.15)]' :
                              'bg-white/10'
                   }`}>
                     {done && <Check className="absolute -inset-[3px] w-4 h-4 text-[hsl(var(--workspace-surface-recessed))]" strokeWidth={3} />}

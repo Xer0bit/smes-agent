@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -72,13 +72,18 @@ export const KnowledgeSettings = ({ projectId }: KnowledgeSettingsProps) => {
         },
     });
 
+    // Only hydrate once — a background refetch mid-edit would otherwise wipe
+    // unsaved typing with the pre-edit DB row (isDirty's whole point is to
+    // protect unsaved edits, so this guard is load-bearing, not cosmetic).
+    const hydrated = useRef(false);
     useEffect(() => {
-        if (!loaded) return;
+        if (hydrated.current || !loaded) return;
         const sp = loaded.custom_system_prompt ?? '';
         const cn = loaded.context_notes ?? '';
         setSystemPrompt(sp);
         setContextNotes(cn);
         setOriginal({ systemPrompt: sp, contextNotes: cn });
+        hydrated.current = true;
     }, [loaded]);
 
     // ── Save ──────────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -60,7 +60,13 @@ export function RouteSeoEditor({
     },
   });
 
+  // Only hydrate once per mount (this component remounts on route change via
+  // `key={selected}` in SeoManager, so that's still handled) — a background
+  // refetch landing mid-edit would otherwise overwrite in-progress typing
+  // with the pre-edit DB row before Save is clicked.
+  const hydrated = useRef(false);
   useEffect(() => {
+    if (hydrated.current) return;
     if (existing) {
       setData({
         title: existing.title ?? "",
@@ -74,10 +80,12 @@ export function RouteSeoEditor({
         structured_data_type: existing.structured_data_type ?? "WebSite",
         structured_data: existing.structured_data ?? {},
       });
-    } else {
+      hydrated.current = true;
+    } else if (!isLoading) {
       setData(DEFAULTS);
+      hydrated.current = true;
     }
-  }, [existing]);
+  }, [existing, isLoading]);
 
   const saveMutation = useMutation({
     mutationFn: async (payload: RouteSeoData) => {

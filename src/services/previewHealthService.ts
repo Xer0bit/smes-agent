@@ -237,11 +237,14 @@ export async function updateDockerPreview(projectId: string, files: { path: stri
             // Proxied through the API server (holds PREVIEW_UPDATE_SECRET server-side)
             // instead of calling the preview service directly with a client-bundled
             // secret — see server/src/routes/database.routes.ts's /preview-update.
-            const { getGenServerUrl } = await import('@/config/external-api');
+            // /api/v1/database/* only runs on the API server (VPS1, SERVICE_ROLE=api) —
+            // NOT the gen server (VPS3, SERVICE_ROLE=gen only mounts /api/v1/ai). Using
+            // getGenServerUrl here 404'd in production.
+            const { getApiServerUrl } = await import('@/config/external-api');
             const { lovableCloud } = await import('@/integrations/supabase/client');
             const { data: { session } } = await lovableCloud.auth.getSession();
 
-            const response = await fetch(getGenServerUrl(`/api/v1/database/preview-update?project_id=${encodeURIComponent(projectId)}`), {
+            const response = await fetch(getApiServerUrl(`/api/v1/database/preview-update?project_id=${encodeURIComponent(projectId)}`), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

@@ -3156,6 +3156,41 @@ async function startMainServer() {
         return out;
     }
 
+    // Site-wide favicon + Google verification (project_settings.setting_key='seo').
+    // Previously these only got baked into index.html when the user clicked
+    // "Sync to Site" in the SEO panel (server/src/routes/seo.routes.ts's /sync,
+    // which ALSO tries to redeploy immediately) — a normal Publish never picked
+    // them up on its own, unlike per-route SEO above which is always read fresh
+    // here at export time. Applying them the same way closes that gap.
+    async function fetchSiteSeoSettings(projectId) {
+        if (!SUPABASE_SERVICE_KEY) return null;
+        try {
+            const url = `${SUPABASE_REST_URL}/rest/v1/project_settings?project_id=eq.${encodeURIComponent(projectId)}&setting_key=eq.seo&select=setting_value`;
+            const r = await fetch(url, { headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` } });
+            if (!r.ok) return null;
+            const rows = await r.json();
+            return rows[0]?.setting_value || null;
+        } catch {
+            return null;
+        }
+    }
+
+    function injectSiteWideSeo(html, siteSeo) {
+        if (!siteSeo) return html;
+        let out = html;
+        if (siteSeo.favicon) {
+            out = /<link[^>]+rel=["']icon["'][^>]*>/i.test(out)
+                ? out.replace(/<link[^>]+rel=["']icon["'][^>]*>/i, `<link rel="icon" href="${siteSeo.favicon}">`)
+                : out.replace('</head>', `  <link rel="icon" href="${siteSeo.favicon}">\n</head>`);
+        }
+        if (siteSeo.google_verification) {
+            const re = /<meta\s[^>]*name=["']google-site-verification["'][^>]*>/i;
+            const tag = `<meta name="google-site-verification" content="${siteSeo.google_verification}">`;
+            out = re.test(out) ? out.replace(re, tag) : out.replace('</head>', `  ${tag}\n</head>`);
+        }
+        return out;
+    }
+
     async function fetchRouteSeoOverrides(projectId) {
         if (!SUPABASE_SERVICE_KEY) return [];
         try {
@@ -3295,8 +3330,18 @@ async function startMainServer() {
             readBuildDir(buildDir, '');
             fs.rmSync(buildDir, { recursive: true, force: true });
 
-            const builtIndexHtml = files.find(f => f.path === 'index.html')?.content;
+            let builtIndexHtml = files.find(f => f.path === 'index.html')?.content;
             if (builtIndexHtml) {
+                try {
+                    const siteSeo = await fetchSiteSeoSettings(projectId);
+                    if (siteSeo) {
+                        builtIndexHtml = injectSiteWideSeo(builtIndexHtml, siteSeo);
+                        const idx = files.findIndex(f => f.path === 'index.html');
+                        if (idx >= 0) files[idx] = { path: 'index.html', content: builtIndexHtml };
+                    }
+                } catch (seoErr) {
+                    console.warn(`[Export] ${projectId} — site-wide SEO (favicon/verification) failed (non-fatal):`, seoErr.message);
+                }
                 try {
                     await appendRouteSeoFiles(files, projectId, builtIndexHtml);
                 } catch (seoErr) {

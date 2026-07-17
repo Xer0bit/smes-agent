@@ -21,6 +21,7 @@ import { KnowledgeSettings } from "./KnowledgeSettings";
 import { SecretsSettings } from "./SecretsSettings";
 import { StripeSettingsContent } from "./StripeSettingsContent";
 import { ZapierSettingsContent } from "./ZapierSettingsContent";
+import { SeoSettingsPanel } from "@/components/seo/SeoSettingsPanel";
 import { Globe, Smartphone, CreditCard, ExternalLink } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -222,6 +223,9 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
       case "workspace-referrals":
         return <ReferralContent />;
         
+      case "project-seo":
+        return <SeoSettingsPanel projectId={projectId} />;
+
       case "project-integrations":
         return <HeaderIntegrationsSettings projectId={projectId} />;
 
@@ -555,6 +559,12 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
         );
     }
   };
+
+  // SEO panel owns its own two-pane layout + independent scroll regions —
+  // wrapping it in the standard p-6/ScrollArea shell would break that layout.
+  if (activeSection === "project-seo") {
+    return <div className="h-full w-full">{renderContent()}</div>;
+  }
 
   return (
     <ScrollArea className="h-full w-full">

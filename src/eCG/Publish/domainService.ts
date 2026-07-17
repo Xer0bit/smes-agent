@@ -32,8 +32,10 @@ async function apiAuthHeaders(): Promise<HeadersInit> {
 }
 
 async function hostingProxyUrl(path: string): Promise<string> {
-  const { getGenServerUrl } = await import('@/config/external-api');
-  return getGenServerUrl(`/api/v1/hosting${path}`);
+  // /api/v1/hosting only runs on the API server (VPS1, SERVICE_ROLE=api) — NOT
+  // the gen server (VPS3, SERVICE_ROLE=gen only mounts /api/v1/ai).
+  const { getApiServerUrl } = await import('@/config/external-api');
+  return getApiServerUrl(`/api/v1/hosting${path}`);
 }
 
 // Hosting node IP is fetched dynamically from the hosting-service /config endpoint.

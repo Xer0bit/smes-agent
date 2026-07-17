@@ -74,12 +74,14 @@ function buildSitemapXml(projectUrl: string): string {
 router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
   try {
-    // 1. Verify user has access to this project (owner, org admin, or explicit member)
+    // 1. Verify user can actually edit this project (not just view it) — this
+    // writes favicon/verification into the published site.
     let project: any;
     try {
+      await projectService.assertCanEditProject(projectId, req.user!.id);
       project = await projectService.getProject(projectId, req.user!.id);
     } catch (projErr) {
-      logger.warn('[SEO sync] getProject failed', { projectId, userId: req.user!.id, error: (projErr as Error).message });
+      logger.warn('[SEO sync] access check failed', { projectId, userId: req.user!.id, error: (projErr as Error).message });
       res.status(404).json({ error: 'Project not found or access denied.' });
       return;
     }
@@ -208,6 +210,19 @@ async function requireProjectAccess(req: AuthenticatedRequest, res: Response, pr
   }
 }
 
+// Write variant — viewer/client collaborators can see SEO settings but must
+// not be able to change them (they affect the published site).
+async function requireProjectEditAccess(req: AuthenticatedRequest, res: Response, projectId: string): Promise<boolean> {
+  try {
+    await projectService.assertCanEditProject(projectId, req.user!.id);
+    return true;
+  } catch (err) {
+    logger.warn('[SEO routes] edit access check failed', { projectId, userId: req.user!.id, error: (err as Error).message });
+    res.status(404).json({ error: 'Project not found or access denied.' });
+    return false;
+  }
+}
+
 // GET /api/v1/seo/:projectId/routes — list all per-route SEO overrides
 router.get('/:projectId/routes', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
@@ -224,7 +239,7 @@ router.get('/:projectId/routes', async (req: AuthenticatedRequest, res: Response
 // PUT /api/v1/seo/:projectId/routes — upsert one route's SEO (keyed by route_path)
 router.put('/:projectId/routes', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
-  if (!(await requireProjectAccess(req, res, projectId))) return;
+  if (!(await requireProjectEditAccess(req, res, projectId))) return;
   const { route_path } = req.body ?? {};
   if (!route_path || typeof route_path !== 'string') {
     res.status(400).json({ error: 'route_path is required.' });
@@ -249,7 +264,7 @@ router.put('/:projectId/routes', async (req: AuthenticatedRequest, res: Response
 // DELETE /api/v1/seo/:projectId/routes/:routeId
 router.delete('/:projectId/routes/:routeId', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId, routeId } = req.params;
-  if (!(await requireProjectAccess(req, res, projectId))) return;
+  if (!(await requireProjectEditAccess(req, res, projectId))) return;
   const { error } = await supabase
     .from('project_seo_routes')
     .delete()
@@ -275,7 +290,7 @@ router.get('/:projectId/redirects', async (req: AuthenticatedRequest, res: Respo
 // POST /api/v1/seo/:projectId/redirects — create a redirect rule
 router.post('/:projectId/redirects', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
-  if (!(await requireProjectAccess(req, res, projectId))) return;
+  if (!(await requireProjectEditAccess(req, res, projectId))) return;
   const { from_path, to_path, status_code } = req.body ?? {};
   if (!from_path || typeof from_path !== 'string' || !to_path || typeof to_path !== 'string') {
     res.status(400).json({ error: 'from_path and to_path are required.' });
@@ -299,7 +314,7 @@ router.post('/:projectId/redirects', async (req: AuthenticatedRequest, res: Resp
 // PUT /api/v1/seo/:projectId/redirects/:redirectId — update a redirect rule
 router.put('/:projectId/redirects/:redirectId', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId, redirectId } = req.params;
-  if (!(await requireProjectAccess(req, res, projectId))) return;
+  if (!(await requireProjectEditAccess(req, res, projectId))) return;
   const { from_path, to_path, status_code } = req.body ?? {};
   const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (typeof from_path === 'string') payload.from_path = from_path;
@@ -320,7 +335,7 @@ router.put('/:projectId/redirects/:redirectId', async (req: AuthenticatedRequest
 // DELETE /api/v1/seo/:projectId/redirects/:redirectId
 router.delete('/:projectId/redirects/:redirectId', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId, redirectId } = req.params;
-  if (!(await requireProjectAccess(req, res, projectId))) return;
+  if (!(await requireProjectEditAccess(req, res, projectId))) return;
   const { error } = await supabase
     .from('project_redirects')
     .delete()

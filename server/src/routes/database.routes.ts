@@ -55,10 +55,38 @@ async function requirePaidPlan(req: AuthenticatedRequest, res: Response, organiz
   return true;
 }
 
+// getStatus()/getCredentials()/etc below filter purely by project_id and never
+// verify the caller owns it — any authenticated user who knows/guesses another
+// project's ID could read or act on that project's hosted database. These two
+// helpers close that gap; read ops accept any accepted role (owner down to
+// viewer/client), write/destructive/export ops require editor+.
+async function requireProjectView(req: AuthenticatedRequest, res: Response, projectId?: string): Promise<boolean> {
+  if (!projectId) return true; // legacy no-projectId path is scoped to the caller's own user_id already
+  try {
+    await projectService.getProject(projectId, req.user!.id);
+    return true;
+  } catch {
+    res.status(404).json({ error: 'Project not found or access denied.' });
+    return false;
+  }
+}
+async function requireProjectEdit(req: AuthenticatedRequest, res: Response, projectId?: string): Promise<boolean> {
+  if (!projectId) return true;
+  try {
+    await projectService.assertCanEditProject(projectId, req.user!.id);
+    return true;
+  } catch {
+    res.status(404).json({ error: 'Project not found or access denied.' });
+    return false;
+  }
+}
+
 // ── GET /api/v1/database/status ──────────────────────────────────────────────
 router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const record = await databaseService.getStatus(req.user!.id, getProjectId(req));
+    const projectId = getProjectId(req);
+    if (!(await requireProjectView(req, res, projectId))) return;
+    const record = await databaseService.getStatus(req.user!.id, projectId);
     res.json({ database: record });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -70,8 +98,10 @@ router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
 // downgraded users cannot keep retrieving live JWT keys.
 router.get('/credentials', async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const projectId = getProjectId(req);
+    if (!(await requireProjectView(req, res, projectId))) return;
     if (!(await requirePaidPlan(req, res))) return;
-    const creds = await databaseService.getCredentials(req.user!.id, getProjectId(req));
+    const creds = await databaseService.getCredentials(req.user!.id, projectId);
     if (!creds) { res.status(404).json({ error: 'No active database' }); return; }
     res.json(creds);
   } catch (err) {
@@ -91,6 +121,7 @@ router.post('/sync-secrets', async (req: AuthenticatedRequest, res: Response) =>
   try {
     const projectId = getProjectId(req);
     if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
+    if (!(await requireProjectEdit(req, res, projectId))) return;
 
     // buildProjectEnvSecrets is the single source of truth (see database.service.ts) —
     // it upserts auth + DB/functions rows as a side effect and returns the full merged
@@ -132,12 +163,7 @@ router.post('/preview-update', async (req: AuthenticatedRequest, res: Response) 
     if (!Array.isArray(files)) { res.status(400).json({ error: 'files array is required.' }); return; }
     const fullSync = req.body?.fullSync !== false;
 
-    try {
-      await projectService.getProject(projectId, req.user!.id);
-    } catch {
-      res.status(404).json({ error: 'Project not found or access denied.' });
-      return;
-    }
+    if (!(await requireProjectEdit(req, res, projectId))) return;
 
     const previewBase = (process.env.PREVIEW_SERVICE_URL || process.env.VITE_PREVIEW_SERVICE_URL || 'http://localhost:3001').replace(/\/$/, '');
     const previewRes = await fetch(`${previewBase}/preview/${projectId}/update`, {
@@ -167,6 +193,7 @@ router.post('/provision', dbProvisionLimiter, async (req: AuthenticatedRequest, 
   try {
     const { organization_id } = req.body;
     const projectId = getProjectId(req);
+    if (!(await requireProjectEdit(req, res, projectId))) return;
     if (!(await requirePaidPlan(req, res, organization_id))) return;
     const record = await databaseService.provision(req.user!.id, organization_id || null, projectId);
     const creds  = await databaseService.getCredentials(req.user!.id, projectId);
@@ -183,7 +210,9 @@ router.post('/provision', dbProvisionLimiter, async (req: AuthenticatedRequest, 
 // No plan gate: if you own the database you can always delete it.
 router.delete('/deprovision', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    await databaseService.deprovision(req.user!.id, getProjectId(req));
+    const projectId = getProjectId(req);
+    if (!(await requireProjectEdit(req, res, projectId))) return;
+    await databaseService.deprovision(req.user!.id, projectId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -193,8 +222,10 @@ router.delete('/deprovision', async (req: AuthenticatedRequest, res: Response) =
 // ── GET /api/v1/database/ping ───────────────────────────────────────────────
 router.get('/ping', async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const projectId = getProjectId(req);
+    if (!(await requireProjectView(req, res, projectId))) return;
     if (!(await requirePaidPlan(req, res))) return;
-    const result = await databaseService.testConnection(req.user!.id, getProjectId(req));
+    const result = await databaseService.testConnection(req.user!.id, projectId);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -203,10 +234,13 @@ router.get('/ping', async (req: AuthenticatedRequest, res: Response) => {
 
 // ── GET /api/v1/database/dump ───────────────────────────────────────────────
 // Returns a downloadable .sql dump (schema + data) of the tenant's schema.
+// Full data export — editor+ only, same bar as /query with role=service.
 router.get('/dump', async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const projectId = getProjectId(req);
+    if (!(await requireProjectEdit(req, res, projectId))) return;
     if (!(await requirePaidPlan(req, res))) return;
-    const { sql, schema, truncated } = await databaseService.dumpDatabase(req.user!.id, getProjectId(req));
+    const { sql, schema, truncated } = await databaseService.dumpDatabase(req.user!.id, projectId);
     res.setHeader('Content-Type', 'application/sql');
     res.setHeader('Content-Disposition', `attachment; filename="${schema}-dump-${Date.now()}.sql"`);
     if (truncated) res.setHeader('X-Dump-Truncated', 'true');
@@ -219,8 +253,10 @@ router.get('/dump', async (req: AuthenticatedRequest, res: Response) => {
 // ── GET /api/v1/database/tables ──────────────────────────────────────────────
 router.get('/tables', async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const projectId = getProjectId(req);
+    if (!(await requireProjectView(req, res, projectId))) return;
     if (!(await requirePaidPlan(req, res))) return;
-    const tables = await databaseService.listTables(req.user!.id, getProjectId(req));
+    const tables = await databaseService.listTables(req.user!.id, projectId);
     res.json({ tables });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -230,10 +266,12 @@ router.get('/tables', async (req: AuthenticatedRequest, res: Response) => {
 // ── GET /api/v1/database/tables/:table/rows ──────────────────────────────────
 router.get('/tables/:table/rows', async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const projectId = getProjectId(req);
+    if (!(await requireProjectView(req, res, projectId))) return;
     if (!(await requirePaidPlan(req, res))) return;
     const limit  = Math.min(parseInt(req.query.limit as string || '50', 10), 200);
     const offset = parseInt(req.query.offset as string || '0', 10);
-    const result = await databaseService.queryTable(req.user!.id, req.params.table, limit, offset, getProjectId(req));
+    const result = await databaseService.queryTable(req.user!.id, req.params.table, limit, offset, projectId);
     res.json(result);
   } catch (err) {
     const msg = (err as Error).message;
@@ -242,16 +280,23 @@ router.get('/tables/:table/rows', async (req: AuthenticatedRequest, res: Respons
 });
 
 // ── POST /api/v1/database/query ──────────────────────────────────────────────
-// role=anon (default) → SELECT only; role=service → full access (agent uses this)
+// role=anon (default) → SELECT only, viewer+; role=service → full access
+// (bypasses RLS, agent uses this) → editor+ only.
 router.post('/query', dbQueryLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { sql, role } = req.body as { sql: string; role?: 'anon' | 'service' };
     if (!sql?.trim()) { res.status(400).json({ error: 'sql required' }); return; }
 
+    const projectId = getProjectId(req);
+    const accessOk = role === 'service'
+      ? await requireProjectEdit(req, res, projectId)
+      : await requireProjectView(req, res, projectId);
+    if (!accessOk) return;
+
     // Both roles require a paid plan (anon could otherwise be used by downgraded users)
     if (!(await requirePaidPlan(req, res))) return;
 
-    const result = await databaseService.runQuery(req.user!.id, sql, role || 'anon', getProjectId(req));
+    const result = await databaseService.runQuery(req.user!.id, sql, role || 'anon', projectId);
     res.json(result);
   } catch (err) {
     const msg = (err as Error).message;

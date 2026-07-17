@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -56,10 +56,14 @@ export const ZapierSettingsContent = ({ projectId }: ZapierSettingsContentProps)
     },
   });
 
+  // Only hydrate once — a background refetch mid-type would otherwise blank
+  // a secret the user is still typing back to "".
+  const hydrated = useRef(false);
   useEffect(() => {
-    if (!previewRows) return;
+    if (hydrated.current || !previewRows) return;
     const previews = new Map(previewRows.map(r => [r.key_name, r.key_preview]));
     setFields(FIELD_DEFS.map(f => ({ ...f, preview: previews.get(f.keyName) ?? null, value: "" })));
+    hydrated.current = true;
   }, [previewRows]);
 
   const setValue = (keyName: string, value: string) => {

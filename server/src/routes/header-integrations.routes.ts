@@ -108,15 +108,15 @@ export function applyHeaderIntegrationsToHtml(html: string, data: HeaderIntegrat
 router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
   try {
-    let project: any;
     try {
-      project = await projectService.getProject(projectId, req.user!.id);
+      // Injects arbitrary <script> into the published site — viewer/client
+      // collaborators must not be able to do this, only owner/admin/editor.
+      await projectService.assertCanEditProject(projectId, req.user!.id);
     } catch (projErr) {
-      logger.warn('[HeaderIntegrations sync] getProject failed', { projectId, userId: req.user!.id, error: (projErr as Error).message });
+      logger.warn('[HeaderIntegrations sync] access check failed', { projectId, userId: req.user!.id, error: (projErr as Error).message });
       res.status(404).json({ error: 'Project not found or access denied.' });
       return;
     }
-    void project;
 
     const { data: setting } = await supabase
       .from('project_settings')
