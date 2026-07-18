@@ -18,7 +18,6 @@ UPDATE edge_function_logs l SET project_id = ef.project_id
 FROM edge_functions ef
 WHERE l.project_id IS NULL AND l.function_id = ef.id;
 
-DROP INDEX IF EXISTS edge_functions_user_id_name_key;
 ALTER TABLE edge_functions DROP CONSTRAINT IF EXISTS edge_functions_user_id_name_key;
 CREATE UNIQUE INDEX IF NOT EXISTS edge_functions_project_id_name_key
   ON edge_functions (project_id, name) WHERE project_id IS NOT NULL;

@@ -1,5 +1,4 @@
 const express = require('express');
-const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
@@ -2767,7 +2766,7 @@ async function startMainServer() {
 
     app.use(cors(corsOptions));
     app.options(/.*/, cors(corsOptions));
-    app.use(bodyParser.json({ limit: '50mb' }));
+    app.use(express.json({ limit: '50mb' }));
 
     // Runtime Control API (local migration mode)
     app.post('/control/runtime/:projectId/start', cors(corsOptions), async (req, res) => {
@@ -2908,7 +2907,7 @@ async function startMainServer() {
         });
     });
 
-    // Catch JSON parse errors from body-parser
+    // Catch JSON parse errors from express.json()
     app.use((err, req, res, next) => {
         if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
             console.error(`[Server] JSON Parse Error: ${err.message}`);

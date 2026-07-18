@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import path from 'node:path';
+import fs from 'node:fs';
 import type { RunStateLedger } from '../services/runStateLedger.js';
 
 // ─── AgentContext ────────────────────────────────────────────────────────────
@@ -105,4 +106,29 @@ export function escapeXmlContent(value: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+// ─── File read helper ────────────────────────────────────────────────────────
+
+export interface ReadProjectFileResult {
+  content: string;
+  totalLines: number;
+}
+
+/**
+ * Resolves, exists-checks, reads, and ledger-records a project file.
+ * Shared by read_file and read_files so both stay in sync on this logic.
+ */
+export function readProjectFile(
+  ctx: AgentContext,
+  relPath: string
+): ReadProjectFileResult | { error: string } {
+  const fullPath = safeJoin(ctx.appPath, relPath);
+  if (!fs.existsSync(fullPath)) {
+    return { error: `File does not exist: ${relPath}` };
+  }
+  const content = fs.readFileSync(fullPath, 'utf8');
+  const totalLines = content.split('\n').length;
+  ctx.ledger?.recordRead(relPath, totalLines);
+  return { content, totalLines };
 }

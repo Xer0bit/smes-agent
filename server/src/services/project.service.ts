@@ -1,4 +1,4 @@
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { syncPlatformAuthSecrets } from './database.service.js';
@@ -25,7 +25,7 @@ export interface CreateProjectParams {
 
 export class ProjectService {
     async createProject(userId: string, params: CreateProjectParams): Promise<Project> {
-        const projectId = uuidv4();
+        const projectId = randomUUID();
         const dirName = `user_${userId.substring(0, 8)}_project_${projectId.substring(0, 8)}`;
         const dockerPath = `/projects/${dirName}`;
         const serverPath = `/var/ecomgear/projects/${dirName}`;

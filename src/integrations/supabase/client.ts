@@ -50,33 +50,3 @@ export const SUPABASE_URL = supabaseUrl;
 export const SUPABASE_ANON_KEY = supabaseAnonKey;
 export const LOVABLE_CLOUD_URL = supabaseUrl;
 
-// ─── eCG Auth token helpers ─────────────────────────────────────────────
-// These manage the eCG Auth access/refresh tokens in localStorage alongside
-// the existing Supabase session.  They are used by the login/signup flows
-// that go through the eCG Auth backend routes.
-
-const ECG_AUTH_STORAGE_KEY = 'ecg-auth-tokens';
-
-export interface EcgAuthTokens {
-  accessToken: string;
-  refreshToken: string;
-}
-
-export function getEcgAuthTokens(): EcgAuthTokens | null {
-  try {
-    const raw = localStorage.getItem(ECG_AUTH_STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as EcgAuthTokens;
-  } catch {
-    return null;
-  }
-}
-
-export function setEcgAuthTokens(accessToken: string, refreshToken: string): void {
-  localStorage.setItem(ECG_AUTH_STORAGE_KEY, JSON.stringify({ accessToken, refreshToken }));
-}
-
-export function clearEcgAuthTokens(): void {
-  localStorage.removeItem(ECG_AUTH_STORAGE_KEY);
-}
-

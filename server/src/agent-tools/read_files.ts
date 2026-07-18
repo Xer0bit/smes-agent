@@ -3,9 +3,8 @@
  * Collapses N sequential read_file calls into a single step,
  * saving N-1 agent steps on multi-file exploration.
  */
-import fs from 'node:fs';
 import { z } from 'zod';
-import { ToolDefinition, AgentContext, safeJoin } from './types.js';
+import { ToolDefinition, AgentContext, readProjectFile } from './types.js';
 
 const schema = z.object({
   paths: z
@@ -30,16 +29,13 @@ export const readFilesTool: ToolDefinition<z.infer<typeof schema>> = {
 
     for (const relPath of args.paths) {
       try {
-        const fullPath = safeJoin(ctx.appPath, relPath);
-        if (!fs.existsSync(fullPath)) {
+        const fileResult = readProjectFile(ctx, relPath);
+        if ('error' in fileResult) {
           results.push(`=== ${relPath} ===\nError: File does not exist`);
           continue;
         }
-        const content = fs.readFileSync(fullPath, 'utf8');
-        const lines = content.split('\n').length;
-        ctx.ledger?.recordRead(relPath, lines);
         if (ctx.readFiles) ctx.readFiles.add(relPath);
-        results.push(`=== ${relPath} ===\n${content}`);
+        results.push(`=== ${relPath} ===\n${fileResult.content}`);
       } catch (err: unknown) {
         results.push(`=== ${relPath} ===\nError: ${err instanceof Error ? err.message : String(err)}`);
       }

@@ -21,7 +21,6 @@ export const EXTERNAL_API_CONFIG = {
     debugSandbox: '/debug-sandbox',
     signupComplete: '/signup-complete',
     agentWithTools: '/agent-with-tools',
-    sendOrgInvitation: '/send-org-invitation',
 
     // NEW: API edge functions (replacing Express backend)
     apiProjects: '/api-projects',

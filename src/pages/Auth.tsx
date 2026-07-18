@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/integrations/supabase/client';
-import { setEcgAuthTokens, clearEcgAuthTokens } from '@/integrations/supabase/client';
 import { getApiServerUrl } from '@/config/external-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -166,19 +165,19 @@ export default function Auth() {
         return;
       }
 
-      // Store eCG Auth tokens if present
-      if (data.accessToken && data.refreshToken) {
-        setEcgAuthTokens(data.accessToken, data.refreshToken);
-      }
-
-      // Also store as Supabase session for compatibility with existing code
-      // that reads from supabase.auth.getSession()
       if (data.accessToken) {
-        // The token is an eCG Auth token, not a Supabase JWT, so we set a
-        // custom localStorage entry that the session check can use
         localStorage.setItem('ecg-auth-access-token', data.accessToken);
         localStorage.setItem('ecg-auth-user-id', data.user.id);
         localStorage.setItem('ecg-auth-user-email', data.user.email);
+
+        // The eCG Auth tokens ARE real Supabase-issued tokens, but supabase-js
+        // doesn't know about them until we hand them over explicitly —
+        // RequireAuth (and everything else gating on supabase.auth.getSession())
+        // stays "unauthenticated" without this, bouncing straight back to /auth.
+        await supabase.auth.setSession({
+          access_token: data.accessToken,
+          refresh_token: data.refreshToken,
+        });
       }
 
       toast({
@@ -266,10 +265,13 @@ export default function Auth() {
 
       if (data.accessToken && data.refreshToken) {
         // Auto-login successful — store tokens
-        setEcgAuthTokens(data.accessToken, data.refreshToken);
         localStorage.setItem('ecg-auth-access-token', data.accessToken);
         localStorage.setItem('ecg-auth-user-id', data.user.id);
         localStorage.setItem('ecg-auth-user-email', data.user.email);
+        await supabase.auth.setSession({
+          access_token: data.accessToken,
+          refresh_token: data.refreshToken,
+        });
 
         // Send welcome email (fire-and-forget)
         supabase.functions.invoke('welcome', {
@@ -356,10 +358,13 @@ export default function Auth() {
       }
 
       // 2FA succeeded — store tokens and navigate
-      setEcgAuthTokens(data.accessToken, data.refreshToken);
       localStorage.setItem('ecg-auth-access-token', data.accessToken);
       localStorage.setItem('ecg-auth-user-id', data.user.id);
       localStorage.setItem('ecg-auth-user-email', data.user.email);
+      await supabase.auth.setSession({
+        access_token: data.accessToken,
+        refresh_token: data.refreshToken,
+      });
       setPending2faToken(null);
       setTwoFaCode('');
 

@@ -178,6 +178,66 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 });
 
+// ─── Shared workspace provisioning (profile + org + first project) ─────────
+// Same provisioning logic regardless of whether userId came from eCG Auth
+// or from a legacy Supabase signUp — both need a profile/org/project.
+
+async function provisionWorkspace(
+  userId: string,
+  email: string,
+  fullName: string,
+  organizationName: string,
+  projectName: string,
+  ecgAuthUserId?: string
+): Promise<{ ok: true; projectId: string } | { ok: false; error: string }> {
+  const { error: profileError } = await supabase
+    .from('profiles')
+    .upsert({
+      id: userId,
+      email,
+      full_name: fullName,
+      ...(ecgAuthUserId ? { ecg_auth_user_id: ecgAuthUserId } : {}),
+    }, { onConflict: 'email' });
+
+  if (profileError) {
+    logger.error('Failed to create profile during registration', { email, error: profileError.message });
+    // Don't fail the registration — the account exists, workspace can be created later
+  }
+
+  const slugBase = organizationName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const slug = `${slugBase || 'workspace'}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const { data: org, error: orgError } = await supabase
+    .from('organizations')
+    .insert({ name: organizationName, slug, created_by: userId })
+    .select('id')
+    .single();
+
+  if (orgError || !org?.id) {
+    logger.error('Failed to create organization during registration', { email, error: orgError?.message });
+    return { ok: false, error: 'Account created but workspace setup failed. Please contact support.' };
+  }
+
+  try {
+    await supabase.from('org_members').insert({ org_id: org.id, user_id: userId, role: 'admin' });
+  } catch (err: any) {
+    logger.warn('Failed to add org member', { error: err?.message });
+  }
+
+  const { data: project, error: projectError } = await supabase
+    .from('projects')
+    .insert({ name: projectName, user_id: userId, created_by: userId, organization_id: org.id })
+    .select('id')
+    .single();
+
+  if (projectError || !project?.id) {
+    logger.error('Failed to create project during registration', { email, error: projectError?.message });
+    return { ok: false, error: 'Account created but project setup failed. Please contact support.' };
+  }
+
+  return { ok: true, projectId: project.id };
+}
+
 // ─── POST /register ───────────────────────────────────────────────────────────
 
 router.post('/register', async (req: Request, res: Response) => {
@@ -192,112 +252,93 @@ router.post('/register', async (req: Request, res: Response) => {
     const firstName = nameParts[0] || '';
     const lastName = nameParts.slice(1).join(' ');
 
-    // ── Register on eCG Auth ────────────────────────────────────────────
-    if (!isEcgAuthConfigured()) {
-      res.status(500).json({ error: 'Authentication service not configured' });
-      return;
-    }
+    // ── Try eCG Auth ─────────────────────────────────────────────────────
+    if (isEcgAuthConfigured()) {
+      const regResult = await ecgRegister(email, password, firstName, lastName);
 
-    const regResult = await ecgRegister(email, password, firstName, lastName);
+      if (regResult.ok) {
+        const ecgUserId = regResult.data!.user.id;
+        const provisioned = await provisionWorkspace(ecgUserId, email, fullName, organizationName, projectName, ecgUserId);
+        if (!provisioned.ok) {
+          res.status(500).json({ error: provisioned.error });
+          return;
+        }
 
-    if (!regResult.ok) {
+        // Login to eCG Auth to get tokens
+        const loginResult = await ecgLogin(email, password);
+        if (!loginResult.ok || !loginResult.data || 'requires2fa' in loginResult.data) {
+          // Registration succeeded but auto-login failed — user can log in manually
+          res.status(201).json({
+            message: 'Account created successfully. Please log in.',
+            projectId: provisioned.projectId,
+          });
+          return;
+        }
+
+        const loginData = loginResult.data as { accessToken: string; refreshToken: string; user: { id: string; email: string } };
+        res.status(201).json({
+          accessToken: loginData.accessToken,
+          refreshToken: loginData.refreshToken,
+          user: { id: loginData.user.id, email: loginData.user.email, fullName },
+          projectId: provisioned.projectId,
+        });
+        return;
+      }
+
       if (regResult.code === 'AR-0006') {
         // Email already registered on eCG Auth
         res.status(409).json({ error: 'An account with this email already exists. Please log in instead.' });
         return;
       }
-      res.status(regResult.status || 400).json({ error: regResult.error || 'Registration failed' });
+      if (regResult.status && regResult.status !== 0) {
+        // Real eCG Auth error (not just unreachable) — surface it, don't fall back
+        res.status(regResult.status).json({ error: regResult.error || 'Registration failed' });
+        return;
+      }
+      // Network error (status 0) — fall through to legacy
+      logger.warn('eCG Auth unreachable during registration, falling back to legacy', { email });
+    }
+
+    // ── Legacy: Supabase Auth ────────────────────────────────────────────
+    const { data, error } = await supabaseAuth.auth.signUp({
+      email,
+      password,
+      options: { data: { full_name: fullName } },
+    });
+
+    if (error) {
+      const status = /already registered|already exists/i.test(error.message) ? 409 : 400;
+      res.status(status).json({ error: error.message });
       return;
     }
 
-    const ecgUser = regResult.data!.user;
-    const ecgUserId = ecgUser.id;
-
-    // ── Provision workspace (profile + org + project) ──────────────────
-    // We create a Supabase user entry and profile linked to the eCG Auth user.
-    // The Supabase user is created via admin API so we get a real auth.users row
-    // for RLS compatibility, but the actual auth is eCG Auth.
-
-    // Create profile with ecg_auth_user_id
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert({
-        id: ecgUserId,
-        email,
-        full_name: fullName,
-        ecg_auth_user_id: ecgUserId,
-      }, { onConflict: 'email' });
-
-    if (profileError) {
-      logger.error('Failed to create profile during eCG registration', { email, error: profileError.message });
-      // Don't fail the registration — the eCG Auth account exists, workspace can be created later
-    }
-
-    // Create organization
-    const slugBase = organizationName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
-    const slug = `${slugBase || 'workspace'}-${Math.random().toString(36).slice(2, 8)}`;
-
-    const { data: org, error: orgError } = await supabase
-      .from('organizations')
-      .insert({ name: organizationName, slug, created_by: ecgUserId })
-      .select('id')
-      .single();
-
-    if (orgError || !org?.id) {
-      logger.error('Failed to create organization during eCG registration', { email, error: orgError?.message });
-      res.status(500).json({ error: 'Account created but workspace setup failed. Please contact support.' });
+    if (!data.user) {
+      res.status(500).json({ error: 'Registration failed' });
       return;
     }
 
-    // Add user as org admin
-    try {
-      await supabase
-        .from('org_members')
-        .insert({ org_id: org.id, user_id: ecgUserId, role: 'admin' });
-    } catch (err: any) {
-      logger.warn('Failed to add org member', { error: err?.message });
-    }
-
-    // Create first project
-    const { data: project, error: projectError } = await supabase
-      .from('projects')
-      .insert({
-        name: projectName,
-        user_id: ecgUserId,
-        created_by: ecgUserId,
-        organization_id: org.id,
-      })
-      .select('id')
-      .single();
-
-    if (projectError || !project?.id) {
-      logger.error('Failed to create project during eCG registration', { email, error: projectError?.message });
-      res.status(500).json({ error: 'Account created but project setup failed. Please contact support.' });
+    const userId = data.user.id;
+    const provisioned = await provisionWorkspace(userId, email, fullName, organizationName, projectName);
+    if (!provisioned.ok) {
+      res.status(500).json({ error: provisioned.error });
       return;
     }
 
-    // Login to eCG Auth to get tokens
-    const loginResult = await ecgLogin(email, password);
-    if (!loginResult.ok || !loginResult.data || 'requires2fa' in loginResult.data) {
-      // Registration succeeded but auto-login failed — user can log in manually
+    if (!data.session) {
+      // Email confirmation required by this Supabase project — no session yet
       res.status(201).json({
-        message: 'Account created successfully. Please log in.',
-        projectId: project.id,
+        message: 'Account created. Please check your email to confirm, then log in.',
+        projectId: provisioned.projectId,
       });
       return;
     }
 
-    const loginData = loginResult.data as { accessToken: string; refreshToken: string; user: { id: string; email: string } };
-
     res.status(201).json({
-      accessToken: loginData.accessToken,
-      refreshToken: loginData.refreshToken,
-      user: {
-        id: loginData.user.id,
-        email: loginData.user.email,
-        fullName,
-      },
-      projectId: project.id,
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+      user: { id: userId, email: data.user.email || '', fullName },
+      projectId: provisioned.projectId,
+      migrated: true,
     });
   } catch (error) {
     logger.error('eCG register error:', error);

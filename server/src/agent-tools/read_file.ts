@@ -2,9 +2,8 @@
  * read_file tool — read a file from the project workspace.
  * Ported from server/src/agent/.../tools/read_file.ts (Electron removed).
  */
-import fs from 'node:fs';
 import { z } from 'zod';
-import { ToolDefinition, AgentContext, safeJoin, escapeXmlAttr } from './types.js';
+import { ToolDefinition, AgentContext, readProjectFile, escapeXmlAttr } from './types.js';
 
 const schema = z
   .object({
@@ -40,18 +39,13 @@ export const readFileTool: ToolDefinition<z.infer<typeof schema>> = {
   getConsentPreview: (args) => `Read ${args.path}`,
 
   execute: async (args, ctx: AgentContext) => {
-    const fullPath = safeJoin(ctx.appPath, args.path);
-
-    if (!fs.existsSync(fullPath)) {
-      return `Error: File does not exist: ${args.path}`;
+    const fileResult = readProjectFile(ctx, args.path);
+    if ('error' in fileResult) {
+      return `Error: ${fileResult.error}`;
     }
 
-    const content = fs.readFileSync(fullPath, 'utf8');
+    const { content } = fileResult;
     if (!content) return '';
-
-    // Record in ledger so the Change Journal shows what the agent has read
-    const totalFileLines = content.split('\n').length;
-    ctx.ledger?.recordRead(args.path, totalFileLines);
 
     const start = args.start_line_one_indexed;
     const end = args.end_line_one_indexed_inclusive;
