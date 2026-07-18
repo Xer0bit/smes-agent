@@ -16,6 +16,8 @@ import { MultiDevicePreview } from "@/components/MultiDevicePreview";
 import type { ActivityType } from "@/components/ProjectActivityIndicator";
 import { AgentChatPanel } from "@/components/chat/_ui_/AgentChatPanel";
 import { SettingsDialog } from "@/components/referral/settings/SettingsDialog";
+import { CloudRegionDialog } from "@/components/editor/CloudRegionDialog";
+import { GithubStatusPopover } from "@/components/editor/GithubStatusPopover";
 import { buildPreviewNavigationUrl, normalizePreviewRoute } from "@/utils/previewNavigation";
 import { getApiServerUrl } from "@/config/external-api";
 
@@ -27,7 +29,6 @@ import {
   Monitor,
   Smartphone,
   Tablet,
-  Github,
   Cloud,
   Bot,
   Globe,
@@ -2099,7 +2100,7 @@ export default defineConfig({
       }
       if (deploy.hostingUrl) setHostingDeployUrl(deploy.hostingUrl);
 
-      const verification = await domainService.verifyDomainDNS(normalizedDomain);
+      const verification = await domainService.verifyDomainDNS(projectId, normalizedDomain);
       setCustomDomainStatus(verification.status);
       if (!verification.verified) {
         if (verification.error) {
@@ -2990,41 +2991,14 @@ export default defineConfig({
               </Tooltip>
 
               {canRenderProjectActions && (
-                <Popover
+                <GithubStatusPopover
                   open={githubPopoverOpen}
-                  onOpenChange={(next) => { if (githubStatus?.connected) setGithubPopoverOpen(next); }}
-                >
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <PopoverTrigger asChild>
-                        <Button variant="ghost" size="icon"
-                          onClick={() => { if (!githubStatus?.connected) openSettings('project-integrations'); }}
-                          className="h-7 w-7 rounded-md text-white/25 hover:text-white/70 hover:bg-white/[0.06]">
-                          <Github className="h-3.5 w-3.5" />
-                        </Button>
-                      </PopoverTrigger>
-                    </TooltipTrigger>
-                    <TooltipContent className="z-[300]"><p>{githubStatus?.connected ? 'GitHub' : 'Connect GitHub'}</p></TooltipContent>
-                  </Tooltip>
-                  <PopoverContent align="end" className="w-64 z-[300] p-3 space-y-2">
-                    <p className="text-[11px] text-white/45">
-                      Connected as <strong className="text-white/80">{githubStatus?.login}</strong>
-                    </p>
-                    {githubLink ? (
-                      <a href={`https://github.com/${githubLink.fullName}`} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-[12px] text-indigo-400 hover:text-indigo-300">
-                        <ExternalLink className="h-3 w-3" />
-                        {githubLink.fullName} ({githubLink.branch})
-                      </a>
-                    ) : (
-                      <p className="text-[11px] text-white/45">No repository linked yet.</p>
-                    )}
-                    <Button size="sm" variant="outline" onClick={() => { setGithubPopoverOpen(false); openSettings('project-integrations'); }}
-                      className="h-7 w-full text-[11px]">
-                      Manage
-                    </Button>
-                  </PopoverContent>
-                </Popover>
+                  onOpenChange={setGithubPopoverOpen}
+                  connected={!!githubStatus?.connected}
+                  login={githubStatus?.login}
+                  link={githubLink}
+                  onOpenSettings={openSettings}
+                />
               )}
 
               {canRenderProjectActions && (
@@ -3850,72 +3824,7 @@ export default defineConfig({
         </Dialog>
 
         {/* Cloud Dialog */}
-        <Dialog open={showCloudDialog} onOpenChange={setShowCloudDialog}>
-          <DialogContent className="max-w-2xl bg-slate-900 text-white border-slate-700">
-            <DialogHeader>
-              <DialogTitle className="text-3xl font-bold">eCOMGear Cloud</DialogTitle>
-              <DialogDescription className="sr-only">
-                Review regional cloud application options for China and Hong Kong services.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-8 py-6">
-              {/* China Section */}
-              <div>
-                <h3 className="text-2xl font-bold mb-4">China</h3>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between py-2">
-                    <span className="text-xl">.cn ICP</span>
-                    <Button
-                      variant="outline"
-                      className="border-2 border-blue-500 text-blue-400 hover:bg-blue-500/10 hover:text-blue-300"
-                      onClick={() => {
-                        setShowCloudDialog(false);
-                        openSettings('china-icp');
-                      }}
-                    >
-                      APPLY
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-between py-2">
-                    <span className="text-xl">Wechat Auth.</span>
-                    <Button
-                      variant="outline"
-                      className="border-2 border-blue-500 text-blue-400 hover:bg-blue-500/10 hover:text-blue-300"
-                      onClick={() => toast.info('Wechat Auth application coming soon')}
-                    >
-                      APPLY
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-between py-2">
-                    <span className="text-xl">QQ Auth.</span>
-                    <Button
-                      variant="outline"
-                      className="border-2 border-blue-500 text-blue-400 hover:bg-blue-500/10 hover:text-blue-300"
-                      onClick={() => toast.info('QQ Auth application coming soon')}
-                    >
-                      APPLY
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Hong Kong Section */}
-              <div>
-                <h3 className="text-2xl font-bold mb-4">Hong Kong</h3>
-                <div className="flex items-center justify-between py-2">
-                  <span className="text-xl">iAM Smart</span>
-                  <Button
-                    variant="outline"
-                    className="border-2 border-blue-500 text-blue-400 hover:bg-blue-500/10 hover:text-blue-300"
-                    onClick={() => toast.info('iAM Smart application coming soon')}
-                  >
-                    APPLY
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+        <CloudRegionDialog open={showCloudDialog} onOpenChange={setShowCloudDialog} onOpenSettings={openSettings} />
 
         {/* Settings Dialog — opens in-place so the editor/preview stay mounted */}
         {projectId && (

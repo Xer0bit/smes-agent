@@ -90,9 +90,10 @@ export function useGuestSession() {
   /** Refresh request count from the database. */
   const refreshRequestCount = useCallback(async () => {
     const fingerprint = getBrowserFingerprint();
-    const { data } = await supabase
-      .rpc('get_guest_ai_requests', { p_fingerprint: fingerprint })
-      .catch(() => ({ data: null }));
+    let data: unknown = null;
+    try {
+      ({ data } = await supabase.rpc('get_guest_ai_requests', { p_fingerprint: fingerprint }));
+    } catch { /* swallow — guest usage banner just won't update this cycle */ }
     if (data) {
       const result = data as { requests_used: number; requests_limit: number; can_request: boolean };
       setRequestsUsed(result.requests_used);

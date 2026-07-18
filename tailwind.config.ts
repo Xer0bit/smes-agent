@@ -130,6 +130,18 @@ export default {
           "0%": { transform: "translateX(-100%)" },
           "100%": { transform: "translateX(200%)" },
         },
+        "loader-breathe": {
+          "0%, 100%": { opacity: "0.6", transform: "translateX(-50%) scale(1)" },
+          "50%": { opacity: "1", transform: "translateX(-50%) scale(1.08)" },
+        },
+        "loader-ring": {
+          "0%": { opacity: "0.6", transform: "scale(1)" },
+          "100%": { opacity: "0", transform: "scale(1.25)" },
+        },
+        "loader-pulse-dot": {
+          "0%, 100%": { opacity: "0.4" },
+          "50%": { opacity: "1" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -137,6 +149,9 @@ export default {
         shimmer: "shimmer 1.8s infinite",
         "fade-in": "fade-in 0.6s ease-out",
         "fade-in-up": "fade-in-up 0.8s ease-out forwards",
+        "loader-breathe": "loader-breathe 6s ease-in-out infinite",
+        "loader-ring": "loader-ring 3s ease-out infinite",
+        "loader-pulse-dot": "loader-pulse-dot 2s ease-in-out infinite",
       },
     },
   },

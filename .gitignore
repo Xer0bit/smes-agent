@@ -13,15 +13,15 @@ dist-ssr
 *.local
 
 # Environment files - NEVER commit these!
-.env
-.env.*
-.env.local
-.env.production
-*.env
-supabase/functions/.env
-server/.env
-server/.llm-control.json
-.deploy.env
+# .env
+# .env.*
+# .env.local
+# .env.production
+# *.env
+# supabase/functions/.env
+# server/.env
+# server/.llm-control.json
+# .deploy.env
 # .env.example / server/.env.example ARE tracked — they're safe templates
 # with no real values. See ENVIRONMENTS.md for what goes where.
 !.env.example

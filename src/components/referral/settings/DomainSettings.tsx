@@ -369,7 +369,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
       const domain = customDomains.find(d => d.id === domainId);
       if (!domain) return;
 
-      const result = await domainService.verifyDomainDNS(domain.domain);
+      const result = await domainService.verifyDomainDNS(projectId, domain.domain);
 
       // Store granular DNS check results so the UI can show per-record status
       setDnsCheckResults(prev => ({

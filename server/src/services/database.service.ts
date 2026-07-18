@@ -668,6 +668,25 @@ export const databaseService = {
       }
 
       await c.query('COMMIT');
+
+      // DDL run through here (agent's query_database tool creating/altering
+      // tables) changes the schema but PostgREST caches its schema at startup —
+      // without a reload, the new table 404s with PGRST205 "not in schema
+      // cache" on every REST call until something unrelated (a provision/
+      // deprovision elsewhere) happens to trigger a reload. Only provision()/
+      // deprovision() called this before; ad-hoc DDL from the agent never did.
+      // Awaited (not fire-and-forget): the agent's very next step often reads
+      // the table it just created via the REST API, so the reload needs to
+      // land before this tool call returns, not sometime after.
+      const ranDdl = statements.some(s => /^\s*(create|alter|drop)\s/i.test(s));
+      if (ranDdl) {
+        try {
+          await this._reloadPostgREST();
+        } catch (err) {
+          console.warn(`[DatabaseService] Schema-cache reload after DDL failed (non-fatal, will self-heal on next provision event): ${(err as Error).message}`);
+        }
+      }
+
       return {
         rows: lastResult.rows ?? [],
         fields: lastResult.fields?.map((f: any) => f.name) ?? [],

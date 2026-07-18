@@ -64,9 +64,9 @@ export function ReferralDashboard() {
               {rewards.map((r) => (
                 <li key={r.id} className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">
-                    {new Date(r.created_at).toLocaleDateString()}
+                    {new Date(r.awarded_at).toLocaleDateString()}
                   </span>
-                  <Badge variant="secondary">+{r.bonus_lines} lines</Badge>
+                  <Badge variant="secondary">+{r.lines_earned} lines</Badge>
                 </li>
               ))}
             </ul>

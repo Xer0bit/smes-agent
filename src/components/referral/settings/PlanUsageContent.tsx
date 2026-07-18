@@ -66,7 +66,7 @@ const FEATURE_ROWS: { key: string; label: string; icon: React.ElementType }[] = 
 
 export const PlanUsageContent = () => {
   const { usageRecord, loading: usageLoading, refreshUsage, getUsagePercentage, getUsageLimit } = useUsage();
-  const { limits, loading: subLoading, tier, tierLabel, subscribed, refresh, publishLinesPercent, hasFeature } = useSubscription();
+  const { limits, loading: subLoading, tier, tierLabel, subscribed, refreshSubscription, publishLinesPercent, hasFeature } = useSubscription();
   const { currentOrganizationId } = useOrganization();
   const navigate = useNavigate();
 
@@ -100,7 +100,7 @@ export const PlanUsageContent = () => {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => { refreshUsage(); refresh(); }}
+          onClick={() => { refreshUsage(); refreshSubscription(); }}
           title="Refresh"
         >
           <RefreshCw className="h-4 w-4" />

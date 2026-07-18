@@ -57,6 +57,8 @@ export function WorkspaceLoader({
   }, [useMilestones, visible]);
 
   const activeStep = useMilestones ? milestoneStep : timerStep;
+  const complete = activeStep >= STEPS.length - 1;
+  const pct = STEPS.length > 1 ? Math.round((activeStep / (STEPS.length - 1)) * 100) : 0;
 
   // Handles both directions: fade out on hide, and reset so the loader
   // can be shown again later instead of being permanently unmountable.
@@ -70,78 +72,98 @@ export function WorkspaceLoader({
 
   if (leaving && !visible) return null;
 
-  const railPercent = STEPS.length > 1 ? (activeStep / (STEPS.length - 1)) * 100 : 0;
-
   return (
     <div
-      className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-[hsl(var(--workspace-surface-recessed))] transition-opacity duration-500 ${!visible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+      className={`fixed inset-0 z-[9999] flex items-center justify-center bg-[hsl(var(--workspace-surface-recessed))] transition-all duration-500 ${!visible ? 'opacity-0 scale-[0.97] pointer-events-none' : 'opacity-100 scale-100'}`}
     >
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_35%,hsl(var(--primary)/0.07),transparent)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_30%_at_50%_85%,hsl(var(--accent)/0.05),transparent)]" />
-      </div>
+      {/* Ambient glow — single light source, breathing */}
+      <div className="absolute left-1/2 top-[15%] -translate-x-1/2 w-[600px] h-[400px] pointer-events-none animate-loader-breathe"
+        style={{ background: 'radial-gradient(ellipse, rgba(52,211,153,0.06) 0%, transparent 70%)' }} />
 
+      {/* Grain texture */}
       <div
-        className="absolute inset-0 pointer-events-none opacity-[0.018]"
-        style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.8) 1px, transparent 1px)', backgroundSize: '28px 28px' }}
+        className="absolute inset-[-50%] w-[200%] h-[200%] pointer-events-none opacity-[0.028]"
+        style={{
+          backgroundImage:
+            "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+          backgroundSize: '180px 180px',
+        }}
       />
 
-      <div className="relative z-10 flex flex-col items-center w-full max-w-[320px] px-6 gap-9">
+      {/* Card */}
+      <div className="relative z-10 w-[340px] rounded-2xl border border-white/[0.06] bg-[hsl(var(--workspace-surface))] px-7 pt-8 pb-7 shadow-[0_24px_80px_-12px_rgba(0,0,0,0.6),0_0_120px_-40px_rgba(52,211,153,0.06)]">
+        {/* Top accent line */}
+        <div className="absolute top-0 left-8 right-8 h-px bg-gradient-to-r from-transparent via-emerald-400/20 to-transparent" />
 
-        {/* Brand mark — single static status dot, no ping */}
-        <div className="flex flex-col items-center gap-3.5">
-          <div className="relative w-12 h-12 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shadow-glow-accent">
-            <img src={ecgLogo} alt="eCG" className="w-6 h-6 object-contain" />
-            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[hsl(var(--primary))]" />
+        {/* Header */}
+        <div className="flex items-center gap-3.5 mb-7">
+          <div className="relative w-10 h-10 rounded-[10px] bg-[hsl(var(--workspace-surface-recessed))] border border-white/[0.06] grid place-items-center shrink-0">
+            <span className="absolute -inset-[3px] rounded-[13px] border border-emerald-400/15 animate-loader-ring" />
+            <img src={ecgLogo} alt="eCG" className="w-[18px] h-[18px] object-contain" />
           </div>
 
-          <div className="text-center">
-            <p className="text-[11px] font-medium tracking-[0.2em] text-white/25 uppercase mb-1">EcomGear</p>
+          <div className="min-w-0">
+            <div className="text-[10px] font-medium tracking-[0.12em] uppercase text-white/20 mb-0.5">EcomGear</div>
             {projectName ? (
-              <p className="font-['Fraunces'] text-[16px] font-semibold text-white/80 leading-tight truncate max-w-[240px]">{projectName}</p>
+              <p className="font-['Fraunces'] text-[17px] font-normal text-white/85 truncate leading-tight">{projectName}</p>
             ) : (
-              <div className="h-4 w-28 rounded bg-white/[0.06] mx-auto" />
+              <div className="h-[14px] w-[100px] rounded bg-white/[0.05] mt-0.5" />
             )}
           </div>
         </div>
 
+        <div className="h-px bg-white/[0.06] mb-6" />
+
+        {/* Progress bar */}
+        <div className="h-[2px] rounded-full bg-white/[0.04] overflow-hidden mb-[22px]">
+          <div className="h-full rounded-full bg-emerald-400 transition-[width] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]" style={{ width: `${pct}%` }} />
+        </div>
+
         {/* Steps */}
-        <div className="relative w-full pl-0.5">
-          <div className="absolute left-[5px] top-1.5 bottom-1.5 w-px bg-white/[0.08]" />
-          <div
-            className="absolute left-[5px] top-1.5 w-px bg-gradient-to-b from-[hsl(var(--primary))] to-[hsl(var(--accent))] transition-[height] duration-500 ease-out"
-            style={{ height: `${railPercent}%` }}
-          />
+        <div className="flex flex-col">
+          {STEPS.map((step, i) => {
+            const done = i < activeStep;
+            const active = i === activeStep;
+            return (
+              <div key={step.id} className="relative flex items-center gap-3 py-[9px]">
+                {i < STEPS.length - 1 && (
+                  <span className={`absolute left-[6.5px] top-7 bottom-[-1px] w-px transition-colors duration-300 ${done ? 'bg-emerald-400/15' : 'bg-white/[0.06]'}`} />
+                )}
 
-          <div className="space-y-4">
-            {STEPS.map((step, i) => {
-              const done   = i < activeStep;
-              const active = i === activeStep;
-
-              return (
-                <div key={step.id} className="relative flex items-center gap-3.5 pl-0.5">
-                  <div className={`relative z-10 shrink-0 w-2.5 h-2.5 rounded-full transition-colors duration-300 ${
-                    done   ? 'bg-[hsl(var(--primary))]' :
-                    active ? 'bg-[hsl(var(--primary))] ring-4 ring-[hsl(var(--primary)/0.15)]' :
-                             'bg-white/10'
-                  }`}>
-                    {done && <Check className="absolute -inset-[3px] w-4 h-4 text-[hsl(var(--workspace-surface-recessed))]" strokeWidth={3} />}
-                  </div>
-
-                  <span className={`flex-1 min-w-0 text-[12.5px] transition-colors duration-300 ${
-                    done   ? 'text-white/30' :
-                    active ? 'text-white/80 font-medium' :
-                             'text-white/20'
-                  }`}>
-                    {step.label}
-                    {active && step.id === 'files' && fileCount != null && fileCount > 0 && (
-                      <span className="ml-1.5 text-[hsl(var(--primary)/0.75)] text-[11px]">({fileCount} files)</span>
-                    )}
-                  </span>
+                <div className={`relative shrink-0 w-3.5 h-3.5 rounded-full grid place-items-center border transition-all duration-300 ${
+                  done ? 'border-emerald-400 bg-emerald-400' :
+                  active ? 'border-emerald-400 bg-emerald-400/10 shadow-[0_0_12px_rgba(52,211,153,0.15)]' :
+                  'border-white/10 bg-transparent'
+                }`}>
+                  {active && (
+                    <span className="absolute inset-[2px] rounded-full border-[1.5px] border-transparent border-t-emerald-400 animate-spin" />
+                  )}
+                  <Check
+                    className={`w-2 h-2 text-[hsl(var(--workspace-surface))] transition-all duration-200 ${done ? 'opacity-100 scale-100' : 'opacity-0 scale-[0.4]'}`}
+                    strokeWidth={3.5}
+                  />
                 </div>
-              );
-            })}
+
+                <span className={`text-[12.5px] leading-none transition-colors duration-300 ${
+                  done ? 'text-white/30' : active ? 'text-white/85 font-medium' : 'text-white/20'
+                }`}>
+                  {step.label}
+                  {active && step.id === 'files' && fileCount != null && fileCount > 0 && (
+                    <span className="ml-1.5 text-emerald-400/75 text-[11px]">({fileCount} files)</span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between mt-6 pt-4 border-t border-white/[0.06]">
+          <div className="flex items-center gap-1.5 text-[11px] text-white/20">
+            <span className="w-[5px] h-[5px] rounded-full bg-emerald-400 animate-loader-pulse-dot" />
+            <span>{complete ? 'Complete' : STEPS[Math.max(activeStep, 0)]?.label.replace(/^(.)/, (c) => c.toLowerCase())}</span>
           </div>
+          <span className={`text-[11px] font-medium tabular-nums transition-colors duration-300 ${complete ? 'text-emerald-400' : 'text-white/45'}`}>{pct}%</span>
         </div>
       </div>
     </div>

@@ -26,6 +26,8 @@ interface SubscriptionContextType {
   subscriptionEnd: string | null;
   loading: boolean;
   limits: OrgLimits | null;
+  /** 0-100 percentage of monthly publish lines used */
+  publishLinesPercent: number;
   hasFeature: (feature: string) => boolean;
   refreshSubscription: () => Promise<void>;
   createCheckout: (priceId: string) => Promise<void>;
@@ -93,6 +95,9 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const hasFeature = useCallback((feature: string): boolean => {
     return TIER_FEATURES[tier]?.[feature] ?? false;
   }, [tier]);
+  const publishLinesPercent = limits && limits.publish_lines_limit > 0
+    ? Math.min(100, Math.round((limits.publish_lines_used / limits.publish_lines_limit) * 100))
+    : 0;
 
   const createCheckout = async (priceId: string) => {
     try {
@@ -201,6 +206,7 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({ 
         subscriptionEnd,
         loading,
         limits,
+        publishLinesPercent,
         hasFeature,
         refreshSubscription,
         createCheckout,

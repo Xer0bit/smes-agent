@@ -16,7 +16,7 @@ import {
 /**
  * Decode base64 content if needed
  */
-function decodeFileContent(file: Partial<GeneratedFile> & { content_b64?: string }): GeneratedFile {
+function decodeFileContent(file: Omit<GeneratedFile, 'content'> & Partial<Pick<GeneratedFile, 'content'>> & { content_b64?: string }): GeneratedFile {
   let content = file.content || '';
   if (!content && file.content_b64) {
     try {
