@@ -1,14 +1,15 @@
 import { ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings, LucideIcon } from 'lucide-react';
+import { LayoutDashboard, Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings, LucideIcon } from 'lucide-react';
 import { ECG } from '../ecg-config';
 
 const ALL_ICONS: Record<string, LucideIcon> = {
-  Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings,
+  LayoutDashboard, Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings,
 };
 
 const ALL_NAV = [
-  { id: 'chat',       label: 'Assistant',     path: '/',           icon: 'MessageSquare', always: true },
+  { id: 'dashboard',  label: 'Home',          path: '/',           icon: 'LayoutDashboard', always: true },
+  { id: 'chat',       label: 'Assistant',     path: '/assistant',  icon: 'MessageSquare',   always: true },
   { id: 'agents',     label: 'Agents',        path: '/agents',     icon: 'Zap' },
   { id: 'schedulers', label: 'Schedulers',    path: '/schedulers', icon: 'Calendar' },
   { id: 'posts',      label: 'Planned Posts', path: '/posts',      icon: 'FileText' },
@@ -19,11 +20,15 @@ const ALL_NAV = [
 ];
 
 // Order follows ECG.modules (set by drag-and-drop reordering in Dashboard
-// Creator), not ALL_NAV's fixed declaration order — the always-shown
-// Assistant tab stays pinned first regardless of module order.
+// Creator), not ALL_NAV's fixed declaration order — the always-shown tabs
+// (Home, Assistant first; Settings last) stay pinned regardless of module
+// order. Previously this used ALL_NAV.find(n => n.always), which only ever
+// returns the FIRST always-item — Settings silently never made it into the
+// sidebar at all. filter() picks up every always-item instead.
 const NAV = [
-  ALL_NAV.find(n => n.always)!,
+  ...ALL_NAV.filter(n => n.always && n.id !== 'settings'),
   ...ECG.modules.map(id => ALL_NAV.find(n => n.id === id)).filter((n): n is typeof ALL_NAV[number] => Boolean(n)),
+  ALL_NAV.find(n => n.id === 'settings')!,
 ];
 
 function BrandLogo({ className }: { className: string }) {

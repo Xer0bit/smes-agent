@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { ecgApi } from '../lib/ecgClient';
+import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
+
+const showDuration = (ECG.moduleSettings.runs?.showDuration ?? true) !== false;
 
 function dur(start: string, end?: string) {
   const ms = new Date(end ?? Date.now()).getTime() - new Date(start).getTime();
@@ -29,7 +32,7 @@ export default function RunsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b text-xs" style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>
-                {['Agent', 'Status', 'Duration', 'Started'].map(h => (
+                {['Agent', 'Status', ...(showDuration ? ['Duration'] : []), 'Started'].map(h => (
                   <th key={h} className="text-left px-4 py-3 font-semibold uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -39,7 +42,9 @@ export default function RunsPage() {
                 <tr key={r.id} className="border-b last:border-0" style={{ borderColor: 'var(--border)' }}>
                   <td className="px-4 py-3 font-medium" style={{ color: 'var(--text)' }}>{r.agentName ?? r.agent_name ?? '—'}</td>
                   <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
-                  <td className="px-4 py-3 tabular-nums" style={{ color: 'var(--muted)' }}>{dur(r.startedAt ?? r.started_at, r.completedAt ?? r.completed_at)}</td>
+                  {showDuration && (
+                    <td className="px-4 py-3 tabular-nums" style={{ color: 'var(--muted)' }}>{dur(r.startedAt ?? r.started_at, r.completedAt ?? r.completed_at)}</td>
+                  )}
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>{new Date(r.startedAt ?? r.started_at).toLocaleString()}</td>
                 </tr>
               ))}

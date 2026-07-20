@@ -1,11 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle, XCircle, FileText, Plus, Trash2, Pencil, X, Sparkles } from 'lucide-react';
+import { CheckCircle, XCircle, FileText, Plus, Trash2, Pencil, X, Sparkles, Calendar } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
+import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
 
 const TABS = ['all', 'pending', 'approved', 'rejected'] as const;
 type Tab = typeof TABS[number];
+
+const configuredDefaultTab = ECG.moduleSettings.posts?.defaultTab as Tab | undefined;
+const defaultTab: Tab = configuredDefaultTab && (TABS as readonly string[]).includes(configuredDefaultTab)
+  ? configuredDefaultTab
+  : 'pending';
 
 const PLATFORM_COLORS: Record<string, string> = {
   linkedin: 'bg-blue-100 text-blue-700', twitter: 'bg-sky-100 text-sky-700',
@@ -17,7 +23,7 @@ export default function PostsPage() {
   const navigate = useNavigate();
   const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>('pending');
+  const [tab, setTab] = useState<Tab>(defaultTab);
   const [acting, setActing] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [deletingPost, setDeletingPost] = useState<any>(null);
@@ -76,13 +82,22 @@ export default function PostsPage() {
     <div className="p-6 max-w-5xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Planned Posts</h1>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white"
-          style={{ background: 'var(--accent)' }}
-        >
-          <Plus className="w-4 h-4" /> New Post
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/posts/calendar')}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border"
+            style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+          >
+            <Calendar className="w-4 h-4" /> Calendar
+          </button>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white"
+            style={{ background: 'var(--accent)' }}
+          >
+            <Plus className="w-4 h-4" /> New Post
+          </button>
+        </div>
       </div>
 
       {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</div>}

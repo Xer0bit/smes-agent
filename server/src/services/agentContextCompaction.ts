@@ -19,9 +19,17 @@ export function clampContextSection(label: string, value: string, maxChars: numb
 // The agent can save important facts via save_memory tool; those survive compaction.
 
 /** How many recent steps keep full detail (older steps get compacted) */
-const KEEP_RECENT_STEPS = 2;
+// Raised 2 → 4 (2026-07-20): a 2-step window compacted read_file results out
+// of context mid-investigation on anything touching more than ~2-3 files —
+// the model would then need to re-read a file it already saw 3 steps ago,
+// producing a step that LOOKS like redundant re-analysis but is actually the
+// model re-fetching evidence that was deleted out from under it. save_memory
+// is the intended escape hatch but nothing enforces the model use it before
+// compaction hits. Widening the window covers a realistic multi-file
+// investigation before anything gets erased.
+const KEEP_RECENT_STEPS = 4;
 /** Step number (0-indexed) at which compaction begins */
-const COMPACT_AFTER_STEP = 3;
+const COMPACT_AFTER_STEP = 6;
 
 export function truncStr(s: string | undefined, max: number): string {
   if (!s || s.length <= max) return s ?? '';

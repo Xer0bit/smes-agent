@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Zap, Clock, Plus, Pencil, Trash2, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Zap, Clock, Plus, Pencil, Trash2 } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
+import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
+
+const showLastRun = (ECG.moduleSettings.agents?.showLastRun ?? true) !== false;
 
 interface Agent {
   id: string;
@@ -9,62 +13,28 @@ interface Agent {
   status: string;
   templateName?: string;
   template_name?: string;
-  templateId?: string;
-  template_id?: string;
   lastRun?: string;
   last_run?: string;
 }
 
-interface AgentTemplate {
-  id: string;
-  name: string;
-}
-
 export default function AgentsPage() {
+  const navigate = useNavigate();
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [deletingAgent, setDeletingAgent] = useState<Agent | null>(null);
-  const [modalLoading, setModalLoading] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      ecgApi.agents.list().then(d => Array.isArray(d) ? d : (d.agents ?? [])),
-      ecgApi.templates.list().then(d => Array.isArray(d) ? d : [])
-    ])
-      .then(([agentsData, templatesData]) => {
-        setAgents(agentsData);
-        setTemplates(templatesData);
-      })
+    ecgApi.agents.list()
+      .then(d => setAgents(Array.isArray(d) ? d : (d.agents ?? [])))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 
-  const handleSave = async (agentData: Partial<Agent>) => {
-    setModalLoading(true);
-    try {
-      if (editingAgent?.id) {
-        const updated = await ecgApi.agents.update(editingAgent.id, agentData);
-        setAgents(agents.map(a => a.id === editingAgent.id ? { ...a, ...updated } : a));
-      } else {
-        const created = await ecgApi.agents.create(agentData);
-        setAgents([...agents, created]);
-      }
-      setEditingAgent(null);
-      setShowCreate(false);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setModalLoading(false);
-    }
-  };
-
   const handleDelete = async () => {
     if (!deletingAgent?.id) return;
-    setModalLoading(true);
+    setDeleting(true);
     try {
       await ecgApi.agents.delete(deletingAgent.id);
       setAgents(agents.filter(a => a.id !== deletingAgent.id));
@@ -72,7 +42,7 @@ export default function AgentsPage() {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setModalLoading(false);
+      setDeleting(false);
     }
   };
 
@@ -90,7 +60,7 @@ export default function AgentsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Agents</h1>
         <button
-          onClick={() => setShowCreate(true)}
+          onClick={() => navigate('/agents/create')}
           className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white"
           style={{ background: 'var(--accent)' }}
         >
@@ -126,7 +96,7 @@ export default function AgentsPage() {
                     <Zap className="w-4 h-4 text-gray-600" />
                   </button>
                   <button
-                    onClick={() => setEditingAgent(a)}
+                    onClick={() => navigate(`/agents/${a.id}/edit`)}
                     className="p-1.5 rounded hover:bg-gray-100"
                     title="Edit"
                   >
@@ -141,10 +111,10 @@ export default function AgentsPage() {
                   </button>
                 </div>
               </div>
-              {(a.lastRun || a.last_run) && (
+              {showLastRun && (a.lastRun || a.last_run) && (
                 <div className="mt-3 flex items-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}>
                   <Clock className="w-3 h-3" />
-                  {new Date(a.lastRun ?? a.last_run).toLocaleString()}
+                  {new Date(a.lastRun ?? a.last_run!).toLocaleString()}
                 </div>
               )}
             </div>
@@ -152,25 +122,12 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {(showCreate || editingAgent) && (
-        <AgentModal
-          agent={editingAgent}
-          templates={templates}
-          onClose={() => {
-            setShowCreate(false);
-            setEditingAgent(null);
-          }}
-          onSave={handleSave}
-          loading={modalLoading}
-        />
-      )}
-
       {deletingAgent && (
         <DeleteConfirmModal
           itemName={deletingAgent.name}
           onClose={() => setDeletingAgent(null)}
           onConfirm={handleDelete}
-          loading={modalLoading}
+          loading={deleting}
         />
       )}
     </div>
@@ -179,87 +136,6 @@ export default function AgentsPage() {
 
 function Spinner() { return <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div>; }
 function Empty({ label }: { label: string }) { return <div className="text-center py-16 text-sm" style={{ color: 'var(--muted)' }}>{label}</div>; }
-
-function AgentModal({ agent, templates, onClose, onSave, loading }: {
-  agent: Agent | null;
-  templates: AgentTemplate[];
-  onClose: () => void;
-  onSave: (data: Partial<Agent>) => void;
-  loading: boolean;
-}) {
-  const [name, setName] = useState(agent?.name ?? '');
-  const [templateId, setTemplateId] = useState(agent?.templateId ?? agent?.template_id ?? '');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim() || !templateId) return;
-    onSave({ name: name.trim(), templateId });
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-md p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
-            {agent ? 'Edit Agent' : 'New Agent'}
-          </h2>
-          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
-            <X className="w-5 h-5" style={{ color: 'var(--muted)' }} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
-              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
-              autoFocus
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Template</label>
-            <select
-              value={templateId}
-              onChange={e => setTemplateId(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
-              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
-              required
-            >
-              <option value="">Select template...</option>
-              {templates.map(t => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg border"
-              style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading || !name.trim() || !templateId}
-              className="flex-1 px-4 py-2 rounded-lg text-white disabled:opacity-50"
-              style={{ background: 'var(--accent)' }}
-            >
-              {loading ? 'Saving...' : agent ? 'Save' : 'Create'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
 
 function DeleteConfirmModal({ itemName, onClose, onConfirm, loading }: {
   itemName: string;

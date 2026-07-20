@@ -84,6 +84,7 @@ function cssVars(d: DesignCfg): string {
   const accentHover  = shade(d.accentColor, isDark(d.bodyColor) ? -20 : 20);
   const sidebarHover = shade(d.sidebarColor, isDark(d.sidebarColor) ? -12 : 12);
   const cardBg       = isDark(d.bodyColor) ? '#1e293b' : '#ffffff';
+  const inputBg      = isDark(d.bodyColor) ? '#0f172a' : '#ffffff';
   const border       = isDark(d.bodyColor) ? '#334155' : '#e2e8f0';
   const text         = isDark(d.bodyColor) ? '#f1f5f9' : '#1e293b';
   const muted        = isDark(d.bodyColor) ? '#94a3b8' : '#64748b';
@@ -97,6 +98,7 @@ function cssVars(d: DesignCfg): string {
   --sidebar-hover: ${sidebarHover};
   --body-bg: ${d.bodyColor};
   --card-bg: ${cardBg};
+  --input-bg: ${inputBg};
   --border: ${border};
   --text: ${text};
   --muted: ${muted};
@@ -122,6 +124,7 @@ export const ECG = {
   fontFamily: ${JSON.stringify(d.fontFamily)},
   proxyUrl: ${JSON.stringify(proxyUrl)},
   projectId: ${JSON.stringify(projectId)},
+  moduleSettings: ${JSON.stringify(d.moduleSettings)} as Record<string, Record<string, boolean | string>>,
 };
 `;
 }

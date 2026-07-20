@@ -1,8 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Upload, Trash2, Plus, FolderPlus, X, Folder } from 'lucide-react';
+import { Upload, Trash2, Plus, FolderPlus, Pencil, X, Folder, Loader2, AlertCircle } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 
 const TYPE_ICONS: Record<string, string> = { document: '📄', url: '🔗', text: '📝' };
+
+// The proxy's GET /knowledge (ecgData.listKnowledge on the portal side) only
+// returns {id, name, type, status, createdAt} — no file size and no kbId, so
+// files can't be grouped/filtered by knowledge base or show a size here the
+// way the real portal's Knowledge page does. Status badge + upload date are
+// the real fields actually available.
+const STATUS_CFG: Record<string, { label: string; color: string }> = {
+  processing: { label: 'Indexing…', color: '#a16207' },
+  ready:      { label: 'Ready',     color: 'var(--muted)' },
+  error:      { label: 'Error',     color: '#dc2626' },
+};
 
 export default function KnowledgePage() {
   const [items, setItems] = useState<any[]>([]);
@@ -140,7 +151,7 @@ export default function KnowledgePage() {
                   className="p-1 rounded hover:bg-gray-100"
                   title="Edit"
                 >
-                  <Plus className="w-4 h-4 text-gray-600" />
+                  <Pencil className="w-4 h-4 text-gray-600" />
                 </button>
                 <button
                   onClick={() => setDeletingBase(b)}
@@ -160,14 +171,24 @@ export default function KnowledgePage() {
         <div className="space-y-2">
           <h2 className="text-sm font-medium" style={{ color: 'var(--text)' }}>Files & Documents</h2>
           {!items.length && <div className="text-center py-8 text-sm" style={{ color: 'var(--muted)' }}>No knowledge assets found</div>}
-          {items.map((k: any) => (
+          {items.map((k: any) => {
+            const statusCfg = STATUS_CFG[k.status as string] ?? STATUS_CFG.ready;
+            return (
             <div key={k.id} className="rounded-xl border px-5 py-4 flex items-center justify-between gap-4"
               style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
               <div className="flex items-center gap-4 flex-1 min-w-0">
-                <span className="text-xl">{TYPE_ICONS[k.type] ?? '📄'}</span>
+                <span className="text-xl">
+                  {k.status === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--muted)' }} />
+                    : k.status === 'error' ? <AlertCircle className="w-4 h-4" style={{ color: '#dc2626' }} />
+                    : (TYPE_ICONS[k.type] ?? '📄')}
+                </span>
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-sm truncate" style={{ color: 'var(--text)' }}>{k.title ?? k.name ?? 'Untitled'}</p>
-                  <p className="text-xs mt-0.5 capitalize" style={{ color: 'var(--muted)' }}>{k.type ?? 'document'}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-xs capitalize" style={{ color: 'var(--muted)' }}>{k.type ?? 'document'}</span>
+                    {k.createdAt && <span className="text-xs" style={{ color: 'var(--muted)' }}>· Uploaded {new Date(k.createdAt).toLocaleDateString()}</span>}
+                    <span className="text-xs font-medium" style={{ color: statusCfg.color }}>· {statusCfg.label}</span>
+                  </div>
                 </div>
                 {k.agentName && <span className="text-xs shrink-0" style={{ color: 'var(--muted)' }}>{k.agentName}</span>}
               </div>
@@ -179,7 +200,8 @@ export default function KnowledgePage() {
                 <Trash2 className="w-4 h-4 text-red-600" />
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

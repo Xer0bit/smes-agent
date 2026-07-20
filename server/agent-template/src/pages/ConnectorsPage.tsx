@@ -1,15 +1,33 @@
 import { useEffect, useState } from 'react';
-import { Plug, Plus, Pencil, Trash2, X } from 'lucide-react';
+import { Plug, Zap, MessageCircle, Linkedin, Plus, Pencil, Trash2, X, RefreshCw, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
-import StatusBadge from '../components/StatusBadge';
 
 interface Connector {
   id: string;
   name: string;
   type: string;
   status?: string;
-  secrets?: Record<string, string>;
+  apiKey?: string; api_key?: string;
+  phone?: string;
 }
+
+// Matches the real connector model (org_connectors table) — type-specific
+// fields, not the generic custom-secrets-map this form used to submit
+// (which the backend's POST /connectors/org never accepted at all).
+const CONNECTOR_TYPES = [
+  { value: 'zapier', label: 'Zapier MCP', Icon: Zap },
+  { value: 'whatsapp', label: 'WhatsApp Business', Icon: MessageCircle },
+  { value: 'zapier-mcp-linkedin', label: 'LinkedIn (Zapier MCP)', Icon: Linkedin },
+];
+function typeMeta(type: string) {
+  return CONNECTOR_TYPES.find(t => t.value === type) ?? { value: type, label: type, Icon: Plug };
+}
+
+const STATUS_CFG: Record<string, { label: string; color: string; Icon: typeof CheckCircle }> = {
+  connected:    { label: 'Connected',    color: '#16a34a', Icon: CheckCircle },
+  disconnected: { label: 'Disconnected', color: 'var(--muted)', Icon: XCircle },
+  error:        { label: 'Error',        color: '#dc2626', Icon: AlertCircle },
+};
 
 export default function ConnectorsPage() {
   const [rows, setRows] = useState<Connector[]>([]);
@@ -19,6 +37,10 @@ export default function ConnectorsPage() {
   const [deletingConnector, setDeletingConnector] = useState<Connector | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [toast, setToast] = useState('');
+
+  function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(''), 4000); }
 
   useEffect(() => {
     ecgApi.connectors.list()
@@ -27,7 +49,7 @@ export default function ConnectorsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleSave = async (connectorData: Partial<Connector>) => {
+  const handleSave = async (connectorData: Record<string, unknown>) => {
     setModalLoading(true);
     try {
       if (editingConnector?.id) {
@@ -60,6 +82,18 @@ export default function ConnectorsPage() {
     }
   };
 
+  const handleTest = async (c: Connector) => {
+    setTestingId(c.id);
+    try {
+      const res: any = await ecgApi.connectors.test(c.id);
+      showToast(res?.note ?? `${c.name} connection verified`);
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : `${c.name} test failed`);
+    } finally {
+      setTestingId(null);
+    }
+  };
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
@@ -78,40 +112,40 @@ export default function ConnectorsPage() {
       {!loading && !rows.length && <div className="text-center py-16 text-sm" style={{ color: 'var(--muted)' }}>No connectors configured</div>}
       {!loading && rows.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {rows.map((c: Connector) => (
+          {rows.map((c: Connector) => {
+            const meta = typeMeta(c.type);
+            const statusCfg = STATUS_CFG[c.status ?? 'disconnected'] ?? STATUS_CFG.disconnected;
+            return (
             <div key={c.id} className="rounded-xl border p-5" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start justify-between gap-3 mb-3">
                 <div className="flex items-start gap-3 flex-1 min-w-0">
-                  <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'var(--border)' }}>
-                    <Plug className="w-4 h-4" style={{ color: 'var(--muted)' }} />
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'var(--accent-bg,#ede9fe)' }}>
+                    <meta.Icon className="w-4 h-4" style={{ color: 'var(--accent)' }} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="font-semibold text-sm truncate" style={{ color: 'var(--text)' }}>{c.name}</p>
-                      <StatusBadge status={c.status ?? 'active'} />
-                    </div>
-                    <p className="text-xs font-mono mt-0.5" style={{ color: 'var(--muted)' }}>{c.type}</p>
+                    <p className="font-semibold text-sm truncate" style={{ color: 'var(--text)' }}>{c.name}</p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>{meta.label}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setEditingConnector(c)}
-                    className="p-1.5 rounded hover:bg-gray-100"
-                    title="Edit"
-                  >
-                    <Pencil className="w-4 h-4 text-gray-600" />
-                  </button>
-                  <button
-                    onClick={() => setDeletingConnector(c)}
-                    className="p-1.5 rounded hover:bg-red-50"
-                    title="Delete"
-                  >
-                    <Trash2 className="w-4 h-4 text-red-600" />
-                  </button>
-                </div>
+                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border shrink-0" style={{ borderColor: 'var(--border)', color: statusCfg.color }}>
+                  <statusCfg.Icon className="w-3 h-3" /> {statusCfg.label}
+                </span>
+              </div>
+              <div className="flex gap-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                <button onClick={() => handleTest(c)} disabled={testingId === c.id}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs border disabled:opacity-50" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                  <RefreshCw className={`w-3 h-3 ${testingId === c.id ? 'animate-spin' : ''}`} /> {testingId === c.id ? 'Testing…' : 'Test'}
+                </button>
+                <button onClick={() => setEditingConnector(c)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                  <Pencil className="w-3 h-3" /> Edit
+                </button>
+                <button onClick={() => setDeletingConnector(c)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs border ml-auto text-red-600" style={{ borderColor: 'var(--border)' }}>
+                  <Trash2 className="w-3 h-3" /> Remove
+                </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -135,6 +169,13 @@ export default function ConnectorsPage() {
           loading={modalLoading}
         />
       )}
+
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 border text-sm px-5 py-3 rounded-xl shadow-2xl z-50 max-w-sm text-center"
+          style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}>
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
@@ -144,33 +185,23 @@ function Spinner() { return <div className="flex justify-center py-16"><span cla
 function ConnectorModal({ connector, onClose, onSave, loading }: {
   connector: Connector | null;
   onClose: () => void;
-  onSave: (data: Partial<Connector>) => void;
+  onSave: (data: Record<string, unknown>) => void;
   loading: boolean;
 }) {
   const [name, setName] = useState(connector?.name ?? '');
-  const [type, setType] = useState(connector?.type ?? 'custom');
-  const [secrets, setSecrets] = useState(connector?.secrets ?? {});
+  const [type, setType] = useState(connector?.type ?? 'zapier');
+  const [apiKey, setApiKey] = useState('');
+  const [phone, setPhone] = useState(connector?.phone ?? '');
+
+  const isZapier = type === 'zapier' || type.startsWith('zapier-mcp');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !type) return;
-    onSave({ name: name.trim(), type, secrets });
-  };
-
-  const addSecret = () => {
-    const key = prompt('Enter secret key name:');
-    if (!key) return;
-    setSecrets({ ...secrets, [key]: '' });
-  };
-
-  const updateSecret = (key: string, value: string) => {
-    setSecrets({ ...secrets, [key]: value });
-  };
-
-  const removeSecret = (key: string) => {
-    const newSecrets = { ...secrets };
-    delete newSecrets[key];
-    setSecrets(newSecrets);
+    const payload: Record<string, unknown> = { name: name.trim(), type };
+    if (isZapier && apiKey.trim()) payload.api_key = apiKey.trim();
+    if (type === 'whatsapp') payload.phone = phone.trim();
+    onSave(payload);
   };
 
   return (
@@ -207,58 +238,37 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
               style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
               required
             >
-              <option value="custom">Custom</option>
-              <option value="webhook">Webhook</option>
-              <option value="api">API</option>
-              <option value="database">Database</option>
+              {CONNECTOR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium" style={{ color: 'var(--text)' }}>Secrets</label>
-              <button
-                type="button"
-                onClick={addSecret}
-                className="text-xs px-2 py-1 rounded border"
-                style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
-              >
-                + Add Secret
-              </button>
+          {isZapier && (
+            <div>
+              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Zapier MCP Token</label>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                placeholder={connector ? 'Leave blank to keep current token' : 'Paste your token from zapier.com/mcp'}
+                className="w-full px-3 py-2 rounded-lg border font-mono text-xs focus:outline-none focus:ring-2"
+                style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+              />
             </div>
-            {Object.entries(secrets).length === 0 ? (
-              <p className="text-xs py-4 text-center" style={{ color: 'var(--muted)' }}>No secrets configured</p>
-            ) : (
-              <div className="space-y-2">
-                {Object.entries(secrets).map(([key, value]) => (
-                  <div key={key} className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={key}
-                      disabled
-                      className="w-1/3 px-2 py-1.5 rounded text-xs border opacity-60"
-                      style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
-                    />
-                    <input
-                      type="password"
-                      value={value as string}
-                      onChange={e => updateSecret(key, e.target.value)}
-                      className="flex-1 px-2 py-1.5 rounded text-xs border"
-                      style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
-                      placeholder="••••••••"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeSecret(key)}
-                      className="p-1 rounded text-red-600 hover:bg-red-50"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
+
+          {type === 'whatsapp' && (
+            <div>
+              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Phone Number</label>
+              <input
+                type="text"
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+                placeholder="+15551234567"
+                className="w-full px-3 py-2 rounded-lg border font-mono text-xs focus:outline-none focus:ring-2"
+                style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+              />
+            </div>
+          )}
 
           <div className="flex gap-3 pt-2">
             <button

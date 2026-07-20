@@ -174,13 +174,19 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response
     sseWrite(res, 'step', { id: 'revision_saved', status: 'done' });
 
     // Push template files to the preview service (VPS2) so the live preview works.
+    // fullSync must be false here: this is an OVERLAY onto the base scaffold
+    // initProjectFromTemplate() just wrote (package.json, vite.config.ts,
+    // tsconfig*.json, node_modules) — agent-template/ never includes those
+    // files, so a fullSync prune deletes them immediately after project
+    // creation, breaking the build before the user's first message. This was
+    // silently corrupting every fresh Dashboard Creator launch.
     const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
     const previewSecret = process.env.PREVIEW_UPDATE_SECRET || '';
     try {
       await fetch(`${previewServiceUrl}/preview/${project.id}/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-update-secret': previewSecret },
-        body: JSON.stringify({ files: filesArray, fullSync: true }),
+        body: JSON.stringify({ files: filesArray, fullSync: false }),
       });
     } catch { /* preview push is non-fatal */ }
     sseWrite(res, 'step', { id: 'preview_synced', status: 'done' });

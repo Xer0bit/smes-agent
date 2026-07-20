@@ -339,13 +339,15 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // to an action or say you're stuck" directive, same delivery mechanism as
   // circuitBreakerNote.
   let stepsSinceLastWrite = 0;
-  // Lowered from 6 → 4 (2026-07-15): confirmed live that a full 6-step stuck
-  // cycle on an expensive model (Claude Sonnet fallback, ~$0.15-0.17/step) costs
-  // real money before the nudge even has a chance to fire — one run spent $0.82
-  // across 6 unproductive steps before the first nudge landed. Firing 2 steps
-  // earlier gives the model more budget-relative chances to course-correct
-  // before either the nudge-ignored hard stop or the token cap kicks in.
-  const STUCK_ANALYSIS_THRESHOLD = 4;
+  // Lowered from 6 → 4 (2026-07-15), then 4 → 3 (2026-07-20): still recurring —
+  // the 4-step/3-nudge combo let a run burn up to 16 steps (nudges at 4/8/12,
+  // abort at 12+) before stopping, on runs where the user's instruction was a
+  // single specific, well-scoped change that should resolve in 1-3 steps.
+  // Firing sooner costs one nudge's worth of false-positive risk on genuinely
+  // multi-step tasks (already mitigated by STATE_MODIFYING_TOOLS recognizing
+  // edge-function/asset writes, not just write_file/edit_file) against real
+  // dollars burned per ignored nudge on a stuck run.
+  const STUCK_ANALYSIS_THRESHOLD = 3;
   // Lighter, earlier nudge than the full stuck-analysis detector below: fires
   // the moment the model calls `think` twice in a row with no other tool in
   // between (re-reasoning about the same thing instead of acting), instead of
@@ -362,7 +364,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // and been ignored twice (i.e. firing a 3rd time), stop nudging and abort
   // the run cleanly instead of letting it grind to the hard cap regardless.
   let stuckAnalysisFireCount = 0;
-  const STUCK_ANALYSIS_HARD_STOP_FIRINGS = 3;
+  // Lowered 3 → 2 (2026-07-20) alongside STUCK_ANALYSIS_THRESHOLD: one ignored
+  // nudge is now enough to abort instead of two, since the whole point of the
+  // nudge is "commit to an action or say you're blocked" — a model that
+  // ignores that once already showed it isn't going to self-correct.
+  const STUCK_ANALYSIS_HARD_STOP_FIRINGS = 2;
   let stuckAnalysisAbortReason: string | null = null;
   // Live signal for "did this run actually change anything" — filesToWrite/
   // filesEdited below are only populated from XML tags in the model's FINAL
@@ -1073,7 +1079,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         'This endpoint is public and rate-limited (30 req/min) — it authenticates with the SAME `VITE_DB_ANON_KEY` used for the database, not a login session, so it works for anonymous visitors of the generated app, not just its owner.'
       : '';
     const ecgNote = hasEcg
-      ? '\n\n## eCG Agents Portal Integration\n\nThis project is linked to the eCG Agents Portal. Follow these rules strictly:\n\n**Frontend (React) code** — NEVER call the portal API directly from the browser. All portal data goes through the eComGear server proxy:\n```ts\n// In src/lib/ecgClient.ts — already configured\nconst url = `${import.meta.env.VITE_ECG_PROXY_URL}/api/v1/ecg-proxy${path}?projectId=${import.meta.env.VITE_PROJECT_ID}`;\n```\nUse `ecgApi` from `src/lib/ecgClient.ts` for all data fetching. Do not use `ECG_PORTAL_TOKEN` — it is server-side only.\n\n**Edge functions** — use the pre-injected `ecg` helper (not `fetch`). ECG credentials are injected server-side:\n```js\n// Agents\nconst agents = await ecg.get(\'/agents\');\n// Approve a post\nawait ecg.patch(\'/planned-posts/\' + params.postId, { status: \'approved\' });\n// Run history\nconst runs = await ecg.get(\'/runs\');\n// LLM call (uses the configured AI model, key stays server-side)\nconst reply = await ecg.llm([\n  { role: \'user\', content: \'Summarize agent performance\' }\n], \'You are an eCG assistant.\');\n```\n`ecg` is `null` for projects without portal integration — check before using.\n\n**AI chat** — the dashboard has a built-in `AiAssistantPage.tsx` that calls `/api/v1/ecg-proxy/ai-chat`. Extend it, do not duplicate it.\n\n**Security rule** — NEVER expose `ECG_PORTAL_TOKEN`, `ECG_LLM_API_KEY`, or any `ECG_*` secret in frontend code, logs, or responses.' +
+      ? '\n\n## eCG Agents Portal Integration\n\nThis project is linked to the eCG Agents Portal. Follow these rules strictly:\n\n**Frontend (React) code** — NEVER call the portal API directly from the browser. All portal data goes through the eComGear server proxy:\n```ts\n// In src/lib/ecgClient.ts — already configured\nconst url = `${import.meta.env.VITE_ECG_PROXY_URL}/api/v1/ecg-proxy${path}?projectId=${import.meta.env.VITE_PROJECT_ID}`;\n```\nUse `ecgApi` from `src/lib/ecgClient.ts` for all data fetching. Do not use `ECG_PORTAL_TOKEN` — it is server-side only.\n\n**Edge functions** — use the pre-injected `ecg` helper (not `fetch`). ECG credentials are injected server-side:\n```js\n// Agents\nconst agents = await ecg.get(\'/agents\');\n// Approve a post\nawait ecg.patch(\'/planned-posts/\' + params.postId, { status: \'approved\' });\n// Run history\nconst runs = await ecg.get(\'/runs\');\n// LLM call (uses the configured AI model, key stays server-side)\nconst reply = await ecg.llm([\n  { role: \'user\', content: \'Summarize agent performance\' }\n], \'You are an eCG assistant.\');\n```\n`ecg` is `null` for projects without portal integration — check before using.\n\n**AI chat** — the dashboard has a built-in `src/pages/ChatPage.tsx` (the "Assistant" nav tab, mounted at `/`) that calls `chat()` from `src/lib/ecgClient.ts`, which hits `/api/v1/ecg-chat` — an agentic tool-calling endpoint (list/create/run agents, approve/reject posts, trigger schedulers, etc., defined server-side in `ecg-chat.routes.ts`). Extend `ChatPage.tsx`/`ecg-chat.routes.ts`, do not duplicate it. Do not confuse this with `/api/v1/ecg-proxy/ai-chat` — that is a separate, tool-less plain LLM passthrough that the template does not use.\n\n**Security rule** — NEVER expose `ECG_PORTAL_TOKEN`, `ECG_LLM_API_KEY`, or any `ECG_*` secret in frontend code, logs, or responses.' +
         (hasEcgMcp ? '\n\n**Knowledge base** — you have a `search_org_knowledge` tool. Use it to ground generated UI copy and content (brand voice, product descriptions, business context) in the organization\'s real knowledge instead of inventing generic placeholder text.' : '')
       : '';
 

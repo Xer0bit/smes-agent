@@ -1,10 +1,14 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ECG } from './ecg-config';
 import Layout from './components/Layout';
+import DashboardPage from './pages/DashboardPage';
 import ChatPage from './pages/ChatPage';
 import AgentsPage from './pages/AgentsPage';
+import CreateAgentPage from './pages/CreateAgentPage';
+import EditAgentPage from './pages/EditAgentPage';
 import SchedulersPage from './pages/SchedulersPage';
 import PostsPage from './pages/PostsPage';
+import PostsCalendarPage from './pages/PostsCalendarPage';
 import ConnectorsPage from './pages/ConnectorsPage';
 import RunsPage from './pages/RunsPage';
 import KnowledgePage from './pages/KnowledgePage';
@@ -18,10 +22,14 @@ export default function App() {
     <BrowserRouter>
       <Layout>
         <Routes>
-          <Route path="/" element={<ChatPage />} />
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/assistant" element={<ChatPage />} />
           {has('agents')     && <Route path="/agents"     element={<AgentsPage />} />}
+          {has('agents')     && <Route path="/agents/create" element={<CreateAgentPage />} />}
+          {has('agents')     && <Route path="/agents/:agentId/edit" element={<EditAgentPage />} />}
           {has('schedulers') && <Route path="/schedulers" element={<SchedulersPage />} />}
           {has('posts')      && <Route path="/posts"      element={<PostsPage />} />}
+          {has('posts')      && <Route path="/posts/calendar" element={<PostsCalendarPage />} />}
           {has('posts')      && <Route path="/posts/:postId/visual" element={<VisualEditorPage />} />}
           {has('posts')      && <Route path="/visuals/:id" element={<VisualEditorPage />} />}
           {has('connectors') && <Route path="/connectors" element={<ConnectorsPage />} />}

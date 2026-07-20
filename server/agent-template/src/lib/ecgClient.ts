@@ -61,6 +61,7 @@ export const ecgApi = {
   // Agents
   agents: {
     list:    () => req('GET', '/agents'),
+    get:     (id: string) => req('GET', `/agents/${id}`),
     create:  (data: unknown) => req('POST', '/agents', data),
     update:  (id: string, data: unknown) => req('PATCH', `/agents/${id}`, data),
     delete:  (id: string) => req('DELETE', `/agents/${id}`),
@@ -73,7 +74,8 @@ export const ecgApi = {
     create:  (data: unknown) => req('POST', '/schedulers', data),
     update:  (id: string, data: unknown) => req('PATCH', `/schedulers/${id}`, data),
     delete:  (id: string) => req('DELETE', `/schedulers/${id}`),
-    trigger: (id: string) => req('POST', `/schedulers/${id}/trigger`),
+    // Backend route is /replan, not /trigger — there is no /trigger endpoint.
+    trigger: (id: string) => req('POST', `/schedulers/${id}/replan`),
   },
 
   // Planned posts
@@ -98,12 +100,16 @@ export const ecgApi = {
     finalize:   (id: string) => req('POST', `/visual-posts/${id}/finalize`),
   },
 
-  // Connectors
+  // Connectors — the backend router (connectors.ts) is mounted directly at
+  // /v1/ecg/connectors but its actual routes all live under /org (/org,
+  // /org/:id, /org/:id/test, /zapier/discover) — there is no bare `/` or
+  // `/:id` route. Every call here used to 404 silently before this fix.
   connectors: {
-    list:    () => req('GET', '/connectors'),
-    create:  (data: unknown) => req('POST', '/connectors', data),
-    update:  (id: string, data: unknown) => req('PATCH', `/connectors/${id}`, data),
-    delete:  (id: string) => req('DELETE', `/connectors/${id}`),
+    list:    () => req('GET', '/connectors/org'),
+    create:  (data: unknown) => req('POST', '/connectors/org', data),
+    update:  (id: string, data: unknown) => req('PATCH', `/connectors/org/${id}`, data),
+    delete:  (id: string) => req('DELETE', `/connectors/org/${id}`),
+    test:    (id: string) => req('POST', `/connectors/org/${id}/test`),
   },
 
   // Runs
