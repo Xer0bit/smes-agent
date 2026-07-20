@@ -43,9 +43,7 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
 
   const workspaceItems: NavItem[] = [
     { id: "workspace-plans", label: "Plan & Usage" },
-    // Analytics: real GA4 dashboard, but awaiting the GCP OAuth redirect URI
-    // setup before it can actually connect anything.
-    { id: "workspace-analytics", label: "Analytics", featureKey: "analytics", disabled: true },
+    { id: "workspace-analytics", label: "Analytics", featureKey: "analytics" },
     { id: "workspace-api-access", label: "API Access", featureKey: "api_access", disabled: true },
     { id: "workspace-white-label", label: "White-label", featureKey: "remove_branding", disabled: true },
     { id: "workspace-autopilot", label: "Autopilot", featureKey: "auto_pilot", disabled: true },
