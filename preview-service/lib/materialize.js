@@ -696,7 +696,7 @@ function isScaffoldOnly(projectRoot) {
     return files.every(f => scaffoldNames.has(f));
 }
 
-async function materializeProjectFiles(projectId, projectRoot, files) {
+async function materializeProjectFiles(projectId, projectRoot, files, { dryRun = false } = {}) {
     const userFilePaths = new Set(files.map((file) => file.path.replace(/^\/+/, '')));
     const allFixedIssues = [];
     const validationErrors = [];
@@ -771,14 +771,16 @@ async function materializeProjectFiles(projectId, projectRoot, files) {
             }
         }
         const dir = path.dirname(filePath);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        if (!dryRun && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
         // Binary files arrive as base64-encoded strings from the agent sync.
         // Decode and write them directly — no preprocessing or validation needed.
         if (file.content && file.content.startsWith('__ECOMGEAR_BIN64__')) {
-            const buf = Buffer.from(file.content.slice('__ECOMGEAR_BIN64__'.length), 'base64');
-            fs.writeFileSync(filePath, buf);
-            binaryWroteFiles.push(filePath);
+            if (!dryRun) {
+                const buf = Buffer.from(file.content.slice('__ECOMGEAR_BIN64__'.length), 'base64');
+                fs.writeFileSync(filePath, buf);
+                binaryWroteFiles.push(filePath);
+            }
             continue;
         }
 
@@ -792,8 +794,10 @@ async function materializeProjectFiles(projectId, projectRoot, files) {
         // /status failures for the whole app, even though this directory is
         // never bundled or executed client-side at all.
         if (safePath.startsWith('__edge_functions__/')) {
-            fs.writeFileSync(filePath, file.content);
-            binaryWroteFiles.push(filePath);
+            if (!dryRun) {
+                fs.writeFileSync(filePath, file.content);
+                binaryWroteFiles.push(filePath);
+            }
             continue;
         }
 
@@ -856,31 +860,37 @@ async function materializeProjectFiles(projectId, projectRoot, files) {
     }
 
     const wroteFiles = [...binaryWroteFiles];
-    for (const prepared of preparedFiles) {
-        if (prepared.shouldSkipWrite) {
-            continue;
+    if (!dryRun) {
+        for (const prepared of preparedFiles) {
+            if (prepared.shouldSkipWrite) {
+                continue;
+            }
+
+            fs.writeFileSync(prepared.filePath, prepared.contentToWrite);
+            wroteFiles.push(prepared.filePath);
         }
 
-        fs.writeFileSync(prepared.filePath, prepared.contentToWrite);
-        wroteFiles.push(prepared.filePath);
-    }
-
-    const projectIdInstance = activeServers.get(projectId);
-    if (projectIdInstance && projectIdInstance.vite) {
-        try {
-            // Batch write complete: invalidate the whole module graph ONCE and send
-            // a SINGLE full-reload to the browser.
-            // Emitting one watcher 'change' event PER FILE caused N separate Vite HMR
-            // processing cycles — each .tsx file without a self-accepting HMR boundary
-            // triggered its own 'full-reload' WebSocket message (26 files = 26
-            // 'page reload' log entries). The Vite client debounces but the module
-            // graph ends in a partially-stale state causing cascading re-requests.
-            projectIdInstance.vite.moduleGraph.invalidateAll();
-            projectIdInstance.vite.ws.send({ type: 'full-reload', path: '*' });
-        } catch (err) {
-            console.warn('Failed to trigger Vite reload:', err);
+        const projectIdInstance = activeServers.get(projectId);
+        if (projectIdInstance && projectIdInstance.vite) {
+            try {
+                // Batch write complete: invalidate the whole module graph ONCE and send
+                // a SINGLE full-reload to the browser.
+                // Emitting one watcher 'change' event PER FILE caused N separate Vite HMR
+                // processing cycles — each .tsx file without a self-accepting HMR boundary
+                // triggered its own 'full-reload' WebSocket message (26 files = 26
+                // 'page reload' log entries). The Vite client debounces but the module
+                // graph ends in a partially-stale state causing cascading re-requests.
+                projectIdInstance.vite.moduleGraph.invalidateAll();
+                projectIdInstance.vite.ws.send({ type: 'full-reload', path: '*' });
+            } catch (err) {
+                console.warn('Failed to trigger Vite reload:', err);
+            }
         }
     }
+    // dryRun (used by /preview/:projectId/check): validation above already ran
+    // in full against the same content; we just never touch disk or the live
+    // Vite instance, so the user-visible preview stays untouched until the
+    // real end-of-run /update push. See get_build_errors.ts.
 
     return { userFilePaths, allFixedIssues, validationErrors, wroteFiles };
 }

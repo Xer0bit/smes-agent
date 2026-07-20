@@ -45,3 +45,5 @@ preview-service/projects/
 .claude
 server/.claude-flow
 .agents/skills
+# Added by code-review-graph
+.code-review-graph/

@@ -135,7 +135,7 @@ app.post('/:schema/secrets/_sync', requireInternalSecret, async (req, res) => {
 // end users call this with the project's anon/service key. Fully local: reads
 // tenant_functions/tenant_secrets from this box's own Postgres, never calls
 // api.ecomgear.dev. ──────────────────────────────────────────────────────────
-app.post('/:schema/functions/:name/invoke', async (req, res) => {
+async function handleInvoke(req, res) {
   const { schema, name } = req.params;
 
   const authHeader = req.headers.authorization;
@@ -191,7 +191,18 @@ app.post('/:schema/functions/:name/invoke', async (req, res) => {
     console.error('[functions-runner] invoke error', err);
     res.status(500).json({ error: err.message ?? String(err) });
   }
-});
+}
+
+app.post('/:schema/functions/:name/invoke', handleInvoke);
+// Compatibility alias: some generated apps' client code calls
+// `${VITE_FUNCTIONS_API_URL}/api/v1/functions/<name>/invoke` instead of the
+// documented flat `${VITE_FUNCTIONS_API_URL}/<name>/invoke` (VITE_FUNCTIONS_API_URL
+// already includes `/functions`) — the model pattern-matched this platform's
+// own `/api/v1/functions` route prefix instead of the edge-function invoke
+// pattern in app-builder.prompt.ts. Accepting the mistaken shape here fixes
+// every already-generated app hitting this 404 without needing to regenerate
+// or hand-edit their source.
+app.post('/:schema/functions/api/v1/functions/:name/invoke', handleInvoke);
 
 ensureSchema()
   .then(() => app.listen(PORT, () => console.log(`[functions-runner] listening on :${PORT}`)))

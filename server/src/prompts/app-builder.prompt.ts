@@ -259,6 +259,7 @@ const res = await fetch(\`\${import.meta.env.VITE_FUNCTIONS_API_URL}/<name>/invo
 });
 const { result, error } = await res.json();
 \`\`\`
+\`VITE_FUNCTIONS_API_URL\` ALREADY ends in \`/functions\` (it's a full base URL, not a bare host) — the path is FLAT: \`\${VITE_FUNCTIONS_API_URL}/<name>/invoke\`, nothing else. Do NOT prepend \`/api/v1/functions\` or any other prefix (that is this platform's OWN internal API shape, unrelated to a generated app's runtime calls, and will 404).
 
 **Rules:**
 1. NEVER put secret-requiring or security-critical logic in frontend code just because it's simpler   it belongs in an edge function, full stop.
