@@ -5,6 +5,24 @@ const path = require('path');
 const http = require('http');
 const crypto = require('crypto');
 const { exec } = require('child_process');
+const { getViteApi } = require('./lib/viteApi');
+const previewState = require('./lib/previewState');
+const {
+    activeServers, projectErrors, projectDiagnostics, runtimeInstances,
+    pendingServerCreations, closingServers, recentUpdateFingerprints,
+    isUpdateRateLimited, createUpdateFingerprint, getPreviewPublicBaseUrl,
+    touchRuntime, escapeHtml, isValidProjectId, getProjectDiagnostics,
+    setProjectErrors, appendProjectError,
+} = previewState;
+const {
+    validateSourceFile, buildValidationResponse, checkCrossFileImports,
+    quickViteBuildCheck,
+} = require('./lib/validation');
+const {
+    TAILWIND_CSS_BASE, preprocessFile, ensureEssentialFiles, isScaffoldOnly,
+    materializeProjectFiles, pruneProjectFiles,
+} = require('./lib/materialize');
+const { snapshotProjectSrc, rollbackProjectSrc, cleanupSnapshot } = require('./lib/snapshot');
 
 // Load .env.production for server-side secrets (Supabase keys etc.) if present.
 // This file is written by the deploy script and never committed to git.
@@ -17,28 +35,6 @@ try {
         }
     }
 } catch { /* ignore */ }
-let viteApiPromise = null;
-
-async function getViteApi() {
-    if (!viteApiPromise) {
-        viteApiPromise = Promise.all([
-            import('vite'),
-            import('@vitejs/plugin-react'),
-        ]).then(([viteModule, reactModule]) => ({
-            createViteServer: viteModule.createServer,
-            transformWithEsbuild: viteModule.transformWithEsbuild,
-            viteBuild: viteModule.build,
-            reactPluginFactory: reactModule.default,
-        })).catch((err) => {
-            // Reset so the next call retries the import instead of re-using the
-            // permanently-rejected promise, which would break all project creation.
-            viteApiPromise = null;
-            throw err;
-        });
-    }
-
-    return viteApiPromise;
-}
 
 // Production configuration from environment
 const PORT = process.env.PORT || 3001;
@@ -61,23 +57,6 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 // Leave empty in local dev to keep the endpoint open without config.
 const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || '';
 
-// ── Rate limiter for /update ──────────────────────────────────────────────────
-// Keyed by IP; allows burst up to 30 requests per 60-second window.
-const _updateRateBuckets = new Map(); // ip → { count, windowStart }
-const UPDATE_RATE_LIMIT = 30;
-const UPDATE_RATE_WINDOW_MS = 60_000;
-
-function isUpdateRateLimited(ip) {
-    const now = Date.now();
-    const bucket = _updateRateBuckets.get(ip);
-    if (!bucket || now - bucket.windowStart > UPDATE_RATE_WINDOW_MS) {
-        _updateRateBuckets.set(ip, { count: 1, windowStart: now });
-        return false;
-    }
-    bucket.count += 1;
-    if (bucket.count > UPDATE_RATE_LIMIT) return true;
-    return false;
-}
 
 const PROJECTS_ROOT = path.resolve(__dirname, 'projects');
 
@@ -86,7 +65,7 @@ if (!fs.existsSync(PROJECTS_ROOT)) {
     fs.mkdirSync(PROJECTS_ROOT, { recursive: true });
 }
 
-// ── Slug registry — maps published slug → projectId ───────────────────────────
+// ── Slug registry   maps published slug → projectId ───────────────────────────
 const SLUGS_FILE = path.join(PROJECTS_ROOT, '.slugs.json');
 function loadSlugRegistry() {
     const map = new Map();
@@ -123,7 +102,7 @@ function saveSlugRegistry(map) {
 const slugRegistry = loadSlugRegistry();
 console.log(`[Slugs] Loaded ${slugRegistry.size} published slug(s)`);
 
-// ── Warmup list — persists active project IDs across restarts ────────────────
+// ── Warmup list   persists active project IDs across restarts ────────────────
 // Written on graceful shutdown so a new process can restore all Vite servers
 // that were running, eliminating user-visible "ecosystem reset" after deploys.
 const WARMUP_LIST_FILE = path.join(PROJECTS_ROOT, '.warmup-list.json');
@@ -132,7 +111,7 @@ function loadWarmupList() {
     try {
         if (fs.existsSync(WARMUP_LIST_FILE))
             return JSON.parse(fs.readFileSync(WARMUP_LIST_FILE, 'utf-8'));
-    } catch (e) { /* corrupt file — ignore */ }
+    } catch (e) { /* corrupt file   ignore */ }
     return [];
 }
 
@@ -143,42 +122,9 @@ function saveWarmupList() {
     } catch (e) { console.warn('[Warmup] Failed to save warmup list:', e.message); }
 }
 
-// Map to store active Vite servers: projectId -> { vite, server (dummy), lastAccessed }
-const activeServers = new Map();
-const projectErrors = new Map();
-const projectDiagnostics = new Map();
-const runtimeInstances = new Map();
-// In-flight server creation promises — prevents two concurrent getOrCreateServer calls
-// from spawning duplicate Vite instances for the same project (leaking the first one).
-const pendingServerCreations = new Map();
-const closingServers = new Set();
-const recentUpdateFingerprints = new Map();
-let cleanupTimer = null;
 
 const UPDATE_DEDUPE_WINDOW_MS = 8000;
 
-function createUpdateFingerprint(files, fullSync) {
-    const hash = crypto.createHash('sha1');
-    hash.update(`fullSync:${fullSync ? 1 : 0}|count:${files.length}|`);
-
-    // Order-insensitive fingerprint so identical payloads with different array ordering
-    // still collapse to one update pass.
-    const normalized = files
-        .map((file) => ({
-            path: String(file?.path || '').replace(/^\/+/, ''),
-            content: String(file?.content || ''),
-        }))
-        .sort((a, b) => a.path.localeCompare(b.path));
-
-    for (const file of normalized) {
-        hash.update(file.path);
-        hash.update('\0');
-        hash.update(file.content);
-        hash.update('\0');
-    }
-
-    return hash.digest('hex');
-}
 
 const VITE_RESTART_TRIGGER_FILES = new Set([
     'package.json',
@@ -196,7 +142,7 @@ function shouldRestartViteForUpdate(files = [], projectRoot = null) {
     return files.some((file) => {
         const safePath = String(file?.path || '').replace(/^\/+/, '');
         if (!VITE_RESTART_TRIGGER_FILES.has(safePath)) return false;
-        // Only restart if the file content actually changed — normalizeProjectFiles
+        // Only restart if the file content actually changed   normalizeProjectFiles
         // always includes config files with default content, so checking by name alone
         // causes unnecessary cache-busting restarts on every update.
         if (projectRoot) {
@@ -206,7 +152,7 @@ function shouldRestartViteForUpdate(files = [], projectRoot = null) {
                 const incoming = typeof file?.content === 'string' ? file.content : '';
                 return diskContent !== incoming;
             } catch {
-                // File doesn't exist on disk yet — this IS a real config change
+                // File doesn't exist on disk yet   this IS a real config change
                 return true;
             }
         }
@@ -251,1491 +197,19 @@ async function closeProjectServer(projectId, reason = 'cleanup') {
     closingServers.delete(projectId);
 }
 
-function getPreviewPublicBaseUrl(req) {
-    const configured = process.env.PREVIEW_PUBLIC_BASE_URL;
-    if (configured && configured.trim()) return configured.replace(/\/$/, '');
-    const host = req.get('host') || `localhost:${PORT}`;
-    const protocol = req.protocol || 'http';
-    return `${protocol}://${host}`;
-}
-
-function touchRuntime(projectId) {
-    const instance = runtimeInstances.get(projectId);
-    if (!instance) return;
-    instance.lastActiveAt = new Date().toISOString();
-    runtimeInstances.set(projectId, instance);
-}
-
-function escapeHtml(value) {
-    return String(value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-// Guest project IDs are prefixed with "guest-" followed by a standard UUID.
-// e.g. guest-a1b2c3d4-e5f6-7890-abcd-ef1234567890
-const GUEST_PROJECT_REGEX = /^guest-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function isValidProjectId(id) {
-    return typeof id === 'string' && (UUID_REGEX.test(id) || GUEST_PROJECT_REGEX.test(id));
-}
-
-function getProjectDiagnostics(projectId) {
-    const stored = projectDiagnostics.get(projectId);
-    const errors = stored?.errors || [];
-    const kind = stored?.diagnosticKind || 'healthy';
-    // Warnings (from non-blocking checks) don't make the preview "unhealthy"
-    const isWarningOnly = kind === 'warning';
-
-    return {
-        healthy: errors.length === 0 || isWarningOnly,
-        errors,
-        diagnosticKind: kind,
-        updatedAt: stored?.updatedAt || null,
-        stalePreviewRetained: errors.length > 0 && !isWarningOnly,
-    };
-}
-
-function setProjectErrors(projectId, errors, diagnosticKind = 'build') {
-    if (!errors || errors.length === 0) {
-        projectErrors.delete(projectId);
-        projectDiagnostics.delete(projectId);
-        return;
-    }
-
-    const normalized = errors
-        .map((error) => typeof error === 'string' ? error : error?.message)
-        .filter(Boolean)
-        .slice(-20);
-
-    if (normalized.length === 0) {
-        projectErrors.delete(projectId);
-        projectDiagnostics.delete(projectId);
-        return;
-    }
-
-    projectErrors.set(projectId, normalized);
-    projectDiagnostics.set(projectId, {
-        diagnosticKind,
-        errors: normalized,
-        updatedAt: new Date().toISOString(),
-    });
-}
-
-function appendProjectError(projectId, error, diagnosticKind = 'build') {
-    const next = [...(projectErrors.get(projectId) || []), typeof error === 'string' ? error : error?.message]
-        .filter(Boolean)
-        .slice(-20);
-    setProjectErrors(projectId, next, diagnosticKind);
-}
-
-function getEsbuildLoader(filePath) {
-    const ext = path.extname(filePath).toLowerCase();
-    switch (ext) {
-        case '.tsx': return 'tsx';
-        case '.ts': return 'ts';
-        case '.jsx': return 'jsx';
-        case '.js': return 'js';
-        case '.mjs': return 'js';
-        case '.mts': return 'ts';
-        case '.cts': return 'ts';
-        case '.json': return 'json';
-        default: return null;
-    }
-}
-
-function formatValidationError(filePath, error) {
-    const message = error?.message || 'Invalid source file';
-    const location = error?.location;
-    const line = location?.line;
-    const column = location?.column != null ? location.column + 1 : undefined;
-    const lineText = location?.lineText || '';
-    const prefix = line && column
-        ? `${filePath}:${line}:${column}`
-        : filePath;
-
-    return {
-        file: filePath,
-        line,
-        column,
-        message,
-        lineText,
-        summary: `${prefix} ${message}`.trim(),
-    };
-}
-
-// System/config files generated by initProject() — skip validation entirely.
-// Vite reads these in-memory (configFile: false) so on-disk content is irrelevant.
-const SKIP_VALIDATION_FILES = new Set([
-    'postcss.config.js', 'postcss.config.cjs', 'postcss.config.mjs',
-    'tailwind.config.js', 'tailwind.config.ts', 'tailwind.config.cjs',
-    'vite.config.ts', 'vite.config.js',
-    'tsconfig.json', 'tsconfig.node.json',
-    'components.json',
-]);
-
-async function validateSourceFile(filePath, content) {
-    const basename = path.basename(filePath);
-    if (SKIP_VALIDATION_FILES.has(basename)) return [];
-
-    const loader = getEsbuildLoader(filePath);
-    if (!loader) return [];
-
-    const isScriptLike = ['tsx', 'ts', 'jsx', 'js', 'mjs', 'mts', 'cts'].includes(loader);
-    if (isScriptLike) {
-        try {
-            const ts = require('typescript');
-            const result = ts.transpileModule(content, {
-                compilerOptions: {
-                    target: ts.ScriptTarget.ES2020,
-                    module: ts.ModuleKind.ESNext,
-                    jsx: ts.JsxEmit.ReactJSX,
-                },
-                fileName: filePath,
-                reportDiagnostics: true,
-            });
-
-            const diagnostics = Array.isArray(result.diagnostics) ? result.diagnostics : [];
-            const hardErrors = diagnostics.filter((d) => d.category === ts.DiagnosticCategory.Error);
-            if (hardErrors.length === 0) {
-                // TypeScript passed — also run esbuild transform so errors like
-                // `unexpected "{"` (JSX shorthand `<Comp {prop}>`) are caught before
-                // the file is written to disk. These errors only appear at Vite
-                // transform time and are NOT reported by TypeScript's transpileModule.
-                if (loader === 'tsx' || loader === 'jsx') {
-                    try {
-                        const { transformWithEsbuild } = await getViteApi();
-                        await transformWithEsbuild(content, filePath, {
-                            loader,
-                            jsx: 'automatic',
-                            sourcemap: false,
-                        });
-                    } catch (esbuildErr) {
-                        // TypeScript accepted the file — esbuild disagreement is
-                        // non-fatal.  Let Vite HMR surface it as a browser overlay
-                        // instead of hard-rejecting the entire update with 422.
-                        const hint = esbuildErr?.errors?.[0]?.text || esbuildErr?.message || '';
-                        console.warn(`[Validate] esbuild warning (TS passed): ${filePath} — ${hint}`);
-                    }
-                }
-                return [];
-            }
-
-            return hardErrors.map((diag) => {
-                const message = ts.flattenDiagnosticMessageText(diag.messageText, '\n') || 'Invalid source file';
-                if (!diag.file || typeof diag.start !== 'number') {
-                    return {
-                        file: filePath,
-                        line: undefined,
-                        column: undefined,
-                        message,
-                        lineText: '',
-                        summary: `${filePath} ${message}`.trim(),
-                    };
-                }
-
-                const lineAndChar = diag.file.getLineAndCharacterOfPosition(diag.start);
-                const line = lineAndChar.line + 1;
-                const column = lineAndChar.character + 1;
-                const lineText = diag.file.text.split('\n')[line - 1] || '';
-
-                return {
-                    file: filePath,
-                    line,
-                    column,
-                    message,
-                    lineText,
-                    summary: `${filePath}:${line}:${column} ${message}`.trim(),
-                };
-            });
-        } catch (error) {
-            return [formatValidationError(filePath, error)];
-        }
-    }
-
-    try {
-        const { transformWithEsbuild } = await getViteApi();
-        await transformWithEsbuild(content, filePath, {
-            loader,
-            jsx: 'automatic',
-            sourcemap: false,
-        });
-        return [];
-    } catch (error) {
-        if (Array.isArray(error?.errors) && error.errors.length > 0) {
-            return error.errors.map((entry) => formatValidationError(filePath, entry));
-        }
-
-        return [formatValidationError(filePath, error)];
-    }
-}
-
-function buildValidationResponse(errors) {
-    const items = errors.map((error) => {
-        const location = error.line && error.column ? `:${error.line}:${error.column}` : '';
-        const codeLine = error.lineText ? `\n${error.lineText}` : '';
-        return `${error.file}${location} ${error.message}${codeLine}`;
-    });
-
-    return {
-        error: `Preview validation failed:\n${items.join('\n\n')}`,
-        validationErrors: errors,
-    };
-}
-
-function repairMalformedDefaultStringParams(content) {
-    let next = content;
-    // Handles patterns like: suffix = ', prefix = ''
-    next = next.replace(/(\b[a-zA-Z_$][\w$]*\s*=\s*)'(?=\s*,\s*[a-zA-Z_$][\w$]*\s*=)/g, "$1''");
-    next = next.replace(/(\b[a-zA-Z_$][\w$]*\s*=\s*)"(?=\s*,\s*[a-zA-Z_$][\w$]*\s*=)/g, '$1""');
-    return next;
-}
-
-// ── Stable Architecture: Cross-file import resolution check ───────────────────
-// Validates that all relative imports resolve to files that WILL exist after
-// the update. This catches "Module not found" errors BEFORE writing to disk,
-// which is the #1 cause of broken previews.
-function checkCrossFileImports(projectRoot, requestFiles, fullSync) {
-    const virtualFS = new Set();
-
-    // 1. Include existing files on disk (unless fullSync replaces everything)
-    if (!fullSync) {
-        const walkDisk = (dir) => {
-            let entries;
-            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-            for (const entry of entries) {
-                if (['node_modules', '.vite-cache', '.git', '.cache', '.src-snapshot'].includes(entry.name)) continue;
-                const abs = path.join(dir, entry.name);
-                if (entry.isDirectory()) walkDisk(abs);
-                else virtualFS.add(path.relative(projectRoot, abs).replace(/\\/g, '/'));
-            }
-        };
-        walkDisk(projectRoot);
-    }
-
-    // 2. Overlay request files (they are the new source of truth for these paths)
-    const requestFileMap = new Map();
-    for (const file of requestFiles) {
-        const safePath = file.path.replace(/^\/+/, '');
-        virtualFS.add(safePath);
-        requestFileMap.set(safePath, file.content || '');
-    }
-
-    // 3. Check relative imports in all script files
-    const errors = [];
-    const scriptExts = /\.(tsx?|jsx?)$/;
-    const scriptFiles = [...virtualFS].filter((p) => scriptExts.test(p));
-
-    for (const filePath of scriptFiles) {
-        let content = requestFileMap.get(filePath);
-        if (content === undefined) {
-            try { content = fs.readFileSync(path.join(projectRoot, filePath), 'utf-8'); }
-            catch { continue; }
-        }
-        if (!content || typeof content !== 'string') continue;
-
-        // Skip binary-encoded files
-        if (content.startsWith('__ECOMGEAR_BIN64__')) continue;
-
-        // Extract relative imports (starting with ./ or ../)
-        const importRegex = /(?:import\s+(?:[\w{}\s*,]+\s+from\s+)?|require\s*\(\s*|export\s+(?:[\w{}\s*,]+\s+from\s+)?)['"](\.[^'"]+)['"]/g;
-        let match;
-        while ((match = importRegex.exec(content)) !== null) {
-            const importPath = match[1];
-            // Skip CSS/SCSS/asset imports (these are handled by Vite)
-            if (/\.(css|scss|sass|less|svg|png|jpg|jpeg|gif|webp|ico|woff2?|ttf|eot|mp4|webm)$/.test(importPath)) continue;
-
-            const fileDir = path.dirname(filePath);
-            const resolved = path.posix.normalize(path.posix.join(fileDir, importPath));
-
-            // Check all possible resolution paths
-            const candidates = [
-                resolved,
-                resolved + '.tsx',
-                resolved + '.ts',
-                resolved + '.jsx',
-                resolved + '.js',
-                resolved + '/index.tsx',
-                resolved + '/index.ts',
-                resolved + '/index.jsx',
-                resolved + '/index.js',
-            ];
-
-            if (!candidates.some((c) => virtualFS.has(c))) {
-                errors.push({
-                    file: filePath,
-                    message: `Unresolved local import '${importPath}' — no matching file found`,
-                    summary: `${filePath}: Unresolved import '${importPath}'`,
-                });
-            }
-        }
-    }
-
-    return errors;
-}
-
-// ── Stable Architecture: Project snapshot / rollback ──────────────────────────
-// Creates a quick snapshot of the src/ directory before writing new files.
-// If the build check fails after writing, we can atomically rollback.
-const SNAPSHOT_DIR_NAME = '.src-snapshot';
-
-function snapshotProjectSrc(projectRoot) {
-    const srcDir = path.join(projectRoot, 'src');
-    const snapshotDir = path.join(projectRoot, SNAPSHOT_DIR_NAME);
-
-    // Clean up any leftover snapshot
-    if (fs.existsSync(snapshotDir)) {
-        fs.rmSync(snapshotDir, { recursive: true, force: true });
-    }
-
-    if (!fs.existsSync(srcDir)) return false;
-
-    try {
-        fs.cpSync(srcDir, snapshotDir, { recursive: true });
-        return true;
-    } catch (err) {
-        console.warn('[Snapshot] Failed to create src snapshot:', err.message);
-        return false;
-    }
-}
-
-function rollbackProjectSrc(projectRoot) {
-    const srcDir = path.join(projectRoot, 'src');
-    const snapshotDir = path.join(projectRoot, SNAPSHOT_DIR_NAME);
-
-    if (!fs.existsSync(snapshotDir)) return false;
-
-    try {
-        if (fs.existsSync(srcDir)) {
-            fs.rmSync(srcDir, { recursive: true, force: true });
-        }
-        fs.cpSync(snapshotDir, srcDir, { recursive: true });
-        fs.rmSync(snapshotDir, { recursive: true, force: true });
-        console.log('[Snapshot] Rolled back src/ to previous state');
-        return true;
-    } catch (err) {
-        console.warn('[Snapshot] Failed to rollback:', err.message);
-        return false;
-    }
-}
-
-function cleanupSnapshot(projectRoot) {
-    const snapshotDir = path.join(projectRoot, SNAPSHOT_DIR_NAME);
-    try {
-        if (fs.existsSync(snapshotDir)) {
-            fs.rmSync(snapshotDir, { recursive: true, force: true });
-        }
-    } catch { /* ignore */ }
-}
-
-// ── Stable Architecture: Post-write Vite transform check ─────────────────────
-// After files are written, attempt to load the entry point through Vite's
-// module graph. If it fails to transform, the project is broken.
-async function quickViteBuildCheck(projectId, projectRoot) {
-    const instance = activeServers.get(projectId);
-    if (!instance || !instance.vite) return { ok: true, errors: [] };
-
-    // Scan ALL source files — not just entry points — so syntax errors in
-    // pages / components are caught immediately (before the agent health-checks).
-    const srcDir = path.join(projectRoot, 'src');
-    const candidateFiles = [];
-    if (fs.existsSync(srcDir)) {
-        const walk = (dir) => {
-            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-                if (entry.isDirectory()) {
-                    walk(path.join(dir, entry.name));
-                } else if (/\.(tsx|jsx|ts|js)$/.test(entry.name)) {
-                    candidateFiles.push(path.join(dir, entry.name));
-                }
-            }
-        };
-        walk(srcDir);
-    }
-
-    const errors = [];
-
-    for (const absPath of candidateFiles) {
-        try {
-            const content = fs.readFileSync(absPath, 'utf-8');
-            const ext = path.extname(absPath).toLowerCase();
-            const { transformWithEsbuild } = await getViteApi();
-            await transformWithEsbuild(content, absPath, {
-                loader: ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : ext === '.ts' ? 'ts' : 'js',
-                jsx: 'automatic',
-                sourcemap: false,
-            });
-        } catch (err) {
-            const relPath = path.relative(projectRoot, absPath).replace(/\\/g, '/');
-            if (Array.isArray(err?.errors) && err.errors.length > 0) {
-                errors.push(...err.errors.map((e) => formatValidationError(relPath, e)));
-            } else {
-                errors.push(formatValidationError(relPath, err));
-            }
-        }
-    }
-
-    return { ok: errors.length === 0, errors };
-}
-
-function delimiterImbalanceScore(content) {
-    const chars = String(content || '');
-    let paren = 0;
-    let brace = 0;
-    let bracket = 0;
-
-    for (let i = 0; i < chars.length; i++) {
-        const ch = chars[i];
-        if (ch === '(') paren += 1;
-        else if (ch === ')') paren -= 1;
-        else if (ch === '{') brace += 1;
-        else if (ch === '}') brace -= 1;
-        else if (ch === '[') bracket += 1;
-        else if (ch === ']') bracket -= 1;
-    }
-
-    return Math.abs(paren) + Math.abs(brace) + Math.abs(bracket);
-}
-
-function trimTrailingOrphanClosers(content) {
-    const lines = String(content || '').split(/\r?\n/);
-    if (lines.length === 0) {
-        return { content: String(content || ''), removed: 0 };
-    }
-
-    const orphanLinePattern = /^\s*[\)\}\];,]+\s*$/;
-    let current = lines.slice();
-    let currentScore = delimiterImbalanceScore(current.join('\n'));
-    let removed = 0;
-
-    while (current.length > 0 && orphanLinePattern.test(current[current.length - 1])) {
-        const candidate = current.slice(0, -1);
-        const candidateText = candidate.join('\n');
-        const candidateScore = delimiterImbalanceScore(candidateText);
-        if (candidateScore > currentScore) {
-            break;
-        }
-
-        current = candidate;
-        currentScore = candidateScore;
-        removed += 1;
-    }
-
-    return { content: current.join('\n'), removed };
-}
-
-async function materializeProjectFiles(projectId, projectRoot, files) {
-    const userFilePaths = new Set(files.map((file) => file.path.replace(/^\/+/, '')));
-    const allFixedIssues = [];
-    const validationErrors = [];
-    const preparedFiles = [];
-    const binaryWroteFiles = [];
-    const configFiles = new Set(['vite.config.ts', 'tsconfig.json', 'tsconfig.node.json', 'package.json', 'postcss.config.js', 'tailwind.config.js', 'components.json']);
-
-    // Known-good scaffold defaults for JSON config files
-    const SCAFFOLD_JSON_DEFAULTS = {
-        'tsconfig.json': JSON.stringify({
-            compilerOptions: {
-                target: 'ES2020', useDefineForClassFields: true,
-                lib: ['ES2020', 'DOM', 'DOM.Iterable'], module: 'ESNext',
-                skipLibCheck: true, moduleResolution: 'bundler',
-                allowImportingTsExtensions: true, resolveJsonModule: true,
-                isolatedModules: true, noEmit: true, jsx: 'react-jsx',
-                strict: true, noUnusedLocals: false, noUnusedParameters: false,
-                noFallthroughCasesInSwitch: true, baseUrl: '.', paths: { '@/*': ['./src/*'] },
-            },
-            include: ['src'], references: [],
-        }, null, 2),
-        'tsconfig.node.json': JSON.stringify({
-            compilerOptions: {
-                composite: true, skipLibCheck: true, module: 'ESNext',
-                moduleResolution: 'bundler', allowSyntheticDefaultImports: true,
-                strict: true, noEmit: true,
-            },
-            include: ['vite.config.ts'],
-        }, null, 2),
-    };
-
-    for (const file of files) {
-        if (file.content == null) {
-            console.warn('[Materialize] Skipping file with null/undefined content:', file.path);
-            continue;
-        }
-        const safePath = file.path.replace(/^\/+/, '');
-        const filePath = path.join(projectRoot, safePath);
-
-        // Security: reject any path that escapes the project root (path traversal).
-        // path.join() alone does NOT prevent ../ sequences — must resolve & compare.
-        const resolvedFilePath = path.resolve(filePath);
-        const resolvedProjectRoot = path.resolve(projectRoot);
-        if (!resolvedFilePath.startsWith(resolvedProjectRoot + path.sep) && resolvedFilePath !== resolvedProjectRoot) {
-            console.warn(`[Security] Path traversal blocked: "${file.path}" resolved to "${resolvedFilePath}"`);
-            continue;
-        }
-
-        // Security: block writes to sensitive directories that must never be
-        // overwritten by agent-generated files.
-        const topSegment = safePath.split('/')[0];
-        if (['node_modules', '.git', 'dist', '.cache', '.vite-cache', '.src-snapshot'].includes(topSegment)) {
-            console.warn(`[Security] Write to protected directory blocked: "${safePath}"`);
-            continue;
-        }
-
-        if (/\.json$/i.test(safePath) && !safePath.startsWith('node_modules')) {
-            try {
-                JSON.parse(file.content);
-            } catch {
-                const fallback = SCAFFOLD_JSON_DEFAULTS[safePath];
-                if (fallback) {
-                    console.warn(`[Materialize] ${safePath}: invalid JSON — replacing with scaffold default`);
-                    file.content = fallback;
-                    allFixedIssues.push(`${safePath}: Replaced corrupt JSON with scaffold default`);
-                } else if (fs.existsSync(filePath)) {
-                    // Keep existing file on disk rather than overwriting with garbage
-                    console.warn(`[Materialize] ${safePath}: invalid JSON — keeping existing file`);
-                    allFixedIssues.push(`${safePath}: Kept existing file (new content was invalid JSON)`);
-                    continue;
-                }
-            }
-        }
-        const dir = path.dirname(filePath);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-        // Binary files arrive as base64-encoded strings from the agent sync.
-        // Decode and write them directly — no preprocessing or validation needed.
-        if (file.content && file.content.startsWith('__ECOMGEAR_BIN64__')) {
-            const buf = Buffer.from(file.content.slice('__ECOMGEAR_BIN64__'.length), 'base64');
-            fs.writeFileSync(filePath, buf);
-            binaryWroteFiles.push(filePath);
-            continue;
-        }
-
-        // __edge_functions__/*.js mirrors (see write_edge_function.ts) are raw
-        // sandbox function bodies — no imports, bare top-level statements,
-        // undeclared free variables (secrets/params/db) injected by the runner.
-        // They are NOT React/TS app code and must never go through preprocessFile
-        // or validateSourceFile, both built for component files: doing so both
-        // corrupted a function's syntax (the same false-positive "autoFix"
-        // pattern seen on regular files) AND surfaced its "errors" as blocking
-        // /status failures for the whole app, even though this directory is
-        // never bundled or executed client-side at all.
-        if (safePath.startsWith('__edge_functions__/')) {
-            fs.writeFileSync(filePath, file.content);
-            binaryWroteFiles.push(filePath);
-            continue;
-        }
-
-        const { content: preprocessedContent, issues } = preprocessFile(safePath, file.content);
-        allFixedIssues.push(...issues.map((issue) => `${safePath}: ${issue}`));
-
-        let contentToWrite = preprocessedContent;
-        if (safePath === 'index.html') {
-            contentToWrite = contentToWrite
-                .replace(/src="\/src\//g, 'src="./src/')
-                .replace(/href="\/src\//g, 'href="./src/');
-        }
-
-        if (safePath === 'package.json') {
-            contentToWrite = harmonizePackageJson(contentToWrite, files);
-        }
-
-        let fileValidationErrors = await validateSourceFile(safePath, contentToWrite);
-
-        // Validation fallback: attempt one more surgical repair for malformed default
-        // string parameters before declaring the file invalid.
-        if (fileValidationErrors.length > 0 && /\.(tsx?|jsx?)$/.test(safePath)) {
-            const repaired = repairMalformedDefaultStringParams(contentToWrite);
-            if (repaired !== contentToWrite) {
-                const repairedValidationErrors = await validateSourceFile(safePath, repaired);
-                if (repairedValidationErrors.length === 0) {
-                    contentToWrite = repaired;
-                    allFixedIssues.push(`${safePath}: Fixed malformed default string parameter (validation fallback)`);
-                    fileValidationErrors = [];
-                }
-            }
-        }
-
-        validationErrors.push(...fileValidationErrors);
-
-        preparedFiles.push({
-            safePath,
-            filePath,
-            contentToWrite,
-            shouldSkipWrite: configFiles.has(safePath) && fs.existsSync(filePath) && fs.readFileSync(filePath, 'utf-8') === contentToWrite,
-        });
-    }
-
-    if (allFixedIssues.length > 0) {
-        const uniqueFilePaths = new Set(allFixedIssues.map((issue) => issue.split(':')[0])).size;
-        const uniqueIssues = [...new Set(allFixedIssues)];
-        const sample = uniqueIssues.slice(0, 6).join(' | ');
-        console.log(
-            `[Preprocess] Applied ${allFixedIssues.length} fix(es) across ${uniqueFilePaths} file(s)` +
-            (sample ? `: ${sample}${uniqueIssues.length > 6 ? ' | ...' : ''}` : '')
-        );
-    }
-
-    // Validation errors are treated as non-blocking warnings — files are written
-    // and Vite HMR surfaces them as browser overlays, consistent with esbuild and
-    // cross-file import handling. Hard-rejecting (422) blocks the AI agent loop.
-    if (validationErrors.length > 0) {
-        const sample = validationErrors.slice(0, 3).map((e) => e.summary).join(' | ');
-        console.warn(`[Validate] ${validationErrors.length} warning(s) — writing files anyway: ${sample}`);
-    }
-
-    const wroteFiles = [...binaryWroteFiles];
-    for (const prepared of preparedFiles) {
-        if (prepared.shouldSkipWrite) {
-            continue;
-        }
-
-        fs.writeFileSync(prepared.filePath, prepared.contentToWrite);
-        wroteFiles.push(prepared.filePath);
-    }
-
-    const projectIdInstance = activeServers.get(projectId);
-    if (projectIdInstance && projectIdInstance.vite) {
-        try {
-            // Batch write complete: invalidate the whole module graph ONCE and send
-            // a SINGLE full-reload to the browser.
-            // Emitting one watcher 'change' event PER FILE caused N separate Vite HMR
-            // processing cycles — each .tsx file without a self-accepting HMR boundary
-            // triggered its own 'full-reload' WebSocket message (26 files = 26
-            // 'page reload' log entries). The Vite client debounces but the module
-            // graph ends in a partially-stale state causing cascading re-requests.
-            projectIdInstance.vite.moduleGraph.invalidateAll();
-            projectIdInstance.vite.ws.send({ type: 'full-reload', path: '*' });
-        } catch (err) {
-            console.warn('Failed to trigger Vite reload:', err);
-        }
-    }
-
-    return { userFilePaths, allFixedIssues, validationErrors, wroteFiles };
-}
-
-function pruneProjectFiles(projectRoot, userFilePaths) {
-    const removed = [];
-    const protectedTopLevel = new Set(['node_modules', '.vite-cache', '.git', '.cache', '.src-snapshot']);
-
-    function walk(dir) {
-        const entries = fs.readdirSync(dir, { withFileTypes: true });
-        for (const entry of entries) {
-            const absPath = path.join(dir, entry.name);
-            const relPath = path.relative(projectRoot, absPath).replace(/\\/g, '/');
-
-            if (!relPath) continue;
-
-            // Protect critical top-level paths whether they are real directories
-            // OR symlinks (node_modules is always a symlink to the shared install).
-            // Without this guard, fullSync pruning deleted the node_modules symlink,
-            // causing Vite to fail resolving any import until the next initProject call.
-            if (protectedTopLevel.has(relPath.split('/')[0])) continue;
-
-            // .env.local (and any .env* file) is written by the /secrets endpoint,
-            // NOT by the agent — it never appears in userFilePaths since the agent
-            // doesn't "own" it. Without this guard, the very next fullSync (which
-            // runs at the end of EVERY agent turn) deleted it as a "stale" file,
-            // silently wiping VITE_DB_API_URL/VITE_SUPABASE_URL/etc. moments after
-            // they were synced — the running Vite server kept them in memory until
-            // its next restart, but any restart (secrets re-sync, redeploy, crash)
-            // came back up with no env file at all ("Database API URL is not
-            // configured" / import.meta.env.VITE_* all undefined).
-            if (/^\.env(\..+)?$/.test(entry.name)) continue;
-
-            if (entry.isDirectory()) {
-                walk(absPath);
-                try {
-                    const remaining = fs.readdirSync(absPath);
-                    if (remaining.length === 0) {
-                        fs.rmSync(absPath, { recursive: true, force: true });
-                    }
-                } catch { /* dir may have been removed or repopulated */ }
-                continue;
-            }
-
-            // Binary files now travel in the payload as base64, so they appear
-            // in userFilePaths like any other file. The normal check below
-            // handles pruning stale binaries correctly.
-            if (!userFilePaths.has(relPath)) {
-                try {
-                    fs.rmSync(absPath, { force: true });
-                    removed.push(relPath);
-                } catch { /* file may be locked by Vite */ }
-            }
-        }
-    }
-
-    walk(projectRoot);
-    return removed;
-}
-
-function collectReferencedPackages(files) {
-    const referencedPackages = new Set();
-
-    for (const file of files) {
-        const safePath = file.path.replace(/^\/+/, '');
-        if (!/\.(tsx?|jsx?)$/.test(safePath)) {
-            continue;
-        }
-
-        const importMatches = file.content.matchAll(/from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"]/g);
-        for (const match of importMatches) {
-            const specifier = match[1] || match[2];
-            if (!specifier || specifier.startsWith('.') || specifier.startsWith('/')) {
-                continue;
-            }
-
-            if (specifier.startsWith('@')) {
-                const scoped = specifier.split('/').slice(0, 2).join('/');
-                referencedPackages.add(scoped);
-                continue;
-            }
-
-            referencedPackages.add(specifier.split('/')[0]);
-        }
-    }
-
-    return referencedPackages;
-}
-
-function harmonizePackageJson(packageJsonContent, files) {
-    try {
-        const parsed = JSON.parse(packageJsonContent);
-        const referencedPackages = collectReferencedPackages(files);
-        if (referencedPackages.size === 0) {
-            return packageJsonContent;
-        }
-
-        const previewPackageJsonPath = path.join(__dirname, 'package.json');
-        const previewPackageJson = JSON.parse(fs.readFileSync(previewPackageJsonPath, 'utf-8'));
-        const availableDeps = {
-            ...(previewPackageJson.dependencies || {}),
-            ...(previewPackageJson.devDependencies || {}),
-        };
-
-        parsed.dependencies = parsed.dependencies || {};
-
-        for (const pkg of referencedPackages) {
-            if (!parsed.dependencies[pkg] && availableDeps[pkg]) {
-                parsed.dependencies[pkg] = availableDeps[pkg];
-            }
-        }
-
-        return JSON.stringify(parsed, null, 2);
-    } catch (error) {
-        console.warn('Failed to harmonize package.json:', error);
-        return packageJsonContent;
-    }
-}
-
-// Base Tailwind + shadcn CSS — plain CSS vars, no @apply color-tokens
-const TAILWIND_CSS_BASE = `@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
-  }
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-  }
-  /* Plain CSS — avoids @apply errors when tailwind.config lacks color tokens */
-  * { border-color: hsl(var(--border, 214.3 31.8% 91.4%)); }
-  body { background-color: hsl(var(--background, 0 0% 100%)); color: hsl(var(--foreground, 222.2 84% 4.9%)); }
-}
-`;
-
-// ============================================================
-// FILE VALIDATION & AUTO-FIX UTILITIES
-// Catches common issues before they reach Vite
-// ============================================================
-
-/**
- * Fix common syntax issues in files before writing them
- */
-function preprocessFile(filePath, content) {
-    // Skip Supabase edge function files -- Deno backend, not React source
-    if (filePath.startsWith('supabase/') || filePath.includes('/supabase/')) {
-        return { content: content ?? '', issues: [] };
-    }
-    let fixed = content;
-    const issues = [];
-
-    // CSS files: ensure @tailwind directives + fix @apply color-token directives
-    if (filePath.endsWith('.css')) {
-        const isIndexCss = filePath === 'src/index.css' || filePath.endsWith('/src/index.css') || filePath === 'index.css';
-
-        // Fix: @import rules must precede all other statements in CSS.
-        // AI often places @import after @tailwind directives which causes a Vite
-        // "[vite:css] @import must precede all other statements" error and prevents
-        // the CSS from loading (blank page).
-        // Move all @import lines to the very top of the file.
-        if (isIndexCss && fixed.includes('@import') && fixed.includes('@tailwind')) {
-            const lines = fixed.split('\n');
-            const importLines = [];
-            const otherLines = [];
-            for (const line of lines) {
-                if (/^\s*@import\s/.test(line)) {
-                    importLines.push(line);
-                } else {
-                    otherLines.push(line);
-                }
-            }
-            if (importLines.length > 0) {
-                const reordered = [...importLines, '', ...otherLines].join('\n');
-                if (reordered !== fixed) {
-                    fixed = reordered;
-                    issues.push('Moved @import rules before @tailwind directives');
-                }
-            }
-        }
-
-        if (isIndexCss && !fixed.includes('@tailwind')) {
-            fixed = TAILWIND_CSS_BASE + '\n' + fixed;
-            issues.push('Prepended @tailwind directives');
-        }
-        // Strip @apply color-token directives that require matching tailwind.config keys
-        const applyFixes = [
-            [/@apply\s+(?=[^;]*bg-gradient-to-br)(?=[^;]*from-slate-50)(?=[^;]*via-blue-50)(?=[^;]*to-purple-50)(?=[^;]*text-foreground)(?=[^;]*min-h-screen)[^;]*;/g, 'background-image: linear-gradient(135deg, #f8fafc 0%, #eff6ff 48%, #f5f3ff 100%); color: hsl(var(--foreground, 222.2 84% 4.9%)); min-height: 100vh;'],
-            [/@apply\s+border-border\s*;/g, 'border-color: hsl(var(--border, 214.3 31.8% 91.4%));'],
-            [/@apply\s+bg-background\s+text-foreground\s*;/g, 'background-color: hsl(var(--background, 0 0% 100%)); color: hsl(var(--foreground, 222.2 84% 4.9%));'],
-            [/@apply\s+bg-background\s*;/g, 'background-color: hsl(var(--background, 0 0% 100%));'],
-            [/@apply\s+text-foreground\s*;/g, 'color: hsl(var(--foreground, 222.2 84% 4.9%));'],
-        ];
-        for (const [pattern, replacement] of applyFixes) {
-            if (pattern.test(fixed)) {
-                fixed = fixed.replace(pattern, replacement);
-                issues.push('Replaced @apply color-token with plain CSS');
-            }
-        }
-
-        // Generic safety net: convert remaining @apply with custom color tokens to plain CSS.
-        // Catches patterns like @apply bg-muted, @apply text-accent-foreground, etc.
-        const COLOR_TOKENS = {
-            background: '0 0% 100%', foreground: '222.2 84% 4.9%',
-            primary: '222.2 47.4% 11.2%', 'primary-foreground': '210 40% 98%',
-            secondary: '210 40% 96.1%', 'secondary-foreground': '222.2 47.4% 11.2%',
-            muted: '210 40% 96.1%', 'muted-foreground': '215.4 16.3% 46.9%',
-            accent: '210 40% 96.1%', 'accent-foreground': '222.2 47.4% 11.2%',
-            destructive: '0 84.2% 60.2%', 'destructive-foreground': '210 40% 98%',
-            popover: '0 0% 100%', 'popover-foreground': '222.2 84% 4.9%',
-            card: '0 0% 100%', 'card-foreground': '222.2 84% 4.9%',
-            border: '214.3 31.8% 91.4%', input: '214.3 31.8% 91.4%', ring: '222.2 84% 4.9%',
-        };
-        const tokenNames = Object.keys(COLOR_TOKENS).sort((a, b) => b.length - a.length).join('|');
-        const genericApplyRe = new RegExp(
-            `@apply\\s+(?:bg|text|border|ring)-(${tokenNames})\\s*;`, 'g'
-        );
-        fixed = fixed.replace(genericApplyRe, (match, token) => {
-            const fallback = COLOR_TOKENS[token];
-            const varName = `--${token}`;
-            if (match.startsWith('@apply bg-')) {
-                issues.push(`Replaced @apply bg-${token} with plain CSS`);
-                return `background-color: hsl(var(${varName}, ${fallback}));`;
-            } else if (match.startsWith('@apply text-')) {
-                issues.push(`Replaced @apply text-${token} with plain CSS`);
-                return `color: hsl(var(${varName}, ${fallback}));`;
-            } else if (match.startsWith('@apply border-')) {
-                issues.push(`Replaced @apply border-${token} with plain CSS`);
-                return `border-color: hsl(var(${varName}, ${fallback}));`;
-            } else if (match.startsWith('@apply ring-')) {
-                issues.push(`Replaced @apply ring-${token} with plain CSS`);
-                return `--tw-ring-color: hsl(var(${varName}, ${fallback}));`;
-            }
-            return match;
-        });
-
-        return { content: fixed, issues };
-    }
-
-    // Only process TypeScript/JavaScript files
-    if (!filePath.match(/\.(tsx?|jsx?|mjs)$/)) {
-        return { content: fixed, issues };
-    }
-
-    // Fix 1: Remove .tsx/.ts/.jsx/.js extensions from imports
-    const extPatterns = [
-        { pattern: /from\s+['"]([^'"]+)\.tsx['"]/g, ext: '.tsx' },
-        { pattern: /from\s+['"]([^'"]+)\.ts['"]/g, ext: '.ts' },
-        { pattern: /from\s+['"]([^'"]+)\.jsx['"]/g, ext: '.jsx' },
-        { pattern: /from\s+['"]([^'"]+)\.js['"]/g, ext: '.js' },
-    ];
-    extPatterns.forEach(({ pattern, ext }) => {
-        if (pattern.test(fixed)) {
-            fixed = fixed.replace(pattern, 'from "$1"');
-            issues.push(`Removed ${ext} extension from imports`);
-        }
-    });
-
-    // Fix 2: React import injection intentionally removed.
-    // The project uses @vitejs/plugin-react with "jsx": "react-jsx" (automatic transform).
-    // React is injected by the compiler — explicit `import React` is not needed and
-    // causes duplicate-identifier errors when files also import React hooks.
-
-    // Fix 3: Replace class= with className= in JSX
-    if ((filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) && / class=/i.test(fixed)) {
-        fixed = fixed.replace(/ class=/gi, ' className=');
-        issues.push('Fixed class -> className');
-    }
-
-    // Fix 3.1: Repair dangling empty string literals in assignment/property contexts only.
-    // Examples:
-    // - suffix = ',    -> suffix = '',
-    // - prefix: ",    -> prefix: "",
-    // Keep this narrowly scoped to avoid mutating valid string syntax in other contexts.
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
-        const before = fixed;
-        fixed = fixed.replace(/(\b[a-zA-Z_$][\w$]*\s*=\s*)(['"])(?=\s*[,}\]])/g, '$1$2$2');
-        fixed = fixed.replace(/(\b[a-zA-Z_$][\w$]*\s*:\s*)(['"])(?=\s*[,}\]])/g, '$1$2$2');
-        if (fixed !== before) {
-            issues.push('Fixed dangling empty string literal');
-        }
-    }
-
-    // Fix 3.13: Repair malformed default-string params in destructuring/signatures.
-    // Examples:
-    // - suffix = ', prefix = ''
-    // - title = ", subtitle = ""
-    // This specifically targets a quote right after `=` when the next token is
-    // another parameter assignment, and normalizes it to an empty string literal.
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
-        const before = fixed;
-        fixed = fixed.replace(/(\b[a-zA-Z_$][\w$]*\s*=\s*)'(?=\s*,\s*[a-zA-Z_$][\w$]*\s*=)/g, "$1''");
-        fixed = fixed.replace(/(\b[a-zA-Z_$][\w$]*\s*=\s*)"(?=\s*,\s*[a-zA-Z_$][\w$]*\s*=)/g, '$1""');
-        if (fixed !== before) {
-            issues.push('Fixed malformed default string parameter');
-        }
-    }
-
-    // Fix 3.12: Normalize bare App imports.
-    // Some generated outputs use `from "App"`, which breaks module resolution in preview.
-    if (/(^|\/)src\/.*\.(tsx|jsx|ts|js)$/.test(filePath)) {
-        const before = fixed;
-        fixed = fixed.replace(/from\s+['"]App['"]/g, "from '@/App'");
-        if (fixed !== before) {
-            issues.push('Normalized bare App import path');
-        }
-    }
-
-    // Fix 3.2: Repair doubled quote typo in function arguments only.
-    // Example: console.error('Error:'', err) -> console.error('Error:', err)
-    // Require at least one char inside the first string so valid empty literals
-    // like '' are not accidentally collapsed back to a single quote.
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
-        const before = fixed;
-        fixed = fixed.replace(/('(?:[^'\\\n\r]|\\.)+?)''(?=\s*,)/g, '$1\'');
-        fixed = fixed.replace(/("(?:[^"\\\n\r]|\\.)+?)""(?=\s*,)/g, '$1"');
-        if (fixed !== before) {
-            issues.push('Fixed doubled quote typo in function arguments');
-        }
-    }
-
-    // Fix 3.3: Repair malformed empty-string argument placeholders.
-    // Examples:
-    // - window.history.replaceState({}, ', window.location.pathname)
-    // - someFn(a, ", b)
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
-        const before = fixed;
-        fixed = fixed.replace(/,\s*'\s*,/g, ", '',");
-        fixed = fixed.replace(/,\s*"\s*,/g, ', "",');
-        if (fixed !== before) {
-            issues.push('Fixed malformed empty-string argument');
-        }
-    }
-
-    // Fix 3.35: Repair malformed empty-string object values (LLM truncation artifact).
-    // Scope this to object-property assignments only so valid string literals
-    // like console.error('Error: ', err) are never mutated.
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
-        const before = fixed;
-        const malformedPropEmptyStringPattern = /([,{]\s*(?:[A-Za-z_$][\w$]*|['"][^'"]+['"])\s*:\s*)'\s*(?=[,}])/g;
-        const malformedPropEmptyDoublePattern = /([,{]\s*(?:[A-Za-z_$][\w$]*|['"][^'"]+['"])\s*:\s*)"\s*(?=[,}])/g;
-        const malformedPropSmartQuotePattern = /([,{]\s*(?:[A-Za-z_$][\w$]*|['"][^'"]+['"])\s*:\s*)[‘’]\s*(?=[,}])/g;
-
-        fixed = fixed
-            .replace(malformedPropEmptyStringPattern, "$1''")
-            .replace(malformedPropEmptyDoublePattern, '$1""')
-            .replace(malformedPropSmartQuotePattern, "$1''");
-
-        if (fixed !== before) {
-            issues.push('Repaired malformed empty-string object values');
-        }
-    }
-
-    // Fix 3.4: Repair malformed History API title arg.
-    // Example: window.history.replaceState({}, ', window.location.pathname)
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
-        const before = fixed;
-        fixed = fixed.replace(/(replaceState\(\s*\{\s*\}\s*,\s*)'(?=\s*,)/g, "$1''");
-        fixed = fixed.replace(/(replaceState\(\s*\{\s*\}\s*,\s*)"(?=\s*,)/g, '$1""');
-        if (fixed !== before) {
-            issues.push('Fixed malformed History API title argument');
-        }
-    }
-
-    // Fix 3.5: Fix common event handler casing
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
-        const events = ['onclick', 'onchange', 'onsubmit', 'onkeydown', 'onkeyup', 'onmouseenter', 'onmouseleave'];
-        events.forEach(event => {
-            const regex = new RegExp(` ${event}=`, 'gi');
-            const proper = ` ${event.slice(0, 2)}${event.charAt(2).toUpperCase()}${event.slice(3)}=`;
-            if (regex.test(fixed)) {
-                fixed = fixed.replace(regex, proper);
-                issues.push(`Fixed ${event} -> ${proper.trim()}`);
-            }
-        });
-    }
-
-    // Fix 3.6: Convert BrowserRouter / createBrowserRouter → Hash equivalents.
-    // BrowserRouter requires a `basename` prop to work under sub-path hosting and
-    // causes parse errors when the agent forgets the space before `basename=`.
-    // HashRouter / createHashRouter works out-of-the-box in the preview environment.
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts')) {
-        if (fixed.includes('BrowserRouter') || fixed.includes('createBrowserRouter')) {
-            const before = fixed;
-            // Step 1: repair missing space (e.g. <BrowserRouterbasename= → <BrowserRouter basename=)
-            fixed = fixed.replace(/<BrowserRouter([a-z])/g, '<BrowserRouter $1');
-            // Step 2: replace createBrowserRouter → createHashRouter (must be before BrowserRouter rename)
-            fixed = fixed.replace(/\bcreateStaticRouter\b/g, '__STATIC_ROUTER_KEEP__'); // protect unrelated
-            fixed = fixed.replace(/\bcreateBrowserRouter\b/g, 'createHashRouter');
-            fixed = fixed.replace(/__STATIC_ROUTER_KEEP__/g, 'createStaticRouter');
-            // Step 3: replace <BrowserRouter> component and its import name
-            fixed = fixed.replace(/\bBrowserRouter\b/g, 'HashRouter');
-            // Step 4: strip any basename prop from the resulting HashRouter tag
-            fixed = fixed.replace(/<HashRouter([^>]*)\bbasename=(?:\{[^}]*\}|"[^"]*"|'[^']*')([^>]*)>/g, (m, pre, post) => {
-                const attrs = (pre + post).trim();
-                return attrs ? `<HashRouter ${attrs}>` : '<HashRouter>';
-            });
-            // Step 5: strip basename option from createHashRouter({ basename: ... }) call
-            fixed = fixed.replace(/createHashRouter\((\[[^\]]*\])\s*,\s*\{[^}]*\bbasename\b[^}]*\}\)/gs,
-                (m, routes) => `createHashRouter(${routes})`);
-            if (fixed !== before) {
-                issues.push('Converted BrowserRouter/createBrowserRouter → HashRouter/createHashRouter');
-            }
-        }
-    }
-
-    // Fix 3.6b: Remove <Navigate to="/home"> redirect and promote /home route to /
-    // Agents often generate: <Route path="/" element={<Navigate to="/home" replace />} />
-    //                         <Route path="/home" element={<HomePage />} />
-    // This causes the preview to always redirect to /#/home, which then gets stored
-    // as the current route and breaks on any subsequent build that lacks a /home route.
-    if ((filePath === 'src/App.tsx' || filePath.endsWith('/App.tsx')) &&
-        /Navigate\s+to=["']\/home["']/.test(fixed) &&
-        /path=["']\/home["']/.test(fixed)) {
-        const before = fixed;
-        // Remove the Navigate redirect line entirely
-        fixed = fixed.replace(
-            /[ \t]*<Route[^>]*path=["']\/["'][^>]*element=\{[^}]*Navigate[^}]*to=["']\/home["'][^}]*\}[^/]*(\/?>|\/>)\s*\n?/g,
-            ''
-        );
-        // Also remove self-closing variant
-        fixed = fixed.replace(
-            /[ \t]*<Route[^/]*\/>[^\n]*Navigate[^\n]*\/home[^\n]*\n?/g,
-            ''
-        );
-        // Promote /home route to /
-        fixed = fixed.replace(
-            /path=["']\/home["']/g,
-            'path="/"'
-        );
-        if (fixed !== before) {
-            issues.push('Promoted /home route to / and removed Navigate redirect');
-        }
-    }
-
-    // Fix 3.7: Repair common router closing-tag mismatches (e.g. <HashRouter> ... </Router>)
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
-        const before = fixed;
-        if (fixed.includes('<HashRouter') && fixed.includes('</Router>') && !fixed.includes('<Router')) {
-            fixed = fixed.replace(/<\/Router>/g, '</HashRouter>');
-        }
-        if (fixed !== before) {
-            issues.push('Fixed router closing-tag mismatch');
-        }
-    }
-
-    // Fix 3.8: Encode raw " inside url('...') → %22 to prevent Babel JSX parse errors
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
-        const before = fixed;
-        fixed = fixed.replace(/url\((['"])(.*?)\1\)/gs, (m, q, inner) => `url(${q}${inner.replace(/"/g, '%22')}${q})`);
-        fixed = fixed.replace(/url\(([^'"()\s][^()]*)\)/gs, (m, inner) => inner.includes('"') ? `url(${inner.replace(/"/g, '%22')})` : m);
-        if (fixed !== before) {
-            issues.push('Encoded raw quotes in url()');
-        }
-    }
-
-    // Fix 3.9: Ensure App.tsx and component files have export default
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
-        // Check for named function/const components without export
-        const componentMatch = fixed.match(/(?:^|\n)(function|const)\s+([A-Z][a-zA-Z0-9]*)\s*(?:=|[(\s])/);
-        if (componentMatch) {
-            const componentName = componentMatch[2];
-            const hasExportDefault = new RegExp(`export\\s+default\\s+${componentName}\\b`).test(fixed) ||
-                                     new RegExp(`export\\s+default\\s+function\\s+${componentName}\\b`).test(fixed);
-            if (!hasExportDefault && !fixed.includes('export default')) {
-                fixed = fixed.trimEnd() + `\n\nexport default ${componentName};\n`;
-                issues.push(`Added missing export default for ${componentName}`);
-            }
-        }
-    }
-
-    // Fix 3.10: Repair unmatched JSX fragment shorthand (<> without </>)
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
-        const fragmentOpenCount = (fixed.match(/<>/g) || []).length;
-        const fragmentCloseCount = (fixed.match(/<\/>/g) || []).length;
-
-        if (fragmentOpenCount > fragmentCloseCount) {
-            const before = fixed;
-
-            // Common failure mode: return ( <> <Router>...</Router> );
-            fixed = fixed.replace(/return\s*\(\s*<>\s*/m, 'return (\n    ');
-
-            // Fallback: if no replacement happened, append missing closers before final `);`
-            if (fixed === before) {
-                const missing = fragmentOpenCount - fragmentCloseCount;
-                if (missing > 0) {
-                    fixed = fixed.replace(/\n\s*\);\s*$/, `\n${'  '.repeat(2)}${'</>\n'.repeat(missing)}  );`);
-                }
-            }
-
-            if (fixed !== before) {
-                issues.push('Fixed unmatched JSX fragment shorthand');
-            }
-        }
-    }
-
-    // Fix 3.11: Repair common truncated empty-string calls from streamed generation
-    // Examples:
-    // - num.toString().split(').map(...)   -> split('')
-    // - useState(');                       -> useState('')
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
-        const before = fixed;
-
-        // string.split(').map(...) => string.split('').map(...)
-        fixed = fixed.replace(/\.split\(\s*'\s*\)(?=\s*\.map\s*\()/g, ".split('')");
-        fixed = fixed.replace(/\.split\(\s*"\s*\)(?=\s*\.map\s*\()/g, '.split("")');
-
-        // useState('); / useState("); => useState('') / useState("")
-        fixed = fixed.replace(/useState\(\s*'\s*\)(?=\s*[;,\)])/g, "useState('')");
-        fixed = fixed.replace(/useState\(\s*"\s*\)(?=\s*[;,\)])/g, 'useState("")');
-
-        if (fixed !== before) {
-            issues.push('Fixed truncated empty-string calls');
-        }
-    }
-
-    // Fix 4: Ensure main.tsx has CSS import
-    if (filePath.endsWith('/main.tsx') || filePath === 'src/main.tsx') {
-        if (!fixed.includes("import './index.css'") && !fixed.includes('import "./index.css"')) {
-            const reactImportMatch = fixed.match(/(import.*from.*['"]react['"];?\s*\n)/);
-            if (reactImportMatch) {
-                fixed = fixed.replace(
-                    reactImportMatch[0],
-                    reactImportMatch[0] + "import './index.css';\n"
-                );
-                issues.push('Added CSS import to main.tsx');
-            }
-        }
-
-        // Fix 4b: Repair truncated render() — replace whole file if parens unbalanced
-        // Handles both `ReactDOM.createRoot(...)` and named-import `createRoot(...)` patterns.
-        if (fixed.includes('createRoot') && fixed.includes('.render(')) {
-            const renderIdx = fixed.indexOf('.render(');
-            if (renderIdx !== -1) {
-                const afterRender = fixed.slice(renderIdx + 8);
-                let depth = 1, balanced = false;
-                for (const ch of afterRender) {
-                    if (ch === '(') depth++;
-                    else if (ch === ')') { depth--; if (depth === 0) { balanced = true; break; } }
-                }
-                if (!balanced) {
-                    const appImport = (fixed.match(/import\s+App\s+from\s+['"]([^'"]+)['"]/) || [])[1] || './App';
-                    fixed = `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from '${appImport}'\nimport './index.css'\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n)\n`;
-                    issues.push('Replaced truncated main.tsx');
-                }
-            }
-        }
-
-        // Fix 4c: Replace near-empty main.tsx
-        if (!fixed.includes('createRoot') && fixed.trim().length < 100) {
-            fixed = `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App'\nimport './index.css'\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n)\n`;
-            issues.push('Replaced empty main.tsx');
-        }
-    }
-
-    // Fix 5 used to blanket-replace every import.meta.env.X (except BASE_URL) with a
-    // literal "" — including VITE_DB_API_URL/VITE_DB_ANON_KEY/VITE_SUPABASE_URL/etc.
-    // Vite's dev server already provides DEV/PROD/MODE/BASE_URL correctly at runtime,
-    // and real project secrets are written to a per-project .env.local file (see the
-    // /preview/:projectId/secrets endpoint below) which Vite loads natively — so this
-    // file must NOT touch import.meta.env.* text at all. Doing so silently nuked every
-    // hosted-database/auth/edge-function call in every preview, unconditionally.
-
-    // Fix 5.5: Remove orphaned closing delimiters after export statements.
-    // Common streamed-generation artifact:
-    //   export default Component;
-    //   }
-    //   )}
-    // or
-    //   export { useToast, toast }
-    //   }
-    //   }
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
-        const before = fixed;
-        // After `export default X` (semicolon optional), strip trailing lines made only of closers.
-        fixed = fixed.replace(/(\nexport\s+default\s+[A-Za-z_$][\w$]*\s*;?)\n((?:\s*[\)\}\];,]+\s*\n)+)/g, '$1\n');
-        // After `export { ... }` (semicolon optional), strip same artifacts.
-        fixed = fixed.replace(/(\nexport\s*\{[^\n]*\}\s*;?)\n((?:\s*[\)\}\];,]+\s*\n)+)/g, '$1\n');
-        // Same-line variant: `export default X; )}`
-        fixed = fixed.replace(/(\nexport\s+default\s+[A-Za-z_$][\w$]*\s*;?)\s*[\)\}\];,]+\s*(\n|$)/g, '$1$2');
-        fixed = fixed.replace(/(\nexport\s*\{[^\n]*\}\s*;?)\s*[\)\}\];,]+\s*(\n|$)/g, '$1$2');
-        if (fixed !== before) {
-            issues.push('Removed orphaned closing delimiters after export');
-        }
-    }
-
-    // Fix 6: Trim trailing orphan closers like standalone ")" or "}" lines.
-    // This specifically targets streamed truncation artifacts that trigger
-    // "Declaration or statement expected" at EOF.
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
-        const trimmed = trimTrailingOrphanClosers(fixed);
-        if (trimmed.removed > 0 && trimmed.content !== fixed) {
-            fixed = trimmed.content;
-            issues.push(`Removed ${trimmed.removed} trailing orphan closer line(s)`);
-        }
-    }
-
-    return { content: fixed, issues };
-}
-
-/**
- * Ensure essential files exist for a valid React project
- */
-function ensureEssentialFiles(projectRoot, userFiles) {
-    const userFilePaths = new Set(userFiles.map(f => f.path.replace(/^\//, '')));
-
-    // Repair corrupt JSON config files that would crash Vite
-    const jsonConfigs = ['tsconfig.json', 'tsconfig.node.json', 'package.json', 'components.json'];
-    const JSON_SCAFFOLD = {
-        'tsconfig.json': JSON.stringify({
-            compilerOptions: {
-                target: 'ES2020', useDefineForClassFields: true,
-                lib: ['ES2020', 'DOM', 'DOM.Iterable'], module: 'ESNext',
-                skipLibCheck: true, moduleResolution: 'bundler',
-                allowImportingTsExtensions: true, resolveJsonModule: true,
-                isolatedModules: true, noEmit: true, jsx: 'react-jsx',
-                strict: true, noUnusedLocals: false, noUnusedParameters: false,
-                noFallthroughCasesInSwitch: true, baseUrl: '.', paths: { '@/*': ['./src/*'] },
-            },
-            include: ['src'], references: [],
-        }, null, 2),
-        'tsconfig.node.json': JSON.stringify({
-            compilerOptions: {
-                composite: true, skipLibCheck: true, module: 'ESNext',
-                moduleResolution: 'bundler', allowSyntheticDefaultImports: true,
-                strict: true, noEmit: true,
-            },
-            include: ['vite.config.ts'],
-        }, null, 2),
-    };
-    for (const configFile of jsonConfigs) {
-        const configPath = path.join(projectRoot, configFile);
-        if (fs.existsSync(configPath)) {
-            try {
-                JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-            } catch {
-                const fallback = JSON_SCAFFOLD[configFile];
-                if (fallback) {
-                    fs.writeFileSync(configPath, fallback);
-                    console.warn(`[${path.basename(projectRoot)}] Repaired corrupt ${configFile} with scaffold default`);
-                }
-            }
-        }
-    }
-
-    // Linux is case-sensitive: generated projects sometimes create src/app.tsx while
-    // main.tsx imports ./App. Create a tiny bridge to avoid boot failures.
-    const appPascalTsx = path.join(projectRoot, 'src', 'App.tsx');
-    const appPascalJsx = path.join(projectRoot, 'src', 'App.jsx');
-    const appLowerTsx = path.join(projectRoot, 'src', 'app.tsx');
-    const appLowerJsx = path.join(projectRoot, 'src', 'app.jsx');
-
-    if (!fs.existsSync(appPascalTsx) && !fs.existsSync(appPascalJsx)) {
-        if (fs.existsSync(appLowerTsx)) {
-            fs.writeFileSync(appPascalTsx, `export { default } from './app';\n`);
-            console.log(`[${path.basename(projectRoot)}] Created App.tsx bridge to ./app`);
-        } else if (fs.existsSync(appLowerJsx)) {
-            fs.writeFileSync(appPascalJsx, `export { default } from './app';\n`);
-            console.log(`[${path.basename(projectRoot)}] Created App.jsx bridge to ./app`);
-        }
-    }
-    
-    // Check if user provided an index.css
-    if (!userFilePaths.has('src/index.css')) {
-        const indexCssPath = path.join(projectRoot, 'src', 'index.css');
-        if (!fs.existsSync(indexCssPath)) {
-            fs.writeFileSync(indexCssPath, TAILWIND_CSS_BASE);
-            console.log(`[${path.basename(projectRoot)}] Created default index.css`);
-        } else {
-            // Repair existing index.css if @tailwind directives are missing
-            const existing = fs.readFileSync(indexCssPath, 'utf-8');
-            if (!existing.includes('@tailwind')) {
-                fs.writeFileSync(indexCssPath, TAILWIND_CSS_BASE + existing);
-                console.log(`[${path.basename(projectRoot)}] Repaired index.css (added @tailwind)`);
-            }
-        }
-    }
-
-    // Check if user provided App.tsx
-    if (!userFilePaths.has('src/App.tsx') && !userFilePaths.has('src/App.jsx')) {
-        // If no App provided, check if there's an alternative entry
-        const hasIndex = userFilePaths.has('src/index.tsx') || userFilePaths.has('index.tsx');
-        if (!hasIndex) {
-            const appPath = path.join(projectRoot, 'src', 'App.tsx');
-            if (!fs.existsSync(appPath)) {
-                fs.writeFileSync(appPath, `function App() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="text-center p-8">
-        <h1 className="text-2xl font-bold text-gray-900">Preview Ready</h1>
-        <p className="text-gray-600 mt-2">Your app files have been loaded.</p>
-      </div>
-    </div>
-  );
-}
-
-export default App;
-`);
-                console.log(`[${path.basename(projectRoot)}] Created default App.tsx`);
-            }
-        }
-    }
-
-        // If generated files import the shadcn dialog primitive but omit the file,
-        // provide a minimal compatible fallback so preview builds don't fail.
-        const importsDialog = userFiles.some((f) =>
-                typeof f.content === 'string' && /@\/components\/ui\/dialog/.test(f.content)
-        );
-        if (importsDialog) {
-                const dialogPath = path.join(projectRoot, 'src', 'components', 'ui', 'dialog.tsx');
-                if (!fs.existsSync(dialogPath)) {
-                        const dialogDir = path.dirname(dialogPath);
-                        if (!fs.existsSync(dialogDir)) fs.mkdirSync(dialogDir, { recursive: true });
-                        fs.writeFileSync(dialogPath, `import * as React from 'react';
-
-type DialogContextValue = {
-    open: boolean;
-    onOpenChange?: (open: boolean) => void;
-};
-
-const DialogContext = React.createContext<DialogContextValue>({ open: true });
-
-interface DialogProps {
-    open?: boolean;
-    onOpenChange?: (open: boolean) => void;
-    children: React.ReactNode;
-}
-
-function Dialog({ open = true, onOpenChange, children }: DialogProps) {
-    return <DialogContext.Provider value={{ open, onOpenChange }}>{children}</DialogContext.Provider>;
-}
-
-function DialogContent({ className = '', children }: { className?: string; children: React.ReactNode }) {
-    const { open } = React.useContext(DialogContext);
-    if (!open) return null;
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className={\`w-full max-w-lg rounded-lg bg-background p-6 shadow-xl \${className}\`.trim()}>{children}</div>
-        </div>
-    );
-}
-
-function DialogHeader({ className = '', children }: { className?: string; children: React.ReactNode }) {
-    return <div className={\`mb-4 space-y-1 \${className}\`.trim()}>{children}</div>;
-}
-
-function DialogTitle({ className = '', children }: { className?: string; children: React.ReactNode }) {
-    return <h2 className={\`text-lg font-semibold \${className}\`.trim()}>{children}</h2>;
-}
-
-function DialogDescription({ className = '', children }: { className?: string; children: React.ReactNode }) {
-    return <p className={\`text-sm text-muted-foreground \${className}\`.trim()}>{children}</p>;
-}
-
-export { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription };
-`);
-                        console.log(`[${path.basename(projectRoot)}] Created fallback src/components/ui/dialog.tsx`);
-                }
-        }
-}
-
-// Returns true when a project directory contains only the blank scaffold written by
-// initProject() — i.e. no real user-generated files exist yet (or were pruned).
-function isScaffoldOnly(projectRoot) {
-    const srcDir = path.join(projectRoot, 'src');
-    if (!fs.existsSync(srcDir)) return true;
-    const files = fs.readdirSync(srcDir);
-    if (files.length > 3) return false;
-    // initProject creates exactly: main.tsx, App.tsx, index.css
-    const scaffoldNames = new Set(['main.tsx', 'App.tsx', 'index.css']);
-    return files.every(f => scaffoldNames.has(f));
-}
 
 // Checks the DB-backed `agent_locks` table before accepting a file push. This
 // closes a race that used to be invisible here entirely: a running agent loop
 // (on VPS3) and any other direct push to this endpoint (a manual fix, a
 // second run, a rollback) would both land on the SAME project directory with
-// zero coordination — whichever wrote last silently won, moments after the
+// zero coordination   whichever wrote last silently won, moments after the
 // other. The agent loop sends its lock token as `x-agent-lock-token`; a push
 // is only rejected if a lock is currently held by someone else (no token, or
 // a mismatched one). No lock held at all → always allowed, so direct/manual
 // pushes work exactly as before when nothing is running.
 const AGENT_LOCK_STALE_MS = 15 * 60_000;
 async function checkAgentLock(projectId, providedToken) {
-    if (!SUPABASE_SERVICE_KEY) return { ok: true }; // fail open — locking unavailable, don't block all pushes
+    if (!SUPABASE_SERVICE_KEY) return { ok: true }; // fail open   locking unavailable, don't block all pushes
     try {
         const url = `${SUPABASE_REST_URL}/rest/v1/agent_locks?project_id=eq.${encodeURIComponent(projectId)}&select=token,acquired_at`;
         const res = await fetch(url, {
@@ -1746,17 +220,17 @@ async function checkAgentLock(projectId, providedToken) {
         const lock = rows[0];
         if (!lock) return { ok: true }; // nothing running for this project
         const age = Date.now() - new Date(lock.acquired_at).getTime();
-        if (age > AGENT_LOCK_STALE_MS) return { ok: true }; // stale — treat as released
+        if (age > AGENT_LOCK_STALE_MS) return { ok: true }; // stale   treat as released
         if (lock.token === providedToken) return { ok: true }; // this push IS the lock holder
         return { ok: false };
     } catch {
-        return { ok: true }; // fail open — never let lock-check errors block pushes
+        return { ok: true }; // fail open   never let lock-check errors block pushes
     }
 }
 
 // Fetches the latest generated_files revision from Supabase and writes them to disk.
 // Called before Vite starts so the browser always gets the real app, not a blank scaffold.
-// Fails silently — Vite will still start with whatever files are present.
+// Fails silently   Vite will still start with whatever files are present.
 async function autoRestoreFromSupabase(projectId, projectRoot) {
     if (!SUPABASE_SERVICE_KEY) return;
     if (!isScaffoldOnly(projectRoot)) return;
@@ -1770,7 +244,7 @@ async function autoRestoreFromSupabase(projectId, projectRoot) {
             },
         });
         if (!res.ok) {
-            console.warn(`[AutoRestore] ${projectId} — Supabase returned ${res.status}`);
+            console.warn(`[AutoRestore] ${projectId}   Supabase returned ${res.status}`);
             return;
         }
         const rows = await res.json();
@@ -1780,7 +254,7 @@ async function autoRestoreFromSupabase(projectId, projectRoot) {
             ? generatedFiles
             : (Array.isArray(generatedFiles?.files) ? generatedFiles.files : null);
         if (!rows.length || !files || !files.length) {
-            console.warn(`[AutoRestore] ${projectId} — no revision found in Supabase`);
+            console.warn(`[AutoRestore] ${projectId}   no revision found in Supabase`);
             return;
         }
         let written = 0;
@@ -1795,9 +269,9 @@ async function autoRestoreFromSupabase(projectId, projectRoot) {
             fs.writeFileSync(absPath, content);
             written++;
         }
-        console.log(`[AutoRestore] ${projectId} — restored ${written} files from Supabase`);
+        console.log(`[AutoRestore] ${projectId}   restored ${written} files from Supabase`);
     } catch (err) {
-        console.warn(`[AutoRestore] ${projectId} — failed: ${err.message}`);
+        console.warn(`[AutoRestore] ${projectId}   failed: ${err.message}`);
     }
 }
 
@@ -1882,7 +356,7 @@ export default App;
 
 
     // Create index.css with full shadcn CSS variables only if missing.
-    // Use TAILWIND_CSS_BASE which uses plain CSS fallbacks — avoids @apply color-token
+    // Use TAILWIND_CSS_BASE which uses plain CSS fallbacks   avoids @apply color-token
     // directives that fail when tailwind.config lacks the matching color keys.
     const indexCssPath = path.join(projectRoot, 'src', 'index.css');
     if (!fs.existsSync(indexCssPath)) {
@@ -2043,16 +517,16 @@ export default {
         try {
             const stat = fs.lstatSync(projectModules);
             if (stat.isSymbolicLink()) {
-                // Already a symlink — verify it points to the right place
+                // Already a symlink   verify it points to the right place
                 const target = fs.readlinkSync(projectModules);
                 needsSymlink = (target !== systemModules);
                 if (needsSymlink) fs.rmSync(projectModules, { recursive: true, force: true }); // stale symlink
             } else {
-                // Real directory — remove it so we can create the symlink
+                // Real directory   remove it so we can create the symlink
                 fs.rmSync(projectModules, { recursive: true, force: true });
             }
         } catch {
-            // lstatSync throws ENOENT — path doesn't exist, symlink needed
+            // lstatSync throws ENOENT   path doesn't exist, symlink needed
         }
         if (needsSymlink) {
             fs.symlinkSync(systemModules, projectModules, 'dir');
@@ -2135,7 +609,7 @@ async function cleanupInactiveServers() {
 }
 
 // Start cleanup interval once for this process
-cleanupTimer = setInterval(() => {
+previewState.cleanupTimer = setInterval(() => {
     cleanupInactiveServers().catch((error) => {
         console.error('[Cleanup] Unhandled cleanup error:', error);
     });
@@ -2224,7 +698,7 @@ async function getOrCreateServer(projectId) {
     // nginx proxy (wss on port 443). Without explicit config, Vite auto-detects
     // location.port which is '' for default ports, producing a malformed WS URL
     // (wss://host:/path) that fails to connect, causing the browser to reload
-    // on each retry — an infinite reload loop when opening the preview link.
+    // on each retry   an infinite reload loop when opening the preview link.
     if (IS_PRODUCTION) {
         hmrConfig.host = HMR_HOST || 'preview.ecomgear.app';
         hmrConfig.protocol = HMR_PROTOCOL || 'wss';
@@ -2239,7 +713,7 @@ async function getOrCreateServer(projectId) {
             plugins: [
                 reactPluginFactory(),
                 // ── Block __edge_functions__/ from ever being served ──────────────
-                // server.fs.deny does NOT reliably block requests here (verified —
+                // server.fs.deny does NOT reliably block requests here (verified  
                 // Vite's dev middleware still transformed and served the file even
                 // with fs.deny set). configureServer runs as real middleware inside
                 // Vite's own stack, so it applies regardless of which of the 3
@@ -2258,7 +732,7 @@ async function getOrCreateServer(projectId) {
                     },
                 },
                 // ── Transform error auto-repair plugin ────────────────────────────
-                // Returns repaired code in-memory ONLY. Do NOT write to disk here —
+                // Returns repaired code in-memory ONLY. Do NOT write to disk here  
                 // any fs.writeFileSync during a transform triggers the file watcher
                 // (300ms polling), which emits a 'change' event → Vite sends
                 // 'page-reload' → browser reloads → requests files again → transform
@@ -2276,7 +750,7 @@ async function getOrCreateServer(projectId) {
                         const { content: repaired, issues } = preprocessFile(relPath, code);
                         if (issues.length > 0) {
                             console.log(`[${projectId}] Transform-repair ${relPath}: ${issues.join(', ')}`);
-                            // Return repaired code in-memory — NO disk write to avoid watcher loop
+                            // Return repaired code in-memory   NO disk write to avoid watcher loop
                             return { code: repaired, map: null };
                         }
 
@@ -2289,7 +763,7 @@ async function getOrCreateServer(projectId) {
                                 sourcemap: false,
                             });
                         } catch (transformErr) {
-                            // Transform failed — attempt component-level fallback (in-memory only).
+                            // Transform failed   attempt component-level fallback (in-memory only).
                             // IMPORTANT: always record the error in projectDiagnostics so that
                             // getProjectDiagnostics() returns healthy:false. This prevents the agent
                             // loop from treating the fallback render as a successful build and stopping
@@ -2452,7 +926,7 @@ async function getOrCreateServer(projectId) {
                                 children: `(function(){
   function sendNav() {
     try {
-      // Apps use HashRouter — the route lives in the hash fragment, not the pathname.
+      // Apps use HashRouter   the route lives in the hash fragment, not the pathname.
       // Send only the route portion (e.g. "/post-gig") so the parent does not
       // re-embed the full /preview/{id}/ path into a URL hash, causing duplication.
       var hash = window.location.hash;
@@ -2493,7 +967,7 @@ async function getOrCreateServer(projectId) {
     var s = window.getComputedStyle(el);
     if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity||'1') < 0.05) return false;
     var r = el.getBoundingClientRect();
-    // Element occupies at least 4x4 px of screen real estate — real content
+    // Element occupies at least 4x4 px of screen real estate   real content
     if (r.width > 4 && r.height > 4) return true;
     for (var i = 0; i < el.children.length; i++) {
       if (hasRealContent(el.children[i], depth - 1)) return true;
@@ -2516,7 +990,7 @@ async function getOrCreateServer(projectId) {
       if (isBlank) {
         reportBlank();
       } else {
-        _hadContent = true; // app has rendered at least once — resets observer guard
+        _hadContent = true; // app has rendered at least once   resets observer guard
       }
     } catch(e) {}
   }
@@ -2666,7 +1140,7 @@ async function getOrCreateServer(projectId) {
     }
 }
 
-// Build CORS options — restrict origins in production, allow all in development.
+// Build CORS options   restrict origins in production, allow all in development.
 const ALLOWED_ORIGINS_ENV = process.env.ALLOWED_ORIGINS || '';
 const ALLOWED_ORIGINS = ALLOWED_ORIGINS_ENV
     ? ALLOWED_ORIGINS_ENV.split(',').map(o => o.trim()).filter(Boolean)
@@ -2826,7 +1300,7 @@ async function startMainServer() {
         });
     });
 
-    // Pre-installed packages list — the agent queries this to know which
+    // Pre-installed packages list   the agent queries this to know which
     // imports are available without an npm install.
     app.get('/packages', (req, res) => {
         res.json({ packages: COMMON_DEPS });
@@ -2853,7 +1327,7 @@ async function startMainServer() {
             return res.status(400).json({ error: 'packages[] array required' });
         }
 
-        // Validate: only plain package names — no shell metacharacters, no paths
+        // Validate: only plain package names   no shell metacharacters, no paths
         const NAME_RE = /^(@[a-z0-9_.-]+\/)?[a-z0-9_.-]+(@[\w.^~>=<-]+)?$/i;
         const invalid = packages.filter(p => typeof p !== 'string' || !NAME_RE.test(p.trim()));
         if (invalid.length > 0) {
@@ -2883,7 +1357,7 @@ async function startMainServer() {
                     return res.status(500).json({ error: 'Install failed', detail: finalOut.slice(0, 1000) });
                 }
 
-                console.log(`[Packages] Installed ${pkgList} — invalidating Vite dep caches`);
+                console.log(`[Packages] Installed ${pkgList}   invalidating Vite dep caches`);
                 for (const [projectId, instance] of activeServers.entries()) {
                     try {
                         instance.vite.moduleGraph.invalidateAll();
@@ -2897,7 +1371,7 @@ async function startMainServer() {
 
             // Auto-retry with --legacy-peer-deps on peer dependency conflicts
             if (err && out.includes('ERESOLVE')) {
-                console.log(`[Packages] Peer dep conflict — retrying with --legacy-peer-deps: ${pkgList}`);
+                console.log(`[Packages] Peer dep conflict   retrying with --legacy-peer-deps: ${pkgList}`);
                 runInstall(legacyCmd, (err2, stdout2, stderr2) => {
                     doFinish(err2, [stdout2, stderr2].filter(Boolean).join('\n'));
                 });
@@ -2919,7 +1393,7 @@ async function startMainServer() {
     // ── Asset path rescue middleware ───────────────────────────────────────
     // When generated code uses an absolute path like `/assets/image.png`
     // instead of `${import.meta.env.BASE_URL}assets/image.png`, the browser
-    // requests the asset from the domain root — bypassing the project's
+    // requests the asset from the domain root   bypassing the project's
     // `/preview/{projectId}/` base path and getting a 404.
     //
     // This middleware intercepts those root-level asset requests, extracts the
@@ -2928,7 +1402,7 @@ async function startMainServer() {
     // by the right Vite instance.
     //
     // Supported asset prefixes: /assets/, /images/, /fonts/, /icons/, /media/
-    // — all common names for things placed in a project's public/ directory.
+    //   all common names for things placed in a project's public/ directory.
     const ASSET_PATH_RE = /^\/(assets|images|fonts|icons|media)\//;
     const PREVIEW_REFERER_RE = /\/preview\/([a-f0-9-]{36})\//i;
 
@@ -2940,17 +1414,17 @@ async function startMainServer() {
 
         const referer = req.headers.referer || req.headers.referrer || '';
         const match = referer.match(PREVIEW_REFERER_RE);
-        if (!match) return next(); // no project context — let it 404 normally
+        if (!match) return next(); // no project context   let it 404 normally
 
         const projectId = match[1];
         const targetUrl = `/preview/${projectId}${req.url}`;
         console.log(`[AssetRescue] ${req.url} → ${targetUrl} (referer project: ${projectId})`);
-        // Internal forward — rewrite req.url and hand off to the /preview/:projectId handler
+        // Internal forward   rewrite req.url and hand off to the /preview/:projectId handler
         req.url = targetUrl;
         next();
     });
 
-    // ── Path-based published site routing — preview.ecomgear.app/p/{slug} ──
+    // ── Path-based published site routing   preview.ecomgear.app/p/{slug} ──
     // Works with existing SSL cert (no wildcard needed).
     // Must be BEFORE /preview/:projectId.
     app.use('/p/:slug', async (req, res, next) => {
@@ -2980,7 +1454,7 @@ async function startMainServer() {
         }
     });
 
-    // ── Published subdomain routing — {slug}.ecomgear.app (legacy/HTTP fallback) ──
+    // ── Published subdomain routing   {slug}.ecomgear.app (legacy/HTTP fallback) ──
     // Only reached when browser allows HTTP (no HSTS). Path-based /p/:slug is preferred.
     const SUBDOMAIN_RESERVED = new Set(['preview', 'api', 'www', 'gen', 'agent', 'app', 'mail', 'admin', 'help']);
     app.use(async (req, res, next) => {
@@ -3094,18 +1568,18 @@ async function startMainServer() {
         '.woff', '.woff2', '.ttf', '.eot', '.otf', '.mp3', '.mp4', '.webm', '.ogg', '.pdf']);
     // ── Per-route static SEO shells ──────────────────────────────────────────
     // Generates {route}/index.html copies of the built SPA shell, each with that
-    // route's own <title>/meta/OG/canonical/structured-data injected — for pages
+    // route's own <title>/meta/OG/canonical/structured-data injected   for pages
     // that have an override saved in project_seo_routes (server/src/routes/seo.routes.ts
     // owns the CRUD API for that table; this is the consumer side, at publish time).
     //
-    // Scoped to STATIC routes only (no ":" params) — a route like "/product/:id"
+    // Scoped to STATIC routes only (no ":" params)   a route like "/product/:id"
     // has no single concrete URL to generate without knowing which product, which
     // needs the project's actual data (product catalog), a separate, bigger piece.
     // Every generated app uses HashRouter for live preview/editing (pinned
-    // deliberately — BrowserRouter breaks the shared preview-service's own
+    // deliberately   BrowserRouter breaks the shared preview-service's own
     // routing), so this does NOT change how the app navigates internally. It only
     // adds extra static entry points a crawler or social-share bot hits on a
-    // fresh page load — real URLs like /about, not hash fragments, which crawlers
+    // fresh page load   real URLs like /about, not hash fragments, which crawlers
     // and OG scrapers (that never execute JS) can actually read.
     function injectSeoMetaJs(html, seo, pageUrl) {
         let out = html;
@@ -3155,10 +1629,102 @@ async function startMainServer() {
         return out;
     }
 
+    // Header integrations (WhatsApp button, GA/GTM/Meta pixel, custom head/body
+    // code   project_settings.setting_key='header_integrations'). Same gap as
+    // the SEO fix below: previously only baked into index.html when the user
+    // clicked "Sync to Site" (server/src/routes/header-integrations.routes.ts),
+    // so any later normal Publish rebuilt from the un-patched source and wiped
+    // it. Reading it fresh on every export makes it (a) survive every publish
+    // and (b) actually disappear when the user clears the field and re-syncs
+    // or republishes, instead of lingering from a stale patched copy.
+    const HEADER_INTEGRATIONS_HEAD_START = '<!-- ecomgear:header-integrations:head:start -->';
+    const HEADER_INTEGRATIONS_HEAD_END = '<!-- ecomgear:header-integrations:head:end -->';
+    const HEADER_INTEGRATIONS_BODY_START = '<!-- ecomgear:header-integrations:body:start -->';
+    const HEADER_INTEGRATIONS_BODY_END = '<!-- ecomgear:header-integrations:body:end -->';
+
+    function replaceHeaderIntegrationsBlock(html, startMarker, endMarker, block, insertBeforeAnchor) {
+        const re = new RegExp(`${startMarker}[\\s\\S]*?${endMarker}\\n?`, 'm');
+        const wrapped = block.trim() ? `${startMarker}\n${block.trim()}\n${endMarker}\n` : '';
+        if (re.test(html)) return html.replace(re, wrapped);
+        if (!wrapped) return html;
+        return html.replace(insertBeforeAnchor, `${wrapped}${insertBeforeAnchor}`);
+    }
+
+    function buildHeaderIntegrationsHead(d) {
+        const parts = [];
+        if (d.ga_measurement_id) {
+            const id = d.ga_measurement_id.trim();
+            parts.push(
+                `<script async src="https://www.googletagmanager.com/gtag/js?id=${id}"></script>\n` +
+                `<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${id}');</script>`
+            );
+        }
+        if (d.gtm_container_id) {
+            const id = d.gtm_container_id.trim();
+            parts.push(
+                `<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],` +
+                `j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})` +
+                `(window,document,'script','dataLayer','${id}');</script>`
+            );
+        }
+        if (d.meta_pixel_id) {
+            const id = d.meta_pixel_id.trim();
+            parts.push(
+                `<script>!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};` +
+                `if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;` +
+                `s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');` +
+                `fbq('init','${id}');fbq('track','PageView');</script>` +
+                `<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${id}&ev=PageView&noscript=1" /></noscript>`
+            );
+        }
+        if (d.custom_head_code) parts.push(d.custom_head_code.trim());
+        return parts.join('\n');
+    }
+
+    function buildHeaderIntegrationsBody(d) {
+        const parts = [];
+        if (d.whatsapp_number) {
+            const number = d.whatsapp_number.replace(/[^\d]/g, '');
+            const message = encodeURIComponent(d.whatsapp_message || 'Hi! I have a question.');
+            parts.push(
+                `<a href="https://wa.me/${number}?text=${message}" target="_blank" rel="noopener noreferrer" ` +
+                `style="position:fixed;bottom:20px;right:20px;z-index:9999;width:56px;height:56px;border-radius:50%;` +
+                `background:#25D366;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.25);text-decoration:none;" ` +
+                `aria-label="Chat on WhatsApp">` +
+                `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" fill="#fff">` +
+                `<path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38a9.9 9.9 0 0 0 4.74 1.2h.01c5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2zm0 18.15h-.01a8.2 8.2 0 0 1-4.18-1.14l-.3-.18-3.11.82.83-3.03-.2-.31a8.22 8.22 0 0 1-1.26-4.4c0-4.54 3.7-8.24 8.25-8.24 2.2 0 4.27.86 5.83 2.42a8.19 8.19 0 0 1 2.41 5.83c0 4.55-3.7 8.23-8.26 8.23zm4.52-6.16c-.25-.12-1.47-.72-1.69-.81-.23-.08-.4-.12-.56.13-.17.25-.64.81-.79.97-.14.17-.29.19-.54.06-.25-.12-1.05-.39-1.99-1.23-.74-.66-1.24-1.47-1.38-1.72-.15-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.12-.15.16-.25.25-.42.08-.17.04-.31-.02-.43-.06-.13-.56-1.35-.77-1.84-.2-.48-.41-.42-.56-.43-.14-.01-.31-.01-.48-.01-.17 0-.43.06-.66.31-.23.25-.86.84-.86 2.04 0 1.2.88 2.36 1 2.52.13.17 1.73 2.65 4.2 3.71.59.25 1.05.4 1.41.52.59.19 1.13.16 1.55.1.47-.07 1.47-.6 1.68-1.18.2-.58.2-1.08.14-1.18-.06-.11-.23-.17-.48-.29z"/>` +
+                `</svg></a>`
+            );
+        }
+        if (d.custom_body_code) parts.push(d.custom_body_code.trim());
+        return parts.join('\n');
+    }
+
+    function applyHeaderIntegrationsToHtml(html, data) {
+        if (!data) return html;
+        let out = html;
+        out = replaceHeaderIntegrationsBlock(out, HEADER_INTEGRATIONS_HEAD_START, HEADER_INTEGRATIONS_HEAD_END, buildHeaderIntegrationsHead(data), '</head>');
+        out = replaceHeaderIntegrationsBlock(out, HEADER_INTEGRATIONS_BODY_START, HEADER_INTEGRATIONS_BODY_END, buildHeaderIntegrationsBody(data), '</body>');
+        return out;
+    }
+
+    async function fetchHeaderIntegrations(projectId) {
+        if (!SUPABASE_SERVICE_KEY) return null;
+        try {
+            const url = `${SUPABASE_REST_URL}/rest/v1/project_settings?project_id=eq.${encodeURIComponent(projectId)}&setting_key=eq.header_integrations&select=setting_value`;
+            const r = await fetch(url, { headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` } });
+            if (!r.ok) return null;
+            const rows = await r.json();
+            return rows[0]?.setting_value || null;
+        } catch {
+            return null;
+        }
+    }
+
     // Site-wide favicon + Google verification (project_settings.setting_key='seo').
     // Previously these only got baked into index.html when the user clicked
     // "Sync to Site" in the SEO panel (server/src/routes/seo.routes.ts's /sync,
-    // which ALSO tries to redeploy immediately) — a normal Publish never picked
+    // which ALSO tries to redeploy immediately)   a normal Publish never picked
     // them up on its own, unlike per-route SEO above which is always read fresh
     // here at export time. Applying them the same way closes that gap.
     async function fetchSiteSeoSettings(projectId) {
@@ -3236,7 +1802,7 @@ async function startMainServer() {
             const pageUrl = projectUrl ? (routePath ? `${projectUrl}/${routePath}` : projectUrl) : '';
             const html = injectSeoMetaJs(indexHtml, o, pageUrl);
             if (!routePath) {
-                // Root override — apply directly to the existing index.html instead of
+                // Root override   apply directly to the existing index.html instead of
                 // generating a duplicate. Takes priority over the global project_settings
                 // SEO (seo.routes.ts /sync) since it's the more specific, later-applied write.
                 const idx = files.findIndex(f => f.path === 'index.html');
@@ -3332,6 +1898,16 @@ async function startMainServer() {
             let builtIndexHtml = files.find(f => f.path === 'index.html')?.content;
             if (builtIndexHtml) {
                 try {
+                    const headerIntegrations = await fetchHeaderIntegrations(projectId);
+                    if (headerIntegrations) {
+                        builtIndexHtml = applyHeaderIntegrationsToHtml(builtIndexHtml, headerIntegrations);
+                        const hiIdx = files.findIndex(f => f.path === 'index.html');
+                        if (hiIdx >= 0) files[hiIdx] = { path: 'index.html', content: builtIndexHtml };
+                    }
+                } catch (hiErr) {
+                    console.warn(`[Export] ${projectId}   header integrations injection failed (non-fatal):`, hiErr.message);
+                }
+                try {
                     const siteSeo = await fetchSiteSeoSettings(projectId);
                     if (siteSeo) {
                         builtIndexHtml = injectSiteWideSeo(builtIndexHtml, siteSeo);
@@ -3339,16 +1915,16 @@ async function startMainServer() {
                         if (idx >= 0) files[idx] = { path: 'index.html', content: builtIndexHtml };
                     }
                 } catch (seoErr) {
-                    console.warn(`[Export] ${projectId} — site-wide SEO (favicon/verification) failed (non-fatal):`, seoErr.message);
+                    console.warn(`[Export] ${projectId}   site-wide SEO (favicon/verification) failed (non-fatal):`, seoErr.message);
                 }
                 try {
                     await appendRouteSeoFiles(files, projectId, builtIndexHtml);
                 } catch (seoErr) {
-                    console.warn(`[Export] ${projectId} — per-route SEO generation failed (non-fatal):`, seoErr.message);
+                    console.warn(`[Export] ${projectId}   per-route SEO generation failed (non-fatal):`, seoErr.message);
                 }
             }
 
-            console.log(`[Export] ${projectId} — ${files.length} built files`);
+            console.log(`[Export] ${projectId}   ${files.length} built files`);
             res.json({ success: true, files });
         } catch (e) {
             if (fs.existsSync(buildDir)) fs.rmSync(buildDir, { recursive: true, force: true });
@@ -3360,7 +1936,7 @@ async function startMainServer() {
     // Secrets API: POST /preview/:projectId/secrets
     // Writes the project's real VITE_* secrets (hosted DB creds, Supabase auth,
     // functions URL, etc.) to a .env.local file so Vite's own env loading serves
-    // the real values via import.meta.env.* — restarts the Vite server so it picks
+    // the real values via import.meta.env.*   restarts the Vite server so it picks
     // them up (Vite only reads .env files at server startup, not on every request).
     app.options('/preview/:projectId/secrets', cors(corsOptions));
     app.post('/preview/:projectId/secrets', async (req, res) => {
@@ -3391,7 +1967,7 @@ async function startMainServer() {
             const existing = fs.readFileSync(envPath, 'utf-8');
             changed = existing !== envContent;
         } catch {
-            // No existing file — this is a real change
+            // No existing file   this is a real change
         }
 
         fs.writeFileSync(envPath, envContent);
@@ -3419,7 +1995,7 @@ async function startMainServer() {
         // ── Rate limit by IP ─────────────────────────────────────────────────
         const clientIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
         if (isUpdateRateLimited(clientIp)) {
-            return res.status(429).json({ error: 'Too many update requests — slow down' });
+            return res.status(429).json({ error: 'Too many update requests   slow down' });
         }
 
         const { projectId } = req.params;
@@ -3438,7 +2014,7 @@ async function startMainServer() {
         const lockCheck = await checkAgentLock(projectId, req.headers['x-agent-lock-token']);
         if (!lockCheck.ok) {
             return res.status(423).json({
-                error: 'Another generation is currently running for this project. This push was rejected to avoid corrupting its files — wait for it to finish and try again.',
+                error: 'Another generation is currently running for this project. This push was rejected to avoid corrupting its files   wait for it to finish and try again.',
                 code: 'PROJECT_LOCKED',
             });
         }
@@ -3475,7 +2051,7 @@ async function startMainServer() {
         const importErrors = checkCrossFileImports(projectRoot, files, fullSync);
         if (importErrors.length > 0) {
             const uniqueImportErrors = importErrors.slice(0, 10);
-            console.warn(`[${projectId}] Import warnings: ${importErrors.length} unresolved import(s) — letting Vite HMR handle`);
+            console.warn(`[${projectId}] Import warnings: ${importErrors.length} unresolved import(s)   letting Vite HMR handle`);
             // Store as warnings so /status can report them, but don't block
             setProjectErrors(projectId, uniqueImportErrors.map((e) => e.summary), 'warning');
         }
@@ -3486,7 +2062,7 @@ async function startMainServer() {
         try {
             const materialized = await materializeProjectFiles(projectId, projectRoot, files);
             const { userFilePaths, allFixedIssues, validationErrors } = materialized;
-            // validationErrors (real TS semantic errors — undefined names, etc.) are
+            // validationErrors (real TS semantic errors   undefined names, etc.) are
             // merged with the post-write build check below into one real health
             // signal, rather than being filed here as a non-blocking 'warning'.
 
@@ -3541,7 +2117,7 @@ export default App;
             // ── Warmup: force dep optimization to finish before client loads ──
             // Vite doesn't pre-bundle deps until the first module request arrives.
             // Without warming up, the browser loads the preview URL and waits
-            // 60-120 seconds while Vite optimizes deps — showing a blank page.
+            // 60-120 seconds while Vite optimizes deps   showing a blank page.
             //
             // Strategy: call vite.transformRequest() on the entry points directly.
             // This is the Vite-internal API that triggers dep discovery + bundling
@@ -3553,12 +2129,12 @@ export default App;
                 });
                 const entryToWarm = entryPoints[0] || 'src/main.tsx';
 
-                // transformRequest with a 30s timeout — enough for large dep trees
+                // transformRequest with a 30s timeout   enough for large dep trees
                 await Promise.race([
                     viteInstance.transformRequest(`/${entryToWarm}`),
                     new Promise((_, reject) => setTimeout(() => reject(new Error('warmup timeout')), 30000)),
                 ]);
-                console.log(`[${projectId}] Warmup complete — Vite deps pre-bundled via transformRequest`);
+                console.log(`[${projectId}] Warmup complete   Vite deps pre-bundled via transformRequest`);
             } catch (warmupErr) {
                 // Non-blocking: warmup failure does not prevent the update from succeeding.
                 // The browser may still get a short blank (Vite will finish optimization
@@ -3568,15 +2144,15 @@ export default App;
 
             // ── Post-write build check ─────────────────────────────────
             // Run syntax check on all source files. Report errors as 'build'
-            // so getProjectDiagnostics() returns healthy:false — this ensures
+            // so getProjectDiagnostics() returns healthy:false   this ensures
             // the agent loop sees the failure and retries instead of stopping.
             //
-            // IMPORTANT: quickViteBuildCheck only runs esbuild (syntax-only —
+            // IMPORTANT: quickViteBuildCheck only runs esbuild (syntax-only  
             // parses fine even for `supabase.auth.getSession()` with zero import
             // of `supabase` anywhere, since that's a semantic/binding issue, not
             // a parse error). The earlier validateSourceFile() pass (TypeScript's
             // transpileModule, captured above as validationErrors) DOES catch
-            // those — undefined-name references, unbound identifiers — but used
+            // those   undefined-name references, unbound identifiers   but used
             // to be filed under diagnosticKind 'warning' (non-blocking), and this
             // check's success branch then unconditionally cleared ALL errors,
             // silently erasing whatever validateSourceFile had just found. Merge
@@ -3589,7 +2165,7 @@ export default App;
                 ...(buildCheck.ok ? [] : buildCheck.errors.map((e) => e.summary)),
             ];
             if (combinedErrorSummaries.length > 0) {
-                console.warn(`[${projectId}] Build/type errors: ${combinedErrorSummaries.length} issue(s) — agent will repair`);
+                console.warn(`[${projectId}] Build/type errors: ${combinedErrorSummaries.length} issue(s)   agent will repair`);
                 setProjectErrors(projectId, combinedErrorSummaries, 'build');
             } else {
                 // Clear previous errors only when BOTH checks are clean.
@@ -3597,7 +2173,7 @@ export default App;
             }
             cleanupSnapshot(projectRoot);
 
-            // Return success — files are promoted to live preview
+            // Return success   files are promoted to live preview
             res.json({ 
                 success: true,
                 promoted: true,
@@ -3767,7 +2343,7 @@ export default App;
                         // Vite HMR will push a full-reload event once the server
                         // is back and the module graph has been invalidated, so
                         // there is no need to trigger location.reload() from here.
-                        chunk = `// Vite server restarting — module temporarily unavailable\nexport default undefined;`;
+                        chunk = `// Vite server restarting   module temporarily unavailable\nexport default undefined;`;
                     }
                 }
                 return originalEnd(chunk, ...args);
@@ -3830,7 +2406,7 @@ export default App;
                     console.warn(`[Warmup] Could not restore ${projectId}:`, e.message);
                 }
             }
-            console.log(`[Warmup] Done — ${restored}/${warmupIds.length} projects restored`);
+            console.log(`[Warmup] Done   ${restored}/${warmupIds.length} projects restored`);
             // Clean up the warmup list now that we've processed it
             try { fs.unlinkSync(WARMUP_LIST_FILE); } catch (e) { /* ignore */ }
         });
@@ -3840,9 +2416,9 @@ export default App;
     const shutdown = async (signal) => {
         console.log(`\n[Shutdown] Received ${signal}, cleaning up...`);
 
-        if (cleanupTimer) {
-            clearInterval(cleanupTimer);
-            cleanupTimer = null;
+        if (previewState.cleanupTimer) {
+            clearInterval(previewState.cleanupTimer);
+            previewState.cleanupTimer = null;
         }
 
         // Persist active project IDs so the next process can restore them.
