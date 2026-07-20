@@ -16,6 +16,7 @@ import { ensureBaseTemplate } from './services/baseTemplateService.js';
 import { testAndAutoDisableProviders } from './services/llm-health.service.js';
 import { getLlmControlState } from './services/llm-control.service.js';
 import { probeEmbeddingProvider } from './knowledgebase/index.js';
+import { releaseAllLocksForThisProcess } from './routes/ai.routes.js';
 import type { Server } from 'node:http';
 
 const PORT = process.env.PORT || 5001;
@@ -74,17 +75,33 @@ function gracefulShutdown(signal: string) {
     shuttingDown = true;
     logger.info(`${signal} received   draining connections...`);
 
+    // Deterministic cleanup: release any agent_locks rows THIS process holds,
+    // regardless of whether its in-flight request handlers ever reach their
+    // own finally block (see releaseAllLocksForThisProcess's comment).
+    releaseAllLocksForThisProcess().catch(() => {});
+
     // Stop accepting new connections
     server.close(() => {
         logger.info('All connections drained, exiting');
         process.exit(0);
     });
 
-    // Destroy keep-alive connections that would block server.close() indefinitely.
-    // SSE streams for active agent runs get 12s to finish; plain HTTP gets 0s.
-    for (const socket of activeConnections) {
-        socket.destroy();
-    }
+    // Grace period before destroying keep-alive connections. This USED to be a
+    // same-tick socket.destroy() with a comment claiming "12s to finish" that
+    // the code never actually gave -- every deploy's SIGTERM killed in-flight
+    // agent-stream sockets instantly, before the request handler's finally
+    // block (releaseAgentLock's DB delete) had any chance to run. Confirmed in
+    // production: 4 agent_locks rows leaked in the same ~90s window as a
+    // single deploy, each still holding a project lock 14 minutes later and
+    // blocking that project's file sync/load with a false "another generation
+    // is running" error. Actually waiting here lets in-flight runs' own
+    // abort/close handling and finally blocks complete normally first.
+    const CONNECTION_DRAIN_GRACE_MS = 12_000;
+    setTimeout(() => {
+        for (const socket of activeConnections) {
+            socket.destroy();
+        }
+    }, CONNECTION_DRAIN_GRACE_MS);
 
     // Hard kill after 15s regardless   should rarely fire now that keep-alive
     // connections are destroyed above, but keeps the process from leaking.

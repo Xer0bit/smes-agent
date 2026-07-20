@@ -246,9 +246,51 @@ async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
 }
 
 async function releaseAgentLock(projectId: string): Promise<void> {
+    // Single-shot delete used to swallow failures silently with no log line at
+    // all. A transient failure here (network blip, Supabase 5xx) then leaves
+    // the lock row alive for the full AGENT_LOCK_STALE_MS (15 min) since
+    // nothing else ever deletes it, while the client's own retry budget on a
+    // PROJECT_LOCKED response is only ~8-10s (LOCK_RETRY_ATTEMPTS *
+    // LOCK_RETRY_DELAY_MS in agentStreamService.ts) -- so a single missed
+    // delete surfaces as a false "another generation is running" error to the
+    // user (most visible on the auto-repair follow-up, which fires ~300ms
+    // after the prior run ends). Retry the delete itself a few times before
+    // giving up, and log if it still fails so a real leak is diagnosable.
+    const attempts = 3;
+    for (let i = 1; i <= attempts; i++) {
+        try {
+            await supabase.from('agent_locks').delete().eq('project_id', projectId);
+            return;
+        } catch (err) {
+            if (i === attempts) {
+                logger.warn(`[agent-lock] Failed to release lock for ${projectId} after ${attempts} attempts (will self-heal via staleness reclaim in ${AGENT_LOCK_STALE_MS / 60_000}min): ${(err as Error).message}`);
+                return;
+            }
+            await new Promise((r) => setTimeout(r, 200 * i));
+        }
+    }
+}
+
+// Called from index.ts's gracefulShutdown on SIGTERM/SIGINT. A dying worker's
+// in-flight agent runs get their sockets destroyed (see index.ts's connection
+// drain) before the request handler's own finally block is guaranteed to run,
+// which is exactly how a deploy leaks an agent_locks row: confirmed in
+// production, 4 rows leaked in the same ~90s window as a single `vps3`
+// deploy, each blocking that project's file sync/load for up to
+// AGENT_LOCK_STALE_MS (15min) with a false "another generation is running"
+// error. Deleting by owner is deterministic regardless of how far any
+// individual request got, unlike waiting for sockets/finally blocks to run.
+export async function releaseAllLocksForThisProcess(): Promise<void> {
     try {
-        await supabase.from('agent_locks').delete().eq('project_id', projectId);
-    } catch { /* best-effort   a stale-lock reclaim will clean up eventually */ }
+        const { error, count } = await supabase
+            .from('agent_locks')
+            .delete({ count: 'exact' })
+            .eq('owner', `pid:${process.pid}`);
+        if (error) throw error;
+        if (count) logger.info(`[agent-lock] Released ${count} lock(s) owned by pid:${process.pid} on shutdown`);
+    } catch (err) {
+        logger.warn(`[agent-lock] Failed to release this process's locks on shutdown: ${(err as Error).message}`);
+    }
 }
 
 // ─── Per-user rate limiting for /agent-stream ────────────────────────────────
