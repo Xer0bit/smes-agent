@@ -114,6 +114,18 @@ function gracefulShutdown(signal: string) {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
+// ecosystem.config.cjs sets shutdown_with_message: true for this app (cluster
+// mode), which makes PM2 send an IPC message instead of SIGTERM/SIGINT on
+// restart/delete. Without this handler, gracefulShutdown() above NEVER ran on
+// a real deploy -- PM2 just waited out kill_timeout and force-killed the
+// process, which is exactly how agent_locks rows kept leaking on deploy even
+// after releaseAllLocksForThisProcess() was added: the code that calls it was
+// unreachable the whole time. Confirmed live: zero "[agent-lock]" log lines
+// around any deploy's shutdown, despite SIGTERM/SIGINT handlers being wired.
+process.on('message', (msg) => {
+    if (msg === 'shutdown') gracefulShutdown('IPC shutdown message');
+});
+
 process.on('uncaughtException', (error) => {
     logger.error('Uncaught Exception:', error);
     process.exit(1);
