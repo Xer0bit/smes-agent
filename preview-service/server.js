@@ -2193,6 +2193,56 @@ export default App;
         }
     });
 
+    // POST /preview/:projectId/check — validate pending in-progress-run edits
+    // WITHOUT writing them to disk or touching the live, watched Vite instance.
+    // Used by get_build_errors.ts's mid-run error checks so an agent run's
+    // intermediate states never flicker in the user-visible preview or
+    // trigger real Vite rebuild work for content about to be overwritten
+    // again seconds later. The one real disk write + live reload still
+    // happens exactly once, at true run completion, via /update.
+    app.post('/preview/:projectId/check', async (req, res) => {
+        if (PREVIEW_UPDATE_SECRET) {
+            const provided = req.headers['x-update-secret'];
+            if (!provided || provided !== PREVIEW_UPDATE_SECRET) {
+                return res.status(401).json({ error: 'Unauthorized' });
+            }
+        }
+
+        const { projectId } = req.params;
+        if (!isValidProjectId(projectId)) {
+            return res.status(400).json({ error: 'Invalid project ID' });
+        }
+        const { files } = req.body;
+        if (!files || !Array.isArray(files)) {
+            return res.status(400).json({ error: 'Invalid files format' });
+        }
+
+        // No initProject() here deliberately — that writes scaffold files to
+        // disk as a side effect. If the project directory doesn't exist yet
+        // (brand-new project, first-ever run), the checks below degrade
+        // gracefully rather than erroring.
+        const projectRoot = path.join(PROJECTS_ROOT, projectId);
+
+        try {
+            const { validationErrors } = await materializeProjectFiles(projectId, projectRoot, files, { dryRun: true });
+            const importErrors = checkCrossFileImports(projectRoot, files, false);
+
+            const errors = [
+                ...validationErrors.map((e) => e.summary),
+                ...importErrors.map((e) => e.summary),
+            ];
+
+            res.json({
+                healthy: errors.length === 0,
+                errors,
+                diagnosticKind: errors.length === 0 ? 'healthy' : 'build',
+            });
+        } catch (err) {
+            console.error(`[${projectId}] Check failed:`, err);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     // Preview Status API: GET /preview/:projectId/status
     app.get('/preview/:projectId/status', cors(corsOptions), (req, res) => {
         const { projectId } = req.params;

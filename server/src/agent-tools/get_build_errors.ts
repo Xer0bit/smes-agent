@@ -35,7 +35,8 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
 
   execute: async (args, ctx: AgentContext) => {
     const projectId = args.projectId || ctx.projectId;
-    const url = `${PREVIEW_SERVICE_URL}/preview/${projectId}/status`;
+    const previewUrl = ctx.previewServiceUrl || PREVIEW_SERVICE_URL;
+    const checkUrl = `${previewUrl}/preview/${projectId}/check`;
 
     // ─── Per-run call cap: prevent infinite error-check loops ────────────────
     ctx.buildErrorCallCount = (ctx.buildErrorCallCount ?? 0) + 1;
@@ -48,30 +49,28 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
       );
     }
 
-    // Flush pending writes to the preview service before checking errors.
-    // Without this the Vite dev server would report stale errors from before
-    // the agent's latest changes.
-    if (ctx.pendingPreviewFiles && ctx.pendingPreviewFiles.size > 0) {
-      const previewUrl = ctx.previewServiceUrl || PREVIEW_SERVICE_URL;
-      const files = Array.from(ctx.pendingPreviewFiles.entries()).map(([path, content]) => ({ path, content }));
-      try {
-        await fetch(`${previewUrl}/preview/${projectId}/update`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files, fullSync: false }),
-          signal: AbortSignal.timeout(10_000),
-        });
-      } catch {
-        // If flush fails, proceed anyway   stale errors are better than a crash
-      }
-    }
+    // Validate the run's pending edits (ctx.pendingPreviewFiles, accumulated by
+    // write_file/edit_file across every step so far this run) against a DRY-RUN
+    // check   never written to disk, never touches the live Vite instance the
+    // user's browser is watching. Only the true end-of-run success push
+    // (agentLoopService.ts) commits to the live, user-visible preview; this
+    // check exists purely to give the agent real error feedback mid-run
+    // without flickering the user's screen through half-finished states.
+    const files = ctx.pendingPreviewFiles && ctx.pendingPreviewFiles.size > 0
+      ? Array.from(ctx.pendingPreviewFiles.entries()).map(([path, content]) => ({ path, content }))
+      : [];
 
     let res: Response;
     try {
-      res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+      res = await fetch(checkUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files }),
+        signal: AbortSignal.timeout(10_000),
+      });
     } catch (err: unknown) {
       return (
-        `Preview service unreachable at ${PREVIEW_SERVICE_URL}: ${err instanceof Error ? err.message : String(err)}. ` +
+        `Preview service unreachable at ${previewUrl}: ${err instanceof Error ? err.message : String(err)}. ` +
         'The preview server may still be starting or is down. ' +
         'Do NOT keep calling get_build_errors   it will keep failing. ' +
         'Finish writing ALL your files first and stop. The system will handle the preview.'
@@ -79,22 +78,6 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
     }
 
     if (!res.ok) {
-      if (res.status === 400) {
-        return (
-          'Preview service returned HTTP 400   the project has not been pushed to the preview yet. ' +
-          'This is NOT a code error. It means your files have NOT been sent to the build server yet. ' +
-          'DO NOT keep calling get_build_errors   it will keep returning 400 until the files are pushed. ' +
-          'INSTEAD: Finish writing ALL your files first, then stop. The system will push files automatically after you finish. ' +
-          'If this is a repair pass and files ARE on disk, the Vite dev server may still be starting   wait and retry ONCE.'
-        );
-      }
-      if (res.status === 404) {
-        return (
-          'Preview service returned HTTP 404   the project does not exist on the preview server. ' +
-          'This means the project directory has not been created yet. ' +
-          'Finish writing all your files. The system will create the project automatically.'
-        );
-      }
       if (res.status >= 500) {
         return (
           `Preview service returned HTTP ${res.status}   the server is experiencing an internal error. ` +
