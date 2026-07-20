@@ -11,6 +11,8 @@ interface NavItem {
   id: string;
   label: string;
   featureKey?: string;
+  /** Not built yet (or, for Analytics, awaiting external GCP OAuth setup) — greyed out, not clickable. */
+  disabled?: boolean;
 }
 
 export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSidebarProps) => {
@@ -41,25 +43,27 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
 
   const workspaceItems: NavItem[] = [
     { id: "workspace-plans", label: "Plan & Usage" },
-    { id: "workspace-analytics", label: "Analytics", featureKey: "analytics" },
-    { id: "workspace-api-access", label: "API Access", featureKey: "api_access" },
-    { id: "workspace-white-label", label: "White-label", featureKey: "remove_branding" },
-    { id: "workspace-autopilot", label: "Autopilot", featureKey: "auto_pilot" },
+    // Analytics: real GA4 dashboard, but awaiting the GCP OAuth redirect URI
+    // setup before it can actually connect anything.
+    { id: "workspace-analytics", label: "Analytics", featureKey: "analytics", disabled: true },
+    { id: "workspace-api-access", label: "API Access", featureKey: "api_access", disabled: true },
+    { id: "workspace-white-label", label: "White-label", featureKey: "remove_branding", disabled: true },
+    { id: "workspace-autopilot", label: "Autopilot", featureKey: "auto_pilot", disabled: true },
     { id: "workspace-referrals", label: "Referrals" },
   ];
 
   const integrationItems: NavItem[] = [
     { id: "integrations-stripe", label: "Stripe", featureKey: "integration_app" },
-    { id: "integrations-alipay", label: "Alipay", featureKey: "integration_app" },
-    { id: "integrations-airwallex", label: "Airwallex", featureKey: "integration_app" },
+    { id: "integrations-alipay", label: "Alipay", featureKey: "integration_app", disabled: true },
+    { id: "integrations-airwallex", label: "Airwallex", featureKey: "integration_app", disabled: true },
     { id: "integrations-zapier", label: "Zapier", featureKey: "integration_app" },
   ];
 
   const chinaEcoItems: NavItem[] = [
     { id: "integrations-china", label: "Overview" },
     { id: "china-icp", label: ".cn ICP Filing" },
-    { id: "china-qq", label: "QQ Auth" },
-    { id: "china-iamsmart", label: "HK iAM Smart" },
+    { id: "china-qq", label: "QQ Auth", disabled: true },
+    { id: "china-iamsmart", label: "HK iAM Smart", disabled: true },
   ];
 
   const renderSection = (title: string, items: NavItem[], sectionId: string, icon: React.ReactNode) => (
@@ -78,14 +82,18 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
             return (
               <button
                 key={item.id}
+                disabled={item.disabled}
                 onClick={() => {
+                  if (item.disabled) return;
                   onSectionChange(item.id);
                 }}
                 className={cn(
                   "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors duration-smooth text-left",
-                  activeSection === item.id
-                    ? "bg-indigo-500/10 text-white font-medium border-l-2 border-indigo-500/60"
-                    : "text-white/30 hover:bg-white/[0.04] hover:text-white/60"
+                  item.disabled
+                    ? "text-white/15 cursor-not-allowed"
+                    : activeSection === item.id
+                      ? "bg-indigo-500/10 text-white font-medium border-l-2 border-indigo-500/60"
+                      : "text-white/30 hover:bg-white/[0.04] hover:text-white/60"
                 )}
               >
                 {item.id === "china-icp" && (
@@ -96,6 +104,9 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
                 <span className="flex-1">{item.label}</span>
                 {item.id === "project-seo" && (
                   <span className="px-1.5 py-0.5 text-[10px] font-bold bg-green-500/20 text-green-400 rounded leading-none">HOT</span>
+                )}
+                {item.disabled && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-medium bg-white/[0.06] text-white/25 rounded leading-none">Soon</span>
                 )}
               </button>
             );
@@ -131,18 +142,14 @@ export const SettingsSidebar = ({ activeSection, onSectionChange }: SettingsSide
             <span className="px-1.5 py-0.5 text-[10px] font-bold bg-orange-500/20 text-orange-400 rounded leading-none">HOT</span>
           </button>
 
-          {/* LLM Section */}
+          {/* LLM Section — not built yet, stub content only */}
           <button
-            onClick={() => onSectionChange('ecomgear-llm')}
-            className={cn(
-              "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors duration-smooth text-left",
-              activeSection === 'ecomgear-llm'
-                ? "bg-indigo-500/10 text-white font-medium border-l-2 border-indigo-500/60"
-                : "text-white/30 hover:bg-white/[0.04] hover:text-white/60"
-            )}
+            disabled
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] text-left text-white/15 cursor-not-allowed"
           >
             <Boxes className="h-4 w-4" />
             <span className="flex-1">LLM</span>
+            <span className="px-1.5 py-0.5 text-[10px] font-medium bg-white/[0.06] text-white/25 rounded leading-none">Soon</span>
           </button>
 
           {/* Edge Functions Section */}

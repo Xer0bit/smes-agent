@@ -679,6 +679,18 @@ fi
 # ── 6. Hard PM2 restart (delete + start   no socket inheritance) ──────────────
 [ -f .env.production ] && set -a && . ./.env.production && set +a
 
+# Send a real SIGTERM and wait BEFORE deleting. `pm2 delete` alone does not
+# reliably run this app's graceful-shutdown path (confirmed live: agent_locks
+# rows for in-flight agent runs kept leaking on every deploy, with zero
+# "[agent-lock]" log lines near shutdown, even after wiring both a
+# SIGTERM/SIGINT handler and an IPC 'shutdown_with_message' handler in
+# index.ts -- pm2 delete just doesn't honor either path the way pm2
+# stop/reload do). `pm2 sendSignal` sends the OS signal directly and
+# unambiguously, so the app's own SIGTERM handler (which releases any
+# agent_locks rows it holds before exiting) actually gets a chance to run.
+pm2 sendSignal SIGTERM "\$APP_NAME" 2>/dev/null || true
+sleep 13
+
 pm2 delete "\$APP_NAME" 2>/dev/null || true
 sleep 2
 

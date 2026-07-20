@@ -14,6 +14,7 @@ import { CollaboratorManager } from "./CollaboratorManager";
 import { ReferralContent } from "./ReferralContent";
 import { DomainSettings } from "./DomainSettings";
 import { HeaderIntegrationsSettings } from "./HeaderIntegrationsSettings";
+import { GoogleAnalyticsSettings } from "./GoogleAnalyticsSettings";
 import { GitHubSettings } from "./GitHubSettings";
 import { DatabaseSettings } from "./DatabaseSettings";
 import { EdgeFunctionsSettings } from "./EdgeFunctionsSettings";
@@ -171,15 +172,17 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
         return <PlanUsageContent />;
 
       case "workspace-analytics":
-        return (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-semibold text-white/85 mb-1">Analytics</h2>
-              <p className="text-sm text-white/45">Monitor project insights and usage analytics.</p>
+        return hasFeature('analytics')
+          ? <GoogleAnalyticsSettings projectId={projectId} />
+          : (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-xl font-semibold text-white/85 mb-1">Analytics</h2>
+                <p className="text-sm text-white/45">Monitor project insights and usage analytics.</p>
+              </div>
+              {renderPlanLocked('Analytics Dashboard', 'Advanced analytics is available on higher tiers.', 'analytics')}
             </div>
-            {renderPlanLocked('Analytics Dashboard', 'Advanced analytics is available on higher tiers.', 'analytics')}
-          </div>
-        );
+          );
 
       case "workspace-api-access":
         return (
