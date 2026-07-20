@@ -1,5 +1,5 @@
 /**
- * set_secret tool — save an API key / env variable for the project so generated
+ * set_secret tool   save an API key / env variable for the project so generated
  * code can reference it as a real environment variable, without ever putting the
  * raw value in a file, a chat message, or this tool's own result.
  */
@@ -27,12 +27,12 @@ export const setSecretTool: ToolDefinition<z.infer<typeof schema>> = {
   name: 'set_secret',
   description:
     'Save a project secret / environment variable (API key, token, etc.) so it becomes available to ' +
-    'the running app as a real env var — never write secret values directly into source files. ' +
+    'the running app as a real env var   never write secret values directly into source files. ' +
     'After saving, reference the variable by NAME in code: `import.meta.env.KEY_NAME` in frontend code ' +
     '(only works if the key starts with VITE_), or `secrets.KEY_NAME` inside edge functions written with ' +
     'write_edge_function. Call list_secrets first to check what already exists before asking the user to ' +
     'repeat a value. CRITICAL: never print, log, repeat, or restate the secret value in your response to ' +
-    'the user — only confirm that it was saved.',
+    'the user   only confirm that it was saved.',
   inputSchema: schema,
   getConsentPreview: (args) => `Save secret ${args.key_name} (value hidden)`,
 
@@ -74,7 +74,7 @@ export const setSecretTool: ToolDefinition<z.infer<typeof schema>> = {
         logger.warn('[set_secret] preview sync failed (secret is still saved)', syncErr);
       }
 
-      // Also push the full secret set to VPS5 — edge functions execute there
+      // Also push the full secret set to VPS5   edge functions execute there
       // and read `secrets.KEY_NAME` from a local copy, never by calling back
       // to the platform API.
       try {
@@ -104,13 +104,13 @@ export const setSecretTool: ToolDefinition<z.infer<typeof schema>> = {
 
       const frontendUsable = keyName.startsWith('VITE_');
       return (
-        `Saved secret "${keyName}" (value hidden — never display it). It is now live in the running preview.\n` +
+        `Saved secret "${keyName}" (value hidden   never display it). It is now live in the running preview.\n` +
         (frontendUsable
           ? `Reference it in frontend code as \`import.meta.env.${keyName}\`.`
           : `This key has no VITE_ prefix, so it is NOT exposed to frontend code. ` +
             `Use it inside an edge function (write_edge_function) as \`secrets.${keyName}\`. ` +
             `If you need it in the browser instead, save it again with a VITE_ prefix.`) +
-        `\nDo not repeat the value back to the user — just confirm it's saved.`
+        `\nDo not repeat the value back to the user   just confirm it's saved.`
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

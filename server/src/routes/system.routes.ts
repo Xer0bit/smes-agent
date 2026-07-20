@@ -225,7 +225,7 @@ router.get('/server-status', authMiddleware, async (req: AuthenticatedRequest, r
     }
 });
 
-// KB embedding diagnostics — admin only
+// KB embedding diagnostics   admin only
 router.get('/kb/status', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     try {
         if (!await requireAdmin(req, res)) return;

@@ -22,7 +22,7 @@ dist-ssr
 # server/.env
 # server/.llm-control.json
 # .deploy.env
-# .env.example / server/.env.example ARE tracked — they're safe templates
+# .env.example / server/.env.example ARE tracked   they're safe templates
 # with no real values. See ENVIRONMENTS.md for what goes where.
 !.env.example
 !server/.env.example

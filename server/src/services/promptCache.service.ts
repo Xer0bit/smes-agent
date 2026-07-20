@@ -64,7 +64,7 @@ async function embedText(text: string): Promise<number[] | null> {
 /** Look up a cached response. Returns entry if found, null if cache miss. */
 export async function lookupCache(projectId: string, prompt: string, tier: string): Promise<CacheEntry | null> {
   if (!supabase) return null;
-  // Only cache micro/fix — these are deterministic one-shot changes
+  // Only cache micro/fix   these are deterministic one-shot changes
   if (tier !== 'micro' && tier !== 'fix') return null;
 
   try {

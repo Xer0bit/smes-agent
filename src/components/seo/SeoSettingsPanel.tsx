@@ -13,7 +13,7 @@ import { RedirectSettings } from "@/components/referral/settings/RedirectSetting
 import { SiteSettingsEditor } from "@/components/seo/SiteSettingsEditor";
 
 // Shared by the SEO settings dialog tab and the standalone /project/:id/seo
-// page — kept as one component so neither view can drift out of sync with
+// page   kept as one component so neither view can drift out of sync with
 // the other, and so the settings-dialog case never has to re-implement it.
 export function SeoSettingsPanel({ projectId }: { projectId?: string }) {
   const queryClient = useQueryClient();

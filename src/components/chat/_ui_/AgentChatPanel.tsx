@@ -74,7 +74,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [thinkingText, setThinkingText] = useState('');
-  // The agent's real internal reasoning (the `think` tool's actual argument) —
+  // The agent's real internal reasoning (the `think` tool's actual argument)  
   // shown live only, cleared on the next step/completion, never saved to the
   // persisted chat transcript.
   const [liveThought, setLiveThought] = useState('');
@@ -174,7 +174,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     let cancelled = false;
     (async () => {
       try {
-        // Ensure a valid session before querying — on page refresh the token
+        // Ensure a valid session before querying   on page refresh the token
         // may be stale and getSession() returns null until the refresh completes.
         // Try getSession() first; if null, call refreshSession() once before giving up.
         let { data: { session } } = await lovableCloud.auth.getSession();
@@ -182,7 +182,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           const { data: refreshed } = await lovableCloud.auth.refreshSession();
           session = refreshed.session;
         }
-        // Still no session — user is truly not logged in; show clean slate but
+        // Still no session   user is truly not logged in; show clean slate but
         // do NOT overwrite an already-populated messages array (e.g. a run is in progress)
         if (!session || cancelled) {
           if (!cancelled) setMessages(prev => prev.length <= 1 ? [GREETING] : prev);
@@ -209,7 +209,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             }
             // Map DB attachments to the ChatAttachment shape for rendering.
             // Use the permanent publicUrl as the previewUrl (no blob URL needed
-            // — the image loads directly from Supabase Storage).
+            //   the image loads directly from Supabase Storage).
             const dbAttachments = (m.attachments ?? []).map(a => ({
               id: m.id,
               name: a.name,
@@ -241,7 +241,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   }, [projectId, isGuest]);
 
   // ── Auto-scroll ───────────────────────────────────────────────────────────
-  // scrollRef points to a plain div with overflow-y:auto — set scrollTop directly.
+  // scrollRef points to a plain div with overflow-y:auto   set scrollTop directly.
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -321,7 +321,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   }, []);
 
   // ── Cleanup on unmount / project change ──────────────────────────────────
-  // Do NOT abort the agent on unmount — it should keep running server-side.
+  // Do NOT abort the agent on unmount   it should keep running server-side.
   // Only clear local UI timers. The user can reconnect by navigating back.
   useEffect(() => () => {}, [projectId]);
 
@@ -343,7 +343,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             const json = await r.json();
             if (cancelled) return;
             if (json.active && !isGenerating) {
-              // A run is in progress server-side — reconnect to it
+              // A run is in progress server-side   reconnect to it
               const asstId = `reconnect-${Date.now()}`;
               setMessages(prev => [...prev, { id: asstId, role: 'assistant', content: '', status: 'pending' }]);
               setIsGenerating(true);
@@ -391,7 +391,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                     const rawContent = currentContent || result.summary || '';
                     const { body: finalContent, summary } = extractSummary(stripEcomgearTags(rawContent));
                     const toolActivities = parseToolActivities(toolXmlAccum || rawContent);
-                    const displayContent = finalContent || buildFallbackSummary(toolActivities) || 'Something went wrong — please try again.';
+                    const displayContent = finalContent || buildFallbackSummary(toolActivities) || 'Something went wrong   please try again.';
                     setMessages(prev => prev.map(m => m.id === asstId
                       ? { ...m, status: 'complete', content: displayContent, summary, toolActivities, snapshotId: result.snapshotId }
                       : m));
@@ -498,7 +498,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     const hasAttachments = !overridePrompt && pendingAttachments.length > 0;
     if ((!raw && !hasAttachments) || isGenerating || !projectId) return;
 
-    // Eco gate — block non-guest users who are at their daily limit
+    // Eco gate   block non-guest users who are at their daily limit
     if (!isGuest && !isWithinLimit()) {
       toast.error('Monthly eco limit reached. Please upgrade your plan or wait for the reset.');
       return;
@@ -538,7 +538,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     // stays in sync without waiting for refreshUsage() after generation ends.
     if (!isGuest) applyUsageDelta(1);
 
-    // Persist user message (skip for guests — no DB project row)
+    // Persist user message (skip for guests   no DB project row)
     if (!isGuest) {
       const attachmentsForDb = messageAttachments
         .filter(a => a.publicUrl)
@@ -573,7 +573,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     // Combines: verified file changes from tool activities + user constraints + summary chips.
     const olderSummary = olderTurns.length > 0
       ? (() => {
-          // Collect verified file changes from tool activities (ground truth — not LLM narrative)
+          // Collect verified file changes from tool activities (ground truth   not LLM narrative)
           const filesChanged: string[] = [];
           const constraints: string[] = [];
 
@@ -616,12 +616,12 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
     let currentContent = '';
     // Accumulate XML from tool-output events (write_file / delete_file / rename_file).
-    // This is the real source for toolActivities chips — the text-delta stream
+    // This is the real source for toolActivities chips   the text-delta stream
     // almost never contains <ecomgear-*> tags when the agent uses tool calls.
     let toolXmlAccum = '';
     // Guard: once 'done' is received, ignore any late text-delta events.
     let generationDone = false;
-    // Step-by-step history — survives after completion (unlike statusText/liveFiles,
+    // Step-by-step history   survives after completion (unlike statusText/liveFiles,
     // which are wiped), rendered alongside the single-line status ticker, not instead of it.
     const stepsAccum: StepEntry[] = [];
     const syncSteps = () => {
@@ -640,7 +640,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         olderSummary,
         fingerprint: guestFingerprint,
         // The auto-fix follow-up fires right after the run that triggered it
-        // ends — the server can still be mid-cleanup (restore-push retries,
+        // ends   the server can still be mid-cleanup (restore-push retries,
         // async lock release) for several seconds after the client sees the
         // stream close. Retry silently on PROJECT_LOCKED instead of showing
         // the user an alarming "another generation is running" error for a
@@ -657,7 +657,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         callbacks: {
           onOpen: () => {
             onAgentStreamClear?.();
-            // Honest initial state — the real per-step status arrives within
+            // Honest initial state   the real per-step status arrives within
             // a moment via onStepFinish / step-status-refine. Never show a
             // fake "Working on your request" headline.
             pushStatus('Starting…');
@@ -700,7 +700,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             const renameMatch = /ecomgear-rename[^>]*\bfrom="([^"]+)"/.exec(xml);
             const depMatch = /ecomgear-add-dependency[^>]*\bpackages="([^"]+)"/.exec(xml);
 
-            // These template labels are a placeholder only — never force, so
+            // These template labels are a placeholder only   never force, so
             // real LLM narration (onAgentNarration/onStepStatusRefine) always
             // wins the live status ticker instead of being clobbered by them.
             // They still go into stepsAccum, which is the persistent step
@@ -746,7 +746,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             const isLLMStatus = stepData.step === 0 && stepData.toolCount === 0;
             // File-op steps already got their own permanent entry from onToolOutput
             // above. A narrative-only step (think, or any step with no file-changing
-            // tool call) is shown live in the status ticker ONLY — it never gets a
+            // tool call) is shown live in the status ticker ONLY   it never gets a
             // permanent stepsAccum entry, so the saved chat transcript isn't cluttered
             // with a growing list of "thinking about X..." lines that never go away.
             if (stepData.status) {
@@ -758,20 +758,20 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           onStepStatusRefine: ({ status }) => {
             // A cheap-model-generated description of what the step actually did,
             // replacing the rule-based canned phrase once it resolves (feature/build
-            // tiers only — see generateDynamicStepStatus on the server). Live ticker
-            // only, same as onStepFinish above — never saved to the permanent history.
+            // tiers only   see generateDynamicStepStatus on the server). Live ticker
+            // only, same as onStepFinish above   never saved to the permanent history.
             if (generationDone) return;
             pushStatus(status, true, true);
           },
           onAgentNarration: (narration) => {
             // Real-time, LLM-written description of what the agent is doing RIGHT
-            // NOW (from the narration microservice). Highest priority — force-push
+            // NOW (from the narration microservice). Highest priority   force-push
             // so it always wins as the live headline, overriding canned strings.
             if (generationDone) return;
             pushStatus(narration, true, true);
           },
           onAgentThinking: ({ thought }) => {
-            // The agent's real internal reasoning, live only — replaces the
+            // The agent's real internal reasoning, live only   replaces the
             // previous thought each time a new `think` step arrives, never
             // accumulates, never gets saved to the persisted message.
             if (generationDone) return;
@@ -808,7 +808,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               /shall i (start building|begin|proceed|start coding|go ahead)|let me know if you.{0,10}d like (any changes|to (change|adjust))|ready to (start|build)|should i (start|build|proceed)|confirm or adjust/i.test(rawContent);
 
             // For confirm requests, show fixed chips immediately. For real builds, set null (loading)
-            // while Gemini generates contextual suggestions — skeleton chips show in the meantime.
+            // while Gemini generates contextual suggestions   skeleton chips show in the meantime.
             const initialSuggestions: string[] | null = isConfirmRequest
               ? ['Yes, build it!', 'Make some changes first']
               : !isPlan && filePaths.length > 0 ? null   // null = Gemini loading
@@ -823,7 +823,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               )
             );
 
-            // Fire Gemini suggestion call — replaces null (loading) with real chips when done.
+            // Fire Gemini suggestion call   replaces null (loading) with real chips when done.
             if (!isConfirmRequest && !isPlan && filePaths.length > 0) {
               fetch(getGenServerUrl('/api/v1/ai/suggestions'), {
                 method: 'POST',
@@ -875,13 +875,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               // Refresh eco usage display after generation
               if (!isGuest) refreshUsage().catch(() => {});
               if (result.ghostRun) {
-                // Agent produced text but wrote no files — this is a normal conversational
+                // Agent produced text but wrote no files   this is a normal conversational
                 // response (question, clarification, limitation) OR a run that fumbled tool
                 // calls and only narrated. Either way, nothing changed: never claim otherwise
                 // with a success toast, and never auto-retry here (repair auto-fix only fires
                 // via onRepairFailed on real build errors).
               } else {
-                autoRepairCountRef.current = 0; // successful build — reset repair counter
+                autoRepairCountRef.current = 0; // successful build   reset repair counter
                 toast.success('App updated.');
               }
             }
@@ -889,7 +889,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           onRepairFailed: (errors) => {
             autoRepairCountRef.current += 1;
 
-            // Cap at 2 consecutive frontend escalations — beyond this the AI is clearly
+            // Cap at 2 consecutive frontend escalations   beyond this the AI is clearly
             // stuck in a loop and further auto-retries will not help.
             if (autoRepairCountRef.current > 2) {
               autoRepairCountRef.current = 0;
@@ -910,7 +910,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               return;
             }
 
-            // Server-side auto-repair exhausted — escalate once more with a focused prompt
+            // Server-side auto-repair exhausted   escalate once more with a focused prompt
             const errorList = errors.length > 0
               ? errors.map(e => `- ${e}`).join('\n')
               : '- Unknown build error';
@@ -932,7 +932,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             setStepCount(0);
             setLiveFiles([]);
             setFilesWritten(0);
-            // Show real error so users/devs can diagnose — strip raw HTTP prefix if present
+            // Show real error so users/devs can diagnose   strip raw HTTP prefix if present
             const display = errMsg
               ? errMsg.replace(/^Agent stream failed \(\d+\):\s*/i, '').slice(0, 300)
               : 'Model temporarily unavailable. Please try again.';
@@ -945,7 +945,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               )
             );
             toast.error(display);
-            // Persist whatever was streamed so far — otherwise a reload silently
+            // Persist whatever was streamed so far   otherwise a reload silently
             // erases the agent's partial reply, leaving only the user's prompt.
             if (!isGuest && errorContent.trim()) {
               messageService.saveAssistantMessage(projectId, `${errorContent}\n\n*[error]*`, userId).catch(err => {
@@ -998,7 +998,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       const last = prev[prev.length - 1];
       if (last?.role === 'assistant' && (last.status === 'pending' || last.status === 'streaming')) {
         const cancelledContent = `${last.content || ''}\n\n*Cancelled.*`;
-        // Persist whatever was streamed so far — otherwise a reload silently
+        // Persist whatever was streamed so far   otherwise a reload silently
         // erases the agent's partial reply, leaving only the user's prompt.
         if (!isGuest && (last.content || '').trim()) {
           messageService.saveAssistantMessage(projectId, cancelledContent, userId).catch(err => {
@@ -1033,7 +1033,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
   if (isMinimized) return null;
 
-  // Honest fallback — only used for the very first frame before any step
+  // Honest fallback   only used for the very first frame before any step
   // status arrives. Once the server emits a step/status this is replaced.
   const statusLabel = statusText || 'Starting…';
 
@@ -1055,7 +1055,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         </div>
       </div>
 
-      {/* ── Messages — plain div so scrollTop works directly ── */}
+      {/* ── Messages   plain div so scrollTop works directly ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
         <div className="px-3 py-3 space-y-3">
           {/* Load-more indicator at top */}
@@ -1102,7 +1102,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 attachments={msg.attachments}
               />
 
-              {/* Retry button — shown on hover below user messages */}
+              {/* Retry button   shown on hover below user messages */}
               {msg.role === 'user' && (
                 <div className="flex justify-end mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
@@ -1117,7 +1117,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 </div>
               )}
 
-              {/* Retry button — shown on an errored assistant message, resubmits the
+              {/* Retry button   shown on an errored assistant message, resubmits the
                   preceding user prompt (same call shape as the user-message retry above). */}
               {msg.role === 'assistant' && msg.status === 'error' && (
                 <div className="flex justify-start mt-1">
@@ -1137,7 +1137,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 </div>
               )}
 
-              {/* Step-by-step history — live while streaming, survives after completion
+              {/* Step-by-step history   live while streaming, survives after completion
                   (unlike the single-line status ticker above, which is wiped). Grouped
                   into one pill-chip strip per turn, matching the follow-up chip language
                   below rather than the bare icon+text rows this used to be. */}
@@ -1167,7 +1167,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 </div>
               )}
 
-              {/* Undo + preview-command action chips — one shared row so both read as the
+              {/* Undo + preview-command action chips   one shared row so both read as the
                   same "message actions" language instead of two separately-spaced blocks;
                   only the accent color carries semantic meaning (yellow = destructive-ish
                   undo, indigo = neutral preview command), shape/size/padding match the
@@ -1200,7 +1200,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                           setMessages(prev => prev.map(m =>
                             m.id === msg.id ? { ...m, snapshotId: undefined } : m
                           ));
-                          toast.success('Rolled back — project restored to previous state.');
+                          toast.success('Rolled back   project restored to previous state.');
                         } catch (err: unknown) {
                           toast.error(err instanceof Error ? err.message : 'Rollback failed');
                         } finally {
@@ -1232,7 +1232,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 </div>
               )}
 
-              {/* Follow-up suggestion chips — skeleton while Gemini is loading (null), chips when ready */}
+              {/* Follow-up suggestion chips   skeleton while Gemini is loading (null), chips when ready */}
               {msg.role === 'assistant' && msg.status === 'complete' && msg.followUpSuggestions !== undefined && !isGenerating && (
                 <div className="mt-2 ml-[30px]">
                   {msg.followUpSuggestions === null ? (
@@ -1272,7 +1272,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             </div>
           ))}
 
-          {/* ── Live agent thinking — the model's real reasoning, shown once, live only.
+          {/* ── Live agent thinking   the model's real reasoning, shown once, live only.
               Never added to `messages`, so it's never part of the saved transcript;
               it just replaces itself each time a new `think` step arrives and
               disappears the moment the agent moves to a real action or finishes. ── */}
@@ -1285,7 +1285,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             </div>
           )}
 
-          {/* ── Live agent status — Lovable-style: real status headline first ── */}
+          {/* ── Live agent status   Lovable-style: real status headline first ── */}
           {isGenerating && (() => {
             const hasFile = liveFiles.length > 0;
             const f = hasFile ? liveFiles[liveFiles.length - 1] : null;
@@ -1300,19 +1300,19 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
             return (
               <div className="ml-[28px] flex items-center gap-2 py-1">
-                {/* Pulsing activity dot — indigo while thinking, emerald while writing files */}
+                {/* Pulsing activity dot   indigo while thinking, emerald while writing files */}
                 <span className="relative flex h-2 w-2 shrink-0">
                   <span className={`absolute inline-flex h-full w-full rounded-full opacity-60 ${hasFile ? 'bg-emerald-400' : 'bg-indigo-400'} animate-ping`} />
                   <span className={`relative inline-flex h-2 w-2 rounded-full ${hasFile ? 'bg-emerald-400' : 'bg-indigo-400'}`} />
                 </span>
-                {/* Headline — the real status (replaces the old raw-file-path line) */}
+                {/* Headline   the real status (replaces the old raw-file-path line) */}
                 <span
                   key={headline.slice(0, 20)}
                   className={`text-[11px] truncate max-w-[200px] animate-status-in ${hasStatus ? 'text-white/55' : 'text-white/35 italic'}`}
                 >
                   {headline}
                 </span>
-                {/* Secondary: current file, subtle — only when a real status is present */}
+                {/* Secondary: current file, subtle   only when a real status is present */}
                 {hasStatus && fileDetail && (
                   <span className="text-[10px] text-white/25 truncate max-w-[120px] font-mono">
                     {fileDetail}
@@ -1326,7 +1326,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             );
           })()}
 
-          {/* Bottom anchor — keeps scroll pinned */}
+          {/* Bottom anchor   keeps scroll pinned */}
           <div className="h-1" />
         </div>
       </div>
@@ -1397,7 +1397,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             </div>
           )}
 
-          {/* Textarea — overflow-hidden only wraps this so rounded corners work */}
+          {/* Textarea   overflow-hidden only wraps this so rounded corners work */}
           <div className={`rounded-xl overflow-hidden transition-all duration-250
             ${isDragOver
               ? 'bg-[#0e0e14] border border-indigo-500/40 shadow-[0_0_0_1px_rgba(99,102,241,0.22),0_0_24px_rgba(99,102,241,0.10)]'
@@ -1469,7 +1469,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 <ChevronDown className="w-3 h-3 opacity-60" />
               </button>
 
-              {/* Dropdown — opens upward */}
+              {/* Dropdown   opens upward */}
               {modelMenuOpen && (
                 <div className="absolute bottom-full right-0 mb-1.5 bg-[#1c1c20] border border-white/[0.10] rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.7)] z-[200] overflow-hidden" style={{ minWidth: 210 }}>
                   <button

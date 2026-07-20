@@ -1,9 +1,9 @@
 /**
- * RunStateLedger — per-run change journal for the agent loop.
+ * RunStateLedger   per-run change journal for the agent loop.
  *
  * Records every file read, write, and edit during a single agent run.
  * Emits a compact journal block injected into each step's context via
- * prepareStep so the agent always knows what it has done this run —
+ * prepareStep so the agent always knows what it has done this run  
  * even after context compaction truncates the tool call history.
  */
 
@@ -35,7 +35,7 @@ export class RunStateLedger {
 
   recordWrite(path: string, lineCount: number, topExports: string): void {
     const detail = topExports
-      ? `${lineCount} lines — exports: ${topExports}`
+      ? `${lineCount} lines   exports: ${topExports}`
       : `${lineCount} lines`;
     this.entries.push({ step: this.currentStep, operation: 'write', path, detail });
   }
@@ -56,7 +56,7 @@ export class RunStateLedger {
       step: this.currentStep,
       operation: 'edit-failed',
       path,
-      detail: `SEARCH not matched: "${snippet}" — ${reason.slice(0, 120)}`,
+      detail: `SEARCH not matched: "${snippet}"   ${reason.slice(0, 120)}`,
     });
   }
 
@@ -72,10 +72,10 @@ export class RunStateLedger {
           `              → You MUST call read_file("${e.path}") and retry with exact content.`
         );
       }
-      return e.detail ? `${base} — ${e.detail}` : base;
+      return e.detail ? `${base}   ${e.detail}` : base;
     });
     return (
-      `[Run Change Journal — step ${this.currentStep} of 25]\n` +
+      `[Run Change Journal   step ${this.currentStep} of 25]\n` +
       `This is an authoritative log of every file you touched this run.\n` +
       lines.join('\n')
     );

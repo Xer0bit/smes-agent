@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix Cases B/C/D — agent silent failures, wrong edits, and regressions — by adding a per-run change journal, fixing the edit_file fuzzy match bug, adding dependency impact warnings, augmenting history with modified-file footers, and tuning compaction/context constants.
+**Goal:** Fix Cases B/C/D   agent silent failures, wrong edits, and regressions   by adding a per-run change journal, fixing the edit_file fuzzy match bug, adding dependency impact warnings, augmenting history with modified-file footers, and tuning compaction/context constants.
 
 **Architecture:** A new `RunStateLedger` class (one instance per agent run) records every read/write/edit and emits a compact journal block injected into each step's context via `prepareStep`. The `reverseGraph` (already built) is threaded into tool context to emit dependency warnings. `AgentChatPanel` appends a file-manifest footer to outgoing history messages.
 
@@ -56,7 +56,7 @@ export class RunStateLedger {
 
   recordWrite(path: string, lineCount: number, topExports: string): void {
     const detail = topExports
-      ? `${lineCount} lines — exports: ${topExports}`
+      ? `${lineCount} lines   exports: ${topExports}`
       : `${lineCount} lines`;
     this.entries.push({ step: this.currentStep, operation: 'write', path, detail });
   }
@@ -72,7 +72,7 @@ export class RunStateLedger {
       step: this.currentStep,
       operation: 'edit-failed',
       path,
-      detail: `SEARCH not matched: "${snippet}" — ${reason.slice(0, 120)}`,
+      detail: `SEARCH not matched: "${snippet}"   ${reason.slice(0, 120)}`,
     });
   }
 
@@ -84,10 +84,10 @@ export class RunStateLedger {
       if (e.operation === 'edit-failed') {
         return `${base}\n              → ${e.detail}\n              → You MUST call read_file("${e.path}") and retry with exact content.`;
       }
-      return e.detail ? `${base} — ${e.detail}` : base;
+      return e.detail ? `${base}   ${e.detail}` : base;
     });
     return (
-      `[Run Change Journal — step ${this.currentStep} of 25]\n` +
+      `[Run Change Journal   step ${this.currentStep} of 25]\n` +
       `This is an authoritative log of every file you touched this run.\n` +
       lines.join('\n')
     );
@@ -108,7 +108,7 @@ export class RunStateLedger {
 }
 ```
 
-- [ ] **Step 2: Verify it compiles (no separate test — it's a pure data class)**
+- [ ] **Step 2: Verify it compiles (no separate test   it's a pure data class)**
 
 ```bash
 cd /home/xer0bit/Desktop/ecomgear-main/server && npx tsc --noEmit 2>&1 | head -30
@@ -139,7 +139,7 @@ Add after the existing import block and inside `AgentContext`:
 import type { RunStateLedger } from '../services/runStateLedger.js';
 
 // Add inside AgentContext interface (after readFiles):
-  /** Per-run change journal — records every read/write/edit for journal injection. */
+  /** Per-run change journal   records every read/write/edit for journal injection. */
   ledger?: RunStateLedger;
   /**
    * Reverse import graph: for each file path, the set of files that import it.
@@ -366,7 +366,7 @@ Then update the final return statements to prepend `depWarning`:
 
 ```typescript
     if (importWarnings.length > 0) {
-      const warnNote = `\n\n⚠️  ACTION REQUIRED — MISSING DEPENDENCIES:\n` +
+      const warnNote = `\n\n⚠️  ACTION REQUIRED   MISSING DEPENDENCIES:\n` +
         importWarnings.map(p => `  • ${p}  ← does not exist on disk`).join('\n') +
         `\n\nYou MUST write these files NEXT before calling get_build_errors. ` +
         `If you do not, the build will fail with "Cannot find module" errors.`;
@@ -391,7 +391,7 @@ git commit -m "feat(write_file): add ledger recording and dependency warning on 
 
 ---
 
-## Task 5: Wire everything into agentLoopService — the big one
+## Task 5: Wire everything into agentLoopService   the big one
 
 **Files:**
 - Modify: `server/src/services/agentLoopService.ts`
@@ -496,7 +496,7 @@ And before that block, declare them:
 
 ```typescript
   const ledger = new RunStateLedger();
-  // reverseGraph is already built above — pass it into context
+  // reverseGraph is already built above   pass it into context
 ```
 
 Also find the declaration `const brainMemory: string[] = [];` (around line 1452) and add immediately before it:
@@ -507,7 +507,7 @@ Also find the declaration `const brainMemory: string[] = [];` (around line 1452)
   const ledger = new RunStateLedger();
 ```
 
-Wait — the order matters. `reverseGraph` and `ledger` need to exist before `ctx`. Let me be precise:
+Wait   the order matters. `reverseGraph` and `ledger` need to exist before `ctx`. Let me be precise:
 
 The `reverseGraph` is built at line ~1072. The `ctx` is built at ~1018. In the actual file, `ctx` comes AFTER the reverseGraph build. So we just need to declare `ledger` before `ctx` and then pass both into ctx.
 
@@ -549,13 +549,13 @@ With:
     case 'write_file':
       if (typeof args.content === 'string' && args.content.length > 200) {
         const lines = args.content.split('\n').length;
-        args.content = `[compacted] ${lines} lines written — see Change Journal for details`;
+        args.content = `[compacted] ${lines} lines written   see Change Journal for details`;
       }
       break;
     case 'edit_file':
       if (typeof args.diff === 'string' && args.diff.length > 300) {
         const searchSnippet = args.diff.match(/<<<<<<< SEARCH\n([\s\S]{0,60})/)?.[1]?.replace(/\n/g, '↵') ?? '';
-        args.diff = `[compacted] edit to ${args.path ?? 'file'} — target: "${searchSnippet}" — see Change Journal`;
+        args.diff = `[compacted] edit to ${args.path ?? 'file'}   target: "${searchSnippet}"   see Change Journal`;
       }
       break;
     case 'think':
@@ -578,7 +578,7 @@ Change to:
     case 'read_file':
       if (result.length > 300) {
         const lines = result.split('\n').length;
-        part.result = `[compacted] ${lines}-line file content — agent read this in full at step time. Call read_file again if you need current content.`;
+        part.result = `[compacted] ${lines}-line file content   agent read this in full at step time. Call read_file again if you need current content.`;
       }
       break;
 ```
@@ -615,7 +615,7 @@ Replace with:
                 break;
               }
             }
-            // Insert after any compacted steps — right before the most recent step
+            // Insert after any compacted steps   right before the most recent step
             const recentStepStart = Math.max(insertIdx, base.length - KEEP_RECENT_STEPS * 2);
             const withJournal = [
               ...base.slice(0, recentStepStart),
@@ -690,7 +690,7 @@ interface Message {
   summary?: string;
   toolActivities?: ToolActivity[];
   attachments?: PendingAttachment[];
-  /** Paths of files written/edited in this assistant turn — appended to outgoing history. */
+  /** Paths of files written/edited in this assistant turn   appended to outgoing history. */
   filesModified?: string[];
 }
 ```
@@ -790,5 +790,5 @@ Start the dev server and run an edit request on an existing project. Verify in t
 
 ```bash
 git add -A
-git commit -m "feat: agent edit reliability — RunStateLedger, history augmentation, fuzzy match fix, dependency warnings, context tuning"
+git commit -m "feat: agent edit reliability   RunStateLedger, history augmentation, fuzzy match fix, dependency warnings, context tuning"
 ```

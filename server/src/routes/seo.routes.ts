@@ -9,12 +9,12 @@ const router = Router();
 router.use(authMiddleware);
 
 // title/description/keywords/robots/OG/structured-data are now owned entirely by
-// the per-route system (project_seo_routes, including the "/" root entry — see
+// the per-route system (project_seo_routes, including the "/" root entry   see
 // preview-service/server.js's appendRouteSeoFiles/injectSeoMetaJs, applied at
 // publish/export time). Keeping them here too would mean two independent code
 // paths (this /sync endpoint vs. the export pipeline) both writing index.html's
 // <title>/meta tags on different triggers, silently overwriting each other
-// depending on which ran last. Only favicon and Google verification stay here —
+// depending on which ran last. Only favicon and Google verification stay here  
 // genuinely site-wide, not meaningfully "per-page".
 interface SeoData {
   favicon?: string;
@@ -63,7 +63,7 @@ export function applySeoToHtml(html: string, seo: SeoData, _projectUrl = ''): st
 
 // ponytail: sitemap covers the homepage only. The scaffold's HashRouter
 // routes (/#/path) aren't distinct crawlable URLs to begin with, so listing
-// more entries needs real route detection first — add when BrowserRouter
+// more entries needs real route detection first   add when BrowserRouter
 // projects with discoverable routes are common enough to matter.
 function buildSitemapXml(projectUrl: string): string {
   const today = new Date().toISOString().slice(0, 10);
@@ -74,7 +74,7 @@ function buildSitemapXml(projectUrl: string): string {
 router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
   try {
-    // 1. Verify user can actually edit this project (not just view it) — this
+    // 1. Verify user can actually edit this project (not just view it)   this
     // writes favicon/verification into the published site.
     let project: any;
     try {
@@ -113,8 +113,8 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
       google_verification: saved.google_verification || '',
     };
 
-    // 3. The project's real index.html lives on VPS2 (preview-service) — the
-    // live dev-server source that /export builds from — not on this server's
+    // 3. The project's real index.html lives on VPS2 (preview-service)   the
+    // live dev-server source that /export builds from   not on this server's
     // disk. The client sends its current content (same source used for
     // GitHub push / header-integrations sync).
     const original = req.body?.indexHtml as string | undefined;
@@ -135,21 +135,21 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
     const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || '';
 
     // 4. Write index.html (+ robots.txt/sitemap.xml, if applicable) into the
-    // live preview project before exporting — /export builds from that source
+    // live preview project before exporting   /export builds from that source
     // directory. robots.txt/sitemap.xml are written whenever their settings
     // are on, even if index.html itself didn't change (those are separate
     // files, not something index.html-diffing alone would catch).
     const filesToWrite: { path: string; content: string }[] = [];
     if (updated !== original) filesToWrite.push({ path: 'index.html', content: updated });
     // Per-page robots directives live on each route's own entry now (including
-    // "/") — this file-level robots.txt is just the crawl-wide default.
+    // "/")   this file-level robots.txt is just the crawl-wide default.
     filesToWrite.push({ path: 'public/robots.txt', content: `User-agent: *\nAllow: /\nSitemap: /sitemap.xml\n` });
     if (projectUrl) {
       filesToWrite.push({ path: 'public/sitemap.xml', content: buildSitemapXml(projectUrl) });
     }
 
     if (filesToWrite.length === 0) {
-      res.json({ message: 'index.html already up to date — no changes needed.', changed: false });
+      res.json({ message: 'index.html already up to date   no changes needed.', changed: false });
       return;
     }
 
@@ -182,7 +182,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
       productionDeployed,
       deployError,
       message: productionDeployed
-        ? 'SEO synced and production site rebuilt — live immediately.'
+        ? 'SEO synced and production site rebuilt   live immediately.'
         : deployError
           ? `SEO saved to source. Production redeploy failed: ${deployError}. Re-publish your app to go live.`
           : 'SEO synced to source. Re-publish your app from the editor to push changes live.',
@@ -196,7 +196,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
 // ── Per-route SEO overrides + redirects (project_seo_routes / project_redirects) ──
 // Same access pattern as /sync above: verify project access explicitly here rather
 // than relying solely on RLS, since this server's supabase client uses the service
-// role key (bypasses RLS) — RLS on these tables only protects direct client-side
+// role key (bypasses RLS)   RLS on these tables only protects direct client-side
 // Supabase calls, not this API path.
 
 async function requireProjectAccess(req: AuthenticatedRequest, res: Response, projectId: string): Promise<boolean> {
@@ -210,7 +210,7 @@ async function requireProjectAccess(req: AuthenticatedRequest, res: Response, pr
   }
 }
 
-// Write variant — viewer/client collaborators can see SEO settings but must
+// Write variant   viewer/client collaborators can see SEO settings but must
 // not be able to change them (they affect the published site).
 async function requireProjectEditAccess(req: AuthenticatedRequest, res: Response, projectId: string): Promise<boolean> {
   try {
@@ -223,7 +223,7 @@ async function requireProjectEditAccess(req: AuthenticatedRequest, res: Response
   }
 }
 
-// GET /api/v1/seo/:projectId/routes — list all per-route SEO overrides
+// GET /api/v1/seo/:projectId/routes   list all per-route SEO overrides
 router.get('/:projectId/routes', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
   if (!(await requireProjectAccess(req, res, projectId))) return;
@@ -236,7 +236,7 @@ router.get('/:projectId/routes', async (req: AuthenticatedRequest, res: Response
   res.json({ routes: data ?? [] });
 });
 
-// PUT /api/v1/seo/:projectId/routes — upsert one route's SEO (keyed by route_path)
+// PUT /api/v1/seo/:projectId/routes   upsert one route's SEO (keyed by route_path)
 router.put('/:projectId/routes', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
   if (!(await requireProjectEditAccess(req, res, projectId))) return;
@@ -287,7 +287,7 @@ router.get('/:projectId/redirects', async (req: AuthenticatedRequest, res: Respo
   res.json({ redirects: data ?? [] });
 });
 
-// POST /api/v1/seo/:projectId/redirects — create a redirect rule
+// POST /api/v1/seo/:projectId/redirects   create a redirect rule
 router.post('/:projectId/redirects', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
   if (!(await requireProjectEditAccess(req, res, projectId))) return;
@@ -311,7 +311,7 @@ router.post('/:projectId/redirects', async (req: AuthenticatedRequest, res: Resp
   res.json({ redirect: data });
 });
 
-// PUT /api/v1/seo/:projectId/redirects/:redirectId — update a redirect rule
+// PUT /api/v1/seo/:projectId/redirects/:redirectId   update a redirect rule
 router.put('/:projectId/redirects/:redirectId', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId, redirectId } = req.params;
   if (!(await requireProjectEditAccess(req, res, projectId))) return;

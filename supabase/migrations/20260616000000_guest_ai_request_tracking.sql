@@ -1,5 +1,5 @@
 -- =============================================================================
--- Guest AI Request Tracking — Gemini-only, max 3 requests before login required
+-- Guest AI Request Tracking   Gemini-only, max 3 requests before login required
 -- =============================================================================
 
 -- ── 1. Add ai_requests_used column to guest_sessions ──────────────────────────

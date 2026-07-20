@@ -1,5 +1,5 @@
 /**
- * agentStreamService — Frontend client for the /api/v1/ai/agent-stream SSE endpoint.
+ * agentStreamService   Frontend client for the /api/v1/ai/agent-stream SSE endpoint.
  *
  * Replaces the old blocking promptService.generateStage() approach with a real-time
  * SSE stream that mirrors the agent's tool-calling loop back to the UI.
@@ -98,11 +98,11 @@ export interface AgentStreamCallbacks {
   onStepStatusRefine?: (data: { step: number; status: string }) => void;
   /** Called with a real-time, LLM-written narration of what the agent is doing right now */
   onAgentNarration?: (narration: string) => void;
-  /** Called with the agent's actual internal reasoning (the `think` tool's real argument) — live/transient only, never persisted */
+  /** Called with the agent's actual internal reasoning (the `think` tool's real argument)   live/transient only, never persisted */
   onAgentThinking?: (data: { step: number; thought: string }) => void;
   /** Called on error */
   onError?: (message: string) => void;
-  /** Called when all auto-repair attempts fail — errors can be shown to user for manual fix */
+  /** Called when all auto-repair attempts fail   errors can be shown to user for manual fix */
   onRepairFailed?: (errors: string[]) => void;
   /** Called with the real token count once the AI SDK resolves usage (after 'done') */
   onUsage?: (tokensUsed: number) => void;
@@ -116,7 +116,7 @@ export async function streamAgentGeneration(params: {
   orgId?: string | null;
   existingFiles?: GeneratedFile[];
   model?: string;
-  /** 'build' (default) or 'plan' — handled server-side */
+  /** 'build' (default) or 'plan'   handled server-side */
   mode?: 'build' | 'plan';
   /** Recent conversation turns (last 6 messages, cleaned) */
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -129,16 +129,16 @@ export async function streamAgentGeneration(params: {
     category: 'image' | 'document';
     tempPath: string;
   }>;
-  /** Guest fingerprint — when set, auth token is optional */
+  /** Guest fingerprint   when set, auth token is optional */
   fingerprint?: string;
   /**
    * When set, a PROJECT_LOCKED response is retried silently (with backoff)
-   * instead of surfacing to the user immediately — for system-triggered
+   * instead of surfacing to the user immediately   for system-triggered
    * follow-up requests (like the post-repair auto-fix escalation) that can
    * legitimately race the tail end of the very run that triggered them: the
    * server may still be mid-cleanup (restore-push retries, lock release)
    * for several seconds after the client sees the stream end. User-initiated
-   * requests should NOT set this — they want to know immediately if locked.
+   * requests should NOT set this   they want to know immediately if locked.
    */
   retryOnLock?: boolean;
   callbacks: AgentStreamCallbacks;
@@ -186,7 +186,7 @@ export async function streamAgentGeneration(params: {
 
   // One pass over every candidate URL. Returns the response on success, or
   // throws: a terminal tagged error (session/guest/eco/lock), a retryable
-  // lock signal (projectLockedRetry — only when retryOnLock lets a caller
+  // lock signal (projectLockedRetry   only when retryOnLock lets a caller
   // ask for it), or falls through to the generic "tried everything" path.
   const tryAllCandidates = async (allowLockRetry: boolean): Promise<globalThis.Response | null> => {
     for (const url of candidateUrls) {
@@ -221,9 +221,9 @@ export async function streamAgentGeneration(params: {
             }
             if (errJson.code === 'PROJECT_LOCKED') {
               if (allowLockRetry) {
-                // Silent — no onError, no toast. The caller decides whether
+                // Silent   no onError, no toast. The caller decides whether
                 // to retry or give up after enough attempts.
-                throw Object.assign(new Error('project locked — retrying'), { projectLockedRetry: true });
+                throw Object.assign(new Error('project locked   retrying'), { projectLockedRetry: true });
               }
               const message = 'Another generation is already running for this project. Please wait for it to finish before starting a new one.';
               callbacks.onError?.(message);
@@ -241,7 +241,7 @@ export async function streamAgentGeneration(params: {
         callbacks.onOpen?.();
         return candidateResponse;
       } catch (error) {
-        // Terminal/retryable-lock errors — don't try other candidate URLs, propagate immediately
+        // Terminal/retryable-lock errors   don't try other candidate URLs, propagate immediately
         if ((error as any).sessionExpired || (error as any).guestLimitReached || (error as any).ecoLimitReached || (error as any).projectLocked || (error as any).projectLockedRetry) throw error;
         lastNetworkError = error instanceof Error ? error.message : String(error);
       }
@@ -391,7 +391,7 @@ export async function streamAgentGeneration(params: {
             }
             case 'done': {
               terminalEventReceived = true;
-              // Default to 'build' when mode is absent/unrecognised — callers type it as 'build' | 'plan'.
+              // Default to 'build' when mode is absent/unrecognised   callers type it as 'build' | 'plan'.
               const mode = normalizeMode(payload.mode) ?? 'build';
               const filesRaw = Array.isArray(payload.filesToWrite) ? payload.filesToWrite : [];
               const files: GeneratedFile[] = filesRaw.map((f) => {
@@ -425,7 +425,7 @@ export async function streamAgentGeneration(params: {
               }
               break;
             case 'error':
-              // Ignore error events that arrive AFTER a 'done' was already processed —
+              // Ignore error events that arrive AFTER a 'done' was already processed  
               // this happens on timeout: the server sends done (salvage) then abort throws,
               // causing the route handler to emit a second 'error' SSE. We don't want to
               // overwrite the already-resolved done state.

@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# VPS3 Setup — 3.148.126.20 (United States)
+# VPS3 Setup   3.148.126.20 (United States)
 # Roles: LLM / Code Generation API + Agent Runner
 # Domains: gen.ecomgear.dev  agent.ecomgear.dev
 # Run as root: bash setup-vps3.sh

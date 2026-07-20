@@ -23,7 +23,7 @@ interface FieldState {
 }
 
 // Zapier's MCP URL (https://mcp.zapier.com/mcp/YOUR-SECRET-KEY) already embeds
-// the secret — a separate bearer token is only needed for MCP servers that
+// the secret   a separate bearer token is only needed for MCP servers that
 // require one, so it's kept optional here.
 const FIELD_DEFS: Omit<FieldState, "preview" | "value">[] = [
   { keyName: "ECG_MCP_URL", label: "Zapier MCP URL", placeholder: "https://mcp.zapier.com/mcp/...", sensitive: true },
@@ -56,7 +56,7 @@ export const ZapierSettingsContent = ({ projectId }: ZapierSettingsContentProps)
     },
   });
 
-  // Only hydrate once — a background refetch mid-type would otherwise blank
+  // Only hydrate once   a background refetch mid-type would otherwise blank
   // a secret the user is still typing back to "".
   const hydrated = useRef(false);
   useEffect(() => {
@@ -80,7 +80,7 @@ export const ZapierSettingsContent = ({ projectId }: ZapierSettingsContentProps)
       for (const f of toSave) {
         const value = f.value.trim();
         const preview = value.length > 4 ? `****${value.slice(-4)}` : "****";
-        // No UPDATE policy on project_secrets — replace via delete-then-insert.
+        // No UPDATE policy on project_secrets   replace via delete-then-insert.
         await supabase.from("project_secrets").delete().eq("project_id", projectId).eq("key_name", f.keyName);
         const { error } = await supabase
           .from("project_secrets")
@@ -124,10 +124,10 @@ export const ZapierSettingsContent = ({ projectId }: ZapierSettingsContentProps)
           <ol className="list-decimal list-inside space-y-1.5">
             <li>In Zapier, add the tools/actions you want available to your AI agent.</li>
             <li>
-              Click the <strong className="text-white/80">Connect</strong> tab at the top — Zapier gives you an MCP URL that
+              Click the <strong className="text-white/80">Connect</strong> tab at the top   Zapier gives you an MCP URL that
               looks like <code className="bg-workspace-surface-recessed px-1 py-0.5 rounded text-[11px]">https://mcp.zapier.com/mcp/YOUR-SECRET-KEY</code>.
             </li>
-            <li>Copy that URL (treat it like a password — don't share it) and paste it below.</li>
+            <li>Copy that URL (treat it like a password   don't share it) and paste it below.</li>
           </ol>
           <a href="https://mcp.zapier.com" target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 pt-1">
@@ -143,7 +143,7 @@ export const ZapierSettingsContent = ({ projectId }: ZapierSettingsContentProps)
             {connected && <span className="text-[11px] font-medium text-emerald-400">● Connected</span>}
           </div>
           <CardDescription className="text-white/45 text-xs">
-            Saved here — never displayed again in plaintext after saving.
+            Saved here   never displayed again in plaintext after saving.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

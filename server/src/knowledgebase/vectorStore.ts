@@ -2,7 +2,7 @@
  * Supabase pgvector operations for file embeddings.
  * Table: project_file_embeddings
  *
- * All operations are safe to call even when Supabase is unavailable —
+ * All operations are safe to call even when Supabase is unavailable  
  * they return empty results rather than throwing.
  */
 
@@ -17,14 +17,14 @@ const supabaseKey =
   process.env.SUPABASE_ANON_KEY || '';
 
 // Must match the vector(N) column in project_file_embeddings.
-// BM25 fallback produces 256-dim — those cannot be stored here.
+// BM25 fallback produces 256-dim   those cannot be stored here.
 const DB_VECTOR_DIMS = 768;
 
 function checkDims(embedding: number[], context: string): boolean {
   if (embedding.length === DB_VECTOR_DIMS) return true;
   console.warn(
     `[kb/vectorStore] ${context}: embedding is ${embedding.length}-dim but DB expects ${DB_VECTOR_DIMS}-dim. ` +
-    'KB indexing disabled — set GOOGLE_GENERATIVE_AI_API_KEY or OPENAI_API_KEY to enable it.',
+    'KB indexing disabled   set GOOGLE_GENERATIVE_AI_API_KEY or OPENAI_API_KEY to enable it.',
   );
   return false;
 }

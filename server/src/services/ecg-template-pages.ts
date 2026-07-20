@@ -39,7 +39,7 @@ export default function AgentsPage() {
                 </div>
                 <div>
                   <p className="font-semibold text-slate-800 text-sm">{a.name}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{a.templateName ?? a.template_name ?? '—'}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{a.templateName ?? a.template_name ?? ' '}</p>
                 </div>
               </div>
               <StatusBadge status={a.status} />
@@ -98,9 +98,9 @@ export default function SchedulersPage() {
         <tbody className="divide-y divide-slate-100">
           {rows.map((s: any) => (
             <tr key={s.id} className="hover:bg-slate-50">
-              <td className="px-4 py-3 font-medium text-slate-800">{s.agentName ?? s.agent_name ?? '—'}</td>
+              <td className="px-4 py-3 font-medium text-slate-800">{s.agentName ?? s.agent_name ?? ' '}</td>
               <td className="px-4 py-3 text-slate-500 font-mono text-xs">{s.schedule ?? s.cron ?? s.cronExpression}</td>
-              <td className="px-4 py-3 text-slate-500 text-xs">{s.nextRun ? new Date(s.nextRun).toLocaleString() : '—'}</td>
+              <td className="px-4 py-3 text-slate-500 text-xs">{s.nextRun ? new Date(s.nextRun).toLocaleString() : ' '}</td>
               <td className="px-4 py-3"><StatusBadge status={s.status ?? 'active'} /></td>
             </tr>
           ))}
@@ -314,7 +314,7 @@ export default function RunsPage() {
         <tbody className="divide-y divide-slate-100">
           {rows.map((r: any) => (
             <tr key={r.id} className="hover:bg-slate-50">
-              <td className="px-4 py-3 font-medium text-slate-800">{r.agentName ?? r.agent_name ?? '—'}</td>
+              <td className="px-4 py-3 font-medium text-slate-800">{r.agentName ?? r.agent_name ?? ' '}</td>
               <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
               <td className="px-4 py-3 text-slate-500 tabular-nums">{dur(r.startedAt ?? r.started_at, r.completedAt ?? r.completed_at)}</td>
               <td className="px-4 py-3 text-slate-400 text-xs">{new Date(r.startedAt ?? r.started_at).toLocaleString()}</td>

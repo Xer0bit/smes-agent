@@ -83,7 +83,7 @@ export default function AgentsPage() {
                   </div>
                   <div>
                     <p className="font-semibold text-sm" style={{ color: 'var(--text)' }}>{a.name}</p>
-                    <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>{a.templateName ?? a.template_name ?? '—'}</p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>{a.templateName ?? a.template_name ?? ' '}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

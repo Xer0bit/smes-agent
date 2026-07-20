@@ -26,26 +26,26 @@ export interface InvokeResult {
 
 const TIMEOUT_MS = 5_000;
 
-// No database provisioned for this project — db.* stays callable but errors
+// No database provisioned for this project   db.* stays callable but errors
 // only if the function code actually tries to use it, so functions that
 // don't touch a database work fine without one.
 function buildNoDbHelper() {
-  const fail = () => { throw new Error('No database provisioned for this project — provision one in Database settings to use db.*'); };
+  const fail = () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); };
   return { select: fail, insert: fail, update: fail, delete: fail, rpc: fail };
 }
 
 // Minimal PostgREST helper exposed to function code as `db`
 // ctx.apiUrl already carries the tenant schema as a URL path segment
-// (https://cloud.ecomgear.app/tenant_xxxx — see database.service.ts), so this
+// (https://cloud.ecomgear.app/tenant_xxxx   see database.service.ts), so this
 // just adds the standard /rest/v1 suffix. Accept-Profile/Content-Profile are
 // still sent for defense in depth, but VPS5's nginx derives the real schema
-// from the URL path itself and overrides these headers regardless — the path
+// from the URL path itself and overrides these headers regardless   the path
 // is the source of truth, not the header.
 // Accepts either a raw PostgREST query string ("email=eq.x&role=eq.buyer",
 // passed through unchanged) or a plain filter object ({ email: 'x' }),
 // converted to the equivalent eq-filter query string. Every generated
-// function this session used the object form — db.select('table', { email })
-// — expecting simple equality filtering, but the helper only ever accepted a
+// function this session used the object form   db.select('table', { email })
+//   expecting simple equality filtering, but the helper only ever accepted a
 // raw string, so `${query}` on an object silently coerced to "[object Object]",
 // PostgREST ignored the garbage filter, and select() returned EVERY row in
 // the table. That produced two real bugs at once: signup always claimed
@@ -132,7 +132,7 @@ async function safeFetch(url: string | URL, init?: RequestInit): Promise<Respons
 }
 
 // ECG portal helper injected as `ecg` in edge functions.
-// Uses real fetch (server-side) with the stored portal token — user code never sees the token.
+// Uses real fetch (server-side) with the stored portal token   user code never sees the token.
 function buildEcgHelper(ctx: EcgContext) {
   const base = `${ctx.portalApiUrl}/v1/ecg`;
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.portalToken}` };
@@ -148,7 +148,7 @@ function buildEcgHelper(ctx: EcgContext) {
     delete: (path: string)                  => call('DELETE', path),
   };
 
-  // LLM helper — server-side call, API key never exposed to edge function code
+  // LLM helper   server-side call, API key never exposed to edge function code
   if (ctx.llmApiKey) {
     ecg.llm = async (messages: unknown[], systemPrompt?: string) => {
       const provider = ctx.llmProvider || 'openai';
@@ -220,7 +220,7 @@ export async function runEdgeFunction(
     btoa,
     atob,
     // Hashing (password hashing, UUIDs) is a near-universal need in generated
-    // auth functions — without these, any function calling `new TextEncoder()`
+    // auth functions   without these, any function calling `new TextEncoder()`
     // or `crypto.subtle.digest(...)`/`crypto.randomUUID()` crashed with
     // "TextEncoder is not defined", since vm.createContext() only includes
     // ECMAScript intrinsics, not Node's WHATWG globals, unless explicitly injected.

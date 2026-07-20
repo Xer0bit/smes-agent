@@ -1,5 +1,5 @@
 /**
- * Eco Counter — per-request eco billing helpers.
+ * Eco Counter   per-request eco billing helpers.
  *
  * 1 eco = 1 code-action request (agent writes files).
  * 0.5 eco = 1 general question (text-only response).

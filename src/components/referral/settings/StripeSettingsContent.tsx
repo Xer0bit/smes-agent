@@ -69,7 +69,7 @@ export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps)
     },
   });
 
-  // Only hydrate once — a background refetch mid-type would otherwise blank
+  // Only hydrate once   a background refetch mid-type would otherwise blank
   // a key the user is still typing back to "".
   const hydrated = useRef(false);
   useEffect(() => {
@@ -93,7 +93,7 @@ export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps)
       for (const f of toSave) {
         const value = f.value.trim();
         const preview = value.length > 4 ? `****${value.slice(-4)}` : "****";
-        // No UPDATE policy on project_secrets — replace via delete-then-insert
+        // No UPDATE policy on project_secrets   replace via delete-then-insert
         // instead of upsert, matching the generic Secrets panel's pattern.
         await supabase.from("project_secrets").delete().eq("project_id", projectId).eq("key_name", f.keyName);
         const { error } = await supabase
@@ -163,14 +163,14 @@ export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps)
             <li>Paste both into the fields below and click <strong className="text-white/80">Save Keys</strong>.</li>
             <li>Click <strong className="text-white/80">Test Connection</strong> to confirm Stripe accepts the key and see which account/mode (test or live) it's connected to.</li>
             <li>
-              <em>Optional</em> — for the Webhook Signing Secret: in Stripe go to <strong className="text-white/80">Developers → Webhooks</strong>, click
+              <em>Optional</em>   for the Webhook Signing Secret: in Stripe go to <strong className="text-white/80">Developers → Webhooks</strong>, click
               {" "}<strong className="text-white/80">Add endpoint</strong>, enter your webhook URL and pick the events to send, then open that endpoint and reveal its
               {" "}<strong className="text-white/80">Signing secret</strong> (starts <code className="bg-workspace-surface-recessed px-1 py-0.5 rounded text-[11px]">whsec_</code>).
             </li>
           </ol>
           <p className="text-[11px] text-white/35 pt-1">
-            Use your <strong>test mode</strong> keys (from Stripe's test/live toggle) while building — switch to live keys only when you're ready to accept real payments.
-            The Webhook Signing Secret is only useful once you have a webhook handler on your own endpoint to verify against — leave it blank until then.
+            Use your <strong>test mode</strong> keys (from Stripe's test/live toggle) while building   switch to live keys only when you're ready to accept real payments.
+            The Webhook Signing Secret is only useful once you have a webhook handler on your own endpoint to verify against   leave it blank until then.
           </p>
           <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 pt-1">

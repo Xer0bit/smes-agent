@@ -4,16 +4,16 @@
  * Serves published applications as static sites.
  * Manages Caddy configuration for custom domains with automatic HTTPS.
  * Provides DNS verification for domain ownership.
- * Runs on any VPS — public IP is configured via HOSTING_PUBLIC_IP env.
+ * Runs on any VPS   public IP is configured via HOSTING_PUBLIC_IP env.
  *
  * Endpoints:
- *   POST   /deploy/:projectId       — Receive and store a published build
- *   DELETE /deploy/:projectId       — Remove a published build
- *   GET    /health                  — Health check
- *   POST   /domains/verify          — Verify DNS records for a custom domain
- *   POST   /domains/activate        — Activate a verified domain in Caddy
- *   DELETE /domains/:domain         — Remove a custom domain from Caddy
- *   GET    /domains/list            — List all active custom domain mappings
+ *   POST   /deploy/:projectId         Receive and store a published build
+ *   DELETE /deploy/:projectId         Remove a published build
+ *   GET    /health                    Health check
+ *   POST   /domains/verify            Verify DNS records for a custom domain
+ *   POST   /domains/activate          Activate a verified domain in Caddy
+ *   DELETE /domains/:domain           Remove a custom domain from Caddy
+ *   GET    /domains/list              List all active custom domain mappings
  *
  * Static serving:
  *   Caddy serves sites directly from /var/www/ecomgear/sites/<projectId>/
@@ -47,7 +47,7 @@ const NODE_NAME = process.env.HOSTING_NODE_NAME || (LOCAL_DEV ? 'local-dev' : 'h
 const DNS_TXT_PREFIX = '_ecomgear-verify';
 
 if (LOCAL_DEV) {
-  console.log('\n  ⚡ LOCAL DEV MODE — Caddy reload skipped, DNS verification mocked\n');
+  console.log('\n  ⚡ LOCAL DEV MODE   Caddy reload skipped, DNS verification mocked\n');
 } else {
   // Production safety: HOSTING_PUBLIC_IP is required for DNS verification and domain config.
   if (!HOSTING_PUBLIC_IP) {
@@ -96,8 +96,8 @@ function authCheck(req, res) {
   if (!DEPLOY_SECRET) {
     if (LOCAL_DEV) return true;
     // Production: reject all mutating requests when no secret is configured
-    console.error('[Auth] HOSTING_DEPLOY_SECRET not set — rejecting request');
-    res.status(500).json({ error: 'Server misconfigured — deploy secret not set' });
+    console.error('[Auth] HOSTING_DEPLOY_SECRET not set   rejecting request');
+    res.status(500).json({ error: 'Server misconfigured   deploy secret not set' });
     return false;
   }
   const token = req.headers['x-deploy-secret'] || req.headers['authorization']?.replace('Bearer ', '');
@@ -109,7 +109,7 @@ function authCheck(req, res) {
 }
 
 function log(tag, msg, details) {
-  const d = details ? ` — ${JSON.stringify(details)}` : '';
+  const d = details ? `   ${JSON.stringify(details)}` : '';
   console.log(`[${tag}] ${msg}${d}`);
 }
 
@@ -141,7 +141,7 @@ function isCloudflareIP(ip) {
 }
 
 function generateVerifyToken(domain) {
-  // Deterministic token from domain — same as frontend
+  // Deterministic token from domain   same as frontend
   return `ecg_${Buffer.from(domain).toString('base64').slice(0, 16)}`;
 }
 
@@ -158,7 +158,7 @@ async function verifyDomainOwnership(domain) {
   // In local dev, skip real DNS lookups and auto-verify
   if (LOCAL_DEV) {
     const expectedToken = generateVerifyToken(domain);
-    log('DNS', `Local dev — auto-verifying ${domain} (${isApex ? 'apex' : 'subdomain'})`);
+    log('DNS', `Local dev   auto-verifying ${domain} (${isApex ? 'apex' : 'subdomain'})`);
     return {
       verified: true,
       domain_type: isApex ? 'apex' : 'subdomain',
@@ -325,7 +325,7 @@ app.get('/health', (_req, res) => {
   });
 });
 
-// Config endpoint — frontend discovers the hosting node's public IP
+// Config endpoint   frontend discovers the hosting node's public IP
 app.get('/config', (_req, res) => {
   res.json({
     publicIp: HOSTING_PUBLIC_IP || null,
@@ -338,7 +338,7 @@ app.get('/config', (_req, res) => {
 if (LOCAL_DEV) {
   app.use('/sites', express.static(SITES_ROOT, { extensions: ['html'] }));
   app.get('/sites/:projectId/*', (req, res) => {
-    // SPA fallback — serve index.html for any unmatched path
+    // SPA fallback   serve index.html for any unmatched path
     const indexPath = path.join(SITES_ROOT, req.params.projectId, 'index.html');
     if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
     res.status(404).send('Not found');
@@ -360,7 +360,7 @@ app.post('/deploy/:projectId', (req, res) => {
   }
 
   const siteDir = path.join(SITES_ROOT, projectId);
-  log('Deploy', `${projectId} — ${files.length} files`);
+  log('Deploy', `${projectId}   ${files.length} files`);
 
   // Clean existing site dir and write new files
   if (fs.existsSync(siteDir)) {
@@ -385,7 +385,7 @@ app.post('/deploy/:projectId', (req, res) => {
     written++;
   }
 
-  log('Deploy', `${projectId} — wrote ${written} files to ${siteDir}`);
+  log('Deploy', `${projectId}   wrote ${written} files to ${siteDir}`);
 
   // If a default domain mapping exists, update Caddy
   // Validate slug to prevent Caddy config injection
@@ -436,7 +436,7 @@ app.delete('/deploy/:projectId', (req, res) => {
 
 // ── DNS Verification ──────────────────────────────────────────────────────────
 app.post('/domains/verify', async (req, res) => {
-  // No auth required — read-only DNS lookup, safe for public access.
+  // No auth required   read-only DNS lookup, safe for public access.
   const { domain } = req.body || {};
   if (!domain || !isValidDomain(domain)) {
     return res.status(400).json({ error: 'Invalid domain' });
@@ -466,7 +466,7 @@ app.post('/domains/activate', async (req, res) => {
   const siteDir = path.join(SITES_ROOT, projectId);
   if (!fs.existsSync(siteDir)) {
     // Auto-create site directory so a domain can be activated before the first deploy.
-    // Caddy needs a non-empty root to serve — write a placeholder until the project is published.
+    // Caddy needs a non-empty root to serve   write a placeholder until the project is published.
     fs.mkdirSync(siteDir, { recursive: true });
     const placeholder = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Coming Soon</title><style>*{box-sizing:border-box}body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f9fafb}.box{text-align:center;padding:2rem}h1{color:#111827;margin-bottom:.5rem}p{color:#6b7280}</style></head><body><div class="box"><h1>Coming Soon</h1><p>This site is being set up. Publish your project to go live.</p></div></body></html>`;
     fs.writeFileSync(path.join(siteDir, 'index.html'), placeholder);
@@ -479,7 +479,7 @@ app.post('/domains/activate', async (req, res) => {
       const dnsResult = await verifyDomainOwnership(domain);
       if (!dnsResult.verified) {
         return res.status(400).json({
-          error: 'DNS verification failed — configure your DNS records first',
+          error: 'DNS verification failed   configure your DNS records first',
           dns: dnsResult,
         });
       }
@@ -494,11 +494,11 @@ app.post('/domains/activate', async (req, res) => {
 
   const reloaded = reloadCaddy();
   if (!reloaded) {
-    // Roll back — config may be invalid
+    // Roll back   config may be invalid
     removeCaddySiteConfig(domain);
     domainRegistry.delete(domain);
     saveDomainRegistry(domainRegistry);
-    return res.status(500).json({ error: 'Caddy reload failed — domain not activated' });
+    return res.status(500).json({ error: 'Caddy reload failed   domain not activated' });
   }
 
   log('Domains', `Activated ${domain} → ${projectId}`);
@@ -653,7 +653,7 @@ app.post('/tenants/:projectId/deploy', (req, res) => {
     }
   }
 
-  log('Tenant', `Deployed ${projectId} — ${written} files`);
+  log('Tenant', `Deployed ${projectId}   ${written} files`);
   res.json({ success: true, projectId, filesWritten: written });
 });
 
@@ -695,7 +695,7 @@ app.post('/tenants/:projectId/resume', async (req, res) => {
 
 /**
  * DELETE /tenants/:projectId
- * Full teardown — remove containers, data, Caddy config.
+ * Full teardown   remove containers, data, Caddy config.
  */
 app.delete('/tenants/:projectId', async (req, res) => {
   if (!authCheck(req, res)) return;

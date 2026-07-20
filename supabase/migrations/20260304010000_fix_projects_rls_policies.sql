@@ -45,7 +45,7 @@ ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 --   4. They are a platform super_admin (get_my_role() = 'super_admin' only)
 --
 -- Note: regular org 'admin' in org_members is handled by clause 2.
--- get_my_role() returns from user_roles (platform-wide role) — only super_admin
+-- get_my_role() returns from user_roles (platform-wide role)   only super_admin
 -- should bypass ownership checks, NOT the org-level 'admin' role.
 CREATE POLICY "projects_select" ON projects
     FOR SELECT USING (

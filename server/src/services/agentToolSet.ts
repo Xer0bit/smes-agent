@@ -29,8 +29,8 @@ import { publishSiteTool } from '../agent-tools/publish_site.js';
 import { checkTsSyntaxInLoop } from './agentContextCompaction.js';
 
 // Tools irrelevant to a single-file, single-property "micro" change (color/text/
-// one-line fixes — see MICRO_SYSTEM_PROMPT). Every tool schema sent costs real
-// input tokens on EVERY step regardless of whether it's ever called — sending the
+// one-line fixes   see MICRO_SYSTEM_PROMPT). Every tool schema sent costs real
+// input tokens on EVERY step regardless of whether it's ever called   sending the
 // full ~20-tool backend/infra set (query_database, write_edge_function, etc.) for
 // a text tweak is pure fixed overhead. Micro tier's own prompt already scopes the
 // task this narrowly; scoping the tool list to match is the same idea applied to
@@ -56,7 +56,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
     searchCodebaseTool,
     findSymbolUsagesTool,
     editFileTool,
-    runCommandTool, // npm install/uninstall only — whitelist enforced inside the tool
+    runCommandTool, // npm install/uninstall only   whitelist enforced inside the tool
     getDatabaseSchemaTool,
     queryDatabaseTool,
     provisionDatabaseTool,
@@ -91,7 +91,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
                   `This prevents accidental overwrites of unread code.`
                 );
               }
-            } catch { /* path traversal — let the tool itself reject it */ }
+            } catch { /* path traversal   let the tool itself reject it */ }
           }
 
           // ── Prefer-edit guard ────────────────────────────────────────────────
@@ -108,13 +108,13 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
                 if (lineCount > 40) {
                   return (
                     `PREFER EDIT: "${relPath}" exists with ${lineCount} lines. ` +
-                    `Use edit_file with SEARCH/REPLACE blocks to change only the lines that need updating — ` +
+                    `Use edit_file with SEARCH/REPLACE blocks to change only the lines that need updating   ` +
                     `do NOT rewrite the whole file. This prevents accidentally deleting untouched code. ` +
                     `Only call write_file on this file again if you are completely rebuilding its structure from scratch.`
                   );
                 }
               }
-            } catch { /* ignore — let write_file handle path errors */ }
+            } catch { /* ignore   let write_file handle path errors */ }
           }
         }
         // ── Pre-write TSX/JSX sanity check ─────────────────────────────────────
@@ -125,7 +125,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
           if (ext === 'tsx' || ext === 'jsx') {
             const content: string = args.content;
             const hasExportDefault = /export\s+default\s+(function|const|class|memo|forwardRef)/m.test(content);
-            // Detect return( or return ( at column 0 — classic module-scope return
+            // Detect return( or return ( at column 0   classic module-scope return
             const moduleReturn = /^return\s*[\n(]/m.test(content);
             if (moduleReturn && !hasExportDefault) {
               return (
@@ -138,7 +138,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
         }
         // ── Platform-URL guard ─────────────────────────────────────────────────
         // EcomGear infrastructure URLs (api/gen.ecomgear.dev, db/cloud/preview/
-        // apps.ecomgear.app) must never be hardcoded into generated project code —
+        // apps.ecomgear.app) must never be hardcoded into generated project code  
         // they belong in env vars (VITE_SUPABASE_URL, VITE_DB_API_URL,
         // VITE_FUNCTIONS_API_URL). The prompt says so, but models still write
         // fallbacks like `import.meta.env.X || 'https://api.ecomgear.dev'`; this
@@ -152,20 +152,20 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
           if (urlMatch) {
             return (
               `BLOCKED: "${args.path}" contains a hardcoded EcomGear platform URL (${urlMatch[0]}). ` +
-              `Platform/system URLs must NEVER be written into project code — not even as env-var fallbacks. ` +
+              `Platform/system URLs must NEVER be written into project code   not even as env-var fallbacks. ` +
               `Use the env var directly with NO fallback: import.meta.env.VITE_SUPABASE_URL for auth, ` +
               `import.meta.env.VITE_DB_API_URL for the hosted database, import.meta.env.VITE_FUNCTIONS_API_URL for edge functions. ` +
-              `If the env var you need is not in the project's environment variables, that integration is not provisioned — ` +
+              `If the env var you need is not in the project's environment variables, that integration is not provisioned   ` +
               `tell the user instead of inventing a URL.`
             );
           }
           // ANY fallback chained to these three critical connection URLs is wrong,
-          // not just a literal EcomGear domain — `window.location.origin`,
+          // not just a literal EcomGear domain   `window.location.origin`,
           // `location.origin`, `'localhost'`, empty-string, etc. are all just as
           // broken (createClient(window.location.origin, ...) silently points auth
           // at the wrong host instead of failing loudly). Seen in the wild: an
           // agent "fixed" a missing-env-var crash by falling back to
-          // window.location.origin — that masks the real bug (the secret was never
+          // window.location.origin   that masks the real bug (the secret was never
           // synced) behind a subtler one (auth silently talks to the wrong origin).
           const criticalEnvFallback = newContent.match(
             /import\.meta\.env\.(VITE_SUPABASE_URL|VITE_DB_API_URL|VITE_FUNCTIONS_API_URL)\s*(\?\?|\|\|)/
@@ -173,7 +173,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
           if (criticalEnvFallback) {
             return (
               `BLOCKED: "${args.path}" adds a fallback after \`import.meta.env.${criticalEnvFallback[1]}\` ` +
-              `(via \`${criticalEnvFallback[2]}\`). This env var must NEVER have a fallback of any kind — not a ` +
+              `(via \`${criticalEnvFallback[2]}\`). This env var must NEVER have a fallback of any kind   not a ` +
               `platform URL, not \`window.location.origin\`, not \`'localhost'\`, nothing. If it's missing, the ` +
               `integration isn't set up for this project; the correct fix is to tell the user to sync/provision it ` +
               `in Settings, NOT to silently substitute a different value that will point the app at the wrong place. ` +
@@ -207,9 +207,9 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
               const finalContent = fs.readFileSync(fullPath, 'utf8');
               const diagnostic = checkTsSyntaxInLoop(args.path, finalContent);
               if (diagnostic) {
-                return `${result}\n\n⚠️ SYNTAX CHECK FAILED for ${args.path}: ${diagnostic}\nFix this now with edit_file before moving to the next file — this file will not compile as-is.`;
+                return `${result}\n\n⚠️ SYNTAX CHECK FAILED for ${args.path}: ${diagnostic}\nFix this now with edit_file before moving to the next file   this file will not compile as-is.`;
               }
-            } catch { /* file may not exist yet or be unreadable — don't block the tool result */ }
+            } catch { /* file may not exist yet or be unreadable   don't block the tool result */ }
           }
           return result;
         } catch (err: any) {
@@ -221,19 +221,19 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
           );
           console.warn(`[AgentTool] ${def.name} failed:`, errMsg, '| args:', argsSummary);
           const codeNote = errCode ? ` (${errCode})` : '';
-          return `ERROR: Tool "${def.name}" failed${codeNote} — ${errMsg}. Args: ${argsSummary}. You MUST address this error before proceeding. Either retry with corrected arguments or use a different approach.`;
+          return `ERROR: Tool "${def.name}" failed${codeNote}   ${errMsg}. Args: ${argsSummary}. You MUST address this error before proceeding. Either retry with corrected arguments or use a different approach.`;
         }
       },
     };
   }
 
-  // Brain memory tool — agent can persist key facts that survive context compaction
+  // Brain memory tool   agent can persist key facts that survive context compaction
   toolSet['save_memory'] = {
     description:
       'Save an important fact, decision, or state to your persistent brain memory for this run. ' +
       'Use this EARLY and OFTEN to remember: architecture decisions, which files you created/modified, ' +
       'key user requirements, error patterns you spotted, and anything you\'ll need in later steps. ' +
-      'Your older tool call history gets compacted to save tokens — only facts saved here are guaranteed to persist.',
+      'Your older tool call history gets compacted to save tokens   only facts saved here are guaranteed to persist.',
     inputSchema: jsonSchema({
       type: 'object' as const,
       properties: {

@@ -1,5 +1,5 @@
 /**
- * Tenant Caddy Config — generates per-tenant Caddy config snippets.
+ * Tenant Caddy Config   generates per-tenant Caddy config snippets.
  *
  * Each tenant gets a single-domain config with path-based routing:
  *   /rest/v1/*      → PostgREST

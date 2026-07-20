@@ -61,7 +61,7 @@ export function RouteSeoEditor({
   });
 
   // Only hydrate once per mount (this component remounts on route change via
-  // `key={selected}` in SeoManager, so that's still handled) — a background
+  // `key={selected}` in SeoManager, so that's still handled)   a background
   // refetch landing mid-edit would otherwise overwrite in-progress typing
   // with the pre-edit DB row before Save is clicked.
   const hydrated = useRef(false);

@@ -23,7 +23,7 @@ interface PendingPrompt {
 }
 
 const Index = () => {
-  // Self-contained auth — Index no longer lives inside LandingLayout
+  // Self-contained auth   Index no longer lives inside LandingLayout
   const [user, setUser] = useState<User | null>(null);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const { refreshOrganization } = useOrganization();
@@ -35,7 +35,7 @@ const Index = () => {
   const [pendingTemplate, setPendingTemplate] = useState<DesignTemplate | null>(null);
   const [questionnaireOpen, setQuestionnaireOpen] = useState(false);
 
-  // Auth subscription — mirrors LandingLayout pattern
+  // Auth subscription   mirrors LandingLayout pattern
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
@@ -83,7 +83,7 @@ const Index = () => {
       let newProject: { id: string } | null = data?.project ?? null;
 
       if (error || !newProject?.id) {
-        // Edge function unavailable or returned non-2xx — fall back to direct insert.
+        // Edge function unavailable or returned non-2xx   fall back to direct insert.
         // This handles auth edge cases, cold-start failures, and permission mismatches.
         console.warn('[Index] Edge function failed, falling back to direct insert:', error?.message);
         const { data: directData, error: directError } = await (await import('@/integrations/supabase/client')).supabase
@@ -145,7 +145,7 @@ const Index = () => {
       const message = await extractFunctionErrorMessage(error);
       const displayMessage = message && message !== 'Edge Function returned a non-2xx status code'
         ? message
-        : 'Server error — check your organisation membership or try again.';
+        : 'Server error   check your organisation membership or try again.';
       toast.error(`Failed to create project: ${displayMessage}`);
     }
   }, [currentOrganizationId, navigate]);
@@ -192,7 +192,7 @@ const Index = () => {
     // If not logged in, allow guest mode (up to 3 requests with Gemini)
     if (!user) {
       if (!canRequest) {
-        // Guest has exhausted free requests — must register
+        // Guest has exhausted free requests   must register
         toast.error('You\'ve used all 3 free generations. Please sign up to continue!');
         navigate('/auth', {
           state: {

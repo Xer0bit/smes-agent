@@ -5,8 +5,8 @@
 
 -- ── 2. Migrate existing data ─────────────────────────────────────────────────
 --  starter      → free   (downgrade: starter had 3 seats/5 projects, now 1/1)
---  professional → pro    (1:1 — 10 seats/unlimited projects → 5 seats/unlimited)
---  enterprise   → agency (1:1 — unlimited seats → 20 seats/unlimited)
+--  professional → pro    (1:1   10 seats/unlimited projects → 5 seats/unlimited)
+--  enterprise   → agency (1:1   unlimited seats → 20 seats/unlimited)
 UPDATE public.organizations
 SET plan_tier = CASE
   WHEN plan_tier::text = 'starter'      THEN 'free'::plan_tier
@@ -33,7 +33,7 @@ BEGIN
       NEW.seats_total   := 20;
       NEW.max_projects  := 2147483647;
       NEW.ai_gens_limit := 1000000;
-    -- legacy values — treat like their migration target
+    -- legacy values   treat like their migration target
     WHEN 'starter' THEN
       NEW.seats_total   := 1;
       NEW.max_projects  := 1;
@@ -77,7 +77,7 @@ SET
                     ELSE 4000
                   END;
 
--- ── 5. Replace get_org_limits() RPC — update returned tier label ──────────────
+-- ── 5. Replace get_org_limits() RPC   update returned tier label ──────────────
 CREATE OR REPLACE FUNCTION public.get_org_limits(p_org_id uuid)
 RETURNS jsonb
 LANGUAGE plpgsql

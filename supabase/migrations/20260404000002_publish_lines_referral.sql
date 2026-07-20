@@ -203,7 +203,7 @@ BEGIN
 
   IF v_referrer_id IS NULL THEN RETURN; END IF;
 
-  -- Idempotent — skip if already rewarded
+  -- Idempotent   skip if already rewarded
   IF EXISTS (
     SELECT 1 FROM public.referral_rewards
     WHERE referrer_id = v_referrer_id AND referee_id = p_referee_id
@@ -213,7 +213,7 @@ BEGIN
   INSERT INTO public.referral_rewards(referrer_id, referee_id, lines_earned)
   VALUES (v_referrer_id, p_referee_id, v_lines);
 
-  -- Add bonus lines to referrer profile (permanent — these top up the org's monthly quota)
+  -- Add bonus lines to referrer profile (permanent   these top up the org's monthly quota)
   UPDATE public.profiles
   SET bonus_publish_lines = bonus_publish_lines + v_lines
   WHERE id = v_referrer_id;

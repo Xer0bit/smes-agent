@@ -6,7 +6,7 @@
 ALTER TABLE edge_functions ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE;
 ALTER TABLE edge_function_logs ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE;
 
--- Backfill: best-effort — a user's sole project if they have exactly one,
+-- Backfill: best-effort   a user's sole project if they have exactly one,
 -- otherwise leave NULL (ambiguous; those rows become inert until rewritten).
 UPDATE edge_functions ef SET project_id = p.id
 FROM public.projects p

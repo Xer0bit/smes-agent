@@ -1,5 +1,5 @@
 /**
- * run_command tool — execute safe, allowlisted shell commands in the project workspace.
+ * run_command tool   execute safe, allowlisted shell commands in the project workspace.
  * Only npm install / npm uninstall are permitted.
  */
 import { exec } from 'node:child_process';
@@ -20,7 +20,7 @@ function parsePackageNames(cmd: string): string[] {
 
 /**
  * Notify the preview service to install the same packages into its own
- * node_modules so Vite can resolve them. Fire-and-forget with a timeout —
+ * node_modules so Vite can resolve them. Fire-and-forget with a timeout  
  * a failure here is non-fatal; the local install already succeeded.
  */
 async function syncPackagesToPreviewService(
@@ -97,7 +97,7 @@ export const runCommandTool: ToolDefinition<z.infer<typeof schema>> = {
 
     // Harden install commands: disable postinstall hooks (arbitrary code execution),
     // skip audit (network call, slow), skip fund messages (noise in output).
-    // Never add these flags to uninstall — they don't apply there.
+    // Never add these flags to uninstall   they don't apply there.
     const isInstall = /^npm\s+(install|i|add)\b/.test(cmd);
     const safeCmd = isInstall
       ? cmd.replace(/^(npm\s+\S+)/, '$1 --ignore-scripts --no-audit --no-fund')
@@ -131,14 +131,14 @@ export const runCommandTool: ToolDefinition<z.infer<typeof schema>> = {
 
     if (!ok) return `Command failed (${cmd}):\n${out}`;
 
-    // Local install succeeded — sync packages to preview service + surface to UI
+    // Local install succeeded   sync packages to preview service + surface to UI
     if (isInstall) {
       const pkgs = parsePackageNames(cmd);
       const previewUrl = ctx.previewServiceUrl || 'http://localhost:3001';
       await syncPackagesToPreviewService(pkgs, previewUrl);
       // Surface the install in the chat as an activity chip/steps entry.
       // The frontend already parses <ecomgear-add-dependency packages="…">
-      // (agentChatHelpers.parseToolActivities) — previously dead because no tool
+      // (agentChatHelpers.parseToolActivities)   previously dead because no tool
       // emitted it. Emits AFTER success so a failed install shows no chip.
       if (pkgs.length > 0) {
         ctx.onXmlComplete?.(`<ecomgear-add-dependency packages="${pkgs.join(', ')}" />`);

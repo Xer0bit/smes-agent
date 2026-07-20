@@ -76,7 +76,7 @@ export function WorkspaceLoader({
     <div
       className={`fixed inset-0 z-[9999] flex items-center justify-center bg-[hsl(var(--workspace-surface-recessed))] transition-all duration-500 ${!visible ? 'opacity-0 scale-[0.97] pointer-events-none' : 'opacity-100 scale-100'}`}
     >
-      {/* Ambient glow — single light source, breathing */}
+      {/* Ambient glow   single light source, breathing */}
       <div className="absolute left-1/2 top-[15%] -translate-x-1/2 w-[600px] h-[400px] pointer-events-none animate-loader-breathe"
         style={{ background: 'radial-gradient(ellipse, rgba(52,211,153,0.06) 0%, transparent 70%)' }} />
 

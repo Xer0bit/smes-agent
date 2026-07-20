@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS public.guest_sessions (
 
 ALTER TABLE public.guest_sessions ENABLE ROW LEVEL SECURITY;
 
--- Only service_role / admin can read guest sessions (no self-select — anonymous users have no auth.uid)
+-- Only service_role / admin can read guest sessions (no self-select   anonymous users have no auth.uid)
 CREATE POLICY "admin full access guest_sessions"
   ON public.guest_sessions FOR ALL
   USING (
@@ -21,7 +21,7 @@ CREATE POLICY "admin full access guest_sessions"
   );
 
 -- Allow service_role insert/select for server-side fingerprint checks
--- (service_role bypasses RLS by default — no policy needed)
+-- (service_role bypasses RLS by default   no policy needed)
 
 -- ── 2. RPC: check_guest_limit(fingerprint) → { can_create bool } ──────────────
 CREATE OR REPLACE FUNCTION public.check_guest_limit(p_fingerprint text)
@@ -56,7 +56,7 @@ GRANT EXECUTE ON FUNCTION public.check_guest_limit(text) TO anon;
 GRANT EXECUTE ON FUNCTION public.check_guest_limit(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.check_guest_limit(text) TO service_role;
 
--- ── 3. RPC: record_guest_project(fingerprint) — call after guest project created ─
+-- ── 3. RPC: record_guest_project(fingerprint)   call after guest project created ─
 CREATE OR REPLACE FUNCTION public.record_guest_project(p_fingerprint text)
 RETURNS void
 LANGUAGE plpgsql

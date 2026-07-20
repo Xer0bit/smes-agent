@@ -1,5 +1,5 @@
 -- =============================================================================
--- Fix publish_lines_limit — values of 30/100 are far too low for real projects.
+-- Fix publish_lines_limit   values of 30/100 are far too low for real projects.
 -- Pro/agency now get effectively unlimited (999999).
 -- Free tier gets 1000 (enough for a couple small projects).
 -- Also resets publish_lines_used to 0 for all paid orgs so they can publish.

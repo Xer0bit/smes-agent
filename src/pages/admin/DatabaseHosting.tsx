@@ -215,7 +215,7 @@ export default function DatabaseHosting() {
                 <TableRow key={r.id}>
                   <TableCell className="font-mono text-xs">{r.schema_name}</TableCell>
                   <TableCell className="text-sm">{r.owner_email || r.user_id}</TableCell>
-                  <TableCell className="text-sm">{r.org_name || '—'}</TableCell>
+                  <TableCell className="text-sm">{r.org_name || ' '}</TableCell>
                   <TableCell>
                     <Badge variant="outline" className={cn(STATUS_STYLES[r.status] || '')} title={r.error_message || undefined}>
                       {r.status}

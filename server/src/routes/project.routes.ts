@@ -69,7 +69,7 @@ router.patch(
 );
 
 // On-demand thumbnail capture
-// previewUrl in body is optional — if omitted, the server looks it up from revisions
+// previewUrl in body is optional   if omitted, the server looks it up from revisions
 router.post('/:projectId/capture-thumbnail', async (req: AuthenticatedRequest, res: Response) => {
     const { projectId } = req.params;
     let { previewUrl } = req.body as { previewUrl?: string };
@@ -102,17 +102,17 @@ router.post('/:projectId/capture-thumbnail', async (req: AuthenticatedRequest, r
     }
 
     if (!previewUrl) {
-        // No build exists yet — nothing to screenshot
+        // No build exists yet   nothing to screenshot
         res.json({ status: 'skipped', reason: 'no_preview_url' });
         return;
     }
 
-    // Fire and forget — respond immediately so the client isn't blocked
+    // Fire and forget   respond immediately so the client isn't blocked
     res.json({ status: 'capturing' });
     captureThumbnail(projectId, previewUrl, supa);
 });
 
-// Delete project (permanently — removes DB row immediately, cleans up storage async)
+// Delete project (permanently   removes DB row immediately, cleans up storage async)
 router.delete('/:projectId', async (req: AuthenticatedRequest, res: Response) => {
     try {
         await projectService.permanentlyDeleteProject(req.params.projectId, req.user!.id);

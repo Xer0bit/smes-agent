@@ -20,7 +20,7 @@ export function clampContextSection(label: string, value: string, maxChars: numb
 
 /** How many recent steps keep full detail (older steps get compacted) */
 // Raised 2 → 4 (2026-07-20): a 2-step window compacted read_file results out
-// of context mid-investigation on anything touching more than ~2-3 files —
+// of context mid-investigation on anything touching more than ~2-3 files  
 // the model would then need to re-read a file it already saw 3 steps ago,
 // producing a step that LOOKS like redundant re-analysis but is actually the
 // model re-fetching evidence that was deleted out from under it. save_memory
@@ -45,13 +45,13 @@ export function compactToolCallArgs(part: any): void {
     case 'write_file':
       if (typeof args.content === 'string' && args.content.length > 200) {
         const lines = args.content.split('\n').length;
-        args.content = `[compacted] ${lines} lines written to ${args.path ?? 'file'} — see Run Change Journal for details`;
+        args.content = `[compacted] ${lines} lines written to ${args.path ?? 'file'}   see Run Change Journal for details`;
       }
       break;
     case 'edit_file':
       if (typeof args.diff === 'string' && args.diff.length > 300) {
         const searchSnippet = args.diff.match(/<<<<<<< SEARCH\n([\s\S]{0,60})/)?.[1]?.replace(/\n/g, '↵') ?? '';
-        args.diff = `[compacted] edit to ${args.path ?? 'file'} — target: "${searchSnippet}" — see Run Change Journal`;
+        args.diff = `[compacted] edit to ${args.path ?? 'file'}   target: "${searchSnippet}"   see Run Change Journal`;
       }
       break;
     case 'think':
@@ -72,7 +72,7 @@ export function compactToolResult(part: any): void {
     case 'read_file':
       if (result.length > 300) {
         const lines = result.split('\n').length;
-        part.result = `[compacted] ${lines}-line file read — agent saw full content at step time. Call read_file again if current content needed.`;
+        part.result = `[compacted] ${lines}-line file read   agent saw full content at step time. Call read_file again if current content needed.`;
       }
       break;
     case 'grep':
@@ -127,7 +127,7 @@ export function compactStepMessages(
     }
   }
   if (stepStartIdx === 0 && msgs.length > 0 && msgs[0].role !== 'assistant') {
-    // No assistant messages yet — nothing to compact
+    // No assistant messages yet   nothing to compact
     return messages;
   }
 
@@ -141,7 +141,7 @@ export function compactStepMessages(
       const assistantIdx = stepStartIdx + pairIdx * 2;
       const toolIdx = assistantIdx + 1;
 
-      // Compact assistant message (tool call args — file contents, diffs)
+      // Compact assistant message (tool call args   file contents, diffs)
       const aMsg = msgs[assistantIdx];
       if (aMsg && Array.isArray(aMsg.content)) {
         for (const part of aMsg.content) {
@@ -155,7 +155,7 @@ export function compactStepMessages(
         }
       }
 
-      // Compact tool message (results — file contents from read_file, grep, etc.)
+      // Compact tool message (results   file contents from read_file, grep, etc.)
       const tMsg = msgs[toolIdx];
       if (tMsg && Array.isArray(tMsg.content)) {
         for (const part of tMsg.content) {
@@ -171,7 +171,7 @@ export function compactStepMessages(
   // Inject brain memories as context before recent steps
   if (brainMemory.length > 0) {
     const brainContent =
-      '[Agent Brain — important facts you saved during this run. These persist across context compaction.]\n' +
+      '[Agent Brain   important facts you saved during this run. These persist across context compaction.]\n' +
       brainMemory.map((m, i) => `${i + 1}. ${m}`).join('\n');
     const insertIdx = stepStartIdx + Math.max(0, compactUpTo * 2);
     msgs.splice(insertIdx, 0, {
@@ -184,10 +184,10 @@ export function compactStepMessages(
 }
 
 /**
- * Fast syntax-only TS/JSX check for a single file's content — NOT a full
+ * Fast syntax-only TS/JSX check for a single file's content   NOT a full
  * type-checked `tsc --noEmit` project build (that needs a persistent
  * ts.LanguageService per project; out of scope here). This only catches
- * structural breakage (unclosed brackets, malformed JSX, stray tokens) —
+ * structural breakage (unclosed brackets, malformed JSX, stray tokens)  
  * exactly the failure mode that used to only surface in the cold, expensive
  * post-run repair pass. Runs in milliseconds since it's a single-file parse.
  * Returns a short diagnostic string, or null if the file parses clean.

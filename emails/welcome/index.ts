@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Supabase Edge Function — welcome email after registration is complete
+// Supabase Edge Function   welcome email after registration is complete
 // Trigger: after signup-complete function runs successfully
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { corsHeaders, json } from '../_shared/cors.ts';
@@ -26,7 +26,7 @@ serve(async (req) => {
 
     const html = baseTemplate({
       title: 'Welcome to EcomGear',
-      preheader: 'Your account is ready — start building your first app.',
+      preheader: 'Your account is ready   start building your first app.',
       body: `
         <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#18181b;">Welcome to EcomGear${safeOrg ? `, ${safeOrg}` : ''}!</h1>
         <p style="margin:0 0 8px;font-size:15px;color:#52525b;line-height:1.6;">
@@ -34,7 +34,7 @@ serve(async (req) => {
         </p>
         <p style="margin:0 0 16px;font-size:15px;color:#52525b;line-height:1.6;">
           Your account is all set. EcomGear lets you build full-stack web apps by simply
-          describing what you want — no boilerplate, no setup.
+          describing what you want   no boilerplate, no setup.
         </p>
         <p style="margin:0 0 28px;font-size:15px;color:#52525b;line-height:1.6;">
           Here's how to get started:
@@ -64,7 +64,7 @@ serve(async (req) => {
 
     await sendEmail({
       to: email,
-      subject: 'Welcome to EcomGear — your account is ready',
+      subject: 'Welcome to EcomGear   your account is ready',
       html,
     }, resendKey);
 

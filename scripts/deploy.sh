@@ -1,15 +1,15 @@
 #!/bin/bash
 # =============================================================================
-# EcomGear — Multi-VPS Manual Deploy Script
+# EcomGear   Multi-VPS Manual Deploy Script
 # Usage: ./scripts/deploy.sh [vps1|vps2|vps3|vps4|vps5|all]
 #
 # Infrastructure:
-#   VPS1  156.67.218.75  (Singapore)  — Frontend + Supabase Edge
-#   VPS2  72.62.126.99   (Indonesia)  — Preview Service
-#   VPS3  3.148.126.20   (USA)        — LLM / Agent Runner
-#   VPS4  187.77.157.231 (—)          — Enterprise Hosting Service (published apps)
-#   VPS5  187.127.108.19 (—)          — Tenant Postgres (paid-user hosted DBs).
-#         No application code is deployed here from this repo — VPS5 is a
+#   VPS1  156.67.218.75  (Singapore)    Frontend + Supabase Edge
+#   VPS2  72.62.126.99   (Indonesia)    Preview Service
+#   VPS3  3.148.126.20   (USA)          LLM / Agent Runner
+#   VPS4  187.77.157.231 ( )            Enterprise Hosting Service (published apps)
+#   VPS5  187.127.108.19 ( )            Tenant Postgres (paid-user hosted DBs).
+#         No application code is deployed here from this repo   VPS5 is a
 #         passive DB endpoint that VPS3's server connects to via TENANT_DB_*.
 #         `vps5` target only health-checks reachability; it uploads nothing.
 #
@@ -47,7 +47,7 @@ VPS5_KEY_PATH="${VPS5_KEY_PATH:-}"
 # Deploying whatever branch happens to be checked out locally is how a stale
 # branch silently overwrites newer code already running on a server (this bit
 # us once: VPS3 was running origin/stage-change while main's agentLoopService.ts
-# was ~1300 lines behind it — a plain deploy would have regressed it with no
+# was ~1300 lines behind it   a plain deploy would have regressed it with no
 # warning). DEPLOY_EXPECTED_BRANCH lets you pin what SHOULD be deployed; unset
 # it (or pass ALLOW_ANY_BRANCH=1) to bypass for an intentional cross-branch deploy.
 CURRENT_BRANCH="$(git -C "$PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
@@ -93,7 +93,7 @@ esac
 preflight_checks() {
     step "Pre-deploy checks..."
 
-    # Warn on uncommitted changes (don't block — developer may intend this)
+    # Warn on uncommitted changes (don't block   developer may intend this)
     if ! git -C "$PROJECT_DIR" diff --quiet 2>/dev/null || \
        ! git -C "$PROJECT_DIR" diff --staged --quiet 2>/dev/null; then
         echo -e "${YELLOW}  ⚠ Uncommitted changes detected. Deploy will use local files as-is.${NC}"
@@ -158,7 +158,7 @@ scp_vps3() { rsync_exec "$VPS3_USER" "$VPS3_IP" "$VPS3_KEY_PATH" "${VPS3_PASS:-}
 scp_vps4() { rsync_exec "$VPS4_USER" "$VPS4_IP" "$VPS4_KEY_PATH" "${VPS4_PASS:-}" "$@"; }
 
 # =========================================================================
-# VPS1 — Deploy React SPA + nginx
+# VPS1   Deploy React SPA + nginx
 # Strategy: rsync to dist.new → atomic directory swap → nginx reload
 #   nginx keeps serving dist/ (old files) during the entire rsync transfer.
 #   Only switches to new content after the fast local mv operations (~10ms).
@@ -166,7 +166,7 @@ scp_vps4() { rsync_exec "$VPS4_USER" "$VPS4_IP" "$VPS4_KEY_PATH" "${VPS4_PASS:-}
 deploy_vps1() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  VPS1 — Frontend + Supabase Edge → $VPS1_IP"
+    echo "  VPS1   Frontend + Supabase Edge → $VPS1_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     step "Building React SPA..."
     cd "$PROJECT_DIR"
@@ -204,7 +204,7 @@ for f in $(ls /tmp/supabase-migrations/*.sql 2>/dev/null | sort); do
   echo "  apply $VERSION..."
   docker cp "$f" "$DB_CONTAINER:/tmp/${VERSION}.sql"
   if ! docker exec "$DB_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -f "/tmp/${VERSION}.sql" 2>&1; then
-    echo "  ✗ $VERSION FAILED — not marking as applied, aborting migrations" >&2
+    echo "  ✗ $VERSION FAILED   not marking as applied, aborting migrations" >&2
     exit 1
   fi
   docker exec "$DB_CONTAINER" psql -U postgres -c \
@@ -230,8 +230,8 @@ cd /var/www/ecomgear
 rm -rf dist.old
 # Use if/then so set -e doesn't exit when dist doesn't exist yet
 if [ -d dist ]; then mv dist dist.old; fi
-# dist.new must exist — abort loudly if rsync didn't upload
-if [ ! -d dist.new ]; then echo "ERROR: dist.new missing — rsync may have failed" >&2; exit 1; fi
+# dist.new must exist   abort loudly if rsync didn't upload
+if [ ! -d dist.new ]; then echo "ERROR: dist.new missing   rsync may have failed" >&2; exit 1; fi
 mv dist.new dist
 ln -sf /etc/nginx/sites-available/ecomgear /etc/nginx/sites-enabled/ecomgear
 ln -sf /etc/nginx/sites-available/1000.ecomgear.dev /etc/nginx/sites-enabled/1000.ecomgear.dev
@@ -241,9 +241,9 @@ nginx -t && systemctl reload nginx && echo 'nginx reloaded'
 echo "Backup preserved at dist.old for rollback"
 REMOTE
 
-    # ── ecomgear-api (server/, SERVICE_ROLE=api) — everything except LLM gen ──
+    # ── ecomgear-api (server/, SERVICE_ROLE=api)   everything except LLM gen ──
     # Rebuilt independently of deploy_vps3's server build since either function
-    # can run alone (single-target deploys) — a little duplicate CI time, but
+    # can run alone (single-target deploys)   a little duplicate CI time, but
     # keeps the two VPS deploys decoupled instead of depending on run order.
     if [ -f "$PROJECT_DIR/server/src/index.ts" ]; then
         step "Building server TypeScript (for VPS1 API)..."
@@ -302,7 +302,7 @@ set -e
 cd /var/www/ecomgear
 rm -rf server.old
 if [ -d server ]; then mv server server.old; fi
-if [ ! -d server.staging ]; then echo "ERROR: server.staging missing — rsync may have failed" >&2; exit 1; fi
+if [ ! -d server.staging ]; then echo "ERROR: server.staging missing   rsync may have failed" >&2; exit 1; fi
 mv server.staging server
 cd server
 npm ci --omit=dev
@@ -317,7 +317,7 @@ REMOTE_API
     # ── Post-deploy health gate ──────────────────────────────────────────────
     # Block until Auth and REST are both responding 200. If either is still
     # loading (e.g. REST schema cache after an edge restart) we wait up to 90s
-    # before failing the deploy — preventing a half-broken release from being
+    # before failing the deploy   preventing a half-broken release from being
     # declared "done".
     step "Post-deploy health gate (auth + REST, up to 90s)..."
     API="https://api.ecomgear.dev"
@@ -342,7 +342,7 @@ REMOTE_API
         [[ $AUTH_OK -eq 0 ]] && echo "  ✗ Auth did not become healthy"
         [[ $REST_OK -eq 0 ]] && echo "  ✗ REST did not become healthy (schema cache timeout?)"
         echo "  Rolling back dist/ → previous version (dist.old)..."
-        ssh_vps1 "bash -s" << 'REMOTE' || echo "  ⚠ Rollback command itself failed — manual intervention needed on VPS1"
+        ssh_vps1 "bash -s" << 'REMOTE' || echo "  ⚠ Rollback command itself failed   manual intervention needed on VPS1"
 set -e
 cd /var/www/ecomgear
 if [ -d dist.old ]; then
@@ -350,37 +350,37 @@ if [ -d dist.old ]; then
     mv dist dist.failed
     mv dist.old dist
     nginx -t && systemctl reload nginx
-    echo "  ROLLED BACK — previous dist/ restored, broken build kept at dist.failed"
+    echo "  ROLLED BACK   previous dist/ restored, broken build kept at dist.failed"
 else
-    echo "  No dist.old to roll back to — this may have been the first-ever deploy"
+    echo "  No dist.old to roll back to   this may have been the first-ever deploy"
 fi
 REMOTE
-        err "Health gate failed (Supabase Auth/REST, not the frontend itself — check VPS1 containers: ssh root@$VPS1_IP 'docker ps')"
+        err "Health gate failed (Supabase Auth/REST, not the frontend itself   check VPS1 containers: ssh root@$VPS1_IP 'docker ps')"
     fi
 
     success "VPS1 deploy complete → https://ecomgear.dev"
 }
 
 # =========================================================================
-# VPS2 — Deploy Preview Service (zero-downtime)
+# VPS2   Deploy Preview Service (zero-downtime)
 # Strategy:
 #   1. rsync to preview-service.staging/ (never touches running service)
 #   2. Atomic mv swap: running dir → .old backup, staging → active
-#   3. pm2 reload (graceful restart — not delete+start)
+#   3. pm2 reload (graceful restart   not delete+start)
 #      On shutdown the old process writes a warmup list of active project IDs;
 #      the new process restores those Vite servers in the background so
 #      users don't see their ecosystem reset.
-#   Note: projects/ dir is ALWAYS excluded from rsync — user files never touched.
+#   Note: projects/ dir is ALWAYS excluded from rsync   user files never touched.
 # =========================================================================
 deploy_vps2() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  VPS2 — Preview Service → $VPS2_IP"
+    echo "  VPS2   Preview Service → $VPS2_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     step "Checking for packages the agent installed at runtime since the last deploy..."
     # /packages/install (preview-service/server.js) lets the agent's run_command
     # tool add a dependency straight into the LIVE server's package.json via
-    # `npm install <pkg>` in its own directory — but that change only exists on
+    # `npm install <pkg>` in its own directory   but that change only exists on
     # VPS2, never in this repo. The next deploy used to run `npm ci` from this
     # repo's lockfile, silently discarding every package added that way since
     # the last deploy (reported bug: "libraries gone after any new deployment").
@@ -419,13 +419,13 @@ console.log(added.length + (added.length ? ':' + added.join(',') : ''));
             success "No runtime-installed packages to preserve"
         fi
     else
-        echo "  (no live preview-service found — first deploy, skipping check)"
+        echo "  (no live preview-service found   first deploy, skipping check)"
     fi
 
     step "Installing preview-service production deps locally..."
     cd "$PROJECT_DIR/preview-service"
     if [ "${ADDED_COUNT:-0}" != "0" ]; then
-        # A package was merged in above — it won't be in package-lock.json yet,
+        # A package was merged in above   it won't be in package-lock.json yet,
         # so `npm ci` would reject the lockfile as out of sync. Use `npm install`
         # to resolve and update the lockfile, same as a developer adding a dep.
         npm install --omit=dev
@@ -486,7 +486,7 @@ pm2 save --force
 
 sleep 4
 if ! curl -sf http://localhost:3001/health; then
-    echo "ERROR: preview health check failed — rolling back"
+    echo "ERROR: preview health check failed   rolling back"
     # Rollback: restore old version
     pm2 stop ecomgear-preview 2>/dev/null || true
     rm -rf preview-service.failed
@@ -504,23 +504,23 @@ REMOTE
 }
 
 # =========================================================================
-# VPS3 — Deploy Server / Agent
+# VPS3   Deploy Server / Agent
 # Strategy:
 #   1. Upload to server.staging/
 #   2. Atomic mv swap: server → server.old backup, staging → server
-#   3. Hard PM2 restart: `pm2 delete` then `pm2 start` (NOT a rolling reload —
+#   3. Hard PM2 restart: `pm2 delete` then `pm2 start` (NOT a rolling reload  
 #      see step 6 below in the code). This is a deliberate choice, not an
 #      oversight: avoids PM2 cluster socket-inheritance issues that caused
 #      problems with `pm2 reload` on this app in the past. There IS a real
 #      downtime window between delete and the new workers passing their
-#      health check (up to ~36s, per the retry loop in step 8) — this is
+#      health check (up to ~36s, per the retry loop in step 8)   this is
 #      NOT zero-downtime. If that gap matters, this needs an actual `pm2
 #      reload`-based rewrite, not just a comment fix.
 # =========================================================================
 deploy_vps3() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  VPS3 — Server / Agent Runner → $VPS3_IP"
+    echo "  VPS3   Server / Agent Runner → $VPS3_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     if [ -f "$PROJECT_DIR/server/src/index.ts" ]; then
         step "Building server TypeScript..."
@@ -530,11 +530,11 @@ deploy_vps3() {
         cd "$PROJECT_DIR"
         success "Server built (server/dist/)"
     else
-        info "No server/src/index.ts — skipping server build"
+        info "No server/src/index.ts   skipping server build"
     fi
     step "Uploading server to VPS3 (staging dir)..."
     ssh_vps3 "mkdir -p $DEPLOY_PATH/server.staging $DEPLOY_PATH/logs $DEPLOY_PATH/backups"
-    # node_modules is excluded — it's reinstalled remotely (npm ci --omit=dev
+    # node_modules is excluded   it's reinstalled remotely (npm ci --omit=dev
     # below), same pattern as VPS4. Shipping node_modules over rsync was
     # dragging every deploy out to 10+ minutes for no benefit: the CI-built
     # copy still needs prod-only deps and the wrong platform's native builds
@@ -616,7 +616,7 @@ ECG_SERVICE_KEY=${ECG_SERVICE_KEY}
 ECOMGEAR_SERVER_URL=${ECOMGEAR_SERVER_URL}
 DASHBOARD_ACCESS_SECRET=${DASHBOARD_ACCESS_SECRET:-}
 FUNCTIONS_INTERNAL_SECRET=${FUNCTIONS_INTERNAL_SECRET:-}
-# LLM API keys are managed via the Admin panel — stored in Supabase, not here.
+# LLM API keys are managed via the Admin panel   stored in Supabase, not here.
 ENV
 
 # ── 2. Timestamped backup of current server dir ───────────────────────────────
@@ -649,7 +649,7 @@ systemctl reload nginx
 systemctl is-active nginx >/dev/null
 
 # ── 5. Kill zombie node workers (processes that share port \$PORT but are
-#       NOT in the current PM2 roster — leftover from manual starts or
+#       NOT in the current PM2 roster   leftover from manual starts or
 #       previous PM2 cluster lifecycles) ────────────────────────────────────
 PM2_PIDS=\$(pm2 jlist 2>/dev/null | python3 -c "
 import sys, json
@@ -676,14 +676,14 @@ else
     echo "  No zombie node processes found"
 fi
 
-# ── 6. Hard PM2 restart (delete + start — no socket inheritance) ──────────────
+# ── 6. Hard PM2 restart (delete + start   no socket inheritance) ──────────────
 [ -f .env.production ] && set -a && . ./.env.production && set +a
 
 pm2 delete "\$APP_NAME" 2>/dev/null || true
 sleep 2
 
 # NOTE: PM2 master daemon (not the workers) holds port \$PORT permanently.
-# There is no "port release" to wait for — the master socket stays bound
+# There is no "port release" to wait for   the master socket stays bound
 # across all worker restarts. New workers receive connections via IPC from
 # the master. Do NOT wait for port release here.
 
@@ -708,7 +708,7 @@ else
 fi
 pm2 save --force
 
-# Ensure PM2 auto-starts on reboot (idempotent — safe to run every deploy)
+# Ensure PM2 auto-starts on reboot (idempotent   safe to run every deploy)
 STARTUP_CMD=\$(pm2 startup systemd -u root --hp /root 2>&1 | grep -E "^sudo " | head -1 || true)
 if [ -n "\$STARTUP_CMD" ]; then eval "\$STARTUP_CMD" 2>/dev/null || true; fi
 pm2 save --force
@@ -750,12 +750,12 @@ for i in \$(seq 1 12); do
         HEALTHY=1
         break
     fi
-    echo "  Health check \$i/12 — waiting..."
+    echo "  Health check \$i/12   waiting..."
     sleep 3
 done
 
 if [ \$HEALTHY -eq 0 ]; then
-    echo "ERROR: gen API failed to respond after 36s — rolling back"
+    echo "ERROR: gen API failed to respond after 36s   rolling back"
     pm2 delete "\$APP_NAME" 2>/dev/null || true
     sleep 1
     # Restore latest backup
@@ -768,7 +768,7 @@ if [ \$HEALTHY -eq 0 ]; then
     pm2 start "\$DEPLOY_PATH/ecosystem.config.cjs" --only "\$APP_NAME" --update-env 2>/dev/null || \
         pm2 start "\$DEPLOY_PATH/server/dist/index.js" --name "\$APP_NAME" --cwd "\$DEPLOY_PATH/server" --update-env
     pm2 save --force
-    echo "  ROLLED BACK — check server.failed for the broken build"
+    echo "  ROLLED BACK   check server.failed for the broken build"
     exit 1
 fi
 
@@ -785,24 +785,24 @@ REMOTE
 }
 
 # =========================================================================
-# VPS4 — Deploy Enterprise Hosting Service
-# Strategy: same shape as VPS2/VPS3 — rsync to a staging path, bootstrap
+# VPS4   Deploy Enterprise Hosting Service
+# Strategy: same shape as VPS2/VPS3   rsync to a staging path, bootstrap
 # deps if missing, restart via PM2, verify health, roll back on failure.
-# NOT zero-downtime: single PM2 instance, hard delete+start — there is a real
+# NOT zero-downtime: single PM2 instance, hard delete+start   there is a real
 # gap between the old process stopping and the new one passing its health
 # check. Fine for an internal hosting-control-plane service; would need a
 # second instance + reload strategy if that gap becomes a problem.
-# Caddy (not nginx) fronts this service — it auto-provisions HTTPS per
+# Caddy (not nginx) fronts this service   it auto-provisions HTTPS per
 # published-app subdomain.
 # =========================================================================
 deploy_vps4() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  VPS4 — Enterprise Hosting Service → $VPS4_IP"
+    echo "  VPS4   Enterprise Hosting Service → $VPS4_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     if [ ! -d "$PROJECT_DIR/hosting-service" ]; then
-        err "hosting-service/ directory not found in repo — nothing to deploy"
+        err "hosting-service/ directory not found in repo   nothing to deploy"
     fi
 
     step "Bootstrapping VPS4 (Node 20 + Caddy + PM2 if missing)..."
@@ -856,7 +856,7 @@ module.exports = {
 };
 PMEOF
 
-# Atomic swap — same pattern as VPS2/VPS3, keeps the old version until the
+# Atomic swap   same pattern as VPS2/VPS3, keeps the old version until the
 # new one is confirmed healthy below.
 rm -rf /opt/ecomgear/hosting-service.old
 [ -d /opt/ecomgear/hosting-service ] && mv /opt/ecomgear/hosting-service /opt/ecomgear/hosting-service.old
@@ -876,7 +876,7 @@ pm2 save --force
 
 sleep 4
 if ! curl -sf http://127.0.0.1:4000/health >/dev/null 2>&1; then
-    echo "ERROR: hosting service failed health check — rolling back"
+    echo "ERROR: hosting service failed health check   rolling back"
     pm2 delete ecomgear-hosting 2>/dev/null || true
     rm -rf /opt/ecomgear/hosting-service.failed
     mv /opt/ecomgear/hosting-service /opt/ecomgear/hosting-service.failed
@@ -884,7 +884,7 @@ if ! curl -sf http://127.0.0.1:4000/health >/dev/null 2>&1; then
     cd /opt/ecomgear/hosting-service
     pm2 start ecosystem.config.cjs 2>/dev/null || true
     pm2 save --force
-    echo "ROLLED BACK — check hosting-service.failed for the broken build"
+    echo "ROLLED BACK   check hosting-service.failed for the broken build"
     exit 1
 fi
 echo "  hosting service healthy"
@@ -894,23 +894,23 @@ REMOTE
 }
 
 # =========================================================================
-# VPS5 — Tenant Postgres (paid-user hosted DBs) — health check only
+# VPS5   Tenant Postgres (paid-user hosted DBs)   health check only
 # No application code from this repo is deployed here. VPS5 is a passive DB
 # endpoint (TENANT_DB_HOST) that VPS3's server.env points at for the hosted-
 # database feature. This target verifies the DB and its reload sidecar are
-# reachable — useful to run before/after a VPS3 deploy so a DB-side outage
+# reachable   useful to run before/after a VPS3 deploy so a DB-side outage
 # isn't mistaken for a VPS3 regression.
 # =========================================================================
 deploy_vps5() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  VPS5 — Tenant Postgres (health check only) → $VPS5_IP"
+    echo "  VPS5   Tenant Postgres (health check only) → $VPS5_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    info "No code is deployed to VPS5 from this repo — this only checks reachability."
+    info "No code is deployed to VPS5 from this repo   this only checks reachability."
 
     step "Checking Postgres port (${TENANT_DB_PORT:-5432})..."
     # Run the whole check as a heredoc script on the remote side rather than a
-    # one-line inline command — avoids fragile nested-quoting across the
+    # one-line inline command   avoids fragile nested-quoting across the
     # local shell → ssh → remote shell hops for $? and /dev/tcp redirection.
     TDB_PORT_CHECK="${TENANT_DB_PORT:-5432}"
     if ssh_vps5 "bash -s" << REMOTE
@@ -930,15 +930,15 @@ REMOTE
         step "Checking tenant-db reload sidecar ($TENANT_DB_RELOAD_URL)..."
         CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$TENANT_DB_RELOAD_URL" 2>/dev/null || echo "000")
         if [[ "$CODE" =~ ^(200|401|403|404)$ ]]; then
-            # Any of these means the sidecar process is up and answering HTTP —
+            # Any of these means the sidecar process is up and answering HTTP  
             # 401/403/404 are fine here since we're not authenticating, we just
             # want proof something is listening.
             success "Reload sidecar responding (HTTP $CODE)"
         else
-            echo "  ⚠ Reload sidecar did not respond as expected (HTTP $CODE) — may be down or misconfigured"
+            echo "  ⚠ Reload sidecar did not respond as expected (HTTP $CODE)   may be down or misconfigured"
         fi
     else
-        info "TENANT_DB_RELOAD_URL not set — skipping sidecar check"
+        info "TENANT_DB_RELOAD_URL not set   skipping sidecar check"
     fi
 
     success "VPS5 health check complete"

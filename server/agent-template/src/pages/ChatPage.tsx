@@ -106,7 +106,7 @@ export default function ChatPage() {
                 How can I help?
               </h2>
               <p className="text-sm max-w-sm" style={{ color: 'var(--muted)' }}>
-                Ask about your agents, review content, check run history, or take actions — I have access to your portal.
+                Ask about your agents, review content, check run history, or take actions   I have access to your portal.
               </p>
             </div>
 

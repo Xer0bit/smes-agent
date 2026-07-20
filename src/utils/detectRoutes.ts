@@ -1,7 +1,7 @@
 /**
  * Parses a generated project's src/App.tsx for declared <Route> entries.
  * Every generated app uses HashRouter with routes written as
- * <Route path="/product/:id" element={<ProductDetails />} /> — this is a
+ * <Route path="/product/:id" element={<ProductDetails />} />   this is a
  * regex extraction (matches the same style already used for symbol/import
  * graph parsing elsewhere in this codebase), not a full AST parse.
  */

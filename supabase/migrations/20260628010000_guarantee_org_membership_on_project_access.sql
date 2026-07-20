@@ -7,14 +7,14 @@
 -- project access but not appear in the org, and vice-versa.
 --
 -- Fix:
---   1. UNIQUE constraint on org_members(org_id, user_id) — enables safe
+--   1. UNIQUE constraint on org_members(org_id, user_id)   enables safe
 --      ON CONFLICT upserts and prevents duplicates.
---   2. TRIGGER on project_member_access INSERT/UPDATE — whenever a project
+--   2. TRIGGER on project_member_access INSERT/UPDATE   whenever a project
 --      access row is created, auto-add the user to the org as 'member'
 --      if not already present.
---   3. Update accept_project_invitation RPC — also adds user to org_members
+--   3. Update accept_project_invitation RPC   also adds user to org_members
 --      so the guarantee holds even before the trigger fires.
---   4. Retroactive fix — backfill org_members for existing project_member_access
+--   4. Retroactive fix   backfill org_members for existing project_member_access
 --      rows that are missing an org membership.
 -- =============================================================================
 

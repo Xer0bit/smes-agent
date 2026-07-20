@@ -207,7 +207,7 @@ export default function TeamAccess() {
         .update({ role: editRole })
         .eq('id', selected.member_id);
 
-      // 2. Sync project access — remove all org-project rows then re-add selected
+      // 2. Sync project access   remove all org-project rows then re-add selected
       const orgProjectIds = orgProjects.map(p => p.id);
       if (orgProjectIds.length > 0) {
         await supabase
@@ -406,7 +406,7 @@ export default function TeamAccess() {
                   </Select>
                   {editRole === 'admin' && (
                     <p className="mt-2 text-xs text-amber-500/80">
-                      Admins have full access to all projects and modules — permission settings below are overridden.
+                      Admins have full access to all projects and modules   permission settings below are overridden.
                     </p>
                   )}
                 </section>
@@ -463,7 +463,7 @@ export default function TeamAccess() {
                   {editRole !== 'admin' && (
                     <p className="mt-2 text-xs text-muted-foreground">
                       {editProjectIds.length === 0
-                        ? 'No projects — member can be assigned later.'
+                        ? 'No projects   member can be assigned later.'
                         : `${editProjectIds.length} of ${orgProjects.length} project${orgProjects.length !== 1 ? 's' : ''} selected`}
                     </p>
                   )}

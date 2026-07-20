@@ -166,7 +166,7 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
     // Re-check on sign-in/sign-out, and on a background 5-minute heartbeat.
     // IMPORTANT: Do NOT call supabase.auth.getSession() (or any auth method) directly
-    // inside the onAuthStateChange callback — it can trigger a TOKEN_REFRESHED event
+    // inside the onAuthStateChange callback   it can trigger a TOKEN_REFRESHED event
     // which would call refreshSubscription() again, creating an infinite refresh loop.
     // Use setTimeout(0) to defer the call outside the callback execution context.
     const { data: { subscription: authListener } } = supabase.auth.onAuthStateChange(
@@ -179,13 +179,13 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({ 
           resetState();
           setLoading(false);
         }
-        // TOKEN_REFRESHED: intentionally not handled — subscription data doesn't change
+        // TOKEN_REFRESHED: intentionally not handled   subscription data doesn't change
         // when the JWT rotates, and handling it would call getSession() inside the
         // callback, which is the root cause of the refresh-token loop on the admin page.
       }
     );
 
-    // Background heartbeat every 5 minutes (not 60s — reduces unnecessary edge-fn calls)
+    // Background heartbeat every 5 minutes (not 60s   reduces unnecessary edge-fn calls)
     const interval = setInterval(() => void refreshSubscription(), 5 * 60 * 1000);
 
     return () => {

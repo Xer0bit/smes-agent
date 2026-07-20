@@ -1,4 +1,4 @@
-// Ported verbatim from server/src/services/functionRunner.service.ts — same
+// Ported verbatim from server/src/services/functionRunner.service.ts   same
 // sandbox shape, same helpers, so relocating execution here changes nothing
 // about what a function can/can't do. Keep this file in sync with the source
 // if that one changes.
@@ -8,7 +8,7 @@ import { webcrypto } from 'node:crypto';
 const TIMEOUT_MS = 5_000;
 
 function buildNoDbHelper() {
-  const fail = () => { throw new Error('No database provisioned for this project — provision one in Database settings to use db.*'); };
+  const fail = () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); };
   return { select: fail, insert: fail, update: fail, delete: fail, rpc: fail };
 }
 
@@ -152,7 +152,7 @@ export async function runEdgeFunction(code, params, dbCtx, ecgCtx, secrets) {
     JSON, Math, Date, Object, Array, String, Number, Boolean, Promise, Error, Map, Set,
     parseInt, parseFloat, isNaN, isFinite, encodeURIComponent, decodeURIComponent, btoa, atob,
     // Hashing (password hashing, UUIDs) is near-universal in generated auth
-    // functions — without these, `new TextEncoder()` / `crypto.subtle.digest`
+    // functions   without these, `new TextEncoder()` / `crypto.subtle.digest`
     // crashed with "TextEncoder is not defined" (vm.createContext only
     // includes ECMAScript intrinsics, not Node's WHATWG globals).
     TextEncoder, TextDecoder, crypto: webcrypto,

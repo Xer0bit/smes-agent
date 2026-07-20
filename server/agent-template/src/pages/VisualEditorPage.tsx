@@ -5,7 +5,7 @@ import { ecgApi } from '../lib/ecgClient';
 
 // Canva-style canvas editor for a post visual: a background plus a flat list
 // of individually positioned objects (text/image/shape), each directly
-// draggable/resizable. Mirrors the eCG Agents Portal's own visual editor —
+// draggable/resizable. Mirrors the eCG Agents Portal's own visual editor  
 // same data model, ported here so dashboards built from this template get
 // the same capability against the same backend routes.
 

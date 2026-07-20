@@ -6,7 +6,7 @@ import { issueDashboardAccessToken } from '../utils/dashboardAccessToken.js';
 const router = Router();
 
 // POST /api/v1/ecg-access?projectId=
-// Anonymous — visitors to a deployed dashboard have no eComGear account.
+// Anonymous   visitors to a deployed dashboard have no eComGear account.
 // Issues a short-lived token for ecg-proxy/ecg-chat. If the project has no
 // password set, issues one unconditionally (dashboard is open by default).
 router.post('/', async (req: Request, res: Response): Promise<void> => {
@@ -26,7 +26,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   const salt = secrets['ECG_ACCESS_PASSWORD_SALT'];
 
   if (!storedHash || !salt) {
-    // No password configured — open dashboard.
+    // No password configured   open dashboard.
     res.json({ accessToken: issueDashboardAccessToken(projectId) });
     return;
   }

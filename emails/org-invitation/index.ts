@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Supabase Edge Function — organisation invitation
+// Supabase Edge Function   organisation invitation
 // Refactored version of supabase/functions/send-org-invitation using shared base
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { corsHeaders, json } from '../_shared/cors.ts';

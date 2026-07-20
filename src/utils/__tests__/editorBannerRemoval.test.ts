@@ -1,5 +1,5 @@
 /**
- * Bug 3 smoke test — static source analysis confirming the activity-message
+ * Bug 3 smoke test   static source analysis confirming the activity-message
  * banner and "Ask the assistant" placeholder text were removed from Editor.tsx.
  *
  * This is a grep/static check, not a component render test.

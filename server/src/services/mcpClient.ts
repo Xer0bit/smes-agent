@@ -16,7 +16,7 @@ export interface McpToolset {
 }
 
 // ponytail: per-request MCP connection, add a projectId-keyed cache if
-// listTools latency becomes measurable — one remote MCP server per chat
+// listTools latency becomes measurable   one remote MCP server per chat
 // request is negligible next to the LLM round-trips already in this loop.
 export async function getMcpTools(mcpUrl: string, mcpToken?: string): Promise<McpToolset | null> {
   try {

@@ -1,12 +1,12 @@
 /**
- * Failure memory — error signature -> verified fix.
+ * Failure memory   error signature -> verified fix.
  *
  * Checked before escalating any build error to the LLM repair agent
  * (agentLoopService.ts PASS -1, before the existing mechanical-repair PASS 0).
- * Only ever stores an outcome AFTER the build passed following that fix —
+ * Only ever stores an outcome AFTER the build passed following that fix  
  * grounded in a verified result, so it can't drift the way an LLM summary
  * would. Global across projects (not per-project) since the same error
- * classes — missing imports, bracket imbalance, wrong router API — recur
+ * classes   missing imports, bracket imbalance, wrong router API   recur
  * across independent projects built from the same base template.
  */
 
@@ -24,12 +24,12 @@ function getClient() {
   return createClient(supabaseUrl, supabaseKey);
 }
 
-const MAX_ENTRIES = 2000; // LRU cap — evict oldest by last_used_at beyond this
+const MAX_ENTRIES = 2000; // LRU cap   evict oldest by last_used_at beyond this
 
 // Fix content is replayed verbatim into OTHER projects, so it must never contain
 // anything that looks like a real credential (JWT, tenant schema name, API key).
 // A fix that legitimately needed one of these should reference the env var, not
-// a literal value — so rejecting on sight is safe and catches the leak class
+// a literal value   so rejecting on sight is safe and catches the leak class
 // where an LLM diff hardcodes a working secret instead of an env reference.
 const SECRET_SHAPE_RE = /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|tenant_[a-f0-9]{10,}/i;
 
@@ -102,7 +102,7 @@ export async function lookupFailureFix(rawError: string): Promise<FailureMemoryE
 
 /**
  * Store a fix that was JUST VERIFIED to clear this error (caller must confirm
- * the build passed after applying it — this function does not re-verify).
+ * the build passed after applying it   this function does not re-verify).
  */
 export async function storeFailureFix(rawError: string, fixKind: FixKind, fixContent: string): Promise<void> {
   const db = getClient();
@@ -128,7 +128,7 @@ export async function storeFailureFix(rawError: string, fixKind: FixKind, fixCon
     );
     logger.info(`[FailureMemory] Stored fix for signature: ${signature.slice(0, 80)}`);
 
-    // Best-effort LRU eviction — cheap count check, only runs the delete when over cap.
+    // Best-effort LRU eviction   cheap count check, only runs the delete when over cap.
     const { count } = await db.from('agent_failure_memory').select('id', { count: 'exact', head: true });
     if (typeof count === 'number' && count > MAX_ENTRIES) {
       const { data: oldest } = await db

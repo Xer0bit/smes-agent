@@ -171,7 +171,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
               .update({ last_dns_check: new Date().toISOString() })
               .eq('id', domain.id);
           }
-        } catch { /* silent — retry next interval */ }
+        } catch { /* silent   retry next interval */ }
       }
     }, 60000);
 
@@ -328,7 +328,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
         .single();
       
       if (error) {
-        // Unique constraint — domain in use by another project
+        // Unique constraint   domain in use by another project
         if (error.code === '23505') {
           toast({
             title: 'Domain already in use',
@@ -385,7 +385,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
       }));
 
       if (result.verified) {
-        // DNS verified — deploy files to VPS4 then activate the domain in Caddy
+        // DNS verified   deploy files to VPS4 then activate the domain in Caddy
         const slug = buildPublishSlug(projectName, projectId);
         const deploy = await domainService.deployToHosting(projectId, slug, workspaceFiles);
         if (!deploy.success) {
@@ -530,7 +530,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
     setDomainToRemove(null);
     setRemovingDomain(domainId);
     try {
-      // Remove from hosting service (best-effort — may not be activated yet)
+      // Remove from hosting service (best-effort   may not be activated yet)
       await domainService.removeHostingDomain(projectId, domainName);
       // Remove from DB
       const { error } = await supabase
@@ -562,7 +562,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
         <Card className="bg-workspace-surface border-indigo-500/30">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              Domain Management — Plan Upgrade Required
+              Domain Management   Plan Upgrade Required
             </CardTitle>
             <CardDescription>
               Upgrade from {planTier} to publish and manage project domains.
@@ -800,7 +800,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
                               <div className="space-y-2">
                                 <div className="flex items-center gap-2">
                                   <p className="text-xs font-medium text-white/45">
-                                    Step 1 — Point your domain to eCOMGear
+                                    Step 1   Point your domain to eCOMGear
                                   </p>
                                   {checkResult && (
                                     checkResult.pointingOk
@@ -843,7 +843,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
                                   }
                                   return rec && rec.found.length > 0 ? (
                                     <p className="text-[11px] text-destructive">
-                                      Found: {rec.found.join(', ')} — expected: {rec.expected}
+                                      Found: {rec.found.join(', ')}   expected: {rec.expected}
                                     </p>
                                   ) : (
                                     <p className="text-[11px] text-white/45">No A record found yet</p>
@@ -855,7 +855,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
                               <div className="space-y-2">
                                 <div className="flex items-center gap-2">
                                   <p className="text-xs font-medium text-white/45">
-                                    Step 2 — Verify domain ownership
+                                    Step 2   Verify domain ownership
                                   </p>
                                   {checkResult && (
                                     checkResult.txtOk
@@ -882,10 +882,10 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
                                   const rec = checkResult.detail?.txt_record;
                                   return rec && rec.found.length > 0 ? (
                                     <p className="text-[11px] text-destructive">
-                                      Found: {rec.found.join(', ')} — expected: {rec.expected}
+                                      Found: {rec.found.join(', ')}   expected: {rec.expected}
                                     </p>
                                   ) : (
-                                    <p className="text-[11px] text-white/45">TXT record not found yet — add it at your DNS provider</p>
+                                    <p className="text-[11px] text-white/45">TXT record not found yet   add it at your DNS provider</p>
                                   );
                                 })()}
                               </div>

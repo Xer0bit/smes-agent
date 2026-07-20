@@ -61,7 +61,7 @@ BEGIN
         );
     END IF;
 
-    -- Idempotent: already a member — still grant project access
+    -- Idempotent: already a member   still grant project access
     IF EXISTS (
         SELECT 1 FROM public.org_members
         WHERE org_id = v_inv.org_id AND user_id = v_uid

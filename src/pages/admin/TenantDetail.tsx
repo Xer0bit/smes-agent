@@ -198,7 +198,7 @@ export default function AdminTenantDetail() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-sm text-white font-medium">{server?.name || '—'}</div>
+            <div className="text-sm text-white font-medium">{server?.name || ' '}</div>
             <div className="text-xs text-gray-500 font-mono mt-1">{server?.public_ip}:{server?.api_port}</div>
           </CardContent>
         </Card>
@@ -219,8 +219,8 @@ export default function AdminTenantDetail() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-sm text-white font-mono">{tenant.db_name || '—'}</div>
-            <div className="text-xs text-gray-500 mt-1">Port: {tenant.postgres_port || '—'}</div>
+            <div className="text-sm text-white font-mono">{tenant.db_name || ' '}</div>
+            <div className="text-xs text-gray-500 mt-1">Port: {tenant.postgres_port || ' '}</div>
           </CardContent>
         </Card>
       </div>
@@ -250,7 +250,7 @@ export default function AdminTenantDetail() {
                     </div>
                     <div className="text-xs text-gray-400">Status: <span className={isRunning ? 'text-emerald-400' : 'text-red-400'}>{c?.status || 'unknown'}</span></div>
                     <div className="text-xs text-gray-500 mt-1">
-                      Port: {svc === 'postgres' ? tenant.postgres_port : svc === 'postgrest' ? tenant.postgrest_port : tenant.edge_runtime_port || '—'}
+                      Port: {svc === 'postgres' ? tenant.postgres_port : svc === 'postgrest' ? tenant.postgrest_port : tenant.edge_runtime_port || ' '}
                     </div>
                   </div>
                 );

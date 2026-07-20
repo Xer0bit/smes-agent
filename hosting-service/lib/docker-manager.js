@@ -1,10 +1,10 @@
 /**
- * Docker Manager — creates/removes/controls tenant Docker containers.
+ * Docker Manager   creates/removes/controls tenant Docker containers.
  *
  * Each tenant gets 3 containers:
- *   ecg-{shortId}-postgres     — Postgres 16
- *   ecg-{shortId}-postgrest    — PostgREST (REST API on top of Postgres)
- *   ecg-{shortId}-edge         — Supabase Edge Runtime (edge functions)
+ *   ecg-{shortId}-postgres       Postgres 16
+ *   ecg-{shortId}-postgrest      PostgREST (REST API on top of Postgres)
+ *   ecg-{shortId}-edge           Supabase Edge Runtime (edge functions)
  *
  * All containers share the bridge network `ecg-tenant-net`.
  */

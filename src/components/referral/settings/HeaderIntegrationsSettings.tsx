@@ -59,7 +59,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
     },
   });
 
-  // Only hydrate from the server once — react-query's background refetches
+  // Only hydrate from the server once   react-query's background refetches
   // (e.g. refetchOnWindowFocus) would otherwise land mid-edit and stomp
   // whatever the user just typed with the pre-edit DB row.
   const hydrated = useRef(false);
@@ -105,7 +105,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
   };
 
   // Blur (tab to next field, click away, close the settings panel) fires
-  // before most refresh/close paths — flushing here means a debounced edit
+  // before most refresh/close paths   flushing here means a debounced edit
   // isn't still sitting unsaved in the 800ms window when the page reloads.
   const flushSave = () => {
     if (autoSaveTimer.current) {
@@ -138,7 +138,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
         );
       const revisions = await revisionService.getRevisions(projectId, 1, 0);
       const latest = revisions[0];
-      if (!latest) throw new Error("No revisions found — generate the project first.");
+      if (!latest) throw new Error("No revisions found   generate the project first.");
       const files = await revisionService.getRevisionFilesForExport(projectId, latest.id);
       const indexHtml = files.find(f => f.path === "index.html")?.content;
       if (!indexHtml) throw new Error("index.html not found in the latest revision.");
@@ -179,7 +179,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
         <div className="flex items-center gap-1.5 text-[11px]">
           {syncStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3 w-3" />Auto-saved</span>}
           {syncStatus === 'live' && <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3 w-3" />Live on site</span>}
-          {syncStatus === 'synced' && <span className="flex items-center gap-1 text-amber-400"><CheckCircle2 className="h-3 w-3" />Saved — re-publish to go live</span>}
+          {syncStatus === 'synced' && <span className="flex items-center gap-1 text-amber-400"><CheckCircle2 className="h-3 w-3" />Saved   re-publish to go live</span>}
           {syncStatus === 'error' && <span className="flex items-center gap-1 text-red-400"><AlertCircle className="h-3 w-3" />Sync failed</span>}
           {(syncStatus === 'idle' || saving) && <span className="text-white/30">{saving ? 'Saving…' : 'Changes auto-save'}</span>}
         </div>
@@ -205,14 +205,14 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="ga-id" className="text-white/60 text-xs">Google Analytics — Measurement ID</Label>
+            <Label htmlFor="ga-id" className="text-white/60 text-xs">Google Analytics   Measurement ID</Label>
             <Input id="ga-id" value={data.ga_measurement_id} onChange={set("ga_measurement_id")} onBlur={flushSave}
               placeholder="G-XXXXXXXXXX"
               className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="gtm-id" className="text-white/60 text-xs">Google Tag Manager — Container ID</Label>
+            <Label htmlFor="gtm-id" className="text-white/60 text-xs">Google Tag Manager   Container ID</Label>
             <Input id="gtm-id" value={data.gtm_container_id} onChange={set("gtm_container_id")} onBlur={flushSave}
               placeholder="GTM-XXXXXXX"
               className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />
@@ -286,7 +286,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
           <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
           <div className="text-xs text-amber-300">
-            <p className="font-semibold">Integrations saved — re-publish to go live.</p>
+            <p className="font-semibold">Integrations saved   re-publish to go live.</p>
             <p className="text-amber-400/80 mt-0.5">Click <strong>Publish</strong> in the editor toolbar to rebuild and deploy with the new scripts.</p>
           </div>
         </div>

@@ -1,8 +1,8 @@
 version: '3.8'
 # =============================================================================
-# docker-compose.prod.yml — VPS2 (72.62.126.99, Indonesia)
+# docker-compose.prod.yml   VPS2 (72.62.126.99, Indonesia)
 # =============================================================================
-# VPS2 (72.62.126.99, Indonesia) — Preview Service
+# VPS2 (72.62.126.99, Indonesia)   Preview Service
 # Domain: preview.ecomgear.app  *.preview.ecomgear.app
 # =============================================================================
 services:

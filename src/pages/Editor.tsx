@@ -76,7 +76,7 @@ import { generatePreview } from "@/eCG/Preview/previewGenerator";
 import { checkPreviewHealth, updateDockerPreview, getPreviewUrl, handlePreviewSessionExpired } from "@/services/previewHealthService";
 import { validateAndFixFiles, getFixedContent } from "@/services/fileValidationService";
 import { QuotaLimitDialog } from "@/components/QuotaLimitDialog";
-import { useSubscription } from "@/contexts/SubscriptionContext"; // single source — hasFeature/tier/tierLabel now on context
+import { useSubscription } from "@/contexts/SubscriptionContext"; // single source   hasFeature/tier/tierLabel now on context
 import { domainService } from "@/eCG/Publish";
 import type { DomainConfiguration, DomainStatus } from "@/eCG/Publish/types";
 import { countNonEmptyLines } from "@/utils/ecoCounter";
@@ -314,7 +314,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
         files.push({ path: file.path, content: fallback.content });
         replaced++;
       } else {
-        // No previous version — keep the file as-is and let the preview service
+        // No previous version   keep the file as-is and let the preview service
         // handle it. Never replace with a generated fallback placeholder.
         files.push(file);
         missingFallbackPaths.push(normalizedPath);
@@ -381,9 +381,9 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
         files.push({ path: file.path, content: fallback.content });
         rolledBack++;
       } else {
-        // No previous version available — keep the current file as-is and let
+        // No previous version available   keep the current file as-is and let
         // the preview service handle validation. Never replace with a generated
-        // "temporarily recovered" placeholder — that confuses users.
+        // "temporarily recovered" placeholder   that confuses users.
         files.push(file);
         removed++;
         unresolved.push(normalizedPath);
@@ -428,7 +428,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
 
         // Auto-trigger repair when a runtime error with a file location arrives.
         // The chat panel's own isGenerating guard prevents double-firing.
-        // Only switch tab if this browser tab is in the foreground — prevents
+        // Only switch tab if this browser tab is in the foreground   prevents
         // background tabs from stealing focus away from the user's active tab.
         if (type === 'error') {
           const meta = event.data.log?.meta;
@@ -459,7 +459,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
         const underLimit = consecutiveRepairsRef.current < MAX_CONSECUTIVE_REPAIRS;
         const agentIdle = !isAgentRunningRef.current;
         // Skip auto-repair if the blank screen arrived shortly after a user-initiated
-        // navigation — this is a missing route (404), not a code error.
+        // navigation   this is a missing route (404), not a code error.
         const afterUserNav = now - lastUserNavigationAtRef.current < NAV_BLANK_GRACE_MS;
         if (cooldownOk && underLimit && agentIdle && !afterUserNav && document.visibilityState === 'visible') {
           lastAutoRepairAtRef.current = now;
@@ -467,12 +467,12 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
           isAgentRunningRef.current = true;
           pendingAutoRepairRef.current = true;
           setRepairPrompt(
-            'The preview screen is completely blank/white with no visible content. Investigate and fix the root cause — check for React rendering errors, a missing root element mount, white-on-white CSS, or an uncaught exception that prevented the app from mounting.'
+            'The preview screen is completely blank/white with no visible content. Investigate and fix the root cause   check for React rendering errors, a missing root element mount, white-on-white CSS, or an uncaught exception that prevented the app from mounting.'
           );
           setIsMinimized(false);
         }
       } else if (event.data?.type === 'preview-session-expired' && event.data?.projectId) {
-        // The preview iframe's session expired — renew and reload iframe
+        // The preview iframe's session expired   renew and reload iframe
         const expiredProjectId = event.data.projectId as string;
         handlePreviewSessionExpired(expiredProjectId).then(newUrl => {
           if (newUrl) {
@@ -481,7 +481,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
           }
         });
       } else if (event.data?.type === 'ecg-element-selected') {
-        // Click-to-select from inspect mode — scope the chat input to the
+        // Click-to-select from inspect mode   scope the chat input to the
         // clicked element so the next prompt has context (Lovable/v0 parity).
         const { selector, tagName, text } = event.data;
         const label = text ? `"${text.slice(0, 60)}"` : selector;
@@ -517,17 +517,17 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   // Local preview HTML (generated from workspace files)
   const [localPreviewHtml, setLocalPreviewHtml] = useState<string | null>(null);
 
-  // Track current path from preview iframe — initialised from URL so refresh restores it
+  // Track current path from preview iframe   initialised from URL so refresh restores it
   const [previewPath, setPreviewPath] = useState<string>(() => searchParams.get('page') || '/');
   const previewPathRef = useRef(previewPath);
   useEffect(() => { previewPathRef.current = previewPath; }, [previewPath]);
 
   // Ref so onGenerationComplete (stale closure) can check whether a preview URL
-  // exists before switching to the preview tab — avoids showing a blank tab.
+  // exists before switching to the preview tab   avoids showing a blank tab.
   const previewUrlRef = useRef<string | null>(null);
   useEffect(() => { previewUrlRef.current = previewUrl; }, [previewUrl]);
 
-  // Auto-repair loop guards — all refs so they stay current inside the message handler closure.
+  // Auto-repair loop guards   all refs so they stay current inside the message handler closure.
   // lastAutoRepairAtRef:       timestamp of the last auto-repair trigger (ms)
   // consecutiveRepairsRef:     how many auto-repairs have fired back-to-back without a clean render
   // isAgentRunningRef:         true while an agent generation is in progress
@@ -671,7 +671,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
 
 
 
-  // GitHub status — used by the header's GitHub button to decide whether to
+  // GitHub status   used by the header's GitHub button to decide whether to
   // open the quick-details popover or send the user to the connect screen.
   // Shares a query key with GitHubSettings.tsx so both read from the same
   // cache instead of each hitting the API independently.
@@ -780,7 +780,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
     // Optimistic update - add to local state immediately
     setMessages(prev => [...prev, systemMessage]);
 
-    // Save to database in background (skip for guests — no DB project row)
+    // Save to database in background (skip for guests   no DB project row)
     if (!isGuest) {
       try {
         await supabase.from("messages").insert({
@@ -833,7 +833,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
     const initializeEditor = async () => {
       if (!messagesLoadedRef.current) {
         if (isGuest) {
-          // Guests: skip DB loads — no project row, no messages, no user
+          // Guests: skip DB loads   no project row, no messages, no user
           setProject({ id: projectId, name: 'Guest Project', status: 'active' } as any);
           setMessages([]);
           setCurrentUser(null);
@@ -911,7 +911,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   }, [location.state]);
 
   const loadProject = async () => {
-    // Explicit column list — excludes latest_generated_code, which duplicates
+    // Explicit column list   excludes latest_generated_code, which duplicates
     // the entire project's file contents as a JSON-stringified blob (can be
     // tens of MB) and is write-only (kept for backwards compat, never read).
     const { data, error } = await supabase
@@ -972,7 +972,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
       }
     } catch (accessErr) {
       console.error('Failed to verify project access:', accessErr);
-      // Don't block on access check failure — fall through
+      // Don't block on access check failure   fall through
     }
 
     setProject(data);
@@ -1238,7 +1238,7 @@ export default defineConfig({
           setLatestPreviewUrl(latestRevision.preview_url);
         }
 
-        // Full file content is fetched on demand for just this one revision —
+        // Full file content is fetched on demand for just this one revision  
         // getRevisions() above intentionally omits generated_files/generated_code
         // (can be tens of MB per row) since list callers only need metadata.
         const latestFiles = await revisionService.getRevisionFiles(projectId!, latestRevision.id);
@@ -1338,16 +1338,16 @@ export default defineConfig({
 
   useEffect(() => {
     if (projectId) {
-      // Load from Storage first — one small request per file, and it's what
+      // Load from Storage first   one small request per file, and it's what
       // every active project already has fully populated. This used to be the
       // "slow" fallback, with the single revisions.generated_files row treated
-      // as the fast path — but that row holds the FULL content of every file
+      // as the fast path   but that row holds the FULL content of every file
       // in the project inlined into one JSONB column, with no way to fetch it
       // partially. For any project that's accumulated enough files/history,
       // that single "fast" query balloons into a multi-MB (sometimes 40MB+)
       // payload on every editor load. Only fall back to the heavy revision
       // blob if Storage is genuinely empty (true legacy projects that
-      // predate Storage-based file sync) — never load it just because a
+      // predate Storage-based file sync)   never load it just because a
       // revision happens to exist.
       loadWorkspaceFromDb().then(hasStorageFiles => {
         if (!hasStorageFiles) {
@@ -1554,7 +1554,7 @@ export default defineConfig({
 
   const loadMessages = async () => {
     if (isGuest) { setMessages([]); return; }
-    // Bounded fetch — this used to be an unbounded select("*") over the whole
+    // Bounded fetch   this used to be an unbounded select("*") over the whole
     // project's message history, re-downloading every message every time the
     // editor mounted. AgentChatPanel renders its own paginated history; this
     // state is only consulted for "has any user message" / "last user message"
@@ -1854,13 +1854,13 @@ export default defineConfig({
   // ── Initialise publish dialog state whenever it opens ─────────────────────
   useEffect(() => {
     if (showPublishDialog) {
-      // If already published — restore live URL so dialog shows "Your app is live"
+      // If already published   restore live URL so dialog shows "Your app is live"
       if (project?.published_url) {
         setPublishedUrl(project.published_url);
         if (project.published_subdomain) setPublishSlug(project.published_subdomain);
         return;
       }
-      // New publish — auto-fill slug from project name (skip temp names) and open edit mode
+      // New publish   auto-fill slug from project name (skip temp names) and open edit mode
       if (project?.name && !publishSlug) {
         const isTempName = /^(temp|project)-\d+$/.test(project.name);
         const auto = isTempName
@@ -1881,7 +1881,7 @@ export default defineConfig({
   // ── Debounced slug availability check ────────────────────────────────────
   useEffect(() => {
     if (!publishSlug || publishSlug.length < 3) { setSlugAvailable(null); return; }
-    // Own slug (re-publish) — always available
+    // Own slug (re-publish)   always available
     if (publishSlug === project?.published_subdomain) { setSlugAvailable(true); return; }
     setSlugChecking(true);
     setSlugAvailable(null);
@@ -1889,7 +1889,7 @@ export default defineConfig({
       const result = await domainService.checkSubdomainAvailability(publishSlug, projectId ?? undefined);
       if (!result.available && projectId) {
         // The slug may already belong to this project (e.g. after a re-publish).
-        // Do a secondary DB lookup — if this project owns it, treat as available.
+        // Do a secondary DB lookup   if this project owns it, treat as available.
         const { data: owner } = await supabase
           .from('projects')
           .select('id')
@@ -1985,7 +1985,7 @@ export default defineConfig({
     );
     const slug = publishSlug || project?.published_subdomain || project?.name?.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     if (!projectId || !slug || !normalizedDomain || !currentOrganizationId) {
-      toast.error('No custom domain found — connect a domain first from Settings.');
+      toast.error('No custom domain found   connect a domain first from Settings.');
       return;
     }
 
@@ -2075,7 +2075,7 @@ export default defineConfig({
         checkedAt: new Date().toLocaleTimeString(),
       });
     } catch {
-      toast.error('DNS check failed — hosting service unreachable');
+      toast.error('DNS check failed   hosting service unreachable');
     } finally {
       setIsCheckingDns(false);
     }
@@ -2638,7 +2638,7 @@ export default defineConfig({
           <div className="flex-1 overflow-hidden">
             {isGuest && (
               <div className="mx-3 mt-3 mb-1 rounded-lg bg-cyan-500/[0.06] px-3 py-2.5 text-xs text-cyan-200/80">
-                <span className="font-medium text-cyan-200">Guest</span> — Gemini &middot; {(() => {
+                <span className="font-medium text-cyan-200">Guest</span>   Gemini &middot; {(() => {
                   const used = parseInt(localStorage.getItem('ecg_guest_requests') || '0', 10);
                   return Math.max(0, 3 - used);
                 })()} of 3 left &middot;{' '}
@@ -2658,7 +2658,7 @@ export default defineConfig({
                 isAgentRunningRef.current = true;
               }}
               onFilesGenerated={(files, filesToDelete, previewPushed) => {
-                // Only normalize when there are actual writes — normalizeProjectFiles([])
+                // Only normalize when there are actual writes   normalizeProjectFiles([])
                 // injects boilerplate that would corrupt the workspace on delete-only runs.
                 const normalizedFiles = files.length > 0
                   ? normalizeProjectFiles(files.map(f => ({ path: f.path, content: f.content })))
@@ -2681,7 +2681,7 @@ export default defineConfig({
                 normalizedFiles.forEach((file) => {
                   writeFileWorkspace(file.path, file.content, 'ai');
                 });
-                // Save immediately after agent generation — do NOT rely on the debounced
+                // Save immediately after agent generation   do NOT rely on the debounced
                 // scheduleWorkspaceSave (1 s delay). If the user navigates away in under
                 // 1 s the debounced save never fires and files are lost on next reload.
                 saveWorkspaceToDb().catch((err) => {
@@ -2692,7 +2692,7 @@ export default defineConfig({
 
                 // Detect new page files to auto-navigate after agent adds routes.
                 // Compare against workspaceFiles (pre-agent state) to find truly new pages.
-                // Start from current path but never use /home — agents commonly
+                // Start from current path but never use /home   agents commonly
                 // generate a redirect from / to /home which gets stored as the
                 // current route, then breaks every subsequent build that lacks /home.
                 const rawTargetRoute = previewPathRef.current || '/';
@@ -2738,7 +2738,7 @@ export default defineConfig({
                     }
                     if (detectedRoute && detectedRoute !== '/') {
                       targetRoute = detectedRoute;
-                      console.log(`[Editor] New page detected (${componentName}) — navigating to ${targetRoute}`);
+                      console.log(`[Editor] New page detected (${componentName})   navigating to ${targetRoute}`);
                     }
                   }
 
@@ -2752,7 +2752,7 @@ export default defineConfig({
                     if (appTsx) {
                       const routePattern = new RegExp(`path=["']${targetRoute.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']`);
                       if (!routePattern.test(appTsx.content)) {
-                        console.log(`[Editor] targetRoute ${targetRoute} not found in App.tsx — falling back to /`);
+                        console.log(`[Editor] targetRoute ${targetRoute} not found in App.tsx   falling back to /`);
                         targetRoute = '/';
                       }
                     }
@@ -2760,9 +2760,9 @@ export default defineConfig({
                 }
 
                 if (previewPushed) {
-                  // Agent server already pushed files to preview service — just refresh the iframe.
+                  // Agent server already pushed files to preview service   just refresh the iframe.
                   // Skipping buildPreviewNow avoids the duplicate push that can cause 422 rejections.
-                  console.log('[Editor] Server already pushed preview — refreshing iframe');
+                  console.log('[Editor] Server already pushed preview   refreshing iframe');
                   const baseUrl = getPreviewUrl(projectId!);
                   setPreviewUrl(buildPreviewNavigationUrl(baseUrl, targetRoute, true));
                   setLatestPreviewUrl(baseUrl);
@@ -2789,10 +2789,10 @@ export default defineConfig({
                 lastAgentEcoRef.current = normalizedFiles.length > 0 ? 1 : 0;
               }}
               onGenerationComplete={() => {
-                // Agent finished — clear running flag.
+                // Agent finished   clear running flag.
                 // Only reset the repair counter when this was a USER-initiated generation.
                 // If it was an auto-repair run, preserve the counter so the MAX limit
-                // actually works — resetting after every repair is what caused the infinite loop.
+                // actually works   resetting after every repair is what caused the infinite loop.
                 isAgentRunningRef.current = false;
                 if (!pendingAutoRepairRef.current) {
                   consecutiveRepairsRef.current = 0;
@@ -2822,7 +2822,7 @@ export default defineConfig({
               }}
               onUsage={(_tokensUsed) => {
                 // Eco is optimistically applied in AgentChatPanel.handleSubmit (1 eco per request).
-                // tokensUsed here is raw LLM token count — not eco units.
+                // tokensUsed here is raw LLM token count   not eco units.
               }}
               onAgentStreamText={handleAgentStreamText}
               onAgentStreamClear={handleAgentStreamClear}
@@ -2941,7 +2941,7 @@ export default defineConfig({
               </Button>
               <Button variant="ghost" size="icon" disabled={showCodeViewer}
                 onClick={() => setInspectMode(!inspectMode)}
-                title={inspectMode ? "Exit inspect mode" : "Inspect — click an element in the preview to scope your next prompt"}
+                title={inspectMode ? "Exit inspect mode" : "Inspect   click an element in the preview to scope your next prompt"}
                 className={cn("h-7 w-7 rounded-md", inspectMode ? "bg-indigo-500/20 text-indigo-300" : "text-white/25 hover:text-white/70 hover:bg-white/[0.06] disabled:text-white/10 disabled:hover:bg-transparent")}>
                 <MousePointerClick className="h-3.5 w-3.5" />
               </Button>
@@ -3647,7 +3647,7 @@ export default defineConfig({
                     )}
                   </button>
                 ) : (
-                  /* Custom domain mode — full DNS flow */
+                  /* Custom domain mode   full DNS flow */
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <p className="text-xs font-medium text-gray-300">Custom domain</p>
@@ -3675,7 +3675,7 @@ export default defineConfig({
                         </p>
                         {customDomainConfig.a_record && (
                           <div className="space-y-1">
-                            <p className="text-gray-400 font-medium">Record 1 — A record</p>
+                            <p className="text-gray-400 font-medium">Record 1   A record</p>
                             <div className="grid grid-cols-[auto_1fr_auto] gap-x-2 gap-y-1 items-center bg-black/20 rounded p-2">
                               <span className="text-purple-300 font-mono">Type</span><span className="text-white font-mono">A</span><span/>
                               <span className="text-purple-300 font-mono">Host</span><span className="text-white font-mono break-all">{customDomainConfig.a_record.host}</span>
@@ -3687,7 +3687,7 @@ export default defineConfig({
                         )}
                         {customDomainConfig.cname_record && (
                           <div className="space-y-1">
-                            <p className="text-gray-400 font-medium">Record 1 — CNAME record</p>
+                            <p className="text-gray-400 font-medium">Record 1   CNAME record</p>
                             <div className="grid grid-cols-[auto_1fr_auto] gap-x-2 gap-y-1 items-center bg-black/20 rounded p-2">
                               <span className="text-purple-300 font-mono">Type</span><span className="text-white font-mono">CNAME</span><span/>
                               <span className="text-purple-300 font-mono">Host</span><span className="text-white font-mono break-all">{customDomainConfig.cname_record.host}</span>
@@ -3698,7 +3698,7 @@ export default defineConfig({
                           </div>
                         )}
                         <div className="space-y-1">
-                          <p className="text-gray-400 font-medium">Record 2 — TXT verification</p>
+                          <p className="text-gray-400 font-medium">Record 2   TXT verification</p>
                           <div className="grid grid-cols-[auto_1fr_auto] gap-x-2 gap-y-1 items-center bg-black/20 rounded p-2">
                             <span className="text-purple-300 font-mono">Type</span><span className="text-white font-mono">TXT</span><span/>
                             <span className="text-purple-300 font-mono">Host</span>
@@ -3729,7 +3729,7 @@ export default defineConfig({
                               <div>
                                 <span className="text-gray-300">{dnsCheckResult.aRecord ? 'A' : 'CNAME'} record</span>
                                 {rec.ok ? <p className="text-emerald-400 text-[10px]">Pointing to {rec.found.join(', ')}</p>
-                                  : <p className="text-red-400 text-[10px]">Expected: {rec.expected} — Found: {rec.found.join(', ') || 'nothing yet'}</p>}
+                                  : <p className="text-red-400 text-[10px]">Expected: {rec.expected}   Found: {rec.found.join(', ') || 'nothing yet'}</p>}
                               </div>
                             </div>
                           );
@@ -3740,12 +3740,12 @@ export default defineConfig({
                             <div>
                               <span className="text-gray-300">TXT at <span className="font-mono text-gray-400">{dnsCheckResult.txtRecord.host}</span></span>
                               {dnsCheckResult.txtOk ? <p className="text-emerald-400 text-[10px]">Verified ✓</p>
-                                : <p className="text-red-400 text-[10px]">Expected: <span className="font-mono">{dnsCheckResult.txtRecord.expected}</span> — Found: {dnsCheckResult.txtRecord.found.join(', ') || 'nothing yet'}</p>}
+                                : <p className="text-red-400 text-[10px]">Expected: <span className="font-mono">{dnsCheckResult.txtRecord.expected}</span>   Found: {dnsCheckResult.txtRecord.found.join(', ') || 'nothing yet'}</p>}
                             </div>
                           </div>
                         )}
                         {!dnsCheckResult.pointingOk && !dnsCheckResult.txtOk && (
-                          <p className="text-amber-400 text-[10px]">Neither record found yet — DNS may still be propagating (up to 48h)</p>
+                          <p className="text-amber-400 text-[10px]">Neither record found yet   DNS may still be propagating (up to 48h)</p>
                         )}
                       </div>
                     )}
@@ -3826,7 +3826,7 @@ export default defineConfig({
         {/* Cloud Dialog */}
         <CloudRegionDialog open={showCloudDialog} onOpenChange={setShowCloudDialog} onOpenSettings={openSettings} />
 
-        {/* Settings Dialog — opens in-place so the editor/preview stay mounted */}
+        {/* Settings Dialog   opens in-place so the editor/preview stay mounted */}
         {projectId && (
           <SettingsDialog
             open={settingsOpen}
@@ -3837,7 +3837,7 @@ export default defineConfig({
           />
         )}
 
-        {/* Version History Panel — plain fixed overlay, no Radix Dialog */}
+        {/* Version History Panel   plain fixed overlay, no Radix Dialog */}
         {showVersionHistory && (
           <>
             <div

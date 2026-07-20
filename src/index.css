@@ -67,21 +67,21 @@
      * Deliberately separate from the --surface and --background tokens above: those serve
      * the marketing/dashboard zone's lighter blue-dark theme (Auth, CTA,
      * dashboard pages). The editor/settings zone uses its own darker, neutral
-     * palette — closer to an IDE than a marketing page — which is correct as
+     * palette   closer to an IDE than a marketing page   which is correct as
      * a distinct visual zone, but had drifted into 6 near-identical hardcoded
      * hex shades across ~20 files (#0f0f12, #0a0a0d, #0b0b0d, #111318,
      * #0d0d0f, #09090b) instead of one formalized pair. These ARE the measured
-     * dominant shades already in use (#0f0f12 = 70 uses, #0a0a0d = 19 uses —
+     * dominant shades already in use (#0f0f12 = 70 uses, #0a0a0d = 19 uses  
      * not invented), just consolidated into named colors.
      *
      * Text (text-white/85, /60, /30) and borders (border-white/[0.07]) don't
-     * need new tokens — Tailwind's built-in white + opacity already covers
+     * need new tokens   Tailwind's built-in white + opacity already covers
      * them. Their drift is inconsistent VALUES (60 vs 70 vs 50, 0.07 vs 0.08),
-     * not a missing token — fixed by standardizing on 85/60/30 and 0.07 as the
+     * not a missing token   fixed by standardizing on 85/60/30 and 0.07 as the
      * canonical values during the sweep, not by adding more CSS variables.
      */
-    --workspace-surface: 240 9% 6%;          /* card/panel bg — was #0f0f12 */
-    --workspace-surface-recessed: 240 13% 4%; /* input/nested bg — was #0a0a0d */
+    --workspace-surface: 240 9% 6%;          /* card/panel bg   was #0f0f12 */
+    --workspace-surface-recessed: 240 13% 4%; /* input/nested bg   was #0a0a0d */
   }
 }
 
@@ -306,7 +306,7 @@
     100% { transform: scale(2.2);  opacity: 0; }
   }
 
-  /* Ticker — counts up nicely */
+  /* Ticker   counts up nicely */
   @keyframes count-in {
     from { opacity: 0; transform: translateY(4px) scale(0.9); }
     to   { opacity: 1; transform: translateY(0) scale(1); }
@@ -369,7 +369,7 @@
   .animate-panel-enter   { animation: panel-enter 0.3s cubic-bezier(0.16,1,0.3,1) both; }
   .animate-page-enter    { animation: page-enter 0.35s cubic-bezier(0.16,1,0.3,1) both; }
 
-  /* Streaming markdown — per-block premium reveal */
+  /* Streaming markdown   per-block premium reveal */
   .animate-fade-in-stream > div > p,
   .animate-fade-in-stream > div > ul,
   .animate-fade-in-stream > div > ol,

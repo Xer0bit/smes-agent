@@ -34,7 +34,7 @@ export interface Revision {
   revision_number: number;
   prompt: string;
   summary?: string;
-  // Not selected by getRevisions() (can be tens of MB per row) — fetch via
+  // Not selected by getRevisions() (can be tens of MB per row)   fetch via
   // getRevisionFiles()/getLegacyGeneratedCode() for one specific revision.
   generated_code?: string;
   generated_files?: GeneratedFiles;
@@ -187,10 +187,10 @@ export const revisionService = {
           const hash = await sha256Hex(file.content ?? '');
           const prev = prevByPath.get(file.path);
           if (prev && prev.hash === hash) {
-            // Identical content — point at the previous source revision
+            // Identical content   point at the previous source revision
             manifest.files.push({ path: file.path, hash, source_revision: prev.source_revision });
           } else {
-            // Changed or new — upload to this revision
+            // Changed or new   upload to this revision
             toUpload.push({ path: file.path, content: file.content ?? '' });
             manifest.files.push({ path: file.path, hash, source_revision: data.id });
           }
@@ -207,7 +207,7 @@ export const revisionService = {
         }
         console.log('[RevisionService] ✓ Changed files uploaded');
       } else {
-        console.log('[RevisionService] ✓ All files deduplicated — no upload needed');
+        console.log('[RevisionService] ✓ All files deduplicated   no upload needed');
       }
 
       // Store the manifest (small metadata only, no file content)
@@ -233,7 +233,7 @@ export const revisionService = {
    * Falls back to direct storage listing for legacy revisions without a manifest.
    */
   async getRevisionFiles(projectId: string, revisionId: string): Promise<{ path: string; content: string }[]> {
-    // Only fetch generated_files — generated_code is pulled separately by
+    // Only fetch generated_files   generated_code is pulled separately by
     // getLegacyGeneratedCode() as an absolute last-resort fallback, so we
     // never need both columns in one request.  Fetching both here was pulling
     // 35MB+ payloads for revisions with large inline JSONB content.
@@ -292,7 +292,7 @@ export const revisionService = {
 
   /**
    * Same as getRevisionFiles(), but binary assets (images, fonts, etc.) are
-   * read as base64 instead of .text() — .text() mangles binary bytes via
+   * read as base64 instead of .text()   .text() mangles binary bytes via
    * UTF-8 decoding, which is fine for the in-editor code view (nothing tries
    * to render those files as text there) but corrupts the file for any export
    * path that needs the original bytes back, like pushing to GitHub.
@@ -365,7 +365,7 @@ export const revisionService = {
 
   /**
    * List revisions for the history panel / "latest revision" lookups.
-   * Deliberately excludes generated_code/generated_files/file_attachments —
+   * Deliberately excludes generated_code/generated_files/file_attachments  
    * those can be tens of MB per row, and every list caller only needs
    * metadata + preview status. Callers that need actual file content must
    * fetch it per-revision via getRevisionFiles()/getLegacyGeneratedCode().

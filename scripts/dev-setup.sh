@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# EcomGear — Local Development Setup
+# EcomGear   Local Development Setup
 #
 # Wires up a local dev environment that uses production services:
 #   Supabase  → https://api.ecomgear.dev    (real DB, auth, edge functions)
@@ -29,7 +29,7 @@ echo ""
 
 # ── 1. Check prerequisites ────────────────────────────────────────────────────
 info "Checking prerequisites..."
-command -v node  >/dev/null 2>&1 || error "node not found — install Node.js 20+"
+command -v node  >/dev/null 2>&1 || error "node not found   install Node.js 20+"
 command -v npm   >/dev/null 2>&1 || error "npm not found"
 NODE_VER=$(node -e "process.stdout.write(process.versions.node.split('.')[0])")
 [ "$NODE_VER" -ge 20 ] || error "Node.js 20+ required (found v$(node -v))"
@@ -39,7 +39,7 @@ success "Node.js $(node -v)"
 if [ ! -f "$ROOT/.env.local" ]; then
     info "Creating .env.local from .env.development template..."
     cp "$ROOT/.env.development" "$ROOT/.env.local"
-    success ".env.local created — open it and fill in the blank values"
+    success ".env.local created   open it and fill in the blank values"
 else
     success ".env.local already exists"
 fi

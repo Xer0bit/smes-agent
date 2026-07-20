@@ -27,7 +27,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
     const [isLoading, setIsLoading] = useState(false);
     const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
-    // Subscribe to workspace changes — stable, runs once per manager instance
+    // Subscribe to workspace changes   stable, runs once per manager instance
     useEffect(() => {
         const unsubscribe = manager.subscribe((state) => {
             setFiles(new Map(state.files));
@@ -43,7 +43,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
             manager.setFiles(initialFiles);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [manager]); // intentionally omit initialFiles — only seed on mount
+    }, [manager]); // intentionally omit initialFiles   only seed on mount
 
     // File operations
     const readFile = useCallback((path: string): string | null => {

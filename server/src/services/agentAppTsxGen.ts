@@ -22,7 +22,7 @@ export function deriveRoutePath(componentName: string): string {
 /**
  * Deterministic codegen replacement for the LLM-based "App.tsx fix pass".
  * Given the list of page files on disk, generates a complete src/App.tsx
- * with HashRouter + a Route per page — zero LLM calls, zero wiring failures.
+ * with HashRouter + a Route per page   zero LLM calls, zero wiring failures.
  * Mirrors exactly the rules the old LLM prompt enforced (HashRouter only,
  * home page at "/", default export name === file basename).
  */
@@ -58,7 +58,7 @@ ${routes}
  * Given a file's content before and after a successful repair, extract the
  * minimal changed region as a SEARCH/REPLACE block for failure-memory storage.
  * Returns null when the change is too large/sprawling to be a useful template
- * for a DIFFERENT file's content (e.g. a full-file rewrite) — only tight,
+ * for a DIFFERENT file's content (e.g. a full-file rewrite)   only tight,
  * localized fixes are worth remembering as a reusable diff.
  */
 export function buildMinimalSearchReplace(before: string, after: string): string | null {
@@ -75,7 +75,7 @@ export function buildMinimalSearchReplace(before: string, after: string): string
   const searchLines = beforeLines.slice(start, endB + 1);
   const replaceLines = afterLines.slice(start, endA + 1);
 
-  // Reject sprawling changes — not a reusable template, and too large to be
+  // Reject sprawling changes   not a reusable template, and too large to be
   // worth matching verbatim against a different file's content later.
   if (searchLines.length === 0 || searchLines.length > 15 || replaceLines.length > 15) return null;
 

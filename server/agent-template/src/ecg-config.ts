@@ -1,5 +1,5 @@
 // This file is overwritten by the server at injection time with real values.
-// Do not edit — changes here will be lost when a dashboard is generated.
+// Do not edit   changes here will be lost when a dashboard is generated.
 export const ECG = {
   appName: 'Dashboard',
   logoUrl: '',

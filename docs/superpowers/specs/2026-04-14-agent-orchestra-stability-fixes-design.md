@@ -1,7 +1,7 @@
 # Agent Orchestra Production Stability Fixes
 
 **Date:** 2026-04-14  
-**Scope:** Production stability — memory leak and guest limit permanence  
+**Scope:** Production stability   memory leak and guest limit permanence  
 **Files touched:** `preview-service/server.js`, `supabase/migrations/`
 
 ---
@@ -10,9 +10,9 @@
 
 Two production stability issues identified in the agent orchestra review:
 
-1. **`activeServers` memory leak** — `getOrCreateServer()` creates new Vite instances without checking the cap first. `MAX_ACTIVE_SERVERS` is only enforced in `cleanupInactiveServers()` which runs every 5 minutes. Between cycles, the server count can exceed the cap, leading to OOM risk under concurrent load.
+1. **`activeServers` memory leak**   `getOrCreateServer()` creates new Vite instances without checking the cap first. `MAX_ACTIVE_SERVERS` is only enforced in `cleanupInactiveServers()` which runs every 5 minutes. Between cycles, the server count can exceed the cap, leading to OOM risk under concurrent load.
 
-2. **Guest limit is permanent** — `check_and_increment_guest_ai_request` RPC tracks a lifetime counter with no date reset. Guests hitting 3 requests are blocked forever, causing conversion loss and poor UX.
+2. **Guest limit is permanent**   `check_and_increment_guest_ai_request` RPC tracks a lifetime counter with no date reset. Guests hitting 3 requests are blocked forever, causing conversion loss and poor UX.
 
 ---
 
@@ -55,7 +55,7 @@ if (activeServers.size >= MAX_ACTIVE_SERVERS) {
 
 ### Behaviour
 - On every new server creation, if `size >= cap`, synchronously close the least-recently-used instance before proceeding.
-- Existing periodic cleanup (`cleanupInactiveServers` every 5 min) stays unchanged — it handles inactivity eviction independently.
+- Existing periodic cleanup (`cleanupInactiveServers` every 5 min) stays unchanged   it handles inactivity eviction independently.
 - Cold start cost on eviction: ~2–3s. Acceptable for production cap of 20.
 - Env var `MAX_ACTIVE_SERVERS` defaults: 20 prod, 50 dev.
 
@@ -95,17 +95,17 @@ Apply the same date-check logic so the UI shows `requests_used = 0` correctly af
 ### Behaviour
 - Guests get 3 requests per calendar day (UTC).
 - On the first request of a new day, the counter resets atomically within the same transaction as the increment.
-- RPC interface is unchanged — still returns `boolean`. No changes to `ai.routes.ts`.
+- RPC interface is unchanged   still returns `boolean`. No changes to `ai.routes.ts`.
 - Existing grants (`anon`, `authenticated`, `service_role`) are re-applied in the migration.
 
 ---
 
 ## What Is Not Changing
 
-- Rate limiting logic (`isRateLimited`) — unchanged
-- Guest model enforcement (Gemini-only) — unchanged
-- Concurrency fan-out logic — unchanged
-- Token budget, XML parsing, agent loop monolith — out of scope for this pass
+- Rate limiting logic (`isRateLimited`)   unchanged
+- Guest model enforcement (Gemini-only)   unchanged
+- Concurrency fan-out logic   unchanged
+- Token budget, XML parsing, agent loop monolith   out of scope for this pass
 
 ---
 

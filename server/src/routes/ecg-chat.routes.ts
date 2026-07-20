@@ -1,6 +1,6 @@
 // Agentic chat endpoint for the eCG dashboard template.
 // Wraps LLM tool-calling: AI can read portal data and take actions (approve/reject posts, etc.)
-// All portal calls are server-side using ECG_PORTAL_TOKEN — never exposed to the browser.
+// All portal calls are server-side using ECG_PORTAL_TOKEN   never exposed to the browser.
 
 import { Router, Response as ExpressResponse, NextFunction } from 'express';
 import { authMiddleware, dashboardAccessMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
@@ -44,7 +44,7 @@ async function portalCall(token: string, method: string, path: string, body?: un
   return r.json().catch(() => ({}));
 }
 
-// Tool definitions — one declarative table drives both the LLM-facing schema
+// Tool definitions   one declarative table drives both the LLM-facing schema
 // and the actual /v1/ecg/* call, so every capability the portal exposes is
 // reachable from chat with an accurate parameter schema (not a one-size-fits-all
 // {id,status} shape that silently couldn't carry richer args).
@@ -165,7 +165,7 @@ router.post('/', resolveAuth, async (req: AuthenticatedRequest, res: ExpressResp
   const { messages = [] } = req.body as { messages: { role: string; content: string }[] };
   const actions: { tool: string; result: unknown }[] = [];
 
-  // Agentic loop — max 4 iterations (3 tool calls + final answer)
+  // Agentic loop   max 4 iterations (3 tool calls + final answer)
   let loopMessages = [...messages];
   let finalText = '';
 
@@ -192,7 +192,7 @@ router.post('/', resolveAuth, async (req: AuthenticatedRequest, res: ExpressResp
       }
       finalText = data.content?.find((b: any) => b.type === 'text')?.text ?? 'No response.';
     } else if (provider === 'google') {
-      // Gemini doesn't support tool calling in same way — inject summary as context
+      // Gemini doesn't support tool calling in same way   inject summary as context
       const contextMsg = i === 0 && actions.length === 0
         ? loopMessages
         : [{ role: 'user', content: `Context:\n${JSON.stringify(actions)}\n\nUser: ${messages.at(-1)?.content}` }];

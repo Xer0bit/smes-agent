@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Supabase Edge Function — usage quota warning alert
+// Supabase Edge Function   usage quota warning alert
 // Trigger: when user hits 80% or 100% of their plan's message/token quota
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { corsHeaders, json } from '../_shared/email-cors.ts';
@@ -28,7 +28,7 @@ serve(async (req) => {
     if (typeof used !== 'number' || typeof limit !== 'number') {
       return json({ error: 'Missing used/limit numbers' }, 400);
     }
-    if (level !== '80' && level !== '100') return json({ error: 'Invalid level — use "80" or "100"' }, 400);
+    if (level !== '80' && level !== '100') return json({ error: 'Invalid level   use "80" or "100"' }, 400);
 
     const resendKey = Deno.env.get('RESEND_API_KEY');
     if (!resendKey) return json({ error: 'Email service not configured' }, 500);

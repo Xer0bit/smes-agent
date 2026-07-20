@@ -1,5 +1,5 @@
 /**
- * Port Allocator — assigns unique host ports per tenant.
+ * Port Allocator   assigns unique host ports per tenant.
  *
  * Strategy: base port + sequential offset.
  *   Postgres:      10000 + (offset * 10) + 0

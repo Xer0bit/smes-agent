@@ -30,7 +30,7 @@ CREATE TRIGGER edge_functions_updated_at
   BEFORE UPDATE ON edge_functions
   FOR EACH ROW EXECUTE FUNCTION update_edge_functions_updated_at();
 
--- invocation log (lightweight — only last 50 per function retained)
+-- invocation log (lightweight   only last 50 per function retained)
 CREATE TABLE IF NOT EXISTS edge_function_logs (
   id          UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id     UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,

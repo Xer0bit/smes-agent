@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import AdmZip from 'adm-zip';
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
-// pdf-parse is a CJS module — use createRequire so ESM can import it
+// pdf-parse is a CJS module   use createRequire so ESM can import it
 let _pdfParse: ((buf: Buffer) => Promise<{ text: string }>) | null = null;
-try { _pdfParse = _require('pdf-parse'); } catch { /* not installed — PDF text extraction disabled */ }
+try { _pdfParse = _require('pdf-parse'); } catch { /* not installed   PDF text extraction disabled */ }
 
 // ─── Document text extraction ────────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ export async function extractDocumentText(filePath: string, mimeType: string): P
     const zip = new AdmZip(filePath);
 
     if (mimeType.includes('wordprocessingml')) {
-      // .docx — main content is in word/document.xml
+      // .docx   main content is in word/document.xml
       const entry = zip.getEntry('word/document.xml');
       if (!entry) return null;
       const xml = entry.getData().toString('utf8');
@@ -48,7 +48,7 @@ export async function extractDocumentText(filePath: string, mimeType: string): P
     }
 
     if (mimeType.includes('spreadsheetml')) {
-      // .xlsx — shared strings in xl/sharedStrings.xml, sheet data in xl/worksheets/sheet1.xml
+      // .xlsx   shared strings in xl/sharedStrings.xml, sheet data in xl/worksheets/sheet1.xml
       const ssEntry = zip.getEntry('xl/sharedStrings.xml');
       const sheetEntry = zip.getEntry('xl/worksheets/sheet1.xml');
       const parts: string[] = [];
@@ -90,10 +90,10 @@ export function isReferenceScreenshot(analysis: string): boolean {
   const lower = analysis.toLowerCase();
   const screenshotSignals = /screenshot|application window|browser window|web app(?:lication)? interface|software interface|ui capture|dark.*ui|builder.*ui|editor.*ui|app.*screenshot|screen capture|dashboard.*screenshot|admin.*panel|dev.*tool|inspector|console.*log|page layout|full page|webpage/i;
   // Diagrams, wireframes, and annotated sketches shared to explain a concept/layout are
-  // reference-only — the agent should use them as visual context, not embed them as assets.
+  // reference-only   the agent should use them as visual context, not embed them as assets.
   const diagramSignals = /\bdiagram\b|\bwireframe\b|\bsketch\b|\bmockup\b|\bflowchart\b|\bannot(?:at|ation)\b|\barchitecture\b|\blayout.*(?:diagram|plan|sketch)\b|\bexplanat/i;
   // "standalone asset" is the literal classification term the vision prompt below
-  // asks the model to use (category 3) — it must be recognized here, not just
+  // asks the model to use (category 3)   it must be recognized here, not just
   // narrower phrasings a model might not happen to reach for on its own.
   const strongAssetSignals = /\b(?:standalone logo|isolated logo|transparent background|brand mark only|icon-only|favicon source|logo file|standalone asset)\b/i;
   // Screenshots and diagrams/wireframes are reference context; treat them as such unless
@@ -114,7 +114,7 @@ export function isScreenshotFilename(name: string): boolean {
 /**
  * Returns true when the user's prompt contains explicit intent to use an attached image
  * as a project asset (logo, hero, background, etc.).
- * When false and no vision confirmation, we treat the image as reference-only — safer default.
+ * When false and no vision confirmation, we treat the image as reference-only   safer default.
  */
 export function hasEmbedIntent(prompt: string): boolean {
   const explicitAssetAction = /\b(?:use|set|add|make|embed|insert|place|put|replace|swap|apply)\b[\s\S]{0,40}\b(?:logo|favicon|hero|banner|background(?: image)?|icon|image|photo|picture|avatar)\b/i;
@@ -133,7 +133,7 @@ export function supportsVision(providerName: string, modelId: string): boolean {
   if (providerName === 'deepseek') return false;
   if (providerName === 'anthropic') return true; // claude-3+ all support vision
   if (providerName === 'gemini')    return true;
-  // OpenAI — only vision-capable models
+  // OpenAI   only vision-capable models
   return modelId.includes('gpt-4o') || modelId.includes('vision');
 }
 
@@ -155,7 +155,7 @@ export async function analyzeImageWithVision(
             { type: 'image', image: imageBase64, mimeType } as any,
             {
               type: 'text',
-              text: 'Describe this image in 2-3 sentences for a web developer. First classify it as exactly one of: (1) screenshot/UI capture — a full application window or web page; (2) diagram/wireframe/sketch/annotation — a hand-drawn or diagrammatic layout, flowchart, architecture drawing, or annotated explanation; or (3) standalone asset — an isolated logo, icon, photo, or graphic intended for direct use in a project. IMPORTANT: if a screenshot contains logos within the UI, it is still a screenshot. Then state main colours, shapes/content, and its likely role in a web project.',
+              text: 'Describe this image in 2-3 sentences for a web developer. First classify it as exactly one of: (1) screenshot/UI capture   a full application window or web page; (2) diagram/wireframe/sketch/annotation   a hand-drawn or diagrammatic layout, flowchart, architecture drawing, or annotated explanation; or (3) standalone asset   an isolated logo, icon, photo, or graphic intended for direct use in a project. IMPORTANT: if a screenshot contains logos within the UI, it is still a screenshot. Then state main colours, shapes/content, and its likely role in a web project.',
             },
           ],
         },

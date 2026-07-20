@@ -8,7 +8,7 @@ const SNAPSHOT_SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.vite',
 const SNAPSHOT_INCLUDE_DOTFILES = new Set(['.env.local', '.env.production', '.gitignore', '.eslintrc.json', '.prettierrc']);
 
 /**
- * Persistent snapshots root — survives server restarts.
+ * Persistent snapshots root   survives server restarts.
  * Configurable via SNAPSHOTS_DIR env var (recommended on VPS: /var/www/ecomgear/snapshots).
  * Falls back to ~/.ecomgear/snapshots locally.
  */
@@ -24,7 +24,7 @@ export const MAX_SNAPSHOTS_PER_PROJECT = 20;
 
 /**
  * Atomically snapshot project files to snapshotDir.
- * Copies into a temp dir first, then renames — so a snapshot is either
+ * Copies into a temp dir first, then renames   so a snapshot is either
  * fully present or not present at all (no half-written states).
  */
 export async function snapshotProject(appPath: string, snapshotDir: string): Promise<void> {
@@ -49,7 +49,7 @@ export async function snapshotProject(appPath: string, snapshotDir: string): Pro
   };
   try {
     await copyDir(appPath, tmpDir);
-    // Atomic rename — the snapshot appears fully formed or not at all.
+    // Atomic rename   the snapshot appears fully formed or not at all.
     // If snapshotDir already exists (shouldn't), remove it first.
     try { await fs.promises.rm(snapshotDir, { recursive: true, force: true }); } catch { /* ok */ }
     await fs.promises.rename(tmpDir, snapshotDir);
@@ -121,7 +121,7 @@ export async function createGeminiRunCache(
           model: fullModelId,
           systemInstruction: { parts: [{ text: systemContent }] },
           contents: [],
-          ttl: '600s', // 10-minute TTL — enough for a 30-step run
+          ttl: '600s', // 10-minute TTL   enough for a 30-step run
         }),
         signal: AbortSignal.timeout(5000), // don't block the run if cache API is slow
       },

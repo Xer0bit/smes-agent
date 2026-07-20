@@ -22,7 +22,7 @@ export default function PostsCalendarPage() {
   }, []);
 
   // The proxy's planned-posts response only ever gives pending/approved/
-  // rejected (see DashboardPage.tsx's note on toDashboardPostStatus) —
+  // rejected (see DashboardPage.tsx's note on toDashboardPostStatus)  
   // "scheduled for" here means scheduledAt if set, otherwise the post is
   // grouped under its createdAt day instead of being dropped from the view.
   const postsByDay = useMemo(() => {

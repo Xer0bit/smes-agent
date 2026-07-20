@@ -1,5 +1,5 @@
 /**
- * delete_file tool — delete a file from the project workspace.
+ * delete_file tool   delete a file from the project workspace.
  * Ported from server/src/agent/.../tools/delete_file.ts (Electron removed).
  */
 import fs from 'node:fs';
@@ -12,13 +12,13 @@ const TEXT_EXTS = new Set(['.tsx', '.ts', '.jsx', '.js', '.css', '.scss', '.html
 const MAX_SCAN_FILES = 2000;
 
 /**
- * Finds other project files that still reference the file being deleted —
+ * Finds other project files that still reference the file being deleted  
  * either as a code import (`from './logo'`) or as an asset path string
  * (`src="/assets/logo.png"`, `url(...)`). Unlike write_file's reverseGraph
  * (which only tracks JS import statements), this also catches image/asset
- * references — the case that actually mattered here: deleting a logo image
+ * references   the case that actually mattered here: deleting a logo image
  * left Header.tsx's <img src="..."> pointing at a file that no longer
- * existed, with nothing telling the agent (or the user) that had happened —
+ * existed, with nothing telling the agent (or the user) that had happened  
  * the deletion "succeeded" while silently breaking the build.
  */
 function findReferences(appPath: string, deletedRelPath: string): string[] {
@@ -49,7 +49,7 @@ function findReferences(appPath: string, deletedRelPath: string): string[] {
         if (needles.some((n) => content.includes(n))) {
           referencing.push(relPath);
         }
-      } catch { /* unreadable — skip */ }
+      } catch { /* unreadable   skip */ }
     }
   };
   walk(appPath);
@@ -74,7 +74,7 @@ export const deleteFileTool: ToolDefinition<z.infer<typeof schema>> = {
       return `Warning: File does not exist: ${args.path}`;
     }
 
-    // Check for referencing files BEFORE deleting — not after, so the
+    // Check for referencing files BEFORE deleting   not after, so the
     // warning can still be acted on if the agent decides to back out.
     let references: string[] = [];
     try {
@@ -82,7 +82,7 @@ export const deleteFileTool: ToolDefinition<z.infer<typeof schema>> = {
       if (!stat.isDirectory()) {
         references = findReferences(ctx.appPath, args.path);
       }
-    } catch { /* best-effort — don't block the delete on a scan failure */ }
+    } catch { /* best-effort   don't block the delete on a scan failure */ }
 
     let deletedCount = 1;
     try {
@@ -114,7 +114,7 @@ export const deleteFileTool: ToolDefinition<z.infer<typeof schema>> = {
     const refWarning = references.length > 0
       ? `\n\n⚠️  STILL REFERENCED: ${references.length} file(s) reference "${args.path}" and will now be broken:\n` +
         references.map((r) => `   • ${r}`).join('\n') +
-        `\nUpdate or remove those references now, in this same turn — don't stop with a dangling reference. ` +
+        `\nUpdate or remove those references now, in this same turn   don't stop with a dangling reference. ` +
         `If the user is about to supply a replacement file, either wait to delete until you have it, or update ` +
         `the reference to point at the new file as part of this change instead of leaving it broken in between.`
       : '';

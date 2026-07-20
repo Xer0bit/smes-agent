@@ -1,5 +1,5 @@
 -- =============================================================================
--- Phase 4: Agency Features — Client Markup + Demo Booking
+-- Phase 4: Agency Features   Client Markup + Demo Booking
 -- =============================================================================
 
 -- ── 1. Client Markups (Agency-only) ──────────────────────────────────────────

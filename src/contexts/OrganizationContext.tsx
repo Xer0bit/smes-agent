@@ -133,7 +133,7 @@ export const OrganizationProvider: React.FC<{ children: React.ReactNode }> = ({ 
         ? nextOrganizationId
         : accessibleOrganizations[0]?.id || null;
 
-      // Pass user.id explicitly — currentUserId state may not have updated yet
+      // Pass user.id explicitly   currentUserId state may not have updated yet
       setCurrentOrganizationId(validatedOrganizationId, user.id);
     } catch (e) {
       console.warn('refreshOrganization exception', e);

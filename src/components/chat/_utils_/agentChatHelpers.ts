@@ -31,10 +31,10 @@ export interface Message {
   noChanges?: boolean;
   summary?: string;
   toolActivities?: ToolActivity[];
-  /** Step-by-step history of the run (file ops + narrative steps) — not persisted, live-session only. */
+  /** Step-by-step history of the run (file ops + narrative steps)   not persisted, live-session only. */
   steps?: StepEntry[];
   attachments?: ChatAttachment[];
-  /** Snapshot ID for rollback — present only on assistant messages after an agent run */
+  /** Snapshot ID for rollback   present only on assistant messages after an agent run */
   snapshotId?: string;
   /** Commands the agent suggested (e.g. 'restart', 'refresh', 'rebuild') */
   suggestedCommands?: string[];
@@ -151,7 +151,7 @@ export function stripEcomgearTags(raw: string): string {
   s = s.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, '');
   s = s.replace(/<tool_calls>[\s\S]*?<\/tool_calls>/gi, '');
   s = s.replace(/<invoke[\s\S]*?<\/invoke>/gi, '');
-  // Partial/unclosed internal block still streaming — truncate at start of tag
+  // Partial/unclosed internal block still streaming   truncate at start of tag
   const internalPartials: RegExp[] = [/<(?:antml:)?thinking>/i, /<function_calls[\s>]/i, /<tool_calls[\s>]/i, /<invoke[\s>]/i];
   for (const re of internalPartials) {
     const idx = s.search(re);

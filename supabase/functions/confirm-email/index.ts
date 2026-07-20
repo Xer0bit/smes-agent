@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Supabase Edge Function — email address confirmation
+// Supabase Edge Function   email address confirmation
 // Trigger: Supabase Auth "Confirm signup" hook or called directly after user registers
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { corsHeaders, json } from '../_shared/email-cors.ts';

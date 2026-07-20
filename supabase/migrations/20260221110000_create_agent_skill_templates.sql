@@ -84,17 +84,17 @@ VALUES
   '- Every function must have explicit parameter types and a return type annotation.\n'
   '- Prefer `interface` for object shapes and `type` for unions/intersections.\n'
   '- Use `const` by default; only `let` when a value will be reassigned.\n'
-  '- No implicit `undefined` — mark optional props explicitly with `?`.',
+  '- No implicit `undefined`   mark optional props explicitly with `?`.',
   'coding', true, 0
 ),
 (
   'React Best Practices',
   E'Follow modern React patterns in every component:\n'
-  '- Functional components only — no class components.\n'
+  '- Functional components only   no class components.\n'
   '- Use `useState`, `useEffect`, `useCallback`, `useMemo` correctly; do not over-memoize.\n'
-  '- Split large components — each component should do one thing and be under ~150 lines.\n'
+  '- Split large components   each component should do one thing and be under ~150 lines.\n'
   '- Use proper dependency arrays in hooks; never ignore exhaustive-deps lint warnings.\n'
-  '- Avoid `useEffect` for data derivable from existing state — derive it inline or with `useMemo`.\n'
+  '- Avoid `useEffect` for data derivable from existing state   derive it inline or with `useMemo`.\n'
   '- Always give list items stable `key` props (not array index).',
   'coding', true, 1
 ),
@@ -110,19 +110,19 @@ VALUES
 
 -- ── Design ──────────────────────────────────────────────────────────────────
 (
-  'Tailwind CSS — No Custom Classes',
+  'Tailwind CSS   No Custom Classes',
   E'Use Tailwind CSS utility classes exclusively for all styling:\n'
   '- Standard palette only: slate, gray, zinc, neutral, stone, red, orange, amber, yellow, lime, green, emerald, teal, cyan, sky, blue, indigo, violet, purple, fuchsia, pink, rose.\n'
-  '- Do NOT use arbitrary values like `bg-[#abc]` unless absolutely unavoidable — use the nearest Tailwind scale step instead.\n'
+  '- Do NOT use arbitrary values like `bg-[#abc]` unless absolutely unavoidable   use the nearest Tailwind scale step instead.\n'
   '- Do NOT create new CSS classes in `.css` files; use Tailwind utilities or @apply.\n'
   '- Do NOT use inline `style={{}}` props except for dynamic values that cannot be expressed as utilities.',
   'design', true, 3
 ),
 (
-  'Responsive Design — Mobile First',
+  'Responsive Design   Mobile First',
   E'Every layout must be fully responsive:\n'
   '- Start with the mobile layout (no prefix) then add `sm:`, `md:`, `lg:` breakpoints progressively.\n'
-  '- Use `flex` or `grid` for layout — never fixed pixel widths on containers.\n'
+  '- Use `flex` or `grid` for layout   never fixed pixel widths on containers.\n'
   '- Text must remain readable on a 375px viewport. Use `text-sm` minimum.\n'
   '- Touch targets (buttons, links) must be at least 44×44px (`min-h-11 min-w-11`).\n'
   '- Images must use `object-cover` or `object-contain` with explicit `aspect-ratio` constraints.',
@@ -134,7 +134,7 @@ VALUES
   '- Every interactive element (`<button>`, `<input>`, `<select>`) must have a visible or `sr-only` label.\n'
   '- Images require descriptive `alt` text. Decorative images use `alt=""`.\n'
   '- Use semantic HTML elements: `<nav>`, `<main>`, `<section>`, `<article>`, `<aside>`, `<header>`, `<footer>`.\n'
-  '- Focus indicators must remain visible — never `outline-none` without a custom focus style.\n'
+  '- Focus indicators must remain visible   never `outline-none` without a custom focus style.\n'
   '- Color is never the sole means of conveying information.',
   'design', true, 5
 ),
@@ -143,12 +143,12 @@ VALUES
 (
   'File & Folder Structure',
   E'Maintain a clean, predictable project structure:\n'
-  '- `src/components/` — reusable UI atoms and molecules.\n'
-  '- `src/pages/` — one file per route; thin, mostly composition.\n'
-  '- `src/hooks/` — custom React hooks; prefix every hook with `use`.\n'
-  '- `src/services/` — API calls and business logic; no JSX.\n'
-  '- `src/types/` — shared TypeScript interfaces and type aliases.\n'
-  '- `src/lib/` or `src/utils/` — pure utility functions with no side-effects.\n'
+  '- `src/components/`   reusable UI atoms and molecules.\n'
+  '- `src/pages/`   one file per route; thin, mostly composition.\n'
+  '- `src/hooks/`   custom React hooks; prefix every hook with `use`.\n'
+  '- `src/services/`   API calls and business logic; no JSX.\n'
+  '- `src/types/`   shared TypeScript interfaces and type aliases.\n'
+  '- `src/lib/` or `src/utils/`   pure utility functions with no side-effects.\n'
   '- Keep component files under 200 lines; extract sub-components when they grow.',
   'architecture', true, 6
 ),
@@ -156,7 +156,7 @@ VALUES
   'Separation of Concerns',
   E'Strictly separate UI, data, and business logic:\n'
   '- Components contain ONLY rendering logic and local UI state.\n'
-  '- Data fetching goes in custom hooks (`useData`) or a service layer — never directly in a component body.\n'
+  '- Data fetching goes in custom hooks (`useData`) or a service layer   never directly in a component body.\n'
   '- Business logic (validation, transformations) belongs in pure utility functions.\n'
   '- Database or API calls must never appear inside a React component render function.',
   'architecture', false, 7
@@ -179,7 +179,7 @@ VALUES
   'Code Quality & Comments',
   E'Write self-documenting, maintainable code:\n'
   '- Add a one-line JSDoc comment to every exported function describing what it does.\n'
-  '- Name variables and functions descriptively — no single-letter names except loop counters.\n'
+  '- Name variables and functions descriptively   no single-letter names except loop counters.\n'
   '- Keep functions short (under 40 lines); extract helpers for anything longer.\n'
   '- Remove all `console.log` debug statements before finalizing; use `console.warn`/`console.error` for legitimate runtime messages only.\n'
   '- Do NOT leave TODO/FIXME comments in generated code.',

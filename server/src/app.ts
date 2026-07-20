@@ -115,7 +115,7 @@ app.use(cors({
     maxAge: 86400,
 }));
 
-// Body parsing — limit raised for base64-encoded binary assets in sync payloads
+// Body parsing   limit raised for base64-encoded binary assets in sync payloads
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -133,14 +133,14 @@ app.get('/health', (req: Request, res: Response) => {
     });
 });
 
-// Rate-limit the AI agent-stream endpoint — 20 requests per user per minute
+// Rate-limit the AI agent-stream endpoint   20 requests per user per minute
 const aiRateLimiter = rateLimit({
     windowMs: 60_000,
     max: 20,
     keyGenerator: (req) => (req as AuthenticatedRequest).user?.id || req.ip || 'unknown',
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: 'Too many AI requests — please wait a moment' },
+    message: { error: 'Too many AI requests   please wait a moment' },
 });
 
 // Which route groups this process serves. VPS3 (gen server) runs SERVICE_ROLE=gen
@@ -170,7 +170,7 @@ if (servesApi) {
     app.use('/api/v1/header-integrations', headerIntegrationsRoutes);
     app.use('/api/v1/github', githubRoutes);
     app.use('/api/v1/stripe', stripeRoutes);
-    // Also mounted at the registered GitHub OAuth App callback path — the
+    // Also mounted at the registered GitHub OAuth App callback path   the
     // App's "Authorization callback URL" is /auth/github/callback, which
     // must match REDIRECT_URI in github.routes.ts exactly.
     app.use('/auth/github', githubRoutes);

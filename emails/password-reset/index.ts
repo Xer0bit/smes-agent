@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Supabase Edge Function — password reset email
+// Supabase Edge Function   password reset email
 // Trigger: Supabase Auth "Reset password" hook or called via auth route
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { corsHeaders, json } from '../_shared/cors.ts';
@@ -38,7 +38,7 @@ serve(async (req) => {
         </p>
       `,
       button: { label: 'Reset password', url: reset_url },
-      footer: 'This link expires in 1 hour. If you did not request a password reset, you can safely ignore this email — your password will not change.',
+      footer: 'This link expires in 1 hour. If you did not request a password reset, you can safely ignore this email   your password will not change.',
       frontendUrl,
     });
 

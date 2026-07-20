@@ -1,5 +1,5 @@
 /**
- * query_database tool — run SQL against the project's hosted PostgreSQL database
+ * query_database tool   run SQL against the project's hosted PostgreSQL database
  * with full (service-role) access: DDL for tables/migrations, DML for data.
  * See server/src/services/database.service.ts for the underlying provisioning/query logic.
  */
@@ -12,7 +12,7 @@ const MAX_CALLS_PER_RUN = 50;
 const schema = z.object({
   sql: z.string().describe(
     "One or more SQL statements to run against the project's hosted database. " +
-    "Separate multiple statements with semicolons — they all execute in one atomic transaction. " +
+    "Separate multiple statements with semicolons   they all execute in one atomic transaction. " +
     "Supports DDL (CREATE TABLE, ALTER TABLE, DROP TABLE, CREATE INDEX) and DML (SELECT, INSERT, UPDATE, DELETE, TRUNCATE)."
   ),
 });
@@ -22,7 +22,7 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
   description:
     "Run SQL against the project's hosted PostgreSQL database with full service-role access. " +
     "Supports any DDL or DML: create/alter/drop tables, insert/update/delete rows, run multi-statement migrations. " +
-    "Multiple statements separated by semicolons execute atomically — if one fails, all roll back. " +
+    "Multiple statements separated by semicolons execute atomically   if one fails, all roll back. " +
     "Returns the result of the last statement plus how many statements ran. " +
     "ALWAYS call get_database_schema first when you're unsure what tables exist. " +
     "If no database is provisioned, tell the user to provision one from Settings → Hosted Database.",

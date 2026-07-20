@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# VPS1 Setup — 156.67.218.75 (Singapore)
+# VPS1 Setup   156.67.218.75 (Singapore)
 # Roles: Main Frontend + Supabase self-hosted (Docker stack)
 # Domains: ecomgear.dev  www.ecomgear.dev  api.ecomgear.dev
 # Run as root: bash setup-vps1.sh

@@ -46,7 +46,7 @@ const DashboardSidebar = ({
   onToggleCollapse,
 }: DashboardSidebarProps) => {
   const { t } = useTranslation();
-  // Hovering over a collapsed sidebar temporarily expands it (common pattern —
+  // Hovering over a collapsed sidebar temporarily expands it (common pattern  
   // VS Code's activity bar, etc.) without touching the user's actual pinned
   // preference: move the mouse away and it collapses back to collapsedPref.
   // The manual toggle button still pins/unpins collapsedPref itself.
@@ -181,7 +181,7 @@ const DashboardSidebar = ({
             </Button>
             <Button onClick={onToggleCollapse} variant="ghost" size="sm" className={`hidden md:flex w-full rounded-md text-white/50 hover:bg-white/[0.04] hover:text-white/80 ${collapsed ? 'justify-center px-0' : 'justify-start'}`}>
               {/* Label reflects the PINNED preference, not the temporary hover-expanded
-                  view — otherwise clicking while hover-expanded would pin it open,
+                  view   otherwise clicking while hover-expanded would pin it open,
                   the opposite of what "Collapse" suggests. */}
               {collapsedPref ? (
                 <PanelLeftOpen className="h-4 w-4" />
@@ -230,7 +230,7 @@ export function DashboardLayout({ children }: { children?: React.ReactNode }) {
       navigate('/auth');
       return;
     }
-    // Block admins from the user panel — redirect them to the admin panel
+    // Block admins from the user panel   redirect them to the admin panel
     const { data: roleData } = await supabase
       .from('user_roles')
       .select('role')

@@ -70,7 +70,7 @@ function calcTrend(current: number, previous: number): string {
 }
 
 function timeAgo(iso: string | null): string {
-  if (!iso) return '—';
+  if (!iso) return ' ';
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'just now';
@@ -445,15 +445,15 @@ export default function AdminAIMetrics() {
                   const tier = (run.request_tier ?? '') as Tier;
                   const projectLabel =
                     (run.project_id && projectNames.get(run.project_id)) ||
-                    (run.project_id ? `${run.project_id.slice(0, 8)}…` : '—');
+                    (run.project_id ? `${run.project_id.slice(0, 8)}…` : ' ');
                   return (
                     <tr key={run.id} className="border-t border-white/[0.04]">
                       <td className="py-2.5 text-white/45 whitespace-nowrap">{timeAgo(run.created_at)}</td>
                       <td className="py-2.5 text-white/85 max-w-[140px] truncate" title={projectLabel}>
                         {projectLabel}
                       </td>
-                      <td className="py-2.5">{TIERS.includes(tier) ? <TierPill tier={tier} /> : <span className="text-white/30">—</span>}</td>
-                      <td className="py-2.5 text-white/60 font-mono text-xs">{run.model_used ?? '—'}</td>
+                      <td className="py-2.5">{TIERS.includes(tier) ? <TierPill tier={tier} /> : <span className="text-white/30"> </span>}</td>
+                      <td className="py-2.5 text-white/60 font-mono text-xs">{run.model_used ?? ' '}</td>
                       <td className="py-2.5 text-right text-white/60">{(run.tokens_used ?? 0).toLocaleString()}</td>
                       <td className="py-2.5 text-right text-white/60">{fmtMoney(run.estimated_cost_usd ?? 0, 4)}</td>
                       <td className="py-2.5 text-right text-white/60">{run.steps_taken ?? 0}</td>

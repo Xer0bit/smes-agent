@@ -1,4 +1,4 @@
-# Roles, Permissions & Billing — Full Implementation Design
+# Roles, Permissions & Billing   Full Implementation Design
 **Date:** 2026-04-04  
 **Status:** Approved
 
@@ -52,7 +52,7 @@ Full implementation of the role/permission/billing system as defined in the prod
 
 ---
 
-## Phase 1 — Tier Migration
+## Phase 1   Tier Migration
 **File:** `supabase/migrations/20260404000001_migrate_tiers_free_pro_agency.sql`
 
 - Create `plan_tier_v2` enum: `free | pro | agency`
@@ -62,7 +62,7 @@ Full implementation of the role/permission/billing system as defined in the prod
 
 ---
 
-## Phase 2 — Publish Lines + Referral System
+## Phase 2   Publish Lines + Referral System
 **File:** `supabase/migrations/20260404000002_publish_lines_referral.sql`
 
 ### Publish Lines
@@ -77,7 +77,7 @@ Full implementation of the role/permission/billing system as defined in the prod
 
 ---
 
-## Phase 3 — Guest Sessions + Share Preview Branding
+## Phase 3   Guest Sessions + Share Preview Branding
 **File:** `supabase/migrations/20260404000003_guest_sessions_branding.sql`
 
 ### Guest Sessions
@@ -94,7 +94,7 @@ Full implementation of the role/permission/billing system as defined in the prod
 
 ---
 
-## Phase 4 — Agency Features
+## Phase 4   Agency Features
 **File:** `supabase/migrations/20260404000004_agency_features.sql`
 
 ### Client Markup
@@ -109,7 +109,7 @@ Full implementation of the role/permission/billing system as defined in the prod
 
 ---
 
-## Phase 5 — Add-on Products
+## Phase 5   Add-on Products
 **File:** `supabase/migrations/20260404000005_addon_products.sql`
 
 ### Auto Pilot Mode ($98/mo)
@@ -125,7 +125,7 @@ Full implementation of the role/permission/billing system as defined in the prod
 - `integration_apps`: seeded catalog (Shopify, WooCommerce, Stripe, PayPal, etc.)
 - `project_integrations`: `id, project_id, integration_app_id, config (jsonb), enabled, installed_by`
 
-### Hosting — Ali Cloud
+### Hosting   Ali Cloud
 - `ali_cloud_configs`: `id, project_id, region, instance_id, endpoint_url, migration_status, migrated_at`
 - Migration flow: request → admin provisions → endpoint URL stored → project routes to Ali Cloud
 
@@ -134,7 +134,7 @@ Full implementation of the role/permission/billing system as defined in the prod
 
 ---
 
-## Phase 6 — RLS + Permission Updates
+## Phase 6   RLS + Permission Updates
 **File:** `supabase/migrations/20260404000006_rls_permissions_update.sql`
 
 - Update all RLS policies to use `pro | agency` instead of old tier names
@@ -147,15 +147,15 @@ Full implementation of the role/permission/billing system as defined in the prod
 ## Frontend Changes
 
 ### New/Updated Components
-- `PricingTiers.tsx` — updated with 3 tiers
-- `SharePreviewBranding.tsx` — conditional watermark/footer rendering
-- `ReferralDashboard.tsx` — referral code, earned lines display
-- `ClientMarkupSettings.tsx` — Agency: set per-client markup
-- `DemoRequestForm.tsx` — upgrade to Agency flow
-- `AutoPilotConfig.tsx` — enable/schedule/configure auto pilot
-- `EComGearCloudSettings.tsx` — enable cloud storage per project
-- `IntegrationAppMarketplace.tsx` — browse + install integrations
-- `AliCloudMigration.tsx` — request + track Ali Cloud migration
+- `PricingTiers.tsx`   updated with 3 tiers
+- `SharePreviewBranding.tsx`   conditional watermark/footer rendering
+- `ReferralDashboard.tsx`   referral code, earned lines display
+- `ClientMarkupSettings.tsx`   Agency: set per-client markup
+- `DemoRequestForm.tsx`   upgrade to Agency flow
+- `AutoPilotConfig.tsx`   enable/schedule/configure auto pilot
+- `EComGearCloudSettings.tsx`   enable cloud storage per project
+- `IntegrationAppMarketplace.tsx`   browse + install integrations
+- `AliCloudMigration.tsx`   request + track Ali Cloud migration
 
 ### Admin Panel Updates
 - Demo requests queue in `admin/Requests.tsx`
@@ -166,7 +166,7 @@ Full implementation of the role/permission/billing system as defined in the prod
 
 ## Implementation Order
 
-1. Phase 1 migration (tier rename) — unblocks everything
+1. Phase 1 migration (tier rename)   unblocks everything
 2. Phase 2 migration + publish lines enforcement
 3. Phase 3 migration + branding logic
 4. Phase 4 migration + agency UI

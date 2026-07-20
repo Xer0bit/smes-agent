@@ -36,7 +36,7 @@ function resolveAuth(req: AuthenticatedRequest, res: ExpressResponse, next: Next
 }
 
 // POST /api/v1/ecg-proxy/ai-chat
-// Server-side LLM call — reads ECG_LLM_* project secrets, never exposes keys to browser.
+// Server-side LLM call   reads ECG_LLM_* project secrets, never exposes keys to browser.
 router.post('/ai-chat', resolveAuth, async (req: AuthenticatedRequest, res: ExpressResponse): Promise<void> => {
   const projectId = (req.query.projectId ?? req.headers['x-project-id']) as string | undefined;
   if (!projectId) { res.status(400).json({ error: 'projectId required' }); return; }

@@ -1,13 +1,13 @@
-# eComGear Multi-Server Tenant Hosting — Setup & Admin Guide
+# eComGear Multi-Server Tenant Hosting   Setup & Admin Guide
 
 ## Overview
 
-The hosting system lets you publish eComGear projects as isolated, production-ready applications on VPS servers. Each tenant gets its own Postgres database, PostgREST API, Edge Runtime, and static file serving — all managed through Docker containers and Caddy reverse proxy.
+The hosting system lets you publish eComGear projects as isolated, production-ready applications on VPS servers. Each tenant gets its own Postgres database, PostgREST API, Edge Runtime, and static file serving   all managed through Docker containers and Caddy reverse proxy.
 
 **Architecture:**
-- **VPS1** — Frontend + Supabase (central DB with `hosting_servers`, `tenant_deployments`, `tenant_domains` tables)
-- **VPS4+** — Hosting nodes running the hosting-service (Express on port 4000), Docker, and Caddy
-- **Admin Panel** — React pages at `/admin/hosting`, `/admin/servers`, `/admin/tenant/:projectId`
+- **VPS1**   Frontend + Supabase (central DB with `hosting_servers`, `tenant_deployments`, `tenant_domains` tables)
+- **VPS4+**   Hosting nodes running the hosting-service (Express on port 4000), Docker, and Caddy
+- **Admin Panel**   React pages at `/admin/hosting`, `/admin/servers`, `/admin/tenant/:projectId`
 
 ---
 
@@ -16,7 +16,7 @@ The hosting system lets you publish eComGear projects as isolated, production-re
 ### Prerequisites
 - Node.js 20+
 - Supabase CLI (`supabase start` running locally)
-- Docker (optional — local dev mode dry-runs container commands)
+- Docker (optional   local dev mode dry-runs container commands)
 
 ### Quick Start
 
@@ -44,9 +44,9 @@ This starts Supabase, Preview Service, Hosting Service, and Frontend together.
 ### Local Dev Mode Behavior
 
 When `NODE_ENV=development` or `LOCAL_DEV=1`:
-- **Docker commands are dry-run** — logged to console but not executed
-- **Caddy reload is skipped** — config files are written but not loaded
-- **DNS verification auto-passes** — no real DNS checks needed
+- **Docker commands are dry-run**   logged to console but not executed
+- **Caddy reload is skipped**   config files are written but not loaded
+- **DNS verification auto-passes**   no real DNS checks needed
 - **Files stored in** `hosting-service/.local-sites/`
 - **Caddy configs written to** `hosting-service/.local-caddy/`
 
@@ -60,7 +60,7 @@ This is already configured in the existing `.env.local` file.
 
 ---
 
-## 2. Admin Panel — Server Management
+## 2. Admin Panel   Server Management
 
 Navigate to **Admin → Hosting Servers** (`/admin/servers`).
 
@@ -68,13 +68,13 @@ Navigate to **Admin → Hosting Servers** (`/admin/servers`).
 
 1. Click **"Add Server"**
 2. Fill in:
-   - **Name** — Friendly label (e.g., "VPS4-Singapore")
-   - **IP Address** — Public IP of the VPS
-   - **SSH User** — Usually `root`
-   - **Region** — Geographic region label
-   - **Service Port** — Hosting service port (default: 4000)
-   - **API Key** — The `HOSTING_DEPLOY_SECRET` configured on that VPS
-   - **Max Tenants** — Capacity limit (default: 20)
+   - **Name**   Friendly label (e.g., "VPS4-Singapore")
+   - **IP Address**   Public IP of the VPS
+   - **SSH User**   Usually `root`
+   - **Region**   Geographic region label
+   - **Service Port**   Hosting service port (default: 4000)
+   - **API Key**   The `HOSTING_DEPLOY_SECRET` configured on that VPS
+   - **Max Tenants**   Capacity limit (default: 20)
 3. Click **"Add Server"** to save
 
 The server record is stored in the `hosting_servers` table.
@@ -85,21 +85,21 @@ Click the **"Test"** button next to a server. This calls the `/health` endpoint 
 
 ### Server Status
 
-- **Online** — Accepting new tenant deployments
-- **Maintenance** — Existing tenants keep running, no new deployments
+- **Online**   Accepting new tenant deployments
+- **Maintenance**   Existing tenants keep running, no new deployments
 - Toggle via the status button on each server row
 
 ### Server Stats Dashboard
 
 The top cards show:
-- **Total Servers** — All registered hosting nodes
-- **Online** — Currently accepting deployments
-- **Total Tenants** — Sum of all deployed tenants across all nodes
-- **Available Slots** — Remaining capacity (`max_tenants - current_tenants`)
+- **Total Servers**   All registered hosting nodes
+- **Online**   Currently accepting deployments
+- **Total Tenants**   Sum of all deployed tenants across all nodes
+- **Available Slots**   Remaining capacity (`max_tenants - current_tenants`)
 
 ---
 
-## 3. Admin Panel — Tenant Deployments
+## 3. Admin Panel   Tenant Deployments
 
 Navigate to **Admin → Hosting** (`/admin/hosting`).
 
@@ -115,8 +115,8 @@ The Tenant Deployments table shows all published projects with:
 
 ### Suspend / Resume
 
-- **Suspend** — Stops all Docker containers for a tenant. Data is preserved. Click the pause button.
-- **Resume** — Restarts all containers. Click the play button.
+- **Suspend**   Stops all Docker containers for a tenant. Data is preserved. Click the pause button.
+- **Resume**   Restarts all containers. Click the play button.
 
 ### Tenant Detail
 
@@ -176,7 +176,7 @@ All endpoints require `Authorization: Bearer <HOSTING_DEPLOY_SECRET>` in product
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/health` | Health check — returns status, site count, domain count, uptime |
+| `GET` | `/health` | Health check   returns status, site count, domain count, uptime |
 | `POST` | `/tenants/provision` | Create new tenant stack (Postgres + PostgREST + Edge) |
 | `POST` | `/tenants/:id/deploy` | Deploy frontend files + optional edge functions |
 | `POST` | `/tenants/:id/suspend` | Stop all tenant containers |
@@ -263,7 +263,7 @@ This script installs Docker, Caddy, Node.js 20, PM2, pulls required images, conf
 
 3. **Test connectivity** using the Admin Panel "Test" button
 
-4. **Configure DNS** — Point `*.apps.ecomgear.app` (wildcard A record) to the VPS IP
+4. **Configure DNS**   Point `*.apps.ecomgear.app` (wildcard A record) to the VPS IP
 
 ---
 
@@ -376,7 +376,7 @@ run();
 | Migration not applied | `supabase db push --local` |
 | Hosting service auth rejected | Set `HOSTING_DEPLOY_SECRET` env var or use `NODE_ENV=development` |
 | Admin pages show empty tables | Ensure Supabase is running and migration was applied |
-| Container status shows empty in local dev | Expected — Docker commands are dry-run in dev mode |
+| Container status shows empty in local dev | Expected   Docker commands are dry-run in dev mode |
 | `Cannot find module './lib/docker-manager'` | Run `npm install` in `hosting-service/` |
 | VPS health check fails | Verify VPS IP, port 4000 open in firewall, hosting-service is running via PM2 |
 

@@ -40,7 +40,7 @@ export default function RunsPage() {
             <tbody>
               {rows.map((r: any) => (
                 <tr key={r.id} className="border-b last:border-0" style={{ borderColor: 'var(--border)' }}>
-                  <td className="px-4 py-3 font-medium" style={{ color: 'var(--text)' }}>{r.agentName ?? r.agent_name ?? '—'}</td>
+                  <td className="px-4 py-3 font-medium" style={{ color: 'var(--text)' }}>{r.agentName ?? r.agent_name ?? ' '}</td>
                   <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
                   {showDuration && (
                     <td className="px-4 py-3 tabular-nums" style={{ color: 'var(--muted)' }}>{dur(r.startedAt ?? r.started_at, r.completedAt ?? r.completed_at)}</td>

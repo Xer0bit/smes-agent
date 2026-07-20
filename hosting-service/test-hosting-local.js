@@ -38,7 +38,7 @@ async function json(url, opts = {}) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function run() {
-  console.log(`\n  Hosting Service Tests — ${BASE}\n`);
+  console.log(`\n  Hosting Service Tests   ${BASE}\n`);
 
   // ── Health & Config ────────────────────────────────────────────────────────
 
@@ -62,7 +62,7 @@ async function run() {
 
   // ── Deploy ─────────────────────────────────────────────────────────────────
 
-  await test('POST /deploy/:id — deploy a test site', async () => {
+  await test('POST /deploy/:id   deploy a test site', async () => {
     const { status, body } = await json(`${BASE}/deploy/${TEST_PROJECT_ID}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -81,7 +81,7 @@ async function run() {
     console.log(`      files=${body.filesWritten} url=${body.siteUrl || 'n/a'}`);
   });
 
-  await test('POST /deploy/:id — rejects invalid project ID', async () => {
+  await test('POST /deploy/:id   rejects invalid project ID', async () => {
     const { status } = await json(`${BASE}/deploy/not-a-uuid`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -90,7 +90,7 @@ async function run() {
     assert(status === 400, `Expected 400, got ${status}`);
   });
 
-  await test('POST /deploy/:id — rejects empty files', async () => {
+  await test('POST /deploy/:id   rejects empty files', async () => {
     const { status } = await json(`${BASE}/deploy/${TEST_PROJECT_ID}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -101,14 +101,14 @@ async function run() {
 
   // ── Site count goes up ─────────────────────────────────────────────────────
 
-  await test('GET /health — site count increased after deploy', async () => {
+  await test('GET /health   site count increased after deploy', async () => {
     const { body } = await json(`${BASE}/health`);
     assert(body.sites >= 1, `Expected sites >= 1, got ${body.sites}`);
   });
 
   // ── Local dev: browse deployed site ────────────────────────────────────────
 
-  await test('GET /sites/:id/index.html — serves deployed file', async () => {
+  await test('GET /sites/:id/index.html   serves deployed file', async () => {
     const res = await fetch(`${BASE}/sites/${TEST_PROJECT_ID}/index.html`);
     assert(res.status === 200, `Expected 200, got ${res.status}`);
     const text = await res.text();
@@ -117,7 +117,7 @@ async function run() {
 
   // ── DNS Verification (auto-verified in local dev) ──────────────────────────
 
-  await test('POST /domains/verify — auto-verifies in local dev', async () => {
+  await test('POST /domains/verify   auto-verifies in local dev', async () => {
     const { status, body } = await json(`${BASE}/domains/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -129,7 +129,7 @@ async function run() {
     assert(body.txt_record.ok === true, 'Expected txt_record.ok=true');
   });
 
-  await test('POST /domains/verify — rejects invalid domain', async () => {
+  await test('POST /domains/verify   rejects invalid domain', async () => {
     const { status } = await json(`${BASE}/domains/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -140,7 +140,7 @@ async function run() {
 
   // ── Activate Domain ────────────────────────────────────────────────────────
 
-  await test('POST /domains/activate — activates domain for deployed project', async () => {
+  await test('POST /domains/activate   activates domain for deployed project', async () => {
     const { status, body } = await json(`${BASE}/domains/activate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -151,7 +151,7 @@ async function run() {
     assert(body.domain === 'myapp.example.com', 'Domain mismatch');
   });
 
-  await test('POST /domains/activate — rejects non-deployed project', async () => {
+  await test('POST /domains/activate   rejects non-deployed project', async () => {
     const fakeId = '99999999-0000-4000-a000-000000000099';
     const { status } = await json(`${BASE}/domains/activate`, {
       method: 'POST',
@@ -163,7 +163,7 @@ async function run() {
 
   // ── List Domains ───────────────────────────────────────────────────────────
 
-  await test('GET /domains/list — shows activated domain', async () => {
+  await test('GET /domains/list   shows activated domain', async () => {
     const { status, body } = await json(`${BASE}/domains/list`);
     assert(status === 200, `Expected 200, got ${status}`);
     const found = body.domains.some(d => d.domain === 'myapp.example.com');
@@ -173,7 +173,7 @@ async function run() {
 
   // ── Remove Domain ──────────────────────────────────────────────────────────
 
-  await test('DELETE /domains/:domain — removes domain', async () => {
+  await test('DELETE /domains/:domain   removes domain', async () => {
     const { status, body } = await json(`${BASE}/domains/myapp.example.com`, {
       method: 'DELETE',
     });
@@ -181,7 +181,7 @@ async function run() {
     assert(body.success === true, 'Expected success=true');
   });
 
-  await test('GET /domains/list — domain removed', async () => {
+  await test('GET /domains/list   domain removed', async () => {
     const { body } = await json(`${BASE}/domains/list`);
     const found = body.domains.some(d => d.domain === 'myapp.example.com');
     assert(!found, 'Domain should have been removed');
@@ -189,7 +189,7 @@ async function run() {
 
   // ── Remove Deploy ──────────────────────────────────────────────────────────
 
-  await test('DELETE /deploy/:id — removes deployment', async () => {
+  await test('DELETE /deploy/:id   removes deployment', async () => {
     const { status, body } = await json(`${BASE}/deploy/${TEST_PROJECT_ID}`, {
       method: 'DELETE',
     });
@@ -197,7 +197,7 @@ async function run() {
     assert(body.success === true, 'Expected success=true');
   });
 
-  await test('GET /health — site count back to 0 (or previous)', async () => {
+  await test('GET /health   site count back to 0 (or previous)', async () => {
     const { body } = await json(`${BASE}/health`);
     // The test site should be gone
     console.log(`      sites remaining: ${body.sites}`);
@@ -205,7 +205,7 @@ async function run() {
 
   // ── Path traversal protection ──────────────────────────────────────────────
 
-  await test('POST /deploy — sanitizes directory traversal in file paths', async () => {
+  await test('POST /deploy   sanitizes directory traversal in file paths', async () => {
     const { status, body } = await json(`${BASE}/deploy/${TEST_PROJECT_ID}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -217,7 +217,7 @@ async function run() {
       }),
     });
     assert(status === 200, `Expected 200, got ${status}`);
-    // Traversal prefix is stripped → becomes "etc/passwd" inside sandbox — both files written safely
+    // Traversal prefix is stripped → becomes "etc/passwd" inside sandbox   both files written safely
     assert(body.filesWritten === 2, `Expected 2 sanitized files, got ${body.filesWritten}`);
   });
 

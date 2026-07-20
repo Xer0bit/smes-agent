@@ -1,5 +1,5 @@
 /**
- * write_file tool — create or overwrite a file in the project workspace.
+ * write_file tool   create or overwrite a file in the project workspace.
  * Ported from server/src/agent/.../tools/write_file.ts (Electron removed).
  */
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ import ts from 'typescript';
 import { ToolDefinition, AgentContext, safeJoin, escapeXmlAttr } from './types.js';
 import { sanitizeFileContent, checkSyntaxBalance } from './sanitize.js';
 
-// Paths that are pre-seeded by the base template — re-writing them wastes a step.
+// Paths that are pre-seeded by the base template   re-writing them wastes a step.
 // These are always correct in a fresh project; skip silently if already on disk.
 const PRE_BUILT_SCAFFOLD_PATHS = new Set([
   'src/lib/utils.ts',
@@ -48,10 +48,10 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
   description:
     'Create a NEW file or COMPLETELY rebuild an existing file from scratch. ' +
     '**EXISTING FILES: use edit_file instead.** Only call write_file on an existing file when you are ' +
-    'rebuilding its entire structure — not when adding a feature, fixing a bug, or changing a few lines. ' +
-    'For any targeted change to an existing file, use edit_file with SEARCH/REPLACE blocks — it touches ' +
+    'rebuilding its entire structure   not when adding a feature, fixing a bug, or changing a few lines. ' +
+    'For any targeted change to an existing file, use edit_file with SEARCH/REPLACE blocks   it touches ' +
     'only what needs to change and cannot accidentally delete unread code. ' +
-    'The content must be ONLY valid source code — never include chat text, markdown, or XML tags inside.',
+    'The content must be ONLY valid source code   never include chat text, markdown, or XML tags inside.',
   inputSchema: schema,
   modifiesState: true,
   getConsentPreview: (args) => `Write to ${args.path}`,
@@ -62,7 +62,7 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
     const topSegment = normalizedPath.split('/')[0];
     const BLOCKED_DIRS = ['node_modules', '.git', 'dist', 'build', '.cache', '.vite-cache', '.src-snapshot'];
     if (BLOCKED_DIRS.includes(topSegment)) {
-      return `ERROR: Cannot write to "${args.path}" — writes to "${topSegment}/" are not permitted. ` +
+      return `ERROR: Cannot write to "${args.path}"   writes to "${topSegment}/" are not permitted. ` +
         `Only src/, public/, and root config files are writable.`;
     }
 
@@ -73,17 +73,17 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
       const fullPathCheck = safeJoin(ctx.appPath, normalizedPath);
       if (fs.existsSync(fullPathCheck)) {
         return (
-          `⛔ SKIPPED — ${args.path} is a pre-built scaffold file already present on disk. ` +
-          `Do NOT write this file again — it wastes a step and overwrites working code. ` +
+          `⛔ SKIPPED   ${args.path} is a pre-built scaffold file already present on disk. ` +
+          `Do NOT write this file again   it wastes a step and overwrites working code. ` +
           `Import from it directly and move on to the next file in your plan.`
         );
       }
     }
 
-    // ── Sandbox: file size cap (500 KB) — prevents runaway large file writes ──────
+    // ── Sandbox: file size cap (500 KB)   prevents runaway large file writes ──────
     const MAX_FILE_BYTES = 500 * 1024;
     if (Buffer.byteLength(args.content, 'utf8') > MAX_FILE_BYTES) {
-      return `ERROR: Cannot write ${args.path} — content exceeds the 500 KB per-file limit ` +
+      return `ERROR: Cannot write ${args.path}   content exceeds the 500 KB per-file limit ` +
         `(${Math.round(Buffer.byteLength(args.content, 'utf8') / 1024)} KB). ` +
         `Split this into multiple smaller files.`;
     }
@@ -97,7 +97,7 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
       try {
         JSON.parse(args.content);
       } catch (e: unknown) {
-        return `ERROR: Cannot write ${args.path} — content is not valid JSON: ${e instanceof Error ? e.message : String(e)}. Please provide valid JSON content.`;
+        return `ERROR: Cannot write ${args.path}   content is not valid JSON: ${e instanceof Error ? e.message : String(e)}. Please provide valid JSON content.`;
       }
     }
 
@@ -110,14 +110,14 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
       const balance = checkSyntaxBalance(content);
       if (balance.score >= 1) {
         return (
-          `ERROR: Cannot write ${args.path} — code has unbalanced brackets ` +
+          `ERROR: Cannot write ${args.path}   code has unbalanced brackets ` +
           `(${balance.braces} net braces, ${balance.parens} net parens, ${balance.brackets} net square brackets, score ${balance.score}). ` +
           `The file was NOT written. Your code is incomplete or has extra closing brackets. ` +
           `Please rewrite the COMPLETE file with properly balanced brackets and try again. Keep it under 200 lines.`
         );
       }
 
-      // Gate 2: TypeScript syntax check — catches JSX errors that bracket counting misses
+      // Gate 2: TypeScript syntax check   catches JSX errors that bracket counting misses
       // (unclosed JSX tags, mismatched tags, invalid expressions, etc.)
       try {
         const isJsx = /\.tsx$/.test(args.path);
@@ -136,13 +136,13 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
             .map(d => ts.flattenDiagnosticMessageText(d.messageText, ' '))
             .join('; ');
           return (
-            `ERROR: Cannot write ${args.path} — TypeScript/JSX syntax error: ${errors}. ` +
+            `ERROR: Cannot write ${args.path}   TypeScript/JSX syntax error: ${errors}. ` +
             `The file was NOT written. Common causes: unclosed JSX tags, mismatched tags, missing return expression. ` +
             `Rewrite the COMPLETE file with valid syntax.`
           );
         }
       } catch (_) {
-        // transpileModule exceptions are rare — don't block writes on them
+        // transpileModule exceptions are rare   don't block writes on them
       }
     }
 
@@ -197,7 +197,7 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
     }
 
     if (importWarnings.length > 0) {
-      const warnNote = `\n\n⚠️  ACTION REQUIRED — MISSING DEPENDENCIES:\n` +
+      const warnNote = `\n\n⚠️  ACTION REQUIRED   MISSING DEPENDENCIES:\n` +
         importWarnings.map(p => `  • ${p}  ← does not exist on disk`).join('\n') +
         `\n\nYou MUST write these files NEXT before calling get_build_errors. ` +
         `If you do not, the build will fail with "Cannot find module" errors.`;

@@ -5,7 +5,7 @@ RUN apk add --no-cache git python3 make g++
 
 WORKDIR /app
 
-# Copy package files first — Docker layer cache means npm install only
+# Copy package files first   Docker layer cache means npm install only
 # re-runs when package.json actually changes.
 COPY package*.json ./
 

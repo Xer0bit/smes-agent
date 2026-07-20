@@ -51,7 +51,7 @@ serve(async (req) => {
         const supabase = createClient(supabaseUrl, supabaseKey);
 
         // ── Idempotency guard ─────────────────────────────────────────────────
-        // Check ANY org membership (not just 'admin') — the fallback path in
+        // Check ANY org membership (not just 'admin')   the fallback path in
         // AuthCallback.tsx creates rows with role='owner', which the old
         // .eq('role','admin') check would miss, causing a new org on every login.
         const { data: existingMember } = await supabase
@@ -82,7 +82,7 @@ serve(async (req) => {
                 .limit(1)
                 .maybeSingle();
 
-            console.log('Signup already complete for user:', user_id, '— skipping org creation');
+            console.log('Signup already complete for user:', user_id, '  skipping org creation');
             return jsonResponse({
                     success: true,
                     organization_id: resolvedOrgId,

@@ -55,7 +55,7 @@ export class ProjectService {
         }
 
         logger.info(`Project created successfully: ${projectId}`);
-        // Fire-and-forget — auth (VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY) must work
+        // Fire-and-forget   auth (VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY) must work
         // from the very first build, not only after the owner visits Database settings.
         syncPlatformAuthSecrets(projectId).catch(() => {});
         return data as Project;
@@ -110,7 +110,7 @@ export class ProjectService {
     }
 
     // ── Role resolution ──────────────────────────────────────────────────────
-    // getProject() above is a binary all-or-nothing gate — every accepted
+    // getProject() above is a binary all-or-nothing gate   every accepted
     // collaborator got full access regardless of the Editor/Viewer/Client role
     // they were invited with, because nothing ever read project_member_access's
     // role column (which didn't even exist until this was added). Callers that
@@ -152,7 +152,7 @@ export class ProjectService {
     }
 
     // Write-gate for settings/deploy endpoints (SEO, header integrations, DB,
-    // hosting/domains) — these previously only called getProject(), which is
+    // hosting/domains)   these previously only called getProject(), which is
     // the binary "has any access" check above, so a 'viewer' or 'client'
     // collaborator could inject scripts / edit DB / change domains same as an
     // owner. Throws the same generic 'Unauthorized' message getProject() uses,
@@ -280,7 +280,7 @@ export class ProjectService {
 
         // 2. Delete everything via a single atomic SQL transaction.
         //    The delete_project_cascade() SECURITY DEFINER function handles all 41 FK tables
-        //    in the correct order — non-CASCADE tables explicitly, CASCADE tables automatically.
+        //    in the correct order   non-CASCADE tables explicitly, CASCADE tables automatically.
         const { error } = await supabase.rpc('delete_project_cascade', { p_project_id: projectId });
 
         if (error) {
@@ -288,7 +288,7 @@ export class ProjectService {
             throw new Error(`Failed to delete project: ${error.message}`);
         }
 
-        logger.info(`Project ${projectId} deleted — archive saved, background cleanup started`);
+        logger.info(`Project ${projectId} deleted   archive saved, background cleanup started`);
 
         // 4. Fire-and-forget: clean up storage files
         setImmediate(() => { void this._cleanupProjectAsync(projectId); });

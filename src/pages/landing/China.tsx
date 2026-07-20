@@ -6,7 +6,7 @@ const BRIDGES = [
   {
     icon: Globe,
     title: "Cross-Border CDN",
-    desc: "Deploy websites and storefronts simultaneously to global and China CDN with ICP-licensed hosting — no separate infrastructure needed.",
+    desc: "Deploy websites and storefronts simultaneously to global and China CDN with ICP-licensed hosting   no separate infrastructure needed.",
   },
   {
     icon: Shield,
@@ -47,7 +47,7 @@ const USECASES = [
   {
     icon: ShoppingCart,
     title: "E-Commerce Brands",
-    desc: "Sell to Chinese consumers with a localized .cn storefront, WeChat integration, and local payment — while running your global store on the same platform.",
+    desc: "Sell to Chinese consumers with a localized .cn storefront, WeChat integration, and local payment   while running your global store on the same platform.",
   },
   {
     icon: Building2,
@@ -76,7 +76,7 @@ export default function China() {
           </h1>
           <p className="hero__sub">
             One platform that handles ICP compliance, WeChat integration,
-            cross-border payments, and bilingual storefronts — so you can reach
+            cross-border payments, and bilingual storefronts   so you can reach
             1.4 billion consumers without building a separate China stack.
           </p>
           <div className="hero__cta">
@@ -181,7 +181,7 @@ export default function China() {
           </h2>
           <p className="china-cta__sub">
             Launch a bilingual storefront, integrate WeChat Pay, and deploy on
-            our ICP-licensed China CDN — all from your existing ecomgear workspace.
+            our ICP-licensed China CDN   all from your existing ecomgear workspace.
           </p>
           <div className="china-cta__actions">
             {user ? (

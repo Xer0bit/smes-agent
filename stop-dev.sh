@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# stop-dev.sh — Stop the LOCAL dev stack started by start-dev.sh
+# stop-dev.sh   Stop the LOCAL dev stack started by start-dev.sh
 # =============================================================================
 # Only touches local dev containers/processes (ecg-preview-dev,
 # ecomgear-hosting-dev, the local gen-server/edge-functions PIDs, ports
 # 3001/4000/5001/54321). Never touches production PM2 processes
-# (ecomgear-preview / ecomgear-gen from ecosystem.config.cjs) — those run on
+# (ecomgear-preview / ecomgear-gen from ecosystem.config.cjs)   those run on
 # separate VPS hosts and are out of scope for this script entirely.
 # =============================================================================
 

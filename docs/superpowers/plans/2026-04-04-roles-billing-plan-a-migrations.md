@@ -1,10 +1,10 @@
-# Roles & Billing — Plan A: Database Migrations + Services
+# Roles & Billing   Plan A: Database Migrations + Services
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement all 6 database migration phases and update TypeScript types + subscription service to match the new free/pro/agency tier system with publish lines, referrals, guest sessions, branding, agency features, and add-on products.
 
-**Architecture:** Six sequential Supabase migrations build on each other — Phase 1 (tier rename) must run first as everything else depends on the `plan_tier` constraint. Types and service files are updated after migrations so TypeScript stays in sync with the DB schema.
+**Architecture:** Six sequential Supabase migrations build on each other   Phase 1 (tier rename) must run first as everything else depends on the `plan_tier` constraint. Types and service files are updated after migrations so TypeScript stays in sync with the DB schema.
 
 **Tech Stack:** PostgreSQL (Supabase), TypeScript, supabase-js v2
 
@@ -21,13 +21,13 @@
 - `supabase/migrations/20260404000006_rls_permissions_update.sql`
 
 ### Modified Files
-- `src/integrations/supabase/types.ts` — update `PlanTier`, add 15+ new table types
-- `src/services/subscriptionService.ts` — replace AI gens with publish lines, update tier config
-- `src/hooks/useSubscription.ts` — update `SubscriptionState` for publish lines
+- `src/integrations/supabase/types.ts`   update `PlanTier`, add 15+ new table types
+- `src/services/subscriptionService.ts`   replace AI gens with publish lines, update tier config
+- `src/hooks/useSubscription.ts`   update `SubscriptionState` for publish lines
 
 ---
 
-## Task 1: Phase 1 — Tier Migration (free/pro/agency)
+## Task 1: Phase 1   Tier Migration (free/pro/agency)
 
 **Files:**
 - Create: `supabase/migrations/20260404000001_migrate_tiers_free_pro_agency.sql`
@@ -126,7 +126,7 @@ git commit -m "feat(db): migrate plan tiers to free/pro/agency"
 
 ---
 
-## Task 2: Phase 2 — Publish Lines + Referral System
+## Task 2: Phase 2   Publish Lines + Referral System
 
 **Files:**
 - Create: `supabase/migrations/20260404000002_publish_lines_referral.sql`
@@ -217,7 +217,7 @@ CREATE POLICY "referral_rewards_admin_all"
   ON referral_rewards FOR ALL
   USING (public.get_my_role() IN ('admin','super_admin'));
 
--- 6. RPC: award_referral_lines — called when a referred user publishes first project
+-- 6. RPC: award_referral_lines   called when a referred user publishes first project
 CREATE OR REPLACE FUNCTION public.award_referral_lines(p_referee_id UUID)
 RETURNS VOID
 LANGUAGE plpgsql
@@ -247,7 +247,7 @@ BEGIN
 END;
 $$;
 
--- 7. RPC: increment_publish_lines — check & increment publish line counter
+-- 7. RPC: increment_publish_lines   check & increment publish line counter
 CREATE OR REPLACE FUNCTION public.increment_publish_lines(p_org_id UUID, p_lines INTEGER DEFAULT 1)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -348,7 +348,7 @@ git commit -m "feat(db): add publish lines quota and referral reward system"
 
 ---
 
-## Task 3: Phase 3 — Guest Sessions + Share Preview Branding
+## Task 3: Phase 3   Guest Sessions + Share Preview Branding
 
 **Files:**
 - Create: `supabase/migrations/20260404000003_guest_sessions_branding.sql`
@@ -371,7 +371,7 @@ CREATE TABLE IF NOT EXISTS guest_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_guest_sessions_fingerprint ON guest_sessions(fingerprint);
 
--- No RLS on guest_sessions — accessed via service role only
+-- No RLS on guest_sessions   accessed via service role only
 -- (guests are not authenticated, so auth.uid() = NULL)
 
 -- 2. RPC: check_and_increment_guest_project
@@ -492,7 +492,7 @@ CREATE TABLE IF NOT EXISTS preview_access_tokens (
 CREATE INDEX IF NOT EXISTS idx_preview_tokens_token   ON preview_access_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_preview_tokens_project ON preview_access_tokens(project_id);
 
--- RPC: get_or_create_preview_token — idempotent, returns existing token if valid
+-- RPC: get_or_create_preview_token   idempotent, returns existing token if valid
 CREATE OR REPLACE FUNCTION public.get_or_create_preview_token(
   p_project_id UUID,
   p_fingerprint TEXT
@@ -556,7 +556,7 @@ git commit -m "feat(db): add guest sessions, preview branding, and 90-day access
 
 ---
 
-## Task 4: Phase 4 — Agency Features
+## Task 4: Phase 4   Agency Features
 
 **Files:**
 - Create: `supabase/migrations/20260404000004_agency_features.sql`
@@ -565,10 +565,10 @@ git commit -m "feat(db): add guest sessions, preview branding, and 90-day access
 
 ```sql
 -- =============================================================================
--- Migration: Agency features — client markup pricing + demo requests
+-- Migration: Agency features   client markup pricing + demo requests
 -- =============================================================================
 
--- 1. client_markups — per-client pricing set by agency admins
+-- 1. client_markups   per-client pricing set by agency admins
 CREATE TABLE IF NOT EXISTS client_markups (
   id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   org_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -605,7 +605,7 @@ CREATE POLICY "client_markups_admin_all"
   ON client_markups FOR ALL
   USING (public.get_my_role() IN ('admin','super_admin'));
 
--- 2. demo_requests — upgrade-to-agency request flow
+-- 2. demo_requests   upgrade-to-agency request flow
 CREATE TABLE IF NOT EXISTS demo_requests (
   id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   org_id       UUID REFERENCES organizations(id) ON DELETE SET NULL,
@@ -663,7 +663,7 @@ BEGIN
 END;
 $$;
 
--- 4. RPC: convert_demo_to_agency — super_admin upgrades org to agency
+-- 4. RPC: convert_demo_to_agency   super_admin upgrades org to agency
 CREATE OR REPLACE FUNCTION public.convert_demo_to_agency(
   p_request_id UUID,
   p_org_id     UUID
@@ -714,7 +714,7 @@ git commit -m "feat(db): add agency client markup pricing and demo request flow"
 
 ---
 
-## Task 5: Phase 5 — Add-on Products
+## Task 5: Phase 5   Add-on Products
 
 **Files:**
 - Create: `supabase/migrations/20260404000005_addon_products.sql`
@@ -723,7 +723,7 @@ git commit -m "feat(db): add agency client markup pricing and demo request flow"
 
 ```sql
 -- =============================================================================
--- Migration: Add-on products — Auto Pilot, eComGear Cloud, Integration Apps,
+-- Migration: Add-on products   Auto Pilot, eComGear Cloud, Integration Apps,
 --            Ali Cloud hosting, Add-on subscriptions
 -- =============================================================================
 
@@ -915,7 +915,7 @@ AS $$
   );
 $$;
 
--- 8. RPC: get_due_auto_pilot_projects — for cron runner
+-- 8. RPC: get_due_auto_pilot_projects   for cron runner
 CREATE OR REPLACE FUNCTION public.get_due_auto_pilot_projects()
 RETURNS TABLE(project_id UUID, app_path TEXT, prompt TEXT, config_id UUID)
 LANGUAGE sql
@@ -963,7 +963,7 @@ git commit -m "feat(db): add Auto Pilot, eComGear Cloud, Integration Apps, Ali C
 
 ---
 
-## Task 6: Phase 6 — RLS + Permission Updates
+## Task 6: Phase 6   RLS + Permission Updates
 
 **Files:**
 - Create: `supabase/migrations/20260404000006_rls_permissions_update.sql`
@@ -1004,7 +1004,7 @@ BEGIN
 END;
 $$;
 
--- 2. has_public_preview_access — validates 90-day token
+-- 2. has_public_preview_access   validates 90-day token
 CREATE OR REPLACE FUNCTION public.has_public_preview_access(p_project_id UUID, p_token UUID)
 RETURNS BOOLEAN
 LANGUAGE sql
@@ -1020,7 +1020,7 @@ AS $$
   );
 $$;
 
--- 3. Update admin_orgs_all to use new plan_tier check (no change needed — uses get_my_role not tier)
+-- 3. Update admin_orgs_all to use new plan_tier check (no change needed   uses get_my_role not tier)
 -- But update any hardcoded tier references in existing policies:
 
 -- Fix any CHECK constraints that reference old tier names (belt-and-suspenders)
@@ -1504,7 +1504,7 @@ Replace the entire file content with:
 
 ```typescript
 /**
- * Subscription service — reads plan limits, checks quotas, tracks usage.
+ * Subscription service   reads plan limits, checks quotas, tracks usage.
  * All reads go through SECURITY DEFINER RPCs (bypasses RLS recursion issues).
  */
 
@@ -1809,7 +1809,7 @@ Expected: 0 lines (no errors). If errors exist, fix them before continuing to Pl
 git add -A
 git status
 # Verify only intended files are staged
-git commit -m "feat: complete Plan A — tier migration, publish lines, referral, guest sessions, agency features, add-on products"
+git commit -m "feat: complete Plan A   tier migration, publish lines, referral, guest sessions, agency features, add-on products"
 ```
 
 ---

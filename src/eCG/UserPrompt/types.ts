@@ -29,7 +29,7 @@ export interface PromptHandlerParams {
   fileContext?: string;
   existingFiles: GeneratedFile[];
   hasRealApp: boolean;
-  /** Guest fingerprint — when set, the user is not authenticated */
+  /** Guest fingerprint   when set, the user is not authenticated */
   fingerprint?: string;
 }
 
@@ -71,7 +71,7 @@ export interface GenerationResponse {
   snapshotId?: string;
   /** True when the agent server already pushed files to the preview service */
   previewPushed?: boolean;
-  /** True when the agent ran in build mode but wrote zero files — ghost run */
+  /** True when the agent ran in build mode but wrote zero files   ghost run */
   ghostRun?: boolean;
 }
 

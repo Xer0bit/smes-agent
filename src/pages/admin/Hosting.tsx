@@ -493,13 +493,13 @@ export default function AdminHosting() {
                       </Badge>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-blue-400">
-                      {dep.custom_domain || dep.subdomain || '—'}
+                      {dep.custom_domain || dep.subdomain || ' '}
                     </TableCell>
                     <TableCell className="text-gray-500 font-mono text-xs">
-                      {dep.postgres_port ? `pg:${dep.postgres_port}` : '—'}
+                      {dep.postgres_port ? `pg:${dep.postgres_port}` : ' '}
                     </TableCell>
                     <TableCell className="text-gray-400 text-xs">
-                      {dep.deployed_at ? new Date(dep.deployed_at).toLocaleDateString() : '—'}
+                      {dep.deployed_at ? new Date(dep.deployed_at).toLocaleDateString() : ' '}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -643,7 +643,7 @@ export default function AdminHosting() {
                       <span className="text-sm font-medium text-white">{site.project_name}</span>
                     </TableCell>
                     <TableCell>
-                      <span className="text-sm text-gray-400">{site.org_name || '—'}</span>
+                      <span className="text-sm text-gray-400">{site.org_name || ' '}</span>
                     </TableCell>
                     <TableCell>
                       {site.subdomain ? (
@@ -656,7 +656,7 @@ export default function AdminHosting() {
                           {site.subdomain}
                         </a>
                       ) : (
-                        <span className="text-sm text-gray-500">—</span>
+                        <span className="text-sm text-gray-500"> </span>
                       )}
                     </TableCell>
                     <TableCell>

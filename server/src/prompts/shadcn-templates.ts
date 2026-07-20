@@ -1,5 +1,5 @@
 /**
- * shadcn/ui component templates — loaded on demand by the agent.
+ * shadcn/ui component templates   loaded on demand by the agent.
  *
  * These are the exact, tested versions that work with our Vite + Tailwind setup.
  * The agent reads this file via `read_file` only when it needs to create a missing

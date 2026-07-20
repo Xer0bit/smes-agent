@@ -1,9 +1,9 @@
-# Roles & Billing — Plan B: Frontend Components + Admin Panel
+# Roles & Billing   Plan B: Frontend Components + Admin Panel
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > **Prerequisite:** Plan A (migrations) must be fully applied before starting this plan.
 
-**Goal:** Build all frontend components for the new roles/billing system — share preview branding, referral dashboard, agency markup settings, demo booking, Auto Pilot config, eComGear Cloud, Integration App marketplace, Ali Cloud migration, and updated admin panels.
+**Goal:** Build all frontend components for the new roles/billing system   share preview branding, referral dashboard, agency markup settings, demo booking, Auto Pilot config, eComGear Cloud, Integration App marketplace, Ali Cloud migration, and updated admin panels.
 
 **Architecture:** Each feature is a self-contained React component using supabase-js for data access. Components follow the existing pattern of `src/components/` for shared UI and `src/pages/` for routed pages. All new components use Tailwind CSS and shadcn/ui primitives already in the project.
 
@@ -14,23 +14,23 @@
 ## File Map
 
 ### New Component Files
-- `src/components/preview/PreviewBranding.tsx` — renders footer/watermark overlay on previews
-- `src/components/referral/ReferralDashboard.tsx` — referral code, earnings, share link
-- `src/components/agency/ClientMarkupSettings.tsx` — agency per-client markup form
-- `src/components/agency/DemoRequestForm.tsx` — book-a-demo upgrade form
-- `src/components/addons/AutoPilotConfig.tsx` — enable/schedule/configure Auto Pilot
-- `src/components/addons/EComGearCloudSettings.tsx` — enable cloud storage per project
-- `src/components/addons/IntegrationAppMarketplace.tsx` — browse + install integrations
-- `src/components/addons/AliCloudMigration.tsx` — request + track Ali Cloud migration
-- `src/components/addons/AddonCard.tsx` — reusable addon purchase/status card
+- `src/components/preview/PreviewBranding.tsx`   renders footer/watermark overlay on previews
+- `src/components/referral/ReferralDashboard.tsx`   referral code, earnings, share link
+- `src/components/agency/ClientMarkupSettings.tsx`   agency per-client markup form
+- `src/components/agency/DemoRequestForm.tsx`   book-a-demo upgrade form
+- `src/components/addons/AutoPilotConfig.tsx`   enable/schedule/configure Auto Pilot
+- `src/components/addons/EComGearCloudSettings.tsx`   enable cloud storage per project
+- `src/components/addons/IntegrationAppMarketplace.tsx`   browse + install integrations
+- `src/components/addons/AliCloudMigration.tsx`   request + track Ali Cloud migration
+- `src/components/addons/AddonCard.tsx`   reusable addon purchase/status card
 
 ### Modified Files
-- `src/pages/admin/RolesPermissions.tsx` — update to show free/pro/agency matrix
-- `src/pages/admin/Subscriptions.tsx` — update tier display for pro/agency
-- `src/pages/admin/DemoRequests.tsx` — new admin page: demo request queue
-- `src/hooks/useGuestSession.ts` — new hook: fingerprint + guest project limit check
-- `src/hooks/useReferral.ts` — new hook: referral code, reward history
-- `src/hooks/useAddonAccess.ts` — new hook: check addon subscriptions
+- `src/pages/admin/RolesPermissions.tsx`   update to show free/pro/agency matrix
+- `src/pages/admin/Subscriptions.tsx`   update tier display for pro/agency
+- `src/pages/admin/DemoRequests.tsx`   new admin page: demo request queue
+- `src/hooks/useGuestSession.ts`   new hook: fingerprint + guest project limit check
+- `src/hooks/useReferral.ts`   new hook: referral code, reward history
+- `src/hooks/useAddonAccess.ts`   new hook: check addon subscriptions
 
 ---
 
@@ -65,7 +65,7 @@ export function useGuestSession() {
     supabase
       .rpc('check_and_increment_guest_project', { p_fingerprint: fingerprint })
       .then(({ data, error }) => {
-        // We only check, not increment here — decrement isn't possible,
+        // We only check, not increment here   decrement isn't possible,
         // so we read the guest_sessions row directly
         setCanCreate(!error);
         setLoading(false);
@@ -210,7 +210,7 @@ export function ReferralDashboard() {
         <CardContent className="space-y-3">
           <div className="flex items-center gap-2">
             <code className="flex-1 bg-muted px-3 py-2 rounded text-sm font-mono">
-              {referralCode ?? '—'}
+              {referralCode ?? ' '}
             </code>
             <Button size="sm" variant="outline" onClick={copyLink} disabled={!referralCode}>
               {copied ? 'Copied!' : 'Copy Link'}
@@ -365,7 +365,7 @@ git commit -m "feat(ui): add PreviewBranding overlay (footer/watermark/none by t
 
 ---
 
-## Task 4: Agency — Client Markup Settings
+## Task 4: Agency   Client Markup Settings
 
 **Files:**
 - Create: `src/components/agency/ClientMarkupSettings.tsx`
@@ -442,7 +442,7 @@ export function ClientMarkupSettings({ orgId, clientUserId, clientName }: Client
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm">Client Pricing — {clientName}</CardTitle>
+        <CardTitle className="text-sm">Client Pricing   {clientName}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex gap-3 items-end">
@@ -494,7 +494,7 @@ git commit -m "feat(ui): add ClientMarkupSettings for agency per-client markup"
 
 ---
 
-## Task 5: Agency — Demo Request Form
+## Task 5: Agency   Demo Request Form
 
 **Files:**
 - Create: `src/components/agency/DemoRequestForm.tsx`
@@ -565,7 +565,7 @@ export function DemoRequestForm({ orgId, onSuccess }: DemoRequestFormProps) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Book a Demo — Upgrade to Agency</CardTitle>
+        <CardTitle>Book a Demo   Upgrade to Agency</CardTitle>
         <CardDescription>
           Agency plan is <strong>$25/mo</strong>. Includes 20 seats, client markup pricing, and all add-ons.
           A member of our team will personally onboard you.
@@ -1004,7 +1004,7 @@ export function EComGearCloudSettings({ projectId, currentTier }: EComGearCloudS
   return (
     <AddonCard
       title="eComGear Cloud"
-      description="Managed CDN storage for project assets — images, fonts, and files."
+      description="Managed CDN storage for project assets   images, fonts, and files."
       price="Included with Pro/Agency"
       active={!!config?.enabled}
       loading={saving || loading}
@@ -1325,7 +1325,7 @@ export function AliCloudMigration({ projectId, currentTier }: AliCloudMigrationP
 
   return (
     <AddonCard
-      title="Hosting — Ali Cloud"
+      title="Hosting   Ali Cloud"
       description="Migrate your hosting to Alibaba Cloud for optimal performance in China and Asia."
       price="$6/domain (same as standard)"
       active={isActive}
@@ -1379,7 +1379,7 @@ git commit -m "feat(ui): add AliCloudMigration component with region selection a
 
 ---
 
-## Task 12: Admin — Demo Requests Page
+## Task 12: Admin   Demo Requests Page
 
 **Files:**
 - Create: `src/pages/admin/DemoRequests.tsx`
@@ -1654,7 +1654,7 @@ Fix any errors. Common ones to look for:
 ```bash
 git add -A
 git status  # verify only intended changes
-git commit -m "feat: complete Plan B — all frontend components for roles/billing system"
+git commit -m "feat: complete Plan B   all frontend components for roles/billing system"
 ```
 
 ---

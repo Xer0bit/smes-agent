@@ -16,7 +16,7 @@ const PRODUCTS = [
     name: "eCGDev",
     tagline: "AI-powered web development platform",
     description:
-      "Go from idea to production website using natural language. AI agents generate code, build storefronts, and deploy globally — or into China — with a single click.",
+      "Go from idea to production website using natural language. AI agents generate code, build storefronts, and deploy globally   or into China   with a single click.",
     features: [
       "AI code generation from natural language prompts",
       "One-click deploy to Global + China CDN",
@@ -34,9 +34,9 @@ const PRODUCTS = [
     name: "OneMAIL",
     tagline: "AI email agent for every mailbox",
     description:
-      "Attach an AI agent to every mailbox in your organization. It reads, categorizes, drafts, and follows up — across Gmail, Outlook, Exchange, and IMAP.",
+      "Attach an AI agent to every mailbox in your organization. It reads, categorizes, drafts, and follows up   across Gmail, Outlook, Exchange, and IMAP.",
     features: [
-      "AI agent per mailbox — reads, drafts, and replies",
+      "AI agent per mailbox   reads, drafts, and replies",
       "Gmail, Outlook, Exchange, and IMAP support",
       "Smart categorization and priority routing",
       "Follow-up tracking and escalation rules",

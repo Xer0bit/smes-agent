@@ -1,5 +1,5 @@
 /**
- * get_build_errors tool — query the Vite preview service for current build errors.
+ * get_build_errors tool   query the Vite preview service for current build errors.
  *
  * This gives the agent the exact, real error messages from the live Vite dev server
  * instead of guessing from file contents. Call this FIRST when asked to fix an error.
@@ -26,8 +26,8 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
   name: 'get_build_errors',
   description:
     'Query the live Vite preview server for current build errors. Returns exact error messages with file paths and line numbers. ' +
-    'When to call: (1) FIRST at the start of a fix run — never guess at errors, ' +
-    '(2) ONCE after ALL files are written in a batch — not after each individual file write. ' +
+    'When to call: (1) FIRST at the start of a fix run   never guess at errors, ' +
+    '(2) ONCE after ALL files are written in a batch   not after each individual file write. ' +
     '(3) When the user explicitly reports a broken state. ' +
     'LIMIT: Maximum 3 calls per run. After that, finish your response and stop.',
   inputSchema: schema,
@@ -62,7 +62,7 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
           signal: AbortSignal.timeout(10_000),
         });
       } catch {
-        // If flush fails, proceed anyway — stale errors are better than a crash
+        // If flush fails, proceed anyway   stale errors are better than a crash
       }
     }
 
@@ -73,7 +73,7 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
       return (
         `Preview service unreachable at ${PREVIEW_SERVICE_URL}: ${err instanceof Error ? err.message : String(err)}. ` +
         'The preview server may still be starting or is down. ' +
-        'Do NOT keep calling get_build_errors — it will keep failing. ' +
+        'Do NOT keep calling get_build_errors   it will keep failing. ' +
         'Finish writing ALL your files first and stop. The system will handle the preview.'
       );
     }
@@ -81,23 +81,23 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
     if (!res.ok) {
       if (res.status === 400) {
         return (
-          'Preview service returned HTTP 400 — the project has not been pushed to the preview yet. ' +
+          'Preview service returned HTTP 400   the project has not been pushed to the preview yet. ' +
           'This is NOT a code error. It means your files have NOT been sent to the build server yet. ' +
-          'DO NOT keep calling get_build_errors — it will keep returning 400 until the files are pushed. ' +
+          'DO NOT keep calling get_build_errors   it will keep returning 400 until the files are pushed. ' +
           'INSTEAD: Finish writing ALL your files first, then stop. The system will push files automatically after you finish. ' +
-          'If this is a repair pass and files ARE on disk, the Vite dev server may still be starting — wait and retry ONCE.'
+          'If this is a repair pass and files ARE on disk, the Vite dev server may still be starting   wait and retry ONCE.'
         );
       }
       if (res.status === 404) {
         return (
-          'Preview service returned HTTP 404 — the project does not exist on the preview server. ' +
+          'Preview service returned HTTP 404   the project does not exist on the preview server. ' +
           'This means the project directory has not been created yet. ' +
           'Finish writing all your files. The system will create the project automatically.'
         );
       }
       if (res.status >= 500) {
         return (
-          `Preview service returned HTTP ${res.status} — the server is experiencing an internal error. ` +
+          `Preview service returned HTTP ${res.status}   the server is experiencing an internal error. ` +
           'This is NOT a code error. Do NOT retry get_build_errors repeatedly. ' +
           'Finish your code changes and move on. The preview will recover on its own.'
         );
@@ -117,7 +117,7 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
     }
 
     if (data.healthy) {
-      return 'No build errors — the preview is healthy and running correctly.';
+      return 'No build errors   the preview is healthy and running correctly.';
     }
 
     const errors = data.errors ?? [];
@@ -129,11 +129,11 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
       ? `${data.diagnosticKind} errors`
       : 'Build errors';
 
-    // Deduplicate and trim stack traces — keep only the first meaningful line per error
+    // Deduplicate and trim stack traces   keep only the first meaningful line per error
     const seen = new Set<string>();
     const condensed: string[] = [];
     for (const e of errors) {
-      // Extract just the first 2 lines (error type + location) — skip the stack trace
+      // Extract just the first 2 lines (error type + location)   skip the stack trace
       const summary = e
         .split('\n')
         .slice(0, 6)
@@ -148,7 +148,7 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
 
     // ─── Blast-radius note ────────────────────────────────────────────────────
     // Extract a likely component/symbol name from the error text (PascalCase
-    // identifier is the strongest signal — React error messages name the
+    // identifier is the strongest signal   React error messages name the
     // component, e.g. "Element type is invalid ... in Navbar"). Look it up in
     // the symbol graph and tell the agent what else calls/renders it, so it
     // doesn't fix the named file only to break every caller silently.
@@ -167,10 +167,10 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
           blastRadiusNote += `\n\n⚠️ BLAST RADIUS: "${name}" is used by: ${callerList}. If you change its props/signature, check these too.`;
         }
       }
-    } catch { /* non-fatal — symbol graph is best-effort */ }
+    } catch { /* non-fatal   symbol graph is best-effort */ }
 
     // Check if any "module not found" errors are for packages the agent declared
-    // with <ecomgear-add-dependency> (legacy) — tell the agent to install them.
+    // with <ecomgear-add-dependency> (legacy)   tell the agent to install them.
     const declaredDeps = ctx.getDeclaredDependencies?.() ?? [];
     const pendingDepNote: string[] = [];
     if (declaredDeps.length > 0) {
@@ -202,13 +202,13 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
         return (
           `CIRCUIT BREAKER: These SAME ${condensed.length} errors appeared ${prev.count + 1} times in a row. ` +
           'Your fixes are NOT working. STOP calling get_build_errors. ' +
-          'Instead: use write_file to REWRITE the broken file(s) completely from scratch — do not patch them. ' +
+          'Instead: use write_file to REWRITE the broken file(s) completely from scratch   do not patch them. ' +
           'After rewriting, call get_build_errors ONE final time, then STOP regardless of result.\n\n' +
           `Errors: ${condensed.slice(0, 3).map((e, i) => `[${i + 1}] ${e}`).join('\n')}`
         );
       }
     } else {
-      // New error signature, or entry expired (different run) — reset
+      // New error signature, or entry expired (different run)   reset
       errorHistory.set(projectId, { signature: errorSignature, count: 1, ts: now });
     }
 

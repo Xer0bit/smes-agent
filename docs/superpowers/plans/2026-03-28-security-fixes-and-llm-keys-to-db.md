@@ -14,19 +14,19 @@
 
 | File | Change |
 |------|--------|
-| `supabase/migrations/20260328100000_system_settings.sql` | CREATE — `system_settings` table + `increment_message_count` RPC |
-| `server/src/services/llm-control.service.ts` | MODIFY — swap `loadPersisted`/`savePersisted` from JSON file to Supabase |
-| `preview-service/server.js` | MODIFY — remove `/exec` endpoint, fix XSS (4 lines), fix path traversal, fix pruneProjectFiles |
-| `src/pages/Editor.tsx` | MODIFY — add origin check to `postMessage` handler |
-| `src/eCG/UserPrompt/messageService.ts` | MODIFY — remove `currentCount` param, use atomic RPC |
-| `src/eCG/UserPrompt/promptService.ts` | MODIFY — remove read-before-increment, call atomic RPC directly |
-| `src/eCG/eCGCloud/llmService.ts` | MODIFY — fix misleading comment/error string |
-| `server/src/services/agentLoopService.ts` | MODIFY — sort files by modification time before slicing context |
-| `.gitignore` | MODIFY — add `server/.llm-control.json` |
+| `supabase/migrations/20260328100000_system_settings.sql` | CREATE   `system_settings` table + `increment_message_count` RPC |
+| `server/src/services/llm-control.service.ts` | MODIFY   swap `loadPersisted`/`savePersisted` from JSON file to Supabase |
+| `preview-service/server.js` | MODIFY   remove `/exec` endpoint, fix XSS (4 lines), fix path traversal, fix pruneProjectFiles |
+| `src/pages/Editor.tsx` | MODIFY   add origin check to `postMessage` handler |
+| `src/eCG/UserPrompt/messageService.ts` | MODIFY   remove `currentCount` param, use atomic RPC |
+| `src/eCG/UserPrompt/promptService.ts` | MODIFY   remove read-before-increment, call atomic RPC directly |
+| `src/eCG/eCGCloud/llmService.ts` | MODIFY   fix misleading comment/error string |
+| `server/src/services/agentLoopService.ts` | MODIFY   sort files by modification time before slicing context |
+| `.gitignore` | MODIFY   add `server/.llm-control.json` |
 
 ---
 
-### Task 1: Supabase migration — `system_settings` table + atomic message count RPC
+### Task 1: Supabase migration   `system_settings` table + atomic message count RPC
 
 **Files:**
 - Create: `supabase/migrations/20260328100000_system_settings.sql`
@@ -209,19 +209,19 @@ git rm --cached server/.llm-control.json 2>/dev/null || true
 
 ```bash
 git add .gitignore
-git commit -m "chore: untrack server/.env and server/.llm-control.json — secrets must not be in git"
+git commit -m "chore: untrack server/.env and server/.llm-control.json   secrets must not be in git"
 ```
 
 > **IMPORTANT after merging:** Rotate all 4 keys (ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GEMINI_API_KEY, SUPABASE_SERVICE_KEY) in their respective dashboards. The old values are in git history and must be treated as compromised. On the production server, re-enter the new keys via the Admin → Settings page (which now saves to DB).
 
 ---
 
-### Task 4: Fix preview-service/server.js — XSS, path traversal, exec endpoint, pruneProjectFiles
+### Task 4: Fix preview-service/server.js   XSS, path traversal, exec endpoint, pruneProjectFiles
 
 **Files:**
 - Modify: `preview-service/server.js`
 
-All four fixes are in the same file — do them in one edit pass.
+All four fixes are in the same file   do them in one edit pass.
 
 - [ ] **Step 1: Remove the unauthenticated `/preview/:projectId/exec` endpoint**
 
@@ -234,9 +234,9 @@ After deletion the file should jump from the `/update` endpoint directly to:
     // Preview Status API: GET /preview/:projectId/status
 ```
 
-- [ ] **Step 2: Fix XSS — escape slug in all four 404 HTML responses**
+- [ ] **Step 2: Fix XSS   escape slug in all four 404 HTML responses**
 
-Location 1 — `/p/:slug` route (around line 1247):
+Location 1   `/p/:slug` route (around line 1247):
 ```js
 // BEFORE:
 return res.status(404).type('html').send(`<!doctype html><html><head><meta charset="utf-8">
@@ -252,7 +252,7 @@ return res.status(404).type('html').send(`<!doctype html><html><head><meta chars
 <p><strong>${safeSlug}</strong> is not published yet.</p>
 ```
 
-Location 2 — subdomain routing (around line 1280):
+Location 2   subdomain routing (around line 1280):
 ```js
 // BEFORE:
 return res.status(404).type('html').send(`<!doctype html><html><head><meta charset="utf-8">
@@ -268,7 +268,7 @@ return res.status(404).type('html').send(`<!doctype html><html><head><meta chars
 <p><strong>${safeSlug}.ecomgear.app</strong> is not published yet.</p>
 ```
 
-- [ ] **Step 3: Fix path traversal — validate projectId is a UUID before all filesystem ops**
+- [ ] **Step 3: Fix path traversal   validate projectId is a UUID before all filesystem ops**
 
 Add a helper function near the top of server.js (after `escapeHtml`):
 ```js
@@ -291,9 +291,9 @@ The routes that need this guard are:
 - `GET /preview/:projectId/status`
 - `POST /preview/:projectId/update` (or equivalent update route)
 - `GET /preview/:projectId/` (Vite serving route)
-- `initProject(projectId)` call sites — add the check before calling `initProject`
+- `initProject(projectId)` call sites   add the check before calling `initProject`
 
-- [ ] **Step 4: Fix `pruneProjectFiles` — protect `.vite-cache` and `.git`**
+- [ ] **Step 4: Fix `pruneProjectFiles`   protect `.vite-cache` and `.git`**
 
 Find `pruneProjectFiles` (around line 364). Change:
 ```js
@@ -366,7 +366,7 @@ git commit -m "fix: validate postMessage origin in Editor to prevent cross-origi
 
 ---
 
-### Task 6: Fix TOCTOU race — atomic message count increment
+### Task 6: Fix TOCTOU race   atomic message count increment
 
 **Files:**
 - Modify: `src/eCG/UserPrompt/messageService.ts`
@@ -476,7 +476,7 @@ async generateFiles(
 
 // AFTER:
 /**
- * Call Anthropic API to generate files (legacy — superseded by agentStreamService).
+ * Call Anthropic API to generate files (legacy   superseded by agentStreamService).
  * Used only by edge functions that pass an API key directly.
  */
 async generateFiles(
@@ -498,7 +498,7 @@ git commit -m "fix: correct misleading OpenAI comment and error message in llmSe
 
 ---
 
-### Task 8: Fix context window capping — sort by most recently modified
+### Task 8: Fix context window capping   sort by most recently modified
 
 **Files:**
 - Modify: `server/src/services/agentLoopService.ts`
@@ -559,7 +559,7 @@ git commit -m "fix: sort existing files by prompt relevance and cap by char coun
 
 **Spec coverage check:**
 - ✅ LLM API keys → DB: Task 1 (migration) + Task 2 (service change)
-- ✅ Admin panel still works: no UI change needed — `system.routes.ts` → `llm-control.service.ts` → DB
+- ✅ Admin panel still works: no UI change needed   `system.routes.ts` → `llm-control.service.ts` → DB
 - ✅ Remove committed secrets: Task 3
 - ✅ Unauthenticated `/exec` removed: Task 4 Step 1
 - ✅ XSS slug escaping: Task 4 Step 2
@@ -571,6 +571,6 @@ git commit -m "fix: sort existing files by prompt relevance and cap by char coun
 - ✅ Context window capping: Task 8
 
 **Out of scope (minor, not blocking):**
-- SRI hashes on CDN scripts in `previewGenerator.ts` — deferred, no security boundary since content is already trusted
-- `twMerge` stub visual regression — deferred, cosmetic only
-- `Editor.tsx` state extraction into hooks — refactor, not a bug
+- SRI hashes on CDN scripts in `previewGenerator.ts`   deferred, no security boundary since content is already trusted
+- `twMerge` stub visual regression   deferred, cosmetic only
+- `Editor.tsx` state extraction into hooks   refactor, not a bug

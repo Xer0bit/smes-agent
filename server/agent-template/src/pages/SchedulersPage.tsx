@@ -73,7 +73,7 @@ export default function SchedulersPage() {
     setReplanMsg('');
     try {
       await ecgApi.schedulers.trigger(id);
-      setReplanMsg('Posts are being generated — check Planned Posts in a moment.');
+      setReplanMsg('Posts are being generated   check Planned Posts in a moment.');
       setTimeout(() => setReplanMsg(''), 5000);
     } catch (e: any) {
       setError(e.message);
@@ -113,10 +113,10 @@ export default function SchedulersPage() {
             <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
               {rows.map((s: any) => (
                 <tr key={s.id}>
-                  <td className="px-4 py-3 font-medium" style={{ color: 'var(--text)' }}>{s.agentName ?? s.agent_name ?? '—'}</td>
+                  <td className="px-4 py-3 font-medium" style={{ color: 'var(--text)' }}>{s.agentName ?? s.agent_name ?? ' '}</td>
                   <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>{s.schedule ?? s.cron}</td>
                   {showNextRun && (
-                    <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>{s.nextRun ? new Date(s.nextRun).toLocaleString() : '—'}</td>
+                    <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>{s.nextRun ? new Date(s.nextRun).toLocaleString() : ' '}</td>
                   )}
                   <td className="px-4 py-3"><StatusBadge status={s.status ?? 'active'} /></td>
                   <td className="px-4 py-3">
@@ -236,7 +236,7 @@ function CreateSchedulerModal({ agents, connectors, onClose, onCreated }: {
             <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Connector</label>
             {connectors.length === 0 ? (
               <p className="text-xs flex items-center gap-1.5" style={{ color: 'var(--muted)' }}>
-                <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> No connected accounts — connect one in Connectors first.
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> No connected accounts   connect one in Connectors first.
               </p>
             ) : (
               <select value={connectorId} onChange={e => setConnectorId(e.target.value)}

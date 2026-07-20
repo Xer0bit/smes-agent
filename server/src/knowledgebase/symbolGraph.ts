@@ -1,10 +1,10 @@
 /**
  * Symbol-level graph: functions/components/hooks within a file, and the calls
  * between them. Extends graphStore.ts (file-level imports/exports) one level
- * down, so context assembly can traverse "which functions call/render X" —
+ * down, so context assembly can traverse "which functions call/render X"  
  * not just "which files import X".
  *
- * Deliberately regex-based, matching the existing graphStore.ts style — no
+ * Deliberately regex-based, matching the existing graphStore.ts style   no
  * tree-sitter dependency. This trades perfect accuracy for zero new native
  * deps and a same-day ship; a tree-sitter-based AST pass is a natural
  * follow-up once this shape proves useful in practice.
@@ -43,7 +43,7 @@ export interface SymbolNode {
 const DECL_RE =
   /(?:^|\n)\s*export\s+(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(|(?:^|\n)\s*(?:export\s+)?(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?\(/g;
 
-// A "call" reference: identifier immediately followed by ( — cheap, catches
+// A "call" reference: identifier immediately followed by (   cheap, catches
 // most real calls, false-positives on things like `if (` are filtered by
 // requiring the identifier to start with a letter/underscore/$ and not be a
 // JS/TS keyword.
@@ -55,7 +55,7 @@ const JS_KEYWORDS = new Set([
 ]);
 
 // JSX component usage: <ComponentName ...> or <ComponentName/>. Only
-// PascalCase tags are real components — lowercase tags are native DOM elements.
+// PascalCase tags are real components   lowercase tags are native DOM elements.
 const JSX_RE = /<([A-Z][\w.]*)\b/g;
 
 function isComponentName(name: string): boolean {
@@ -68,7 +68,7 @@ function isHookName(name: string): boolean {
 
 /**
  * Extract top-level function/component/hook symbols and their call/render
- * edges from a single file's source. Best-effort static analysis — a
+ * edges from a single file's source. Best-effort static analysis   a
  * declaration this regex misses just means that symbol isn't graph-traversable,
  * not a crash or a wrong result.
  */
@@ -113,7 +113,7 @@ export function extractSymbols(content: string): SymbolNode[] {
     nodes.push({
       name,
       kind,
-      calls: [...calls].slice(0, 40), // cap — pathological files shouldn't blow up storage
+      calls: [...calls].slice(0, 40), // cap   pathological files shouldn't blow up storage
       renders: [...renders].slice(0, 40),
     });
   }
@@ -131,7 +131,7 @@ export async function upsertSymbolGraph(
   const db = getClient();
   if (!db) return;
 
-  // Replace this file's symbols wholesale — simpler and cheap enough at
+  // Replace this file's symbols wholesale   simpler and cheap enough at
   // file-write frequency than diffing individual symbol rows.
   await db.from('project_symbol_graph').delete().eq('project_id', projectId).eq('file_path', filePath);
   if (symbols.length === 0) return;
@@ -186,7 +186,7 @@ export async function getCallers(projectId: string, symbolNames: string[]): Prom
   if (!db || symbolNames.length === 0) return [];
 
   // Two separate .overlaps() queries (calls, renders) instead of one combined
-  // .or() — .overlaps() is parameterized by the client (safe against symbol
+  // .or()   .overlaps() is parameterized by the client (safe against symbol
   // names containing commas/braces), whereas building an .or() filter string
   // by hand would require manually escaping user-influenced symbol names.
   const [callsRes, rendersRes] = await Promise.all([

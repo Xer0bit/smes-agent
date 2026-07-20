@@ -131,17 +131,17 @@ const templates = [
   },
   {
     name: '2-welcome',
-    subject: 'Welcome to EcomGear — your account is ready',
+    subject: 'Welcome to EcomGear   your account is ready',
     from: 'EcomGear <noreply@ecomgear.dev>',
     html: baseTemplate({
       title: 'Welcome to EcomGear',
-      preheader: 'Your account is ready — start building your first app in minutes.',
+      preheader: 'Your account is ready   start building your first app in minutes.',
       body: `
         <h1 ${h1}>Welcome to EcomGear</h1>
         <p ${p}>Hi Jane,</p>
         <p ${p}>
           Your account is all set. EcomGear lets you build full-stack web apps by
-          simply describing what you want — the AI writes the code, you see it live.
+          simply describing what you want   the AI writes the code, you see it live.
         </p>
         <table cellpadding="0" cellspacing="0" style="width:100%;margin:8px 0 0;">
           <tr>
@@ -169,7 +169,7 @@ const templates = [
               <table cellpadding="0" cellspacing="0"><tr>
                 <td style="width:32px;font-size:18px;vertical-align:top;">03</td>
                 <td style="font-size:14px;color:#475569;line-height:1.6;padding-left:12px;">
-                  <strong style="color:#0f172a;">See it live</strong> — the AI writes and previews your code in real time
+                  <strong style="color:#0f172a;">See it live</strong>   the AI writes and previews your code in real time
                 </td>
               </tr></table>
             </td>
@@ -177,7 +177,7 @@ const templates = [
         </table>
       `,
       button: { label: 'Go to Dashboard', url: `${FRONTEND_URL}/dashboard` },
-      footer: "Questions? Just reply to this email — we're happy to help.",
+      footer: "Questions? Just reply to this email   we're happy to help.",
       frontendUrl: FRONTEND_URL,
     }),
   },
@@ -197,7 +197,7 @@ const templates = [
         </p>
       `,
       button: { label: 'Reset password', url: `${FRONTEND_URL}/auth` },
-      footer: 'This link expires in 1 hour. If you did not request a password reset, no action is needed — your password remains unchanged.',
+      footer: 'This link expires in 1 hour. If you did not request a password reset, no action is needed   your password remains unchanged.',
       frontendUrl: FRONTEND_URL,
     }),
   },
@@ -285,7 +285,7 @@ const templates = [
     from: 'EcomGear <noreply@ecomgear.dev>',
     html: baseTemplate({
       title: "80% of quota used",
-      preheader: "You've used 80% of your monthly messages — upgrade to keep building.",
+      preheader: "You've used 80% of your monthly messages   upgrade to keep building.",
       body: `
         <h1 ${h1}>You're approaching your usage limit</h1>
         <p ${p}>Hi Jane,</p>
@@ -308,7 +308,7 @@ const templates = [
           </tr>
         </table>
         <p ${pl}>
-          Upgrade your plan to keep building without interruption — your quota resets
+          Upgrade your plan to keep building without interruption   your quota resets
           on the 1st of each month.
         </p>
       `,
@@ -323,7 +323,7 @@ const templates = [
     from: 'EcomGear <noreply@ecomgear.dev>',
     html: baseTemplate({
       title: "Usage limit reached",
-      preheader: "Your monthly quota is exhausted — upgrade to resume AI requests.",
+      preheader: "Your monthly quota is exhausted   upgrade to resume AI requests.",
       body: `
         <h1 ${h1}>Usage limit reached</h1>
         <p ${p}>Hi Jane,</p>

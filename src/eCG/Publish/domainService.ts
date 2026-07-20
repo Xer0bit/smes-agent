@@ -20,7 +20,7 @@ const HOSTING_BASE = rawHostingUrl.replace(/\/$/, '');
 
 // Domain/deploy operations that need VITE_HOSTING_SERVICE_SECRET now go through
 // the API server's /api/v1/hosting proxy instead of hitting HOSTING_BASE
-// directly — Vite bundles VITE_-prefixed vars into the public JS, so the
+// directly   Vite bundles VITE_-prefixed vars into the public JS, so the
 // secret used to be extractable from the built output. The proxy holds the
 // secret server-side and checks project ownership / admin role instead.
 async function apiAuthHeaders(): Promise<HeadersInit> {
@@ -32,7 +32,7 @@ async function apiAuthHeaders(): Promise<HeadersInit> {
 }
 
 async function hostingProxyUrl(path: string): Promise<string> {
-  // /api/v1/hosting only runs on the API server (VPS1, SERVICE_ROLE=api) — NOT
+  // /api/v1/hosting only runs on the API server (VPS1, SERVICE_ROLE=api)   NOT
   // the gen server (VPS3, SERVICE_ROLE=gen only mounts /api/v1/ai).
   const { getApiServerUrl } = await import('@/config/external-api');
   return getApiServerUrl(`/api/v1/hosting${path}`);
@@ -53,7 +53,7 @@ async function getHostingPublicIp(): Promise<string> {
       _hostingPublicIp = data.publicIp || '';
       _hostingIpFetched = true;
     }
-  } catch { /* silent — will retry next call */ }
+  } catch { /* silent   will retry next call */ }
   return _hostingPublicIp || '';
 }
 
@@ -99,7 +99,7 @@ class DomainService {
         is_apex: true,
       };
     }
-    // Subdomain — A record pointing directly to the hosting node IP.
+    // Subdomain   A record pointing directly to the hosting node IP.
     // (Previously used CNAME → hosting.ecomgear.app, but that resolves to
     // VPS2/preview which runs nginx, causing 404 for custom domains.)
     const hostPart = parts.slice(0, parts.length - 2).join('.');
@@ -210,7 +210,7 @@ class DomainService {
   }
 
   /**
-   * Add custom domain (Pro/Agency only) — placeholder.
+   * Add custom domain (Pro/Agency only)   placeholder.
    */
   async addCustomDomain(projectId: string, domain: string): Promise<ProjectCustomDomain> {
     const config = await this.getDomainConfiguration(domain);
@@ -422,7 +422,7 @@ class DomainService {
   }
 
   /**
-   * Remove any domain mapping from the hosting service (admin panel only —
+   * Remove any domain mapping from the hosting service (admin panel only  
    * no project-ownership check, gated by admin role server-side instead).
    */
   async adminRemoveHostingDomain(domain: string): Promise<{ success: boolean; error?: string }> {
@@ -443,7 +443,7 @@ class DomainService {
   }
 
   /**
-   * Remove a deployed project from the hosting service (admin panel only —
+   * Remove a deployed project from the hosting service (admin panel only  
    * no project-ownership check, gated by admin role server-side instead).
    */
   async removeHostingDeployment(projectId: string): Promise<{ success: boolean; error?: string }> {

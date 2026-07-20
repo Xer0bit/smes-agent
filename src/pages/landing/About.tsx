@@ -54,7 +54,7 @@ const PRODUCTS = [
     description:
       "Distributed compute exchange pooling idle CPU and GPU resources into AI inference, VPN credits, and high-performance workloads.",
     bullets: [
-      "Network Compute Pool — 4,221 TH/s",
+      "Network Compute Pool   4,221 TH/s",
       "1,847 active AI agents",
       "VPN Credits earned from contributing compute",
     ],
@@ -76,7 +76,7 @@ const PILLARS = [
     bg: "bg-indigo-500/10 border-indigo-500/20",
     title: "Connect",
     description:
-      "OneNET gives SMEs private, secure cross-border connectivity — WireGuard VPN across HK, CN, SG, US, and EU edge nodes with GPU compute on demand.",
+      "OneNET gives SMEs private, secure cross-border connectivity   WireGuard VPN across HK, CN, SG, US, and EU edge nodes with GPU compute on demand.",
   },
   {
     icon: Globe,
@@ -132,7 +132,7 @@ export default function About() {
           </h1>
           <p className="text-lg md:text-xl text-slate-400 leading-relaxed max-w-2xl mx-auto">
             Build, connect, and operate on a single AI-powered platform.
-            Application development, cross-border infrastructure, and intelligent automation —
+            Application development, cross-border infrastructure, and intelligent automation  
             unified for SMEs expanding across global, China, and ASEAN markets.
           </p>
         </div>
@@ -234,7 +234,7 @@ export default function About() {
           <h2 className="text-2xl font-bold text-white mb-4">Our vision</h2>
           <p className="text-slate-300 leading-7 text-base">
             Every SME deserves enterprise-grade infrastructure. We unify AI-powered development,
-            secure cross-border connectivity, and intelligent automation into a single platform —
+            secure cross-border connectivity, and intelligent automation into a single platform  
             so founders and teams can build fast, connect globally, and operate with confidence
             across China, ASEAN, and beyond.
           </p>
@@ -246,7 +246,7 @@ export default function About() {
         <div className="max-w-xl mx-auto text-center">
           <h3 className="text-xl font-bold text-white mb-3">Work with us</h3>
           <p className="text-slate-400 text-sm mb-6">
-            We're building the future of AI-powered SME infrastructure — reach out to learn more or explore partnership opportunities.
+            We're building the future of AI-powered SME infrastructure   reach out to learn more or explore partnership opportunities.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             <Link

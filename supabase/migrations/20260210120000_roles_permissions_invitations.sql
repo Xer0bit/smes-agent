@@ -102,7 +102,7 @@ END;
 $$;
 
 -- =============================================================================
--- 5. RLS Policies — Projects (role-aware)
+-- 5. RLS Policies   Projects (role-aware)
 -- =============================================================================
 
 -- Drop existing project policies to replace them
@@ -167,7 +167,7 @@ CREATE POLICY "Admins can delete projects" ON projects
     );
 
 -- =============================================================================
--- 5b. RLS Policies — org_invitations
+-- 5b. RLS Policies   org_invitations
 -- =============================================================================
 
 DROP POLICY IF EXISTS "Admins can manage invitations" ON org_invitations;
@@ -199,7 +199,7 @@ CREATE POLICY "Invitees can accept or decline" ON org_invitations
     );
 
 -- =============================================================================
--- 5c. RLS Policies — project_member_access
+-- 5c. RLS Policies   project_member_access
 -- =============================================================================
 
 DROP POLICY IF EXISTS "Admins manage project access" ON project_member_access;

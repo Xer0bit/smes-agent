@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# force-deploy.sh — One-shot local deploy to all VPS
+# force-deploy.sh   One-shot local deploy to all VPS
 # Usage:
 #   ./scripts/force-deploy.sh              # deploy all (vps1-3)
 #   ./scripts/force-deploy.sh vps1         # frontend only
@@ -80,10 +80,10 @@ rsync_preview_service() {
 }
 
 # ============================================================
-# VPS1 — Frontend (ecomgear.dev)
+# VPS1   Frontend (ecomgear.dev)
 # ============================================================
 deploy_vps1() {
-  log "═══ VPS1 ($VPS1_HOST) — Building & deploying frontend ═══"
+  log "═══ VPS1 ($VPS1_HOST)   Building & deploying frontend ═══"
   cd "$ROOT_DIR"
   local active_supabase_dir="/root/ecom-ondy/ecomgear/supabase"
   local legacy_supabase_dir="/var/www/ecomgear/ecomgear-agent/supabase"
@@ -149,7 +149,7 @@ deploy_vps1() {
     [[ -n "${ANTHROPIC_API_KEY:-}" ]] && \
       SECRETS_CMD+=" && npx supabase secrets set ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY}'"
     ssh_run "$VPS1_HOST" "$VPS1_USER" "$VPS1_PASS" "$SECRETS_CMD && echo 'Secrets updated'" || \
-      warn "Could not set secrets via supabase CLI — runtime restart applied"
+      warn "Could not set secrets via supabase CLI   runtime restart applied"
   else
     log "SUPABASE_ACCESS_TOKEN not set; skipping 'supabase secrets set' and using synced function env files"
   fi
@@ -209,7 +209,7 @@ server {
     listen 80;
     server_name api.ecomgear.dev;
     client_max_body_size 20m;  # allow large file uploads to storage
-    # ── Realtime WebSocket — must be before the catch-all location ──
+    # ── Realtime WebSocket   must be before the catch-all location ──
     location /realtime/ {
         proxy_pass http://127.0.0.1:54321;
         proxy_http_version 1.1;
@@ -301,7 +301,7 @@ NGINX
 BENIGN="already exists|already member of publication|permission denied for function pg_read_file|must be owner of table objects|cannot change name of view column|cannot change data type of view column"
 DB_CTR=$(docker ps --format "{{.Names}}" | grep supabase_db_ | head -1)
 
-# Ensure migration tracking table exists (idempotent — safe on every deploy)
+# Ensure migration tracking table exists (idempotent   safe on every deploy)
 docker exec "$DB_CTR" psql -U postgres -d postgres -c "
   CREATE TABLE IF NOT EXISTS public._ecg_migrations (
     filename   TEXT PRIMARY KEY,
@@ -339,7 +339,7 @@ MIGRATE_EOF
     "chmod +x /tmp/run-ecg-migrations.sh && bash /tmp/run-ecg-migrations.sh"
   ok "Migrations applied ✓"
 
-  # ── 7. SSL cert — reinstall if exists, issue if not ───────
+  # ── 7. SSL cert   reinstall if exists, issue if not ───────
   log "Configuring SSL for VPS1..."
   ssh_run "$VPS1_HOST" "$VPS1_USER" "$VPS1_PASS" "
     if [ -f /etc/letsencrypt/live/www.ecomgear.dev/fullchain.pem ]; then
@@ -359,10 +359,10 @@ MIGRATE_EOF
 }
 
 # ============================================================
-# VPS2 — Preview Service (preview.ecomgear.app)
+# VPS2   Preview Service (preview.ecomgear.app)
 # ============================================================
 deploy_vps2() {
-  log "═══ VPS2 ($VPS2_HOST) — Deploying preview service ═══"
+  log "═══ VPS2 ($VPS2_HOST)   Deploying preview service ═══"
   cd "$ROOT_DIR"
 
   # ── 1. Bootstrap: Node 20 + nginx + PM2 + certbot ────────
@@ -394,7 +394,7 @@ server {
 
     location /.well-known/acme-challenge/ { root /var/www/html; }
 
-    # Health check — proxy through Express so CORS headers are included
+    # Health check   proxy through Express so CORS headers are included
     location = /health {
         proxy_pass http://127.0.0.1:3001/health;
         proxy_http_version 1.1;
@@ -406,7 +406,7 @@ server {
         add_header Access-Control-Allow-Methods "GET, OPTIONS" always;
     }
 
-    # Preview file-update endpoint — large body + CORS + no buffering
+    # Preview file-update endpoint   large body + CORS + no buffering
     location ~ ^/preview/[^/]+/update$ {
         if ($request_method = 'OPTIONS') {
             add_header Access-Control-Allow-Origin  "*";
@@ -434,7 +434,7 @@ server {
         add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
     }
 
-    # Publish endpoint — needs large body for full project file uploads
+    # Publish endpoint   needs large body for full project file uploads
     location ~ ^/(check-subdomain|publish)(/.*)?$ {
         if ($request_method = 'OPTIONS') {
             add_header Access-Control-Allow-Origin  "*";
@@ -476,7 +476,7 @@ server {
     }
 }
 
-# Wildcard published subdomains — redirect {slug}.ecomgear.app → path-based HTTPS
+# Wildcard published subdomains   redirect {slug}.ecomgear.app → path-based HTTPS
 # .app TLD is HSTS-preloaded: HTTP is blocked by all browsers.
 # All published sites use https://preview.ecomgear.app/p/{slug} instead.
 server {
@@ -501,7 +501,7 @@ NGINX
     nginx -t && systemctl reload nginx && echo 'nginx OK on VPS2'
   " "$VPS2_SSH_PORT"
 
-  # ── 5. SSL cert — reinstall if exists, issue if not ───────
+  # ── 5. SSL cert   reinstall if exists, issue if not ───────
   log "Configuring SSL for VPS2..."
   ssh_run "$VPS2_HOST" "$VPS2_USER" "$VPS2_PASS" "
     if [ -f /etc/letsencrypt/live/preview.ecomgear.app/fullchain.pem ]; then
@@ -535,7 +535,7 @@ NGINX
   log "Configuring hosting.ecomgear.app proxy on VPS2..."
   local vps4_target="${VPS4_HOST:-187.77.157.231}"
   cat > "$TMP_DIR/hosting-proxy.conf" << NGINX
-# Allowed origins map — only ecomgear.dev frontends get CORS header
+# Allowed origins map   only ecomgear.dev frontends get CORS header
 map \$http_origin \$cors_hosting {
     default                      "";
     "https://ecomgear.dev"       "https://ecomgear.dev";
@@ -608,10 +608,10 @@ NGINX
 }
 
 # ============================================================
-# VPS3 — Agent / Gen Server (gen.ecomgear.dev + agent.ecomgear.dev)
+# VPS3   Agent / Gen Server (gen.ecomgear.dev + agent.ecomgear.dev)
 # ============================================================
 deploy_vps3() {
-  log "═══ VPS3 ($VPS3_HOST) — Building & deploying agent/gen server ═══"
+  log "═══ VPS3 ($VPS3_HOST)   Building & deploying agent/gen server ═══"
   cd "$ROOT_DIR"
 
   local supabase_service_key_effective="${SUPABASE_SERVICE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
@@ -636,7 +636,7 @@ deploy_vps3() {
 
   # ── 3. Upload files (source only, no node_modules) ───────
   log "Uploading server/ → VPS3..."
-  # Upload server source (except node_modules — npm ci runs on remote)
+  # Upload server source (except node_modules   npm ci runs on remote)
   # shellcheck disable=SC2086
   sshpass -p "$VPS3_PASS" rsync -avz --delete \
     --filter='P logs/***' \
@@ -772,7 +772,7 @@ NGINX
 
   # ── 7. Write .env + start PM2 ────────────────────────────
   log "Writing server .env + starting PM2..."
-  # Write env file locally then upload — avoids heredoc quoting issues with SSH
+  # Write env file locally then upload   avoids heredoc quoting issues with SSH
   cat > "$TMP_DIR/server.env" << ENVEOF
 NODE_ENV=production
 PORT=5001
@@ -829,12 +829,12 @@ ENVEOF
 }
 
 # ============================================================
-# VPS4 — Enterprise Hosting Service
+# VPS4   Enterprise Hosting Service
 # ============================================================
 deploy_vps4() {
   [[ -n "$VPS4_HOST" ]] || die "VPS4_HOST not set in .deploy.env"
   [[ -n "$VPS4_PASS" ]] || die "VPS4_PASS not set in .deploy.env"
-  log "═══ VPS4 ($VPS4_HOST) — Deploying hosting service ═══"
+  log "═══ VPS4 ($VPS4_HOST)   Deploying hosting service ═══"
   cd "$ROOT_DIR"
 
   # ── 1. Bootstrap: Node 20 + Caddy + PM2 ─────────────────
@@ -927,7 +927,7 @@ TARGETS=("$@")
 [[ ${#TARGETS[@]} -eq 0 ]] && TARGETS=("vps1" "vps2" "vps3")
 
 START_TIME=$(date +%s)
-log "Force-deploy started — targets: ${TARGETS[*]}"
+log "Force-deploy started   targets: ${TARGETS[*]}"
 echo ""
 
 for target in "${TARGETS[@]}"; do

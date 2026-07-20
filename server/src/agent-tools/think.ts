@@ -1,7 +1,7 @@
 /**
- * think tool — structured reasoning scratchpad for the agent.
+ * think tool   structured reasoning scratchpad for the agent.
  *
- * This tool does nothing mechanically — it simply returns "OK". Its purpose
+ * This tool does nothing mechanically   it simply returns "OK". Its purpose
  * is to give the model a dedicated space to reason, plan, and analyze before
  * taking action. Research (Anthropic, OpenAI, Google) shows that agents
  * perform dramatically better when they "think out loud" before acting.
@@ -10,7 +10,7 @@
  *  1. At the START of every task to plan the approach
  *  2. Before complex multi-file edits to coordinate changes
  *  3. When analyzing errors to reason about root cause vs. symptom
- *  4. When stuck — to re-evaluate the approach instead of retrying blindly
+ *  4. When stuck   to re-evaluate the approach instead of retrying blindly
  */
 import { z } from 'zod';
 import { ToolDefinition, AgentContext } from './types.js';
@@ -30,12 +30,12 @@ export const thinkTool: ToolDefinition<z.infer<typeof schema>> = {
   description:
     'Use this tool to plan, reason, and analyze BEFORE taking action. ' +
     'Call this at the start of every task to create a plan, before multi-file edits to coordinate changes, ' +
-    'and when debugging to identify root causes. This is your internal scratchpad — the user does not see it. ' +
+    'and when debugging to identify root causes. This is your internal scratchpad   the user does not see it. ' +
     'TOKEN BUDGET: For small changes (color, text, one-line fixes) keep your thought under 60 words. ' +
-    'For multi-file builds keep it under 400 words. No prose — use bullet points.',
+    'For multi-file builds keep it under 400 words. No prose   use bullet points.',
   inputSchema: schema,
 
   execute: async (_args: z.infer<typeof schema>, _ctx: AgentContext) => {
-    return 'OK — thought recorded. Now proceed with your plan.';
+    return 'OK   thought recorded. Now proceed with your plan.';
   },
 };

@@ -8,7 +8,7 @@ function fmtMoney(n: number, d = 2) { return `$${n.toFixed(d)}`; }
 function fmtNum(n: number) { return n.toLocaleString(); }
 
 function shortModel(m: string): string {
-  if (!m) return '—';
+  if (!m) return ' ';
   if (m.includes('gemini-2.5-pro')) return 'Gemini 2.5 Pro';
   if (m.includes('gemini-2.5-flash') || m.includes('gemini-flash-latest')) return 'Gemini Flash';
   if (m.includes('gemini')) return 'Gemini';
@@ -132,8 +132,8 @@ function buildProjectRows(runs: Run[], projMap: Map<string, Project>, orgMap: Ma
   return Array.from(m.entries())
     .map(([pid, agg]) => {
       const proj = projMap.get(pid);
-      const orgName = proj?.organization_id ? (orgMap.get(proj.organization_id)?.name ?? '—') : '—';
-      const topModel = Array.from(agg.models.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—';
+      const orgName = proj?.organization_id ? (orgMap.get(proj.organization_id)?.name ?? ' ') : ' ';
+      const topModel = Array.from(agg.models.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? ' ';
       return {
         id: pid,
         name: proj?.name ?? pid.slice(0, 8) + '…',

@@ -1,18 +1,18 @@
 /**
- * sanitize.ts — auto-correct common code mistakes before writing to disk.
+ * sanitize.ts   auto-correct common code mistakes before writing to disk.
  *
  * Runs on every write_file and edit_file operation. Catches errors that
  * would cause Vite/Babel build failures, so the agent never writes broken code.
  *
  * Rules applied (in order):
- *  1. Duplicate React import  — remove `import React from 'react'` when
+ *  1. Duplicate React import    remove `import React from 'react'` when
  *     `import * as React from "react"` is also present.
- *  2. .tsx/.ts extension in imports — strip file extensions from local imports
+ *  2. .tsx/.ts extension in imports   strip file extensions from local imports
  *     (Vite/TypeScript resolves them automatically; explicit extensions break HMR).
- *  3. Missing React in JSX files that use forwardRef/ElementRef — ensure
+ *  3. Missing React in JSX files that use forwardRef/ElementRef   ensure
  *     `import * as React from "react"` is present.
- *  4. Tailwind config — inject shadcn color extensions if missing.
- *  5. Leaked agent narrative — strip chat/explanation text appended after code
+ *  4. Tailwind config   inject shadcn color extensions if missing.
+ *  5. Leaked agent narrative   strip chat/explanation text appended after code
  *     (e.g. "</Perfect! I've..." or "<ecomgear-chat-summary>..." in the file body).
  */
 
@@ -26,7 +26,7 @@ export interface SyntaxBalanceResult {
   braces: number;    // positive = unclosed, negative = surplus
   parens: number;
   brackets: number;  // square brackets [ vs ]
-  score: number;     // abs(braces) + abs(parens) + abs(brackets) — 0 is perfect
+  score: number;     // abs(braces) + abs(parens) + abs(brackets)   0 is perfect
 }
 
 /** Lightweight bracket/paren balance check for source files.
@@ -99,13 +99,13 @@ export function sanitizeConfigFile(filePath: string, raw: string): SanitizeResul
       JSON.parse(raw);
       return { content: raw, fixes };
     } catch {
-      // Content is not valid JSON — use scaffold default if available
+      // Content is not valid JSON   use scaffold default if available
       const fallback = SCAFFOLD_DEFAULTS[basename];
       if (fallback) {
         fixes.push(`Replaced corrupt ${basename} (non-JSON content) with scaffold default`);
         return { content: fallback, fixes };
       }
-      // Unknown JSON file with no fallback — return as-is (preview will error but we can't guess the schema)
+      // Unknown JSON file with no fallback   return as-is (preview will error but we can't guess the schema)
       fixes.push(`Warning: ${basename} contains invalid JSON but no scaffold default available`);
       return { content: raw, fixes };
     }
@@ -130,7 +130,7 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
 
   // ── Rule 1: Duplicate React import ───────────────────────────────────────────
   // Detects: both `import React from 'react'` AND `import * as React from "react"`
-  // Fix: remove the default import line — the namespace import covers all usages.
+  // Fix: remove the default import line   the namespace import covers all usages.
   const hasDefaultReact = /^import React from ['"]react['"];?\s*$/m.test(content);
   const hasNamespaceReact = /^import \* as React from ['"]react['"];?\s*$/m.test(content);
 
@@ -202,7 +202,7 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
       if (/extend\s*:\s*\{/.test(content)) {
         content = content.replace(/extend\s*:\s*\{/, `extend: {${SHADCN_COLORS}`);
       } else {
-        // No extend block — add one inside theme: { ... }
+        // No extend block   add one inside theme: { ... }
         content = content.replace(/theme\s*:\s*\{/, `theme: {\n    extend: {${SHADCN_COLORS}\n    },`);
       }
       fixes.push('Injected shadcn/ui color extensions into tailwind config (required for bg-background, text-foreground, etc.)');
@@ -255,7 +255,7 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
   //
   // Strategy: Use depth-tracking to find where the last top-level block closes
   // (depth returns to 0). Everything after that point which is a pure closer
-  // line is an orphan — strip it unconditionally. Then handle any remaining
+  // line is an orphan   strip it unconditionally. Then handle any remaining
   // imbalance (truncated or surplus) with the standard append/strip approach.
   if (isSourceFile(filePath)) {
     /** Count net open braces/parens/brackets, ignoring string literals. */
@@ -320,13 +320,13 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
 
       for (let i = componentEndLine + 1; i < lines.length; i++) {
         const trimmed = lines[i].trim();
-        if (!trimmed) continue; // blank lines between closers — fine
+        if (!trimmed) continue; // blank lines between closers   fine
         if (/^export\s+(default\s+)?\w/.test(trimmed)) continue; // valid export statement
         if (closerPattern.test(trimmed)) {
           if (orphanStart < 0) orphanStart = i;
           foundOrphans = true;
         } else {
-          // Real code after component end — these aren't orphans
+          // Real code after component end   these aren't orphans
           foundOrphans = false;
           orphanStart = -1;
           break;
@@ -344,14 +344,14 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
     // After structural orphan removal, fix any remaining imbalance.
     const { braces: braceCount, parens: parenCount, brackets: bracketCount } = countDelimiters(content);
 
-    // Case (a): truncated — append missing closers
+    // Case (a): truncated   append missing closers
     if (braceCount > 0 || parenCount > 0 || bracketCount > 0) {
       const closers: string[] = [];
       for (let i = 0; i < parenCount; i++) closers.push(')');
       for (let i = 0; i < bracketCount; i++) closers.push(']');
       for (let i = 0; i < braceCount; i++) closers.push('}');
       content = content.trimEnd() + '\n' + closers.join('\n') + '\n';
-      fixes.push(`Appended ${closers.length} closing bracket(s) — file was truncated (${braceCount} unclosed braces, ${parenCount} unclosed parens, ${bracketCount} unclosed brackets)`);
+      fixes.push(`Appended ${closers.length} closing bracket(s)   file was truncated (${braceCount} unclosed braces, ${parenCount} unclosed parens, ${bracketCount} unclosed brackets)`);
 
     // Case (b): surplus closers still remaining after Phase A
     } else if (braceCount < 0 || parenCount < 0 || bracketCount < 0) {

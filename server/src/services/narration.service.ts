@@ -1,5 +1,5 @@
 /**
- * Status service — the SINGLE source of "what is the agent doing right now".
+ * Status service   the SINGLE source of "what is the agent doing right now".
  *
  * Replaces the old trio of overlapping systems:
  *   - deriveStepStatus()          (rule-based canned strings)
@@ -28,7 +28,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 // ─── Per-run state ───────────────────────────────────────────────────────────
 
 interface RunState {
-  /** Latest think() reasoning text — grounds every narration in real intent. */
+  /** Latest think() reasoning text   grounds every narration in real intent. */
   latestThought: string;
   /** The original user prompt for this run. */
   userPrompt: string;
@@ -104,12 +104,12 @@ export type LifecyclePhase =
 export async function generateStatus(projectId: string, what: StatusKind): Promise<string | null> {
   const state = states.get(projectId);
 
-  // ── `think` content IS the narration already — no LLM round-trip ──────────
+  // ── `think` content IS the narration already   no LLM round-trip ──────────
   if (what.kind === 'tool' && what.toolName === 'think') {
     const thought = typeof what.args.thought === 'string' ? what.args.thought : '';
     const first = humanize(thought);
     if (first) return emit(projectId, state, first);
-    return null; // empty thought — don't overwrite the previous real status
+    return null; // empty thought   don't overwrite the previous real status
   }
 
   // ── Build the prompt + fallback for everything else ────────────────────────
@@ -130,7 +130,7 @@ export async function generateStatus(projectId: string, what: StatusKind): Promi
     ]);
     status = cleanLlmText(result.text ?? '');
   } catch {
-    status = null; // LLM unavailable — use fallback below
+    status = null; // LLM unavailable   use fallback below
   }
 
   // Honest, SPECIFIC fallback (never a generic "Working..."). Built from the
@@ -268,7 +268,7 @@ function humanize(thought: string): string | null {
 }
 
 function cleanLlmText(text: string): string | null {
-  const t = text.trim().replace(/^["']|["']$/g, '').replace(/\.$/, '').replace(/—/g, '-');
+  const t = text.trim().replace(/^["']|["']$/g, '').replace(/\.$/, '').replace(/ /g, '-');
   if (!t || t.length < 3) return null;
   return t.length > 80 ? t.slice(0, 77) + '...' : t;
 }

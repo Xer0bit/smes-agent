@@ -33,7 +33,7 @@ export default function AuthCallback() {
 
     try {
       // Check if user already has an org (returning user).
-      // .limit(1) is required — .maybeSingle() returns null (not data) when
+      // .limit(1) is required   .maybeSingle() returns null (not data) when
       // multiple rows exist, causing a new org to be created on every login.
       const { data: existingMember } = await supabase
         .from("org_members")
@@ -60,7 +60,7 @@ export default function AuthCallback() {
         return;
       }
 
-      // New OAuth user — provision org + project
+      // New OAuth user   provision org + project
       setStatus("setting-up");
 
       const displayName =
@@ -97,13 +97,13 @@ export default function AuthCallback() {
               user_name: displayName,
               org_name: `${displayName}'s Workspace`,
             },
-          }).catch(() => {}); // fire-and-forget — don't block navigation
+          }).catch(() => {}); // fire-and-forget   don't block navigation
         }
 
         if (signupError) {
           console.warn("signup-complete edge fn failed, trying direct insert:", signupError.message);
 
-          // Guard: re-check before fallback insert — signup-complete may have
+          // Guard: re-check before fallback insert   signup-complete may have
           // succeeded partially, or another tab may have already created the org.
           const { data: guardMember } = await supabase
             .from("org_members").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
@@ -166,7 +166,7 @@ export default function AuthCallback() {
     const urlErrorDesc = searchParams.get("error_description");
 
     // ── Path A: session already set (hash parsed before component mounted) ──
-    // Always check session first — even when error params are present, a previous
+    // Always check session first   even when error params are present, a previous
     // session may still be valid (e.g. user was already logged in via email).
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {

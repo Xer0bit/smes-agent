@@ -30,7 +30,7 @@ async function findChromium(): Promise<string | null> {
 
 /**
  * Fire-and-forget: screenshots `previewUrl`, uploads to Storage, updates project row.
- * Never throws — all errors are logged and swallowed.
+ * Never throws   all errors are logged and swallowed.
  */
 export async function captureThumbnail(
   projectId: string,
@@ -40,7 +40,7 @@ export async function captureThumbnail(
   try {
     const executablePath = await findChromium();
     if (!executablePath) {
-      logger.warn('[Thumbnail] No chromium binary found — skipping thumbnail capture. Set CHROMIUM_PATH or install chromium.');
+      logger.warn('[Thumbnail] No chromium binary found   skipping thumbnail capture. Set CHROMIUM_PATH or install chromium.');
       return;
     }
 
@@ -70,7 +70,7 @@ export async function captureThumbnail(
       await browser.close();
     }
 
-    // Upload to Supabase Storage — upsert so re-runs overwrite the same file
+    // Upload to Supabase Storage   upsert so re-runs overwrite the same file
     const storagePath = `${projectId}.webp`;
     const { error: uploadErr } = await supabase.storage
       .from(BUCKET)

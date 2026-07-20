@@ -31,7 +31,7 @@ BEGIN
     END IF;
 
     IF v_inv.status != 'pending' THEN
-        -- Already accepted — idempotent success
+        -- Already accepted   idempotent success
         IF v_inv.status = 'accepted' THEN
             RETURN json_build_object('success', true, 'org_id', v_inv.org_id, 'role', v_inv.role, 'already_member', true);
         END IF;

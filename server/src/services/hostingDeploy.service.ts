@@ -3,7 +3,7 @@
  * (VPS2), then push the built files to hosting-service (VPS4).
  *
  * Extracted from seo.routes.ts / header-integrations.routes.ts, which both had
- * this exact block inline — a third caller (publish_site agent tool) made the
+ * this exact block inline   a third caller (publish_site agent tool) made the
  * duplication worth collapsing.
  */
 import { supabase } from '../config/database.js';
@@ -51,7 +51,7 @@ export async function deployProjectToProduction(projectId: string): Promise<Depl
       .maybeSingle();
 
     if (!(published as any)?.subdomain) {
-      return { productionDeployed: false, deployError: 'Project has not been published yet — publish it once from the editor first.' };
+      return { productionDeployed: false, deployError: 'Project has not been published yet   publish it once from the editor first.' };
     }
 
     const deployRes = await fetch(`${HOSTING_BASE}/deploy/${projectId}`, {

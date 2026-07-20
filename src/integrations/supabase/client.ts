@@ -1,13 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
 // No hardcoded dev fallback here on purpose. This project's local dev talks
-// to the REAL production Supabase (see ENVIRONMENTS.md) — there is no local
+// to the REAL production Supabase (see ENVIRONMENTS.md)   there is no local
 // Supabase CLI stack to fall back to. A previous hardcoded fallback to
 // 'http://localhost:54321' silently masked a missing/stale VITE_SUPABASE_URL
 // with a URL that corresponds to nothing actually running, producing
 // confusing generic 500s instead of the clear "Missing Supabase URL" error
 // below. If you see that error, check .env.local and restart the Vite dev
-// server — env vars are only read at startup, not hot-reloaded.
+// server   env vars are only read at startup, not hot-reloaded.
 const VITE_SUPABASE_URL =
   import.meta.env.VITE_SUPABASE_URL || import.meta.env.SUPABASE_URL;
 const VITE_SUPABASE_PUBLISHABLE_KEY =

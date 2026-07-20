@@ -592,7 +592,7 @@ function NewKeyModal({ keyData, onClose }: { keyData: any; onClose: () => void }
           <Shield className="w-8 h-8 text-green-600" />
           <div>
             <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>API Key Created</h2>
-            <p className="text-xs" style={{ color: 'var(--muted)' }}>Copy this key now — you won't see it again</p>
+            <p className="text-xs" style={{ color: 'var(--muted)' }}>Copy this key now   you won't see it again</p>
           </div>
         </div>
 

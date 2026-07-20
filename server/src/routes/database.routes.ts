@@ -35,7 +35,7 @@ async function requirePaidPlan(req: AuthenticatedRequest, res: Response, organiz
     return false;
   }
 
-  // Verify membership + plan in one query — prevents org_id forgery
+  // Verify membership + plan in one query   prevents org_id forgery
   const { data } = await supabase
     .from('organizations')
     .select('plan_tier, org_members!inner(user_id)')
@@ -56,7 +56,7 @@ async function requirePaidPlan(req: AuthenticatedRequest, res: Response, organiz
 }
 
 // getStatus()/getCredentials()/etc below filter purely by project_id and never
-// verify the caller owns it — any authenticated user who knows/guesses another
+// verify the caller owns it   any authenticated user who knows/guesses another
 // project's ID could read or act on that project's hosted database. These two
 // helpers close that gap; read ops accept any accepted role (owner down to
 // viewer/client), write/destructive/export ops require editor+.
@@ -111,7 +111,7 @@ router.get('/credentials', async (req: AuthenticatedRequest, res: Response) => {
 
 // ── POST /api/v1/database/sync-secrets ──────────────────────────────────────
 // The Settings "Sync" button. getCredentials() only upserts VITE_DB_*/
-// VITE_FUNCTIONS_API_URL into the project_secrets TABLE — it never reaches the
+// VITE_FUNCTIONS_API_URL into the project_secrets TABLE   it never reaches the
 // live preview, which only reads a .env.local file written by the preview
 // service's own /secrets endpoint. Without this, the running app's
 // import.meta.env.VITE_DB_API_URL stays undefined ("Database API URL is not
@@ -123,7 +123,7 @@ router.post('/sync-secrets', async (req: AuthenticatedRequest, res: Response) =>
     if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
     if (!(await requireProjectEdit(req, res, projectId))) return;
 
-    // buildProjectEnvSecrets is the single source of truth (see database.service.ts) —
+    // buildProjectEnvSecrets is the single source of truth (see database.service.ts)  
     // it upserts auth + DB/functions rows as a side effect and returns the full merged
     // set, so this route never needs its own derivation logic to drift out of sync.
     const secrets = await buildProjectEnvSecrets(req.user!.id, projectId);
@@ -151,7 +151,7 @@ router.post('/sync-secrets', async (req: AuthenticatedRequest, res: Response) =>
 // Proxies a file push to the preview service so the browser never has to hold
 // PREVIEW_UPDATE_SECRET. Previously src/services/previewHealthService.ts sent
 // this secret straight from the client as VITE_PREVIEW_UPDATE_SECRET, which
-// Vite bundles into the public JS — anyone could pull it out of the built
+// Vite bundles into the public JS   anyone could pull it out of the built
 // output and hit the preview service's /update endpoint directly. The secret
 // stays server-side now; the client just needs to be an authenticated owner
 // of the project.
@@ -234,7 +234,7 @@ router.get('/ping', async (req: AuthenticatedRequest, res: Response) => {
 
 // ── GET /api/v1/database/dump ───────────────────────────────────────────────
 // Returns a downloadable .sql dump (schema + data) of the tenant's schema.
-// Full data export — editor+ only, same bar as /query with role=service.
+// Full data export   editor+ only, same bar as /query with role=service.
 router.get('/dump', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const projectId = getProjectId(req);

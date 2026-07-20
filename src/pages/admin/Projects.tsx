@@ -187,7 +187,7 @@ export default function Projects() {
                       {project.org_name}
                     </span>
                   ) : (
-                    <span className="text-xs text-gray-500">—</span>
+                    <span className="text-xs text-gray-500"> </span>
                   )}
                 </td>
                 <td className="px-5 py-3">{statusBadge(project.status)}</td>
@@ -249,7 +249,7 @@ export default function Projects() {
           <DialogHeader>
             <DialogTitle className="text-white flex items-center gap-2">
               <Users className="h-4 w-4 text-blue-400" />
-              Member Access — {accessProject?.name}
+              Member Access   {accessProject?.name}
             </DialogTitle>
           </DialogHeader>
           <div className="py-2">

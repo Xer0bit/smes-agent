@@ -1,8 +1,8 @@
 /**
- * delete_edge_function tool — remove an edge function from the DB and VPS5.
+ * delete_edge_function tool   remove an edge function from the DB and VPS5.
  *
  * This is the ONLY delete path for edge functions now. The Settings UI's
- * DELETE endpoint is locked (403) — same policy as create/update — so a
+ * DELETE endpoint is locked (403)   same policy as create/update   so a
  * user asks the agent to remove a function instead of doing it manually
  * behind the agent's back.
  */
@@ -21,7 +21,7 @@ const schema = z.object({
 export const deleteEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
   name: 'delete_edge_function',
   description:
-    'Delete an edge function permanently — removes the DB row, the VPS5 copy, and the __edge_functions__/<name>.js mirror. ' +
+    'Delete an edge function permanently   removes the DB row, the VPS5 copy, and the __edge_functions__/<name>.js mirror. ' +
     'Use when a function is no longer needed or is being replaced. This cannot be undone.',
   inputSchema: schema,
   modifiesState: true,

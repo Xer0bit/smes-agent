@@ -120,7 +120,7 @@ CREATE POLICY "admin full access project_custom_domains"
     EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid() AND role IN ('super_admin','admin'))
   );
 
--- ── 4. first_time_test_run role — 90-day cached read access ───────────────────
+-- ── 4. first_time_test_run role   90-day cached read access ───────────────────
 -- Store the grant in project_member_access with a role column if it exists,
 -- or in a new lightweight table.
 CREATE TABLE IF NOT EXISTS public.guest_project_access (
@@ -142,10 +142,10 @@ CREATE POLICY "service_role manage guest_project_access"
 -- ── 5. Ensure all new tables from phases 3-5 have admin bypass policies ───────
 -- (policies created inline in each phase, but guard with IF NOT EXISTS pattern here)
 
--- referral_rewards — already done in phase 2
--- preview_branding — already done in phase 3
--- client_markups   — already done in phase 4
--- demo_requests    — already done in phase 4
+-- referral_rewards   already done in phase 2
+-- preview_branding   already done in phase 3
+-- client_markups     already done in phase 4
+-- demo_requests      already done in phase 4
 
 -- ── 6. Updated comment to reflect 3-tier model ───────────────────────────────
 COMMENT ON FUNCTION public.sync_org_plan_limits IS

@@ -1,5 +1,5 @@
 /**
- * search_org_knowledge tool — lets the dev agent ground UI copy/content in
+ * search_org_knowledge tool   lets the dev agent ground UI copy/content in
  * the org's real business knowledge (from the eCG Agents Portal knowledge
  * base) instead of inventing generic placeholder text. Only available for
  * projects with MCP enabled at Dashboard Creator launch time (ctx.ecgMcp).

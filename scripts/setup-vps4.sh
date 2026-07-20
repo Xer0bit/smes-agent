@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# VPS4+ Setup — Enterprise Hosting Service
+# VPS4+ Setup   Enterprise Hosting Service
 # Can run on any VPS. Set HOSTING_PUBLIC_IP in the env after setup.
 #
 # Installs: Node.js 20, Caddy, PM2
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║  eComGear VPS4 — Enterprise Hosting Setup                  ║"
+echo "║  eComGear VPS4   Enterprise Hosting Setup                  ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 
 # ── 1. System updates ─────────────────────────────────────────────────────────

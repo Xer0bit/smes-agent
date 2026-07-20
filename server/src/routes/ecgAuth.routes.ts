@@ -1,5 +1,5 @@
 /**
- * eCG Auth routes — backend endpoints that integrate with the eCG Auth
+ * eCG Auth routes   backend endpoints that integrate with the eCG Auth
  * centralised authentication service.
  *
  * Mounted at /api/v1/auth/ecg/*
@@ -55,7 +55,7 @@ router.post('/login', async (req: Request, res: Response) => {
             res.json({ requires2fa: true, pendingToken: (ecgResult.data as { pendingToken: string }).pendingToken });
             return;
           }
-          // 2FA flag is off — ignore the challenge and treat as error
+          // 2FA flag is off   ignore the challenge and treat as error
           logger.warn('eCG Auth 2FA required but ECG_AUTH_2FA_ACTIVE is false', { email });
         } else {
           // Successful login
@@ -85,12 +85,12 @@ router.post('/login', async (req: Request, res: Response) => {
 
       // eCG Auth returned a specific error
       if (!ecgResult.ok && ecgResult.code) {
-        // AL-0003: no account found on eCG Auth — fall through to legacy
+        // AL-0003: no account found on eCG Auth   fall through to legacy
         if (ecgResult.code === 'AL-0003') {
           logger.info('eCG Auth: user not found, falling back to legacy', { email });
           // fall through to legacy below
         }
-        // AL-0004: wrong password — check if user has been migrated
+        // AL-0004: wrong password   check if user has been migrated
         else if (ecgResult.code === 'AL-0004') {
           // Check if this email has ecg_auth_user_id set (meaning they've been migrated)
           const { data: profile } = await supabase
@@ -107,15 +107,15 @@ router.post('/login', async (req: Request, res: Response) => {
             return;
           }
 
-          // Not migrated yet — fall through to legacy
+          // Not migrated yet   fall through to legacy
           logger.info('eCG Auth: wrong password, user not migrated, falling back to legacy', { email });
         }
-        // Other errors (rate limit, validation) — return as-is
+        // Other errors (rate limit, validation)   return as-is
         else if (ecgResult.status !== 0) {
           res.status(ecgResult.status).json({ error: ecgResult.error });
           return;
         }
-        // Network error (status 0) — fall through to legacy
+        // Network error (status 0)   fall through to legacy
         else {
           logger.warn('eCG Auth unreachable, falling back to legacy', { email });
         }
@@ -180,7 +180,7 @@ router.post('/login', async (req: Request, res: Response) => {
 
 // ─── Shared workspace provisioning (profile + org + first project) ─────────
 // Same provisioning logic regardless of whether userId came from eCG Auth
-// or from a legacy Supabase signUp — both need a profile/org/project.
+// or from a legacy Supabase signUp   both need a profile/org/project.
 
 async function provisionWorkspace(
   userId: string,
@@ -201,7 +201,7 @@ async function provisionWorkspace(
 
   if (profileError) {
     logger.error('Failed to create profile during registration', { email, error: profileError.message });
-    // Don't fail the registration — the account exists, workspace can be created later
+    // Don't fail the registration   the account exists, workspace can be created later
   }
 
   const slugBase = organizationName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
@@ -267,7 +267,7 @@ router.post('/register', async (req: Request, res: Response) => {
         // Login to eCG Auth to get tokens
         const loginResult = await ecgLogin(email, password);
         if (!loginResult.ok || !loginResult.data || 'requires2fa' in loginResult.data) {
-          // Registration succeeded but auto-login failed — user can log in manually
+          // Registration succeeded but auto-login failed   user can log in manually
           res.status(201).json({
             message: 'Account created successfully. Please log in.',
             projectId: provisioned.projectId,
@@ -291,11 +291,11 @@ router.post('/register', async (req: Request, res: Response) => {
         return;
       }
       if (regResult.status && regResult.status !== 0) {
-        // Real eCG Auth error (not just unreachable) — surface it, don't fall back
+        // Real eCG Auth error (not just unreachable)   surface it, don't fall back
         res.status(regResult.status).json({ error: regResult.error || 'Registration failed' });
         return;
       }
-      // Network error (status 0) — fall through to legacy
+      // Network error (status 0)   fall through to legacy
       logger.warn('eCG Auth unreachable during registration, falling back to legacy', { email });
     }
 
@@ -325,7 +325,7 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     if (!data.session) {
-      // Email confirmation required by this Supabase project — no session yet
+      // Email confirmation required by this Supabase project   no session yet
       res.status(201).json({
         message: 'Account created. Please check your email to confirm, then log in.',
         projectId: provisioned.projectId,
@@ -431,7 +431,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
       .maybeSingle();
 
     if (profile?.ecg_auth_user_id && isEcgAuthConfigured()) {
-      // User has been migrated to eCG Auth — use eCG Auth reset
+      // User has been migrated to eCG Auth   use eCG Auth reset
       const brandedHtml = buildBrandedResetEmailHtml(resetUrl);
       const result = await ecgForgotPassword(email, resetUrl, brandedHtml);
 

@@ -82,7 +82,7 @@ export default function CreateAgentPage() {
         try {
           await ecgApi.schedulers.create({ agentId: created.id, cron: cron.trim(), connector: selectedConnectorIds[0] });
         } catch {
-          // Agent was created fine — scheduler is a nice-to-have, don't block success on it.
+          // Agent was created fine   scheduler is a nice-to-have, don't block success on it.
         }
       }
       setDone(true);

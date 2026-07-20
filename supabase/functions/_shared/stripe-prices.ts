@@ -1,7 +1,7 @@
 /**
  * Single source of truth for Stripe Price → Plan Tier mapping.
  * Used by edge functions: org-create-checkout, get-billing-info
- * Update here when Stripe prices change — no other file needs editing.
+ * Update here when Stripe prices change   no other file needs editing.
  */
 export const STRIPE_PRICE_PLAN_MAP: Record<string, 'starter' | 'professional'> = {
   'price_1TAmb4Ckmi49M8D1I4VOHjjp': 'starter',

@@ -90,7 +90,7 @@ async function main() {
     assert(res.body.promoted === true, `Expected promoted=true (new staging model)`);
   })) passed++; else failed++;
 
-  // ── Test 3: Cross-file import check — missing import ──
+  // ── Test 3: Cross-file import check   missing import ──
   if (await test('Unresolved import → rejected (422)', async () => {
     const files = [
       { path: 'index.html', content: '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Test</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>' },

@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# EcomGear — Local Build + Boot Smoke Test
+# EcomGear   Local Build + Boot Smoke Test
 #
 # Run this before every ./scripts/deploy.sh. Type-checks and builds each
 # service, boots the gen server and preview-service locally, and confirms
-# both actually come up healthy — catches the class of bugs that only show
+# both actually come up healthy   catches the class of bugs that only show
 # up at runtime (missing exports, wrong secret names, broken imports) before
 # they ever reach production.
 #
@@ -91,7 +91,7 @@ fi
 
 # ── 4. Boot gen server locally, wait for /health ──────────────────────────────
 if [[ ! -f server/.env ]]; then
-    fail "server/.env not found — run scripts/dev-setup.sh first. Skipping boot test."
+    fail "server/.env not found   run scripts/dev-setup.sh first. Skipping boot test."
     FAILURES=$((FAILURES+1))
 else
     info "Booting gen server (port 5001)..."
@@ -108,7 +108,7 @@ else
     if [[ $GEN_OK -eq 1 ]]; then
         success "Gen server booted and healthy"
     else
-        fail "Gen server did not become healthy within 20s — see /tmp/local-test-gen.log"
+        fail "Gen server did not become healthy within 20s   see /tmp/local-test-gen.log"
         tail -20 /tmp/local-test-gen.log
         FAILURES=$((FAILURES+1))
     fi
@@ -129,7 +129,7 @@ done
 if [[ $PREVIEW_OK -eq 1 ]]; then
     success "preview-service booted and healthy"
 else
-    fail "preview-service did not become healthy within 20s — see /tmp/local-test-preview.log"
+    fail "preview-service did not become healthy within 20s   see /tmp/local-test-preview.log"
     tail -20 /tmp/local-test-preview.log
     FAILURES=$((FAILURES+1))
 fi
@@ -137,9 +137,9 @@ fi
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 if [[ $FAILURES -eq 0 ]]; then
-    success "All local checks passed — safe to deploy"
+    success "All local checks passed   safe to deploy"
 else
-    fail "$FAILURES check(s) failed — fix before deploying"
+    fail "$FAILURES check(s) failed   fix before deploying"
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 exit $FAILURES

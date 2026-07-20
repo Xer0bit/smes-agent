@@ -187,7 +187,7 @@ export default function DashboardOrganizations() {
 
       const mergedOrgs = Object.values(combined) as any[];
 
-      // Check if this user is a platform admin — they get admin rights in every org
+      // Check if this user is a platform admin   they get admin rights in every org
       const { data: platformRoleRow } = await supabase
         .from('user_roles')
         .select('role')
@@ -1335,7 +1335,7 @@ export default function DashboardOrganizations() {
               )}
               <p className="text-xs text-muted-foreground">
                 {inviteProjectIds.length === 0
-                  ? 'No projects selected — member can be assigned projects later.'
+                  ? 'No projects selected   member can be assigned projects later.'
                   : `${inviteProjectIds.length} project${inviteProjectIds.length !== 1 ? 's' : ''} selected`}
               </p>
             </div>

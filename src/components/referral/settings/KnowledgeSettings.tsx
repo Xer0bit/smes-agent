@@ -28,7 +28,7 @@ function PaywallCard() {
             <Card className="bg-workspace-surface border-indigo-500/30">
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2">
-                        Knowledge Configuration — Paid Plan Feature
+                        Knowledge Configuration   Paid Plan Feature
                     </CardTitle>
                     <CardDescription>
                         Upgrade your organization plan to customise how the AI understands and works with your project.
@@ -72,7 +72,7 @@ export const KnowledgeSettings = ({ projectId }: KnowledgeSettingsProps) => {
         },
     });
 
-    // Only hydrate once — a background refetch mid-edit would otherwise wipe
+    // Only hydrate once   a background refetch mid-edit would otherwise wipe
     // unsaved typing with the pre-edit DB row (isDirty's whole point is to
     // protect unsaved edits, so this guard is load-bearing, not cosmetic).
     const hydrated = useRef(false);
@@ -169,8 +169,8 @@ export const KnowledgeSettings = ({ projectId }: KnowledgeSettingsProps) => {
                                 placeholder={
                                     'e.g. This is a Hong Kong e-commerce site targeting Cantonese-speaking users.\n' +
                                     'Always add bilingual labels (English + 繁中) to form buttons.\n' +
-                                    'Use HKD currency formatting — never USD.\n' +
-                                    'Payment provider: Stripe (already integrated — do not add a second provider).'
+                                    'Use HKD currency formatting   never USD.\n' +
+                                    'Payment provider: Stripe (already integrated   do not add a second provider).'
                                 }
                                 rows={8}
                                 className="text-sm font-mono resize-y"
@@ -189,7 +189,7 @@ export const KnowledgeSettings = ({ projectId }: KnowledgeSettingsProps) => {
                                 Project Context Notes
                             </CardTitle>
                             <CardDescription className="text-xs">
-                                Background knowledge the AI uses when generating code — describe your domain,
+                                Background knowledge the AI uses when generating code   describe your domain,
                                 data model, integrations, and brand.
                             </CardDescription>
                         </CardHeader>
@@ -204,9 +204,9 @@ export const KnowledgeSettings = ({ projectId }: KnowledgeSettingsProps) => {
                                 placeholder={
                                     'e.g. Tech stack: React 18 + Supabase + Stripe.\n' +
                                     'Brand: blue (#1877F2) and white. Font: Inter.\n' +
-                                    'Target market: HK retail — products are sold in HKD.\n' +
+                                    'Target market: HK retail   products are sold in HKD.\n' +
                                     'Main entities: Product, Order, Customer, Vendor.\n' +
-                                    'Auth is already set up — do not rebuild it.'
+                                    'Auth is already set up   do not rebuild it.'
                                 }
                                 rows={6}
                                 className="text-sm font-mono resize-y"

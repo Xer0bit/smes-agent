@@ -95,7 +95,7 @@ export default function Settings() {
       const results = await adminLlmService.testProviders();
       setTestResults(results);
       await loadSettings(); // refresh provider enabled states
-      toast.success('Provider test complete — states updated');
+      toast.success('Provider test complete   states updated');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Provider test failed');
     } finally {
@@ -288,8 +288,8 @@ export default function Settings() {
             <Label className="text-gray-300 text-xs font-medium">GLM / z.ai Experiment</Label>
             <p className="text-[11px] text-gray-500 mt-0.5">
               {isGlmExperiment
-                ? <>Active — primary: <span className="font-mono text-indigo-300">{status?.models.primary}</span>, fallback: <span className="font-mono text-indigo-300">{status?.models.fallback}</span></>
-                : 'Off — using Gemini primary (gemini-3.1-pro-preview)'}
+                ? <>Active   primary: <span className="font-mono text-indigo-300">{status?.models.primary}</span>, fallback: <span className="font-mono text-indigo-300">{status?.models.fallback}</span></>
+                : 'Off   using Gemini primary (gemini-3.1-pro-preview)'}
             </p>
           </div>
           <Switch
@@ -339,7 +339,7 @@ export default function Settings() {
                     ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                     : <XCircle className="h-3.5 w-3.5 text-red-400 shrink-0" />}
                   <span className="text-xs text-white capitalize font-medium">{provider}</span>
-                  <span className="text-[11px] text-gray-500">— {result.reason}</span>
+                  <span className="text-[11px] text-gray-500">  {result.reason}</span>
                 </div>
                 <span className="text-[10px] text-gray-600">{new Date(result.testedAt).toLocaleTimeString()}</span>
               </div>
@@ -461,7 +461,7 @@ export default function Settings() {
         <p className="text-xs text-gray-500 mb-5">Set default primary and fallback models used by backend services.</p>
         <div className="space-y-5">
           <div className="space-y-2">
-            <Label className="text-gray-300 text-xs">Primary Model <span className="text-purple-400 ml-1">(Paid users — EcomGear Smart)</span></Label>
+            <Label className="text-gray-300 text-xs">Primary Model <span className="text-purple-400 ml-1">(Paid users   EcomGear Smart)</span></Label>
             <Select value={status?.models.primary} onValueChange={(v) => void setPrimaryModel(v)} disabled={syncing}>
               <SelectTrigger className="bg-white/5 border-white/10 text-white h-9 text-sm">
                 <SelectValue placeholder="Select primary model" />
@@ -474,7 +474,7 @@ export default function Settings() {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label className="text-gray-300 text-xs">Free User Model <span className="text-amber-400 ml-1">(Free tier — restricted access)</span></Label>
+            <Label className="text-gray-300 text-xs">Free User Model <span className="text-amber-400 ml-1">(Free tier   restricted access)</span></Label>
             <Select value={status?.models.freeModel || status?.models.fallback || ''} onValueChange={(v) => void setFreeModel(v)} disabled={syncing}>
               <SelectTrigger className="bg-white/5 border-white/10 text-white h-9 text-sm">
                 <SelectValue placeholder="Select free tier model" />

@@ -8,7 +8,7 @@ router.use(authMiddleware);
 
 // ── POST /api/v1/stripe/:projectId/test ──────────────────────────────────────
 // Verifies the project's stored Stripe secret key actually works, by calling
-// Stripe's own /v1/account endpoint — the standard lightweight way to check a
+// Stripe's own /v1/account endpoint   the standard lightweight way to check a
 // key without side effects. Never returns the key itself, only what Stripe
 // reports about the account it belongs to.
 router.post('/:projectId/test', async (req: AuthenticatedRequest, res: Response) => {

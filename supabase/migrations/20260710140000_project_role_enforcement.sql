@@ -1,13 +1,13 @@
 -- Role enforcement for project collaborators.
 --
 -- Before this migration, neither project_invitations nor project_member_access
--- had a role column at all — the Editor/Viewer/Client dropdown in
+-- had a role column at all   the Editor/Viewer/Client dropdown in
 -- CollaboratorManager.tsx was purely cosmetic. Every accepted collaborator got
 -- identical full access regardless of what was selected, and nothing in the
 -- backend distinguished a read-only viewer from a full editor.
 --
 -- Default 'editor' on both new columns preserves current behavior for every
--- existing row (nobody's access silently changes) — only NEW invitations
+-- existing row (nobody's access silently changes)   only NEW invitations
 -- (which default to 'viewer' in the UI) get the tighter, intended behavior.
 
 ALTER TABLE public.project_invitations
@@ -60,7 +60,7 @@ BEGIN
         );
     END IF;
 
-    -- Idempotent: already a member — update their role in case they were
+    -- Idempotent: already a member   update their role in case they were
     -- re-invited with a different one.
     IF EXISTS (
         SELECT 1 FROM project_member_access

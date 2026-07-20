@@ -13,7 +13,7 @@ process.env.TENANT_DB_JWT_SECRET = 'test-secret';
 const upsertCalls: any[] = [];
 const deleteCalls: any[] = [];
 
-// tenant_databases fixture: user-1 has TWO projects, each with its own row —
+// tenant_databases fixture: user-1 has TWO projects, each with its own row  
 // simulates the exact scenario that exposed the cross-tenant leak.
 const tenantDbRows = [
   { id: 'row-1', user_id: 'user-1', project_id: 'project-1', organization_id: null, schema_name: 'tenant_project1', status: 'active', error_message: null, created_at: new Date().toISOString() },
@@ -78,18 +78,18 @@ beforeEach(() => {
   deleteCalls.length = 0;
 });
 
-describe('databaseService.getCredentials — VITE_DB_* secret sync', () => {
+describe('databaseService.getCredentials   VITE_DB_* secret sync', () => {
   it('upserts VITE_DB_API_URL and VITE_DB_ANON_KEY for the project', async () => {
     const creds = await databaseService.getCredentials('user-1', 'project-1');
     expect(creds).not.toBeNull();
-    // api_url carries the tenant schema as a URL path segment — see
+    // api_url carries the tenant schema as a URL path segment   see
     // database.service.ts's getCredentials(): the header-based Accept-Profile
     // convention was error-prone (forgetting the header silently 404/406'd),
     // so the schema now lives in the URL itself and VPS5's nginx derives the
     // real header from it.
     expect(creds!.api_url).toBe('https://cloud.ecomgear.app/tenant_project1');
 
-    // upsert is fired async (not awaited) — flush microtasks.
+    // upsert is fired async (not awaited)   flush microtasks.
     await new Promise((r) => setImmediate(r));
 
     const secretsUpsert = upsertCalls.find((c) => c.table === 'project_secrets');
@@ -99,7 +99,7 @@ describe('databaseService.getCredentials — VITE_DB_* secret sync', () => {
     const keyNames = secretsUpsert.rows.map((r: any) => r.key_name).sort();
     expect(keyNames).toEqual(['VITE_DB_ANON_KEY', 'VITE_DB_API_URL', 'VITE_DB_SCHEMA', 'VITE_FUNCTIONS_API_URL']);
 
-    // Functions live on the API server — never gen.ecomgear.dev, never the tenant DB host.
+    // Functions live on the API server   never gen.ecomgear.dev, never the tenant DB host.
     const fnUrlRow = secretsUpsert.rows.find((r: any) => r.key_name === 'VITE_FUNCTIONS_API_URL');
     expect(fnUrlRow.key_value).toBe(process.env.ECOMGEAR_SERVER_URL?.replace(/\/$/, '') || 'https://api.ecomgear.dev');
 
@@ -123,11 +123,11 @@ describe('databaseService.getCredentials — VITE_DB_* secret sync', () => {
   });
 });
 
-describe('databaseService.getCredentials — cross-tenant leak fix', () => {
+describe('databaseService.getCredentials   cross-tenant leak fix', () => {
   it('returns null for a project with no dedicated row, never another project\'s credentials', async () => {
     // user-1 owns project-1 (row-1) and project-2 (row-2). Requesting a THIRD
     // project with no row of its own must not fall back to a sibling
-    // project's schema/anon-key — that would leak project-1/2's DB into
+    // project's schema/anon-key   that would leak project-1/2's DB into
     // project-3's generated frontend code.
     const creds = await databaseService.getCredentials('user-1', 'project-3-has-no-db');
     expect(creds).toBeNull();
@@ -142,7 +142,7 @@ describe('databaseService.getCredentials — cross-tenant leak fix', () => {
   });
 });
 
-describe('databaseService.deprovision — VITE_DB_* secret cleanup', () => {
+describe('databaseService.deprovision   VITE_DB_* secret cleanup', () => {
   it('deletes VITE_DB_API_URL and VITE_DB_ANON_KEY for the project', async () => {
     await databaseService.deprovision('user-1', 'project-1');
 

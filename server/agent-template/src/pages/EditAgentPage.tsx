@@ -61,7 +61,7 @@ export default function EditAgentPage() {
     setSaving(true);
     setError('');
     try {
-      // PATCH /agents/:id only accepts snake_case keys — no camelCase
+      // PATCH /agents/:id only accepts snake_case keys   no camelCase
       // fallback like POST has (see agents.ts's PATCH handler).
       await ecgApi.agents.update(agentId, {
         name: name.trim(),
@@ -124,7 +124,7 @@ export default function EditAgentPage() {
         </div>
         <div>
           <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Status</label>
-          <p className="text-xs" style={{ color: 'var(--muted)' }}>Currently <span className="font-medium" style={{ color: 'var(--text)' }}>{status}</span> — change via the run/pause controls in Agents.</p>
+          <p className="text-xs" style={{ color: 'var(--muted)' }}>Currently <span className="font-medium" style={{ color: 'var(--text)' }}>{status}</span>   change via the run/pause controls in Agents.</p>
         </div>
       </div>
 

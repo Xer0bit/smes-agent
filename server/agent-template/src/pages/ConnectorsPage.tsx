@@ -11,7 +11,7 @@ interface Connector {
   phone?: string;
 }
 
-// Matches the real connector model (org_connectors table) — type-specific
+// Matches the real connector model (org_connectors table)   type-specific
 // fields, not the generic custom-secrets-map this form used to submit
 // (which the backend's POST /connectors/org never accepted at all).
 const CONNECTOR_TYPES = [

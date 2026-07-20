@@ -130,7 +130,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
     );
   }
 
-  // ── Assistant pending — three-dot thinking ────────────────────────────────────
+  // ── Assistant pending   three-dot thinking ────────────────────────────────────
   if (status === 'pending') {
     return (
       <div className="flex items-start gap-2 animate-msg-appear">
@@ -160,7 +160,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
   // ── Assistant streaming / complete ────────────────────────────────────────────
   const isStreaming = status === 'streaming';
   // Before any text has arrived, show the same three-dot "thinking" language as the
-  // pending state instead of a second, differently-worded status line — the detailed
+  // pending state instead of a second, differently-worded status line   the detailed
   // headline (what file, how long) lives once, in AgentChatPanel's status ticker below.
   const showThinkingDots = isStreaming && !content.trim();
 
@@ -168,7 +168,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
     <div className="flex items-start gap-2 animate-msg-appear">
       <AvatarBadge streaming={isStreaming} />
 
-      {/* Pulsing left accent — sits outside the content box so it's never clipped */}
+      {/* Pulsing left accent   sits outside the content box so it's never clipped */}
       {isStreaming && (
         <div
           aria-hidden="true"

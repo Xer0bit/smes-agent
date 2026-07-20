@@ -62,14 +62,14 @@ interface MultiDevicePreviewProps {
     status?: 'pending' | 'building' | 'ready' | 'failed';
     currentPath?: string;
     projectId?: string;
-    /** Inspect mode toggle — when true, clicking elements in the preview posts a selector back. */
+    /** Inspect mode toggle   when true, clicking elements in the preview posts a selector back. */
     inspectMode?: boolean;
     onInspectModeChange?: (active: boolean) => void;
 }
 
 function isNonFatalAssetError(errorText: string): boolean {
     const text = errorText.toLowerCase();
-    // [object Event] is a stringified Event object — this happens when a resource (image, font, etc.)
+    // [object Event] is a stringified Event object   this happens when a resource (image, font, etc.)
     // fails to load. The window error listener catches it but it's not a JS/build error.
     if (text.includes('[object event]')) return true;
     const hasAssetExt = /(\.png|\.jpe?g|\.gif|\.webp|\.svg|\.ico|\.avif|\.woff2?|\.ttf|\.otf)/.test(text);
@@ -123,7 +123,7 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     }, [inspectMode, src]);
 
     // Poll preview service for build errors once a preview URL is loaded.
-    // Skips the request while the tab is backgrounded (document.hidden) — this
+    // Skips the request while the tab is backgrounded (document.hidden)   this
     // was firing every 4s indefinitely even when nobody was looking at the tab.
     useEffect(() => {
         if (!projectId || !src) return;
@@ -144,7 +144,7 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
                     stalePreviewRetained: data.stalePreviewRetained,
                 });
             } catch {
-                // network error — ignore silently
+                // network error   ignore silently
             }
         };
 
@@ -196,7 +196,7 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
                     }
                 }
             } catch {
-                // cross-origin iframe — can't inspect, ignore
+                // cross-origin iframe   can't inspect, ignore
             }
         }, 3000);
     };
@@ -211,7 +211,7 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     const handleRepair = () => {
         if (!onRepair) return;
         // Build a structured repair prompt from the actual diagnostics instead
-        // of a generic "fix the build error" — the agent gets the real error
+        // of a generic "fix the build error"   the agent gets the real error
         // text, the diagnostic kind, and the file path, so it can fix it in
         // one shot instead of guessing.
         const allErrors = [...fatalBuildErrors, ...buildErrors].filter(Boolean);
@@ -325,7 +325,7 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
                                 </div>
                                 <p className="text-white font-semibold text-sm mb-1">App rendered nothing</p>
                                 <p className="text-gray-400 text-xs mb-4">
-                                    The app loaded but the screen is blank. There may be a runtime error — try refreshing or repairing.
+                                    The app loaded but the screen is blank. There may be a runtime error   try refreshing or repairing.
                                 </p>
                                 <div className="flex gap-2 justify-center">
                                     {onRepair && (
@@ -381,7 +381,7 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     return (
         <div className="flex flex-col h-full">
             {/* Inspect mode toggle now lives in Editor's main toolbar (next to the
-                source-code-view button) instead of its own bar here — a second
+                source-code-view button) instead of its own bar here   a second
                 strip stacked right under that toolbar was visually redundant. */}
             {inspectMode && (
                 <div className="flex items-center justify-center px-2 py-1 bg-indigo-500/10 border-b border-indigo-500/20">

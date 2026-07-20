@@ -1,4 +1,4 @@
--- Archive table for deleted projects — keeps metadata for up to 2 years
+-- Archive table for deleted projects   keeps metadata for up to 2 years
 -- so support can recover project info, files list, and owner details.
 CREATE TABLE IF NOT EXISTS public.deleted_projects (
   id                uuid        NOT NULL DEFAULT gen_random_uuid(),
@@ -30,10 +30,10 @@ CREATE POLICY "service_role_all" ON public.deleted_projects
 -- Manual: DELETE FROM deleted_projects WHERE expires_at < now();
 
 COMMENT ON TABLE public.deleted_projects IS
-  'Soft-delete archive — one row per deleted project. Retained for 2 years for support recovery. '
+  'Soft-delete archive   one row per deleted project. Retained for 2 years for support recovery. '
   'metadata contains a snapshot of the project row, settings (seo, etc.), and file paths.';
 
--- Atomic project deletion function — deletes all 41 FK-constrained child tables
+-- Atomic project deletion function   deletes all 41 FK-constrained child tables
 -- in one transaction so no FK constraint can be left dangling.
 CREATE OR REPLACE FUNCTION public.delete_project_cascade(p_project_id uuid)
 RETURNS void

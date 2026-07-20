@@ -5,7 +5,7 @@
  *   3. BM25 pseudo-embedding (zero cost, in-memory, good enough for code files)
  *
  * Which provider is used depends on which API key is present in env.
- * Falls back gracefully — embedding failures never break the agent run.
+ * Falls back gracefully   embedding failures never break the agent run.
  */
 
 import { embedMany } from 'ai';
@@ -38,7 +38,7 @@ export function resetProviderCache(): void {
   _openaiCircuitOpen = false;
 }
 
-// Circuit breaker — if an API embedding call fails, skip it for 30 minutes
+// Circuit breaker   if an API embedding call fails, skip it for 30 minutes
 // instead of retrying on every file write (wasted latency + log spam).
 let _googleCircuitOpen = false;
 let _openaiCircuitOpen = false;
@@ -102,7 +102,7 @@ async function discoverGoogleEmbedModel(apiKey: string): Promise<string> {
       }
       if (embedModels.length > 0) return embedModels[0];
     }
-  } catch { /* ignore — fall through to default */ }
+  } catch { /* ignore   fall through to default */ }
   return 'text-embedding-004'; // best guess if discovery fails
 }
 
@@ -226,10 +226,10 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
     }
   } catch (err) {
     if (provider === 'google') {
-      console.warn('[kb/embedder] Google embedding failed — circuit open 30 min, using BM25:', (err as Error)?.message?.slice(0, 200));
+      console.warn('[kb/embedder] Google embedding failed   circuit open 30 min, using BM25:', (err as Error)?.message?.slice(0, 200));
       tripGoogleCircuit();
     } else if (provider === 'openai') {
-      console.warn('[kb/embedder] OpenAI embedding failed — circuit open 30 min, using BM25:', (err as Error)?.message?.slice(0, 200));
+      console.warn('[kb/embedder] OpenAI embedding failed   circuit open 30 min, using BM25:', (err as Error)?.message?.slice(0, 200));
       tripOpenAICircuit();
     }
   }
@@ -248,14 +248,14 @@ export async function embedText(text: string): Promise<number[]> {
 export async function probeEmbeddingProvider(): Promise<void> {
   const provider = getProvider();
   if (provider === 'bm25') {
-    console.info('[kb/embedder] Startup probe: no API key — using BM25 in-memory (KB count stays at 0)');
+    console.info('[kb/embedder] Startup probe: no API key   using BM25 in-memory (KB count stays at 0)');
     return;
   }
   await embedTexts(['probe']);
   // Re-check after the call: if the circuit tripped, provider flipped to bm25
   const afterProvider = getProvider();
   if (afterProvider !== provider) {
-    console.info(`[kb/embedder] Startup probe: ${provider} unavailable — using BM25`);
+    console.info(`[kb/embedder] Startup probe: ${provider} unavailable   using BM25`);
   } else {
     console.info(`[kb/embedder] Startup probe: ${provider} embeddings OK`);
   }

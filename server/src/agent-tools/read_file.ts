@@ -1,5 +1,5 @@
 /**
- * read_file tool — read a file from the project workspace.
+ * read_file tool   read a file from the project workspace.
  * Ported from server/src/agent/.../tools/read_file.ts (Electron removed).
  */
 import { z } from 'zod';
@@ -34,7 +34,7 @@ const schema = z
 export const readFileTool: ToolDefinition<z.infer<typeof schema>> = {
   name: 'read_file',
   description:
-    'Read the content of a file from the project. You can call multiple tools in a single response — speculatively read multiple files as a batch when they are likely useful.',
+    'Read the content of a file from the project. You can call multiple tools in a single response   speculatively read multiple files as a batch when they are likely useful.',
   inputSchema: schema,
   getConsentPreview: (args) => `Read ${args.path}`,
 

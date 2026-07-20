@@ -1,5 +1,5 @@
 /**
- * place_asset tool — copy a user-uploaded image from /tmp into project public/assets/.
+ * place_asset tool   copy a user-uploaded image from /tmp into project public/assets/.
  *
  * Images uploaded via chat stay in /tmp until the agent explicitly calls this tool.
  * This prevents any image attachment from accidentally overwriting project assets
@@ -36,7 +36,7 @@ function validateImage(filePath: string): { valid: boolean; format?: string; rea
 
     if (bytesRead < 4) return { valid: false, reason: 'File is too small to be a valid image' };
 
-    // SVG is text-based — check for XML/SVG opening tag
+    // SVG is text-based   check for XML/SVG opening tag
     const text = header.toString('utf8', 0, Math.min(bytesRead, 10)).toLowerCase();
     if (text.startsWith('<svg') || text.startsWith('<?xml')) {
       return { valid: true, format: 'SVG' };
@@ -63,7 +63,7 @@ const schema = z.object({
     'Absolute path to the uploaded file, which must be under /tmp/ecomgear-chat-uploads/',
   ),
   destName: z.string().describe(
-    'Destination filename inside public/assets/ — plain filename only, e.g. "logo.png". No directory separators.',
+    'Destination filename inside public/assets/   plain filename only, e.g. "logo.png". No directory separators.',
   ),
 });
 
@@ -93,7 +93,7 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
       );
     }
 
-    // ── Security: destName must be a plain filename — no path traversal ──────
+    // ── Security: destName must be a plain filename   no path traversal ──────
     const safeDest = path.basename(args.destName).replace(/[^a-zA-Z0-9._-]/g, '_');
     if (!safeDest || safeDest.startsWith('.') || safeDest.length === 0) {
       return `ERROR: Invalid destination name "${args.destName}". Provide a plain filename like "logo.png".`;
@@ -102,14 +102,14 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
     // ── Validate file is actually an image (magic bytes) ─────────────────────
     const validation = validateImage(resolvedSrc);
     if (!validation.valid) {
-      return `ERROR: File validation failed — ${validation.reason}. Only JPEG, PNG, GIF, WebP, and SVG files are allowed.`;
+      return `ERROR: File validation failed   ${validation.reason}. Only JPEG, PNG, GIF, WebP, and SVG files are allowed.`;
     }
 
     // ── Size check ────────────────────────────────────────────────────────────
     const stat = fs.statSync(resolvedSrc);
     const sizeKB = Math.round(stat.size / 1024);
     const sizeWarning = sizeKB > 800
-      ? `\n⚠ Warning: image is ${sizeKB} KB — consider using a smaller/compressed version for better page load performance.`
+      ? `\n⚠ Warning: image is ${sizeKB} KB   consider using a smaller/compressed version for better page load performance.`
       : '';
 
     // ── Copy to public/assets/ ────────────────────────────────────────────────
@@ -148,7 +148,7 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
       `✓ Image placed: public/assets/${safeDest} (${sizeKB} KB, ${validation.format})${sizeWarning}\n` +
       `Reference in JSX:        <img src={\`\${import.meta.env.BASE_URL}assets/${safeDest}\`} />\n` +
       `Reference as bg (inline): style={{ backgroundImage: \`url(\${import.meta.env.BASE_URL}assets/${safeDest})\` }}\n` +
-      `Do NOT use a leading slash like "/assets/${safeDest}" — that breaks the preview.`
+      `Do NOT use a leading slash like "/assets/${safeDest}"   that breaks the preview.`
     );
   },
 };

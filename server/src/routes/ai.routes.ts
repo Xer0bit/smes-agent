@@ -22,7 +22,7 @@ import { applySeoToHtml } from './seo.routes.js';
 
 const router = Router();
 
-// Guest model: Gemini Flash for unauthenticated (guest) users — fast, free tier.
+// Guest model: Gemini Flash for unauthenticated (guest) users   fast, free tier.
 const GUEST_MODEL = DEFAULT_FREE_MODEL;
 const GUEST_MAX_REQUESTS = 3;
 const FINGERPRINT_RE = /^[a-z0-9]{6,40}$/;
@@ -77,7 +77,7 @@ router.post('/upload-attachment', authMiddleware, upload.single('file'), (req: A
       return;
     }
 
-    // Validate projectId here — req.body is guaranteed populated by this point.
+    // Validate projectId here   req.body is guaranteed populated by this point.
     const projectId = (req.body as Record<string, string>)?.projectId || '';
     if (!/^[a-f0-9-]{36}$/i.test(projectId)) {
       fs.unlinkSync(req.file.path); // clean up staging file
@@ -91,7 +91,7 @@ router.post('/upload-attachment', authMiddleware, upload.single('file'), (req: A
     const destPath = path.join(projectDir, path.basename(req.file.path));
     fs.renameSync(req.file.path, destPath);
 
-    // Magic-byte validation for image uploads — prevent disguised executables
+    // Magic-byte validation for image uploads   prevent disguised executables
     const mime = req.file.mimetype;
     if (mime.startsWith('image/')) {
       let valid = false;
@@ -163,27 +163,27 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
-// Per-project concurrency guard — prevents two simultaneous agent runs on the same project.
+// Per-project concurrency guard   prevents two simultaneous agent runs on the same project.
 // Stores abort controller, start time, event bus, and raw SSE chunk buffer for fan-out.
 interface ActiveRun {
     abort: () => void;
     startedAt: number;
     bus: EventEmitter;   // fan-out: subscribers (rejoining connections) listen on 'chunk' / 'end'
-    buffer: string[];    // raw SSE chunks emitted so far — replayed to new subscribers
+    buffer: string[];    // raw SSE chunks emitted so far   replayed to new subscribers
 }
 const activeAgentRuns = new Map<string, ActiveRun>();
 
 // ── Cross-process lock ────────────────────────────────────────────────────
-// `activeAgentRuns` above is a module-level Map — it only exists in the memory
+// `activeAgentRuns` above is a module-level Map   it only exists in the memory
 // of THIS PM2 worker process. This server runs in PM2 cluster mode (multiple
 // worker processes sharing the same filesystem but NOT the same memory), so
 // two requests for the same project can land on different workers and never
 // see each other's in-memory guard at all. Both then read/write the SAME
-// shared project directory on disk with zero coordination — a genuine race
+// shared project directory on disk with zero coordination   a genuine race
 // where one run's file write (or its end-of-run rollback) can be silently
 // stomped by the other run's concurrent write, moments apart, with nothing in
-// any log to explain why. A plain file lock works here because — unlike the
-// in-memory Map — the filesystem itself IS shared across every worker.
+// any log to explain why. A plain file lock works here because   unlike the
+// in-memory Map   the filesystem itself IS shared across every worker.
 // Generous ceiling above the longest real AGENT_TIMEOUT_MS (see agentLoopService.ts
 // getDefaultAgentTimeoutMs) so a genuinely still-running request is never treated
 // as stale, while a lock left behind by a crashed/killed worker doesn't wedge a
@@ -194,13 +194,13 @@ const AGENT_LOCK_STALE_MS = 15 * 60_000;
 // preview-service pushing files for a run lives on a *different machine*
 // (VPS2) than the gen workers (VPS3) that hold this lock. A local file lock
 // only ever protected same-node PM2-cluster races; it was invisible to
-// preview-service's own /update endpoint, which happily accepted any push —
+// preview-service's own /update endpoint, which happily accepted any push  
 // including a direct manual push racing a live agent run on another actor
 // entirely (a real production incident: a direct file push during an active
 // run silently stomped the run's own writes, moments apart). The DB row is
 // visible to every VPS via PostgREST, and the token in it lets preview-service
 // tell "this push came from the run that holds the lock" apart from anything
-// else — see preview-service/server.js's /update handler.
+// else   see preview-service/server.js's /update handler.
 function randomToken(): string {
     return `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -217,7 +217,7 @@ async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
 
     if (!insertError) return token;
 
-    // Row already exists — check whether it's stale (a worker that crashed/was
+    // Row already exists   check whether it's stale (a worker that crashed/was
     // killed without reaching the finally-block release below).
     const { data: existing, error: selectError } = await supabase
         .from('agent_locks')
@@ -226,7 +226,7 @@ async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
         .maybeSingle();
 
     if (selectError) {
-        // Unexpected error (network, RLS, etc.) — fail open rather than
+        // Unexpected error (network, RLS, etc.)   fail open rather than
         // blocking every generation request because locking itself broke.
         logger.warn(`[agent-lock] Unexpected error checking lock for ${projectId}, allowing request: ${selectError.message}`);
         return token;
@@ -248,7 +248,7 @@ async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
 async function releaseAgentLock(projectId: string): Promise<void> {
     try {
         await supabase.from('agent_locks').delete().eq('project_id', projectId);
-    } catch { /* best-effort — a stale-lock reclaim will clean up eventually */ }
+    } catch { /* best-effort   a stale-lock reclaim will clean up eventually */ }
 }
 
 // ─── Per-user rate limiting for /agent-stream ────────────────────────────────
@@ -462,7 +462,7 @@ router.post('/test-providers', authMiddleware, async (req: AuthenticatedRequest,
     }
 });
 
-// Allowed AI models for frontend selector — gated by subscription tier.
+// Allowed AI models for frontend selector   gated by subscription tier.
 // Guests:      Gemini Flash (fast, free)
 // Free users:  DeepSeek (everyday tasks) + Gemini Flash (fast, free)
 // Paid users:  Claude (EcomSmart) + DeepSeek (everyday) + Gemini (fast)
@@ -504,7 +504,7 @@ router.get('/models', optionalAuthMiddleware, async (req: AuthenticatedRequest, 
             return res.json({ success: true, primary: primary.id, allowed: allAllowed });
         }
 
-        // Guest (no token) — only Gemini
+        // Guest (no token)   only Gemini
         if (!userId) {
             const guestEntry = allAllowed.find((m) => m.id === GUEST_MODEL) || allAllowed[0];
             return res.json({ success: true, primary: guestEntry.id, allowed: [guestEntry], isGuest: true });
@@ -578,7 +578,7 @@ function resolveAgentMode(prompt: string, clientMode?: 'build' | 'plan'): 'build
 }
 
 // Trim conversation history to a token budget (newest-first), instead of a fixed
-// message count — long messages no longer blow the context window. ~4 chars/token.
+// message count   long messages no longer blow the context window. ~4 chars/token.
 function trimHistoryToTokenBudget(
     history: Array<{ role: 'user' | 'assistant'; content: string }>,
     maxTokens: number,
@@ -664,20 +664,20 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         logger.info(`[agent-stream] Guest request (fp=${fingerprint.slice(0, 8)}...) for project ${projectId}`);
     }
 
-    // Per-user rate limit — prevent abuse / accidental rapid-fire requests
+    // Per-user rate limit   prevent abuse / accidental rapid-fire requests
     const rateLimitUserId = req.user?.id || (fingerprint ? `guest:${fingerprint}` : undefined);
     if (rateLimitUserId && isRateLimited(rateLimitUserId)) {
         res.status(429).json({ error: 'Too many requests. Please wait a moment before starting another generation.' });
         return;
     }
 
-    // Concurrency guard — if a run is already active for this project, subscribe this new
+    // Concurrency guard   if a run is already active for this project, subscribe this new
     // SSE connection to it (fan-out) rather than starting a new run and charging eco again.
     // Must be checked BEFORE eco deduction so reconnects don't double-count usage.
     const existingRunEarly = activeAgentRuns.get(projectId);
     if (existingRunEarly) {
         const ageMs = Date.now() - existingRunEarly.startedAt;
-        logger.info(`[agent-stream] Project ${projectId} has active run (age ${ageMs}ms) — subscribing new connection`);
+        logger.info(`[agent-stream] Project ${projectId} has active run (age ${ageMs}ms)   subscribing new connection`);
 
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -699,7 +699,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
     }
 
     // ── Backend eco enforcement ─────────────────────────────────────────────
-    // Check budget BEFORE running the agent (no deduction yet — charge only if
+    // Check budget BEFORE running the agent (no deduction yet   charge only if
     // files are actually written). Ghost runs (text-only answers) are free.
     // Guests use their own separate limit (checked above), so skip here.
     // Set DISABLE_ECO_ENFORCEMENT=true in .env to bypass for local development.
@@ -711,14 +711,14 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             const effectiveOrgId = await resolveEffectiveOrgIdForEco(req.user.id, projectId, orgId);
             ecoOrgId = effectiveOrgId ?? null;
             if (!effectiveOrgId) {
-                // No org context — log and allow rather than block. Eco will not be tracked
+                // No org context   log and allow rather than block. Eco will not be tracked
                 // for this run, but we should not prevent the user from using the product.
-                logger.warn(`[agent-stream] No org found for eco debit (user=${req.user.id}, project=${projectId}) — allowing request without eco tracking`);
+                logger.warn(`[agent-stream] No org found for eco debit (user=${req.user.id}, project=${projectId})   allowing request without eco tracking`);
             } else {
-                // Budget check only — no deduction. Deduction happens post-run if files written.
+                // Budget check only   no deduction. Deduction happens post-run if files written.
                 const withinLimit = await isWithinEcoPolicyLimit(effectiveOrgId);
                 if (!withinLimit) {
-                    // Genuine limit reached — block
+                    // Genuine limit reached   block
                     logger.info(`[agent-stream] Eco limit reached for user ${req.user.id} (org ${effectiveOrgId})`);
                     res.status(429).json({
                         error: 'Monthly eco limit reached. Please upgrade your plan or wait for the reset.',
@@ -728,12 +728,12 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 }
             }
         } catch (ecoErr) {
-            // Eco system unavailable — log and allow rather than block the user
+            // Eco system unavailable   log and allow rather than block the user
             logger.warn(`[agent-stream] Eco validation error (allowing request): ${(ecoErr as Error).message}`);
         }
     }
 
-    // Cross-process guard — see tryAcquireAgentLock's comment above. The
+    // Cross-process guard   see tryAcquireAgentLock's comment above. The
     // in-memory `activeAgentRuns` check earlier only catches a duplicate on
     // THIS worker; this catches one on any other worker in the cluster. There
     // is no cheap way to fan out this second worker's SSE stream to the first
@@ -800,23 +800,23 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         const userId = req.user?.id || `guest:${fingerprint || 'unknown'}`;
         const control = await getLlmControlState();
 
-        // Fetch project record once (authenticated path only) — reused for both
+        // Fetch project record once (authenticated path only)   reused for both
         // model selection and server-path resolution below to avoid a double DB hit.
         let projectRecord: Record<string, unknown> = {};
         if (isGuest) {
-            // Guests are forced to Gemini — no choice
+            // Guests are forced to Gemini   no choice
             effectiveModel = GUEST_MODEL;
-            logger.info(`[agent-stream] Guest user — forcing model to "${effectiveModel}"`);
+            logger.info(`[agent-stream] Guest user   forcing model to "${effectiveModel}"`);
         } else {
-            // Authenticated user — normal tier logic
+            // Authenticated user   normal tier logic
             projectRecord = await projectService.getProject(projectId, req.user!.id) as unknown as Record<string, unknown>;
 
-            // getProject() above only checks "has ANY access" — it doesn't distinguish
+            // getProject() above only checks "has ANY access"   it doesn't distinguish
             // a full editor from a read-only viewer/client collaborator. Without this,
             // any accepted collaborator (regardless of the role they were invited with)
             // could invoke the agent to generate/modify code, since role was never
             // enforced anywhere. Owners/admins/editors can generate; viewers/clients
-            // cannot — this is the actual "edit the project" action.
+            // cannot   this is the actual "edit the project" action.
             const projectRole = await projectService.getUserRole(projectId, req.user!.id);
             if (projectRole === 'viewer' || projectRole === 'client') {
                 res.status(403).json({ error: 'You have read-only access to this project and cannot generate or modify code.' });
@@ -837,7 +837,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                }
 
                if (tier === 'free' && model && !['glm'].some(m => model.toLowerCase().includes(m))) {
-                   logger.info(`[agent-stream] Free user ${req.user!.id} requested restricted model "${model}" — overriding to "${effectiveModel}"`);
+                   logger.info(`[agent-stream] Free user ${req.user!.id} requested restricted model "${model}"   overriding to "${effectiveModel}"`);
                }
         }
 
@@ -854,7 +854,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
 
         // Fetch project secrets (key=value pairs injected as env vars for the agent).
         // buildProjectEnvSecrets is the SINGLE source of truth for auth/DB/functions
-        // env vars — do not re-derive any of these locally here. This file used to
+        // env vars   do not re-derive any of these locally here. This file used to
         // independently recompute VITE_FUNCTIONS_API_URL/VITE_SUPABASE_* with its own
         // fallback logic and silently diverged from database.service.ts (wrong
         // gen.ecomgear.dev fallback, missing VITE_SUPABASE_URL entirely).
@@ -863,11 +863,11 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             const { buildProjectEnvSecrets } = await import('../services/database.service.js');
             projectSecrets = await buildProjectEnvSecrets(userId, projectId);
         } catch {
-            // Non-fatal — agent can still discover credentials via get_database_schema tool
+            // Non-fatal   agent can still discover credentials via get_database_schema tool
         }
 
         // Sync VITE_* secrets to the preview service so the live preview actually has
-        // real values for import.meta.env.VITE_DB_API_URL etc. — previously nothing wrote
+        // real values for import.meta.env.VITE_DB_API_URL etc.   previously nothing wrote
         // these anywhere the running Vite dev server could see them, so every hosted-DB/
         // auth/edge-function call in the preview silently had no real URL/key to use.
         // Fire-and-forget: this must never block or fail the agent run.
@@ -887,7 +887,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                     signal: AbortSignal.timeout(10_000),
                 });
             } catch {
-                // Non-fatal — preview will just lack real secrets until the next successful sync
+                // Non-fatal   preview will just lack real secrets until the next successful sync
             }
         })();
 
@@ -929,7 +929,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         }
 
         // ── Intent classification + cost routing ─────────────────────────────
-        // Classify the request tier (zero LLM cost — pure regex) so we can:
+        // Classify the request tier (zero LLM cost   pure regex) so we can:
         //   1. Right-size MAX_STEPS in the agent loop
         //   2. Route micro requests to the cheap model (Gemini Flash)
         // isEmptyProject: no user files on disk = this is a fresh project.
@@ -937,15 +937,15 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             && fs.readdirSync(appPath).some(f => !['node_modules', '.git', 'dist'].includes(f));
 
         // Detect auto-repair prompts (from the frontend Repair button or auto-fix escalation).
-        // These MUST use the user's selected model with full context — routing them to a cheap
+        // These MUST use the user's selected model with full context   routing them to a cheap
         // model with a stripped prompt is what causes infinite repair loops.
         const isRepairPrompt = /build errors that could not be auto-repaired|please fix all of them|auto.?repair|🔧/i.test(prompt);
         const requestTier = isRepairPrompt ? 'feature' : classifyRequest(prompt, !projectHasFiles);
 
         // Tier-based model routing:
-        //   micro → Gemini Flash  (visual tweaks, $0.075/MTok — 40× cheaper than Sonnet)
-        //   micro → free model (glm-4.7-flash by default — visual tweaks)
-        //   fix   → fallback model (glm-5 by default — error diagnosis)
+        //   micro → Gemini Flash  (visual tweaks, $0.075/MTok   40× cheaper than Sonnet)
+        //   micro → free model (glm-4.7-flash by default   visual tweaks)
+        //   fix   → fallback model (glm-5 by default   error diagnosis)
         //   edit/feature/build → user's selected model / admin primary
         // Guests always stay on GUEST_MODEL regardless.
         if (!isGuest) {
@@ -964,7 +964,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
 
         // ── Fast path: pure questions / chit-chat skip the full agent loop ─────
         // Conversational messages that aren't about existing project code can be
-        // answered directly by a cheap model — no tool calls, no file syncing.
+        // answered directly by a cheap model   no tool calls, no file syncing.
         const QUESTION_RE = /^(what|how|why|where|when|explain|describe|tell me|show me|can you tell|does|is |are |who|which)\b/i;
         const GREETING_RE = /^(hi|hello|hey|thanks|thank you|ok|okay|sure|great|nice|cool|perfect|sounds good)\b[.!?]?\s*$/i;
         const trimmedPrompt = prompt.trim();
@@ -973,7 +973,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             && !projectHasFiles; // questions about existing code still need the agent
 
         if (isConversational) {
-            logger.info(`[agent-stream] Fast path (conversational) — bypassing agent loop`);
+            logger.info(`[agent-stream] Fast path (conversational)   bypassing agent loop`);
             sseWrite(res, 'start', { projectId, model: 'fast-path', mode: effectiveMode });
 
             const anthropicKey = process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
@@ -1017,7 +1017,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             history: (() => {
               if (!Array.isArray(history)) return [];
               // Trim by token budget per tier (not message count) so long messages
-              // can't blow the context window — micro tasks are one-shot, no context.
+              // can't blow the context window   micro tasks are one-shot, no context.
               const budget = HISTORY_TOKEN_BUDGET[requestTier] ?? 2000;
               const bounded = trimHistoryToTokenBudget(history, budget);
               return bounded.length > 0 && bounded[0].role !== 'user' ? bounded.slice(1) : bounded;
@@ -1047,7 +1047,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 f => f.path === 'index.html' || f.path === '/index.html',
             );
             if (wroteIndex) {
-                // fire-and-forget — never block the response
+                // fire-and-forget   never block the response
                 (async () => {
                     try {
                         const { data: setting } = await supabase
@@ -1091,7 +1091,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         const wroteFiles = (agentResult?.filesToWrite?.length ?? 0) > 0
             || (agentResult?.filesToDelete?.length ?? 0) > 0;
         if (ecoOrgId && wroteFiles) {
-            // 1 eco per code-writing run (flat). Token-based scaling removed — see incrementEcoUsage.
+            // 1 eco per code-writing run (flat). Token-based scaling removed   see incrementEcoUsage.
             incrementEcoUsage(ecoOrgId).catch((err) =>
                 logger.warn(`[agent-stream] Eco charge failed for org ${ecoOrgId}: ${(err as Error).message}`),
             );
@@ -1165,7 +1165,7 @@ router.post('/suggestions', optionalAuthMiddleware, async (req: AuthenticatedReq
             model,
             maxOutputTokens: 300,
             temperature: 0.6,
-            // Disable thinking budget — saves tokens on this tiny task
+            // Disable thinking budget   saves tokens on this tiny task
             providerOptions: { google: { thinkingConfig: { thinkingBudget: 0 } } },
             prompt: `You are a product assistant inside an AI web app builder. The user just completed a task and you need to suggest 3 smart follow-up actions they might want to take next.
 
@@ -1173,14 +1173,14 @@ Context:
 - What was built/changed: ${(summary || '').slice(0, 600)}${requestContext}${fileContext}
 
 Your goal: suggest the 3 most USEFUL next steps that naturally extend what was JUST built.
-Think like a product designer — what would make this feature more complete, polished, or useful?
+Think like a product designer   what would make this feature more complete, polished, or useful?
 
 Rules:
 - Each suggestion is a short imperative sentence (6–12 words max)
-- Must be DIRECTLY related to what was just built — no unrelated features
+- Must be DIRECTLY related to what was just built   no unrelated features
 - Vary the suggestions: one UX polish, one content/data, one functional enhancement
 - Write as direct instructions to the AI builder, e.g. "Make the navbar sticky on scroll"
-- Return ONLY a raw JSON array of exactly 3 strings — no markdown, no explanation
+- Return ONLY a raw JSON array of exactly 3 strings   no markdown, no explanation
 
 ["suggestion 1","suggestion 2","suggestion 3"]`,
         });
@@ -1348,7 +1348,7 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
         return;
     }
 
-    // Resolve snapshot dir — check persistent store first, fall back to /tmp
+    // Resolve snapshot dir   check persistent store first, fall back to /tmp
     const SNAPSHOTS_DIR = process.env.SNAPSHOTS_DIR
         ? path.resolve(process.env.SNAPSHOTS_DIR)
         : path.join(os.homedir(), '.ecomgear', 'snapshots');

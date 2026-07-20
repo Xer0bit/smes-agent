@@ -16,7 +16,7 @@ const BASE_TEMPLATE_DIR =
   path.join(os.homedir(), '.ecomgear', 'base-template');
 
 // Stable versions of the most commonly requested packages.
-// Update this list periodically — bump the hash file to force a re-install.
+// Update this list periodically   bump the hash file to force a re-install.
 // ─── Pre-installed packages ───────────────────────────────────────────────────
 // These are baked into the golden template AND the preview Docker image.
 // The agent can import any of these without triggering a slow npm install.
@@ -348,7 +348,7 @@ export default function App() {
 }
 `,
   // ─── Pre-built shadcn/ui components ──────────────────────────────────────────
-  // Agent no longer needs to write these — saves 10-15 tool calls per build.
+  // Agent no longer needs to write these   saves 10-15 tool calls per build.
   'src/lib/utils.ts': `import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -887,7 +887,7 @@ function isTemplateReady(): boolean {
 let buildPromise: Promise<void> | null = null;
 
 /**
- * Ensure the golden template is installed.  Safe to call concurrently —
+ * Ensure the golden template is installed.  Safe to call concurrently  
  * multiple callers share the same in-flight promise.
  */
 export async function ensureBaseTemplate(): Promise<void> {
@@ -976,7 +976,7 @@ export async function initProjectFromTemplate(destDir: string): Promise<void> {
     fs.copyFileSync(srcLock, destLock);
   }
 
-  // Copy scaffold files (only if not already present — agent may have written them)
+  // Copy scaffold files (only if not already present   agent may have written them)
   for (const [relPath, content] of Object.entries(SCAFFOLD_FILES)) {
     const destFile = path.join(destDir, relPath);
     if (!fs.existsSync(destFile)) {

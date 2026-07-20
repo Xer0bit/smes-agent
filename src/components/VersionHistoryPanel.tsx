@@ -159,7 +159,7 @@ export function VersionHistoryPanel({ projectId, onRestored, onClose }: VersionH
 
       {/* Info banner */}
       <div className="px-4 py-2 bg-muted/40 border-b border-border text-xs text-muted-foreground shrink-0">
-        Each version is a snapshot taken <strong>before</strong> an AI run — restoring it reverts all files to that point.
+        Each version is a snapshot taken <strong>before</strong> an AI run   restoring it reverts all files to that point.
         The last {versions.length > 0 ? Math.min(20, versions.length) : 20} versions are kept.
       </div>
 

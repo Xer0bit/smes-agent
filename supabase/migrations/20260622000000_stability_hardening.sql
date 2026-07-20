@@ -27,7 +27,7 @@ BEGIN
       NEW.seats_total   := 20;
       NEW.max_projects  := 2147483647;
       NEW.ai_gens_limit := 1000000;
-    -- legacy values — treat like their migration target
+    -- legacy values   treat like their migration target
     WHEN 'starter' THEN
       NEW.seats_total   := 1;
       NEW.max_projects  := 1;

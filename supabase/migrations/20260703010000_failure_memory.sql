@@ -1,7 +1,7 @@
 -- Failure memory: error signature -> verified fix (mechanical patch or LLM diff)
 -- that cleared it. Checked before escalating a build error to the LLM repair
 -- agent (server/src/services/agentLoopService.ts, PASS -1 before mechanical repair).
--- Only stores outcomes where the build passed AFTER applying the fix — grounded
+-- Only stores outcomes where the build passed AFTER applying the fix   grounded
 -- in verified results, not LLM self-report, so it doesn't drift like a summary would.
 --
 -- Keyed globally (not per-project) on error signature: the same "Cannot find
@@ -23,7 +23,7 @@ create index if not exists idx_failure_memory_last_used
 
 alter table agent_failure_memory enable row level security;
 
--- Same access pattern as the other KB tables — service_role in production,
+-- Same access pattern as the other KB tables   service_role in production,
 -- anon fallback when no service key is configured. No project_id column here
 -- (memory is intentionally global), so no per-project ownership check applies.
 create policy "failure_memory_access" on agent_failure_memory

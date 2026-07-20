@@ -55,7 +55,7 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
 
   useEffect(() => {
     const ghParam = searchParams.get("github");
-    if (ghParam === "connected") toast.success("GitHub account connected — name a repository below to save your project");
+    if (ghParam === "connected") toast.success("GitHub account connected   name a repository below to save your project");
     if (ghParam === "error") toast.error("Failed to connect GitHub account");
     if (ghParam) {
       const p = new URLSearchParams(searchParams);
@@ -86,12 +86,12 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
   };
 
   // Shared by both "Create & Connect" (first push into a fresh repo) and the
-  // "Commit to GitHub" button (subsequent pushes) — same commit logic either way.
+  // "Commit to GitHub" button (subsequent pushes)   same commit logic either way.
   const pushCurrentCode = async () => {
     if (!projectId) return;
     const revisions = await revisionService.getRevisions(projectId, 1, 0);
     const latest = revisions[0];
-    if (!latest) throw new Error("No revisions found — generate the project first.");
+    if (!latest) throw new Error("No revisions found   generate the project first.");
     const files = await revisionService.getRevisionFilesForExport(projectId, latest.id);
     if (files.length === 0) throw new Error("No files found in the latest revision.");
 
@@ -115,13 +115,13 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
       });
       queryClient.setQueryData(["github-link", projectId], { link: { fullName: result.fullName, branch: result.branch } });
       setNewRepoName("");
-      toast.success(`Created ${result.fullName} — uploading your code…`);
+      toast.success(`Created ${result.fullName}   uploading your code…`);
 
       try {
         const pushResult = await pushCurrentCode();
         toast.success(`Uploaded ${pushResult.filesPushed} files to GitHub`);
       } catch (pushErr: any) {
-        // Repo exists and is linked even if this first push failed — the user
+        // Repo exists and is linked even if this first push failed   the user
         // can retry via "Commit to GitHub" without losing the connection.
         toast.error(pushErr.message ?? "Repository created, but the initial code upload failed");
       }
@@ -189,7 +189,7 @@ export const GitHubSettings = ({ projectId }: GitHubSettingsProps) => {
           <CardHeader className="pb-2">
             <CardTitle className="text-base text-white/85">Repository</CardTitle>
             <CardDescription className="text-white/45 text-xs">
-              This project only ever pushes to a repository created for it — not any of your other repos.
+              This project only ever pushes to a repository created for it   not any of your other repos.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

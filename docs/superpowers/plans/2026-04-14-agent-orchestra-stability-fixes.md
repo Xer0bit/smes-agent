@@ -1,10 +1,10 @@
-# Agent Orchestra Production Stability Fixes — Implementation Plan
+# Agent Orchestra Production Stability Fixes   Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix the `activeServers` memory leak in the preview service and add daily reset to the guest request limit.
 
-**Architecture:** Two independent fixes — (1) proactive LRU eviction in `getOrCreateServer()` before new Vite instances are created, and (2) a new Supabase migration that adds a `requests_reset_date` column and rewrites the guest request RPC to reset the counter at the start of each calendar day.
+**Architecture:** Two independent fixes   (1) proactive LRU eviction in `getOrCreateServer()` before new Vite instances are created, and (2) a new Supabase migration that adds a `requests_reset_date` column and rewrites the guest request RPC to reset the counter at the start of each calendar day.
 
 **Tech Stack:** Node.js/Express (preview server), PostgreSQL/Supabase (guest limit), no new dependencies.
 
@@ -15,7 +15,7 @@
 | File | Change |
 |------|--------|
 | `preview-service/server.js` | Make `MAX_ACTIVE_SERVERS` env-configurable; add LRU eviction block in `getOrCreateServer()` |
-| `supabase/migrations/20260616000001_guest_daily_reset.sql` | New file — adds `requests_reset_date` column; replaces both guest RPCs |
+| `supabase/migrations/20260616000001_guest_daily_reset.sql` | New file   adds `requests_reset_date` column; replaces both guest RPCs |
 
 ---
 
@@ -431,7 +431,7 @@
 
 ## Done
 
-Both fixes are independent — Task 1 and Task 2 can be applied without Task 3, and vice versa.
+Both fixes are independent   Task 1 and Task 2 can be applied without Task 3, and vice versa.
 
 **Verification after both are deployed:**
 - `GET /health` on preview service shows `activeServers` never exceeds `MAX_ACTIVE_SERVERS`

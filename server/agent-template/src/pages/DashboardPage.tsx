@@ -41,7 +41,7 @@ export default function DashboardPage() {
   // NOTE: the proxy this dashboard reads through collapses the portal's real
   // draft/scheduled/posted/failed post lifecycle down to just
   // pending/approved/rejected (see ecgData.toDashboardPostStatus on the
-  // portal side) — there is no way to tell "scheduled" from "already posted"
+  // portal side)   there is no way to tell "scheduled" from "already posted"
   // through this endpoint, so KPIs are built from the 3 states that actually
   // exist here rather than faking the richer 4-state breakdown.
   const pending  = useMemo(() => posts.filter(p => p.status === 'pending'), [posts]);

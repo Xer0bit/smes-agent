@@ -79,7 +79,7 @@ export const DualPublish = () => {
           <span className="section-title__accent">Two markets. 两个市场.</span>
         </h2>
         <p className="section-sub">
-          Every SKU, page, and policy is published to the global web and the China mainland at the same time — with the right domain, CDN, payment rails, and language for each.
+          Every SKU, page, and policy is published to the global web and the China mainland at the same time   with the right domain, CDN, payment rails, and language for each.
         </p>
       </div>
       <div className="dual__stage">

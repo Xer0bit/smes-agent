@@ -1,7 +1,7 @@
 const path = require('path');
-// VPS1: 156.67.218.75 (Singapore) — Frontend + Supabase Edge + API server
-// VPS2: 72.62.126.99(Indonesia) — Preview Hosting + Generated Apps
-// VPS3: 3.148.126.20 (USA) — LLM / Code Generation + Agent Runner (generation-only)
+// VPS1: 156.67.218.75 (Singapore)   Frontend + Supabase Edge + API server
+// VPS2: 72.62.126.99(Indonesia)   Preview Hosting + Generated Apps
+// VPS3: 3.148.126.20 (USA)   LLM / Code Generation + Agent Runner (generation-only)
 const ROOT = __dirname;
 const PREVIEW_PORT = Number(process.env.PREVIEW_PORT || process.env.PORT || 3001);
 const GEN_API_PORT = Number(process.env.GEN_API_PORT || process.env.PORT || 5001);
@@ -10,7 +10,7 @@ const API_SERVER_PORT = Number(process.env.API_SERVER_PORT || process.env.PORT |
 module.exports = {
     apps: [
         // ──────────────────────────────────────────────────────────
-        //  Preview Service — VPS2
+        //  Preview Service   VPS2
         //  Serves generated React apps via Vite HMR
         // ──────────────────────────────────────────────────────────
         {
@@ -45,9 +45,9 @@ module.exports = {
         },
 
         // ──────────────────────────────────────────────────────────
-        //  Gen / Agent Server — VPS3 (generation-only)
+        //  Gen / Agent Server   VPS3 (generation-only)
         //  Serves gen.ecomgear.dev + agent.ecomgear.dev (port 5001)
-        //  SERVICE_ROLE=gen mounts only /api/v1/ai — every other route group
+        //  SERVICE_ROLE=gen mounts only /api/v1/ai   every other route group
         //  lives on ecomgear-api (VPS1) instead. See server/src/app.ts.
         //  Cluster mode: 2 instances → pm2 reload gives true zero-downtime
         //  (new worker starts + signals ready, then old worker drains and exits)
@@ -81,9 +81,9 @@ module.exports = {
         },
 
         // ──────────────────────────────────────────────────────────
-        //  API Server — VPS1 (everything except LLM generation)
+        //  API Server   VPS1 (everything except LLM generation)
         //  Serves api.ecomgear.dev/api/v1/* (port 5002), fronted by the
-        //  same nginx server block that proxies Supabase/Kong — see
+        //  same nginx server block that proxies Supabase/Kong   see
         //  infrastructure/nginx/vps1-ecomgear.dev.conf's /api/v1/ location.
         //  SERVICE_ROLE=api mounts everything except /api/v1/ai.
         // ──────────────────────────────────────────────────────────

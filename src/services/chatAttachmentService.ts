@@ -15,11 +15,11 @@ export interface ChatAttachment {
   type: string;
   /** Local object URL for preview in the chat bubble (revoked on unmount) */
   previewUrl: string;
-  /** Server-side temp path — sent to the agent loop */
+  /** Server-side temp path   sent to the agent loop */
   tempPath: string;
-  /** Permanent Supabase Storage URL — persists across reloads */
+  /** Permanent Supabase Storage URL   persists across reloads */
   publicUrl: string;
-  /** 'image' | 'document' — determines rendering */
+  /** 'image' | 'document'   determines rendering */
   category: 'image' | 'document';
 }
 
@@ -107,7 +107,7 @@ export async function uploadChatAttachment(
   // ── Step 2: Upload to the (private) chat-attachments bucket for a durable URL ──
   // RLS on this bucket requires the path to start with the uploader's own
   // auth.uid() (see supabase/migrations/20260402120000_chat_attachments_bucket.sql).
-  // Falls back to the local blob URL if storage upload fails — the chat works
+  // Falls back to the local blob URL if storage upload fails   the chat works
   // for the current session, but the attachment won't survive reload (a
   // message with no publicUrl gets dropped when saved, see AgentChatPanel.tsx).
   const storagePath = `${userId}/${projectId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
@@ -117,9 +117,9 @@ export async function uploadChatAttachment(
       .from('chat-attachments')
       .upload(storagePath, file, { upsert: false, contentType: file.type });
     if (uploadError) {
-      console.error('Chat attachment storage upload failed — image will not persist after reload:', uploadError);
+      console.error('Chat attachment storage upload failed   image will not persist after reload:', uploadError);
     } else {
-      // Bucket is private — a public URL 403s. Sign it for 5 years, effectively
+      // Bucket is private   a public URL 403s. Sign it for 5 years, effectively
       // permanent for chat history purposes.
       const { data: signedData, error: signError } = await supabase.storage
         .from('chat-attachments')
@@ -128,7 +128,7 @@ export async function uploadChatAttachment(
       publicUrl = signedData?.signedUrl ?? '';
     }
   } catch (err) {
-    console.error('Chat attachment storage upload threw — image will not persist after reload:', err);
+    console.error('Chat attachment storage upload threw   image will not persist after reload:', err);
   }
 
   return {

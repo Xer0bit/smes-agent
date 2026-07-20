@@ -4,7 +4,7 @@
 -- explicit project_member_access grant). Result: for any org-owned project, the
 -- browser's own RLS-scoped query returned zero rows even though the rows exist
 -- (confirmed by the server's service-role sync endpoint reporting a nonzero
--- count) — the Secrets settings panel silently showed "No secrets yet".
+-- count)   the Secrets settings panel silently showed "No secrets yet".
 
 drop policy if exists "project_secrets_select" on public.project_secrets;
 drop policy if exists "project_secrets_insert" on public.project_secrets;

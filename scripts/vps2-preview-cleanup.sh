@@ -35,7 +35,7 @@ fi
 
 log "cleanup started retention_days=$RETENTION_DAYS keep_recent=$KEEP_RECENT_COUNT dir=$PROJECTS_DIR"
 
-# Build a set of published project IDs from .slugs.json — these are NEVER deleted.
+# Build a set of published project IDs from .slugs.json   these are NEVER deleted.
 declare -A published_ids
 SLUGS_FILE="$PROJECTS_DIR/.slugs.json"
 if [[ -f "$SLUGS_FILE" ]] && command -v python3 >/dev/null 2>&1; then

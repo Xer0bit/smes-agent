@@ -40,13 +40,13 @@ import EcgConnectPage from "./pages/EcgConnectPage";
 import { supabase } from "./integrations/supabase/client";
 import './i18n/config';
 
-// Default cache window for settings/dashboard data — most of it doesn't
+// Default cache window for settings/dashboard data   most of it doesn't
 // change from other clients mid-session, so re-fetching on every remount
 // (e.g. re-opening a settings tab) was just wasted API calls.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000, // 5 min — data is "fresh enough", no refetch
+      staleTime: 5 * 60 * 1000, // 5 min   data is "fresh enough", no refetch
       gcTime: 15 * 60 * 1000,   // keep cached data around for 15 min unused
       refetchOnWindowFocus: false,
       retry: 1,

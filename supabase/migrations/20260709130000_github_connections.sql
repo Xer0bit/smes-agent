@@ -20,4 +20,4 @@ CREATE POLICY "service_role_github_connections" ON public.github_connections
 
 -- Per-project linked repo (owner/repo full_name + branch) reuses the existing
 -- generic project_settings key/value table (setting_key = 'github_repo'),
--- same pattern as 'seo' and 'header_integrations' — no schema change needed there.
+-- same pattern as 'seo' and 'header_integrations'   no schema change needed there.

@@ -2,12 +2,12 @@
  * Gemini context caching for tool-using (build/edit/fix/feature) runs.
  *
  * Gemini's cachedContents API rejects any generateContent request that sets
- * `tools`/`toolConfig`/`system_instruction` if a cachedContent is attached —
+ * `tools`/`toolConfig`/`system_instruction` if a cachedContent is attached  
  * those must be baked into the cache itself instead. This module:
  *   1. Converts our Zod-based ToolSet into Gemini functionDeclarations.
  *   2. Creates a cachedContent containing systemInstruction + those declarations.
  *   3. Exposes a small AI SDK v6 LanguageModelMiddleware that strips
- *      tools/toolConfig from the outbound request whenever a cache is active —
+ *      tools/toolConfig from the outbound request whenever a cache is active  
  *      local tool-call *execution* in streamText/generateText is unaffected,
  *      since that dispatch table is separate from what gets sent over the wire.
  */
@@ -86,7 +86,7 @@ export function toolSetToGeminiDeclarations(toolSet: ToolSet): GeminiFunctionDec
   const decls: GeminiFunctionDeclaration[] = [];
   for (const [name, tool] of Object.entries(toolSet)) {
     const zodSchema = (tool as any).inputSchema;
-    if (!zodSchema || typeof zodSchema.safeParse !== 'function') continue; // not a zod schema — skip defensively
+    if (!zodSchema || typeof zodSchema.safeParse !== 'function') continue; // not a zod schema   skip defensively
     let jsonSchema: any;
     try {
       jsonSchema = zodToJsonSchema(zodSchema, { target: 'openApi3' });
@@ -110,7 +110,7 @@ const geminiToolCaches = new Map<string, CachedEntry>();
 
 /**
  * Creates (or reuses) a Gemini cachedContent containing the static system
- * prompt AND the tool function declarations. Returns null on any failure —
+ * prompt AND the tool function declarations. Returns null on any failure  
  * callers must treat this as best-effort and fall back to uncached requests.
  */
 export async function createGeminiToolCache(
@@ -119,7 +119,7 @@ export async function createGeminiToolCache(
   modelId: string,
   apiKey: string,
 ): Promise<string | null> {
-  // Gemini requires a minimum content size (~1024 tokens) to create a cache —
+  // Gemini requires a minimum content size (~1024 tokens) to create a cache  
   // below that, the create call itself fails, so skip it and run uncached.
   if (systemContent.length < 4096) return null;
 
@@ -129,7 +129,7 @@ export async function createGeminiToolCache(
   if (existing && existing.expiresAt > Date.now()) return existing.name;
 
   const declarations = toolSetToGeminiDeclarations(toolSet);
-  if (declarations.length === 0) return null; // nothing to bake in — not worth a cache
+  if (declarations.length === 0) return null; // nothing to bake in   not worth a cache
 
   const fullModelId = modelId.startsWith('models/') ? modelId : `models/${modelId}`;
 
@@ -144,7 +144,7 @@ export async function createGeminiToolCache(
           systemInstruction: { parts: [{ text: systemContent }] },
           tools: [{ functionDeclarations: declarations }],
           contents: [],
-          ttl: '600s', // 10-minute TTL — enough for a 30-45 step run
+          ttl: '600s', // 10-minute TTL   enough for a 30-45 step run
         }),
         signal: AbortSignal.timeout(5000), // never block the run if the cache API is slow
       },
@@ -167,7 +167,7 @@ export async function createGeminiToolCache(
 
 // ── Middleware: strip tools/toolConfig from the outbound request ─────────────
 // when a cache is active. Local tool-call execution in streamText/generateText
-// is driven by the `tools` object passed to streamText itself — that dispatch
+// is driven by the `tools` object passed to streamText itself   that dispatch
 // table is untouched. This middleware only affects what gets serialized into
 // the actual HTTP request body sent to Gemini.
 

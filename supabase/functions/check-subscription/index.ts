@@ -33,14 +33,14 @@ serve(async (req) => {
     const stripeSandbox = Deno.env.get('STRIPE_SANDBOX') === 'true';
     const hasLiveStripeKey = Boolean(stripeKey?.startsWith('sk_live_'));
 
-    // DEV / SANDBOX MODE BYPASS — only when Stripe isn't configured at all
+    // DEV / SANDBOX MODE BYPASS   only when Stripe isn't configured at all
     if (!stripeKey || stripeKey === 'sk_test_placeholder_key') {
       logStep('No Stripe key configured. Returning unsubscribed (safe default).');
       return new Response(JSON.stringify({
         subscribed: false,
         product_id: null,
         subscription_end: null,
-        note: 'Stripe not configured — subscription check skipped',
+        note: 'Stripe not configured   subscription check skipped',
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 200,

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..');
-// Local dev: load .env.local (project root) — contains production service credentials.
+// Local dev: load .env.local (project root)   contains production service credentials.
 // Does NOT override server/.env so local overrides always win.
 configDotenv({ path: path.join(ROOT, '.env.local'), override: false });
 // Production / any environment: load .env.production so TENANT_DB_* and other
@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 5001;
 const activeConnections = new Set<import('node:net').Socket>();
 
 // Load LLM config first (sets GOOGLE_GENERATIVE_AI_API_KEY), then probe embeddings.
-// Must be sequential — probing before the key is loaded caches 'bm25' and silently
+// Must be sequential   probing before the key is loaded caches 'bm25' and silently
 // prevents all KB indexing until the next resetProviderCache() call.
 getLlmControlState()
     .then(() => probeEmbeddingProvider())
@@ -44,7 +44,7 @@ const server: Server = app.listen(PORT, () => {
         socket.once('close', () => activeConnections.delete(socket));
     });
 
-    // Test all LLM providers on startup — auto-disables any that fail.
+    // Test all LLM providers on startup   auto-disables any that fail.
     // Runs after the server is already accepting requests so startup is never blocked.
     testAndAutoDisableProviders().catch((err) =>
         logger.warn('[LlmHealth] Startup health check failed:', err?.message)
@@ -72,7 +72,7 @@ let shuttingDown = false;
 function gracefulShutdown(signal: string) {
     if (shuttingDown) return;
     shuttingDown = true;
-    logger.info(`${signal} received — draining connections...`);
+    logger.info(`${signal} received   draining connections...`);
 
     // Stop accepting new connections
     server.close(() => {
@@ -86,7 +86,7 @@ function gracefulShutdown(signal: string) {
         socket.destroy();
     }
 
-    // Hard kill after 15s regardless — should rarely fire now that keep-alive
+    // Hard kill after 15s regardless   should rarely fire now that keep-alive
     // connections are destroyed above, but keeps the process from leaking.
     setTimeout(() => {
         logger.warn('Forcing exit after 15s drain timeout');
@@ -102,7 +102,7 @@ process.on('uncaughtException', (error) => {
     process.exit(1);
 });
 
-// Treat unhandled rejections as fatal — drain active connections then let PM2 restart.
+// Treat unhandled rejections as fatal   drain active connections then let PM2 restart.
 // Calling gracefulShutdown() stops new connections and gives in-flight SSE streams
 // up to 15s to complete before the process exits.
 process.on('unhandledRejection', (reason, promise) => {

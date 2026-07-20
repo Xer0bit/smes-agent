@@ -1,5 +1,5 @@
 /**
- * list_files tool — list files in a directory of the project workspace.
+ * list_files tool   list files in a directory of the project workspace.
  * Ported from server/src/agent/.../tools/list_files.ts (Electron removed).
  */
 import fs from 'node:fs';

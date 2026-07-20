@@ -25,20 +25,20 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Root — install, typecheck (advisory), test (blocking)
+      - name: Root   install, typecheck (advisory), test (blocking)
         run: |
           npm ci --legacy-peer-deps
           # tsc -p tsconfig.app.json was never actually invokable before this
           # workflow (an invalid ignoreDeprecations value in tsconfig.app.json
-          # made it hard-fail immediately) — now that it runs, it surfaces
+          # made it hard-fail immediately)   now that it runs, it surfaces
           # ~16 pre-existing type errors scattered across unrelated files.
           # Report only until those are cleaned up; don't block unrelated PRs.
           npx tsc --noEmit -p tsconfig.app.json || echo "::warning::root typecheck has pre-existing errors (non-blocking)"
-          # server/** is a separate package with its own node_modules — it
+          # server/** is a separate package with its own node_modules   it
           # gets its own vitest run in the Server step below.
           npx vitest run --exclude 'server/**'
 
-      - name: Root — lint changed files (blocking)
+      - name: Root   lint changed files (blocking)
         run: |
           git fetch origin "${{ github.base_ref }}" --depth=1
           CHANGED=$(git diff --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}...HEAD" -- '*.ts' '*.tsx' | grep -v '^server/' || true)
@@ -50,7 +50,7 @@ jobs:
             echo "No changed root .ts/.tsx files to lint."
           fi
 
-      - name: Root — lint full repo (advisory)
+      - name: Root   lint full repo (advisory)
         run: npm run lint || echo "::warning::root lint has pre-existing errors (non-blocking)"
 
       - uses: actions/setup-node@v4
@@ -59,14 +59,14 @@ jobs:
           cache: 'npm'
           cache-dependency-path: server/package-lock.json
 
-      - name: Server — install, typecheck (blocking), test (blocking)
+      - name: Server   install, typecheck (blocking), test (blocking)
         run: |
           cd server
           npm ci
           npx tsc --noEmit
           npx vitest run src/services
 
-      - name: Server — lint changed files (blocking)
+      - name: Server   lint changed files (blocking)
         run: |
           CHANGED=$(git diff --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}...HEAD" -- 'server/**/*.ts' | sed 's#^server/##' || true)
           if [ -n "$CHANGED" ]; then
@@ -77,7 +77,7 @@ jobs:
             echo "No changed server .ts files to lint."
           fi
 
-      - name: Server — lint full repo (advisory)
+      - name: Server   lint full repo (advisory)
         run: cd server && npm run lint || echo "::warning::server lint has pre-existing errors (non-blocking)"
 
       - name: Detect if preview-service changed

@@ -101,7 +101,7 @@ export const getGenServerUrl = (path: string): string =>
 export const getAgentServerUrl = (path: string): string =>
   `${GEN_SERVER_CONFIG.AGENT_URL}${path.startsWith('/') ? path : `/${path}`}`;
 
-// ── VPS1 API Server — everything except LLM generation ──────────────────
+// ── VPS1 API Server   everything except LLM generation ──────────────────
 // All /api/v1/* routes other than /api/v1/ai (auth, projects, files, preview,
 // system, runtime, database, admin-database, seo, header-integrations, github,
 // functions, ecg-*). In local dev this is the same single process as the gen

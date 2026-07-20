@@ -1,5 +1,5 @@
 /**
- * edit_file / search_replace tool — apply targeted edits to an existing file.
+ * edit_file / search_replace tool   apply targeted edits to an existing file.
  * Ported from server/src/agent/.../tools/search_replace.ts and edit_file.ts.
  *
  * Uses the SEARCH/REPLACE block format from the Dyad draft agent:
@@ -128,7 +128,7 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
   name: 'edit_file',
   description:
     'Apply targeted search-and-replace edits to an existing file without rewriting it entirely. ' +
-    'ALWAYS call read_file first to see the exact current content — then copy the search text verbatim from there. ' +
+    'ALWAYS call read_file first to see the exact current content   then copy the search text verbatim from there. ' +
     'If the SEARCH block fails to match, you will get the current file content back to help you correct it. ' +
     'If it fails twice on the same file, switch to write_file with the full corrected content instead.',
   inputSchema: schema,
@@ -142,7 +142,7 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
     try {
       original = fs.readFileSync(fullPath, 'utf8');
     } catch {
-      return `Error: File does not exist or is unreadable: ${args.path}. Check the file tree — use write_file (ecomgear-write) to create it first.`;
+      return `Error: File does not exist or is unreadable: ${args.path}. Check the file tree   use write_file (ecomgear-write) to create it first.`;
     }
     const result = applySearchReplace(original, args.diff);
 
@@ -155,7 +155,7 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
       // the exact content and correct the SEARCH text without an extra read_file call.
       const previewLines = original.split('\n').slice(0, 100).join('\n');
       const filePreview = original.split('\n').length > 100
-        ? `${previewLines}\n… (${original.split('\n').length - 100} more lines — call read_file for the full content)`
+        ? `${previewLines}\n… (${original.split('\n').length - 100} more lines   call read_file for the full content)`
         : previewLines;
       return `Error applying edit to ${args.path}: ${result.error}\n\nCurrent file content (first 100 lines):\n\`\`\`\n${filePreview}\n\`\`\`\n\nFix your SEARCH text to exactly match the content above.`;
     }
@@ -175,7 +175,7 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
       if (afterBalance.score > beforeBalance.score && afterBalance.score >= balanceThreshold) {
         const previewLines = original.split('\n').slice(0, 100).join('\n');
         const filePreview = original.split('\n').length > 100
-          ? `${previewLines}\n… (${original.split('\n').length - 100} more lines — call read_file for the full content)`
+          ? `${previewLines}\n… (${original.split('\n').length - 100} more lines   call read_file for the full content)`
           : previewLines;
         return (
           `Error: edit_file produced unbalanced code (${afterBalance.braces} unclosed braces, ${afterBalance.parens} unclosed parens). ` +
@@ -186,7 +186,7 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
       }
     }
 
-    // Gate 2: TypeScript syntax check — catches JSX errors that bracket counting misses
+    // Gate 2: TypeScript syntax check   catches JSX errors that bracket counting misses
     if (/\.tsx?$/.test(args.path)) {
       try {
         const isJsx = /\.tsx$/.test(args.path);
@@ -215,7 +215,7 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
           );
         }
       } catch (_) {
-        // transpileModule exceptions are rare — don't block writes on them
+        // transpileModule exceptions are rare   don't block writes on them
       }
     }
 
@@ -235,8 +235,8 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
     // Emit SSE tool-output so the frontend shows an activity chip
     ctx.onXmlComplete(`<ecomgear-edit path="${args.path}"></ecomgear-edit>`);
 
-    // Incremental live push — same as write_file, keeps preview in sync mid-run
-    // Buffer for deferred preview sync — same pattern as write_file.
+    // Incremental live push   same as write_file, keeps preview in sync mid-run
+    // Buffer for deferred preview sync   same pattern as write_file.
     if (ctx.pendingPreviewFiles) {
       ctx.pendingPreviewFiles.set(args.path, sanitized);
     }

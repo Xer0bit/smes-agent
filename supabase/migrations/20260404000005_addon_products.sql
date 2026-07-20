@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS public.addon_subscriptions (
 
 ALTER TABLE public.addon_subscriptions ENABLE ROW LEVEL SECURITY;
 
--- ── 7. RLS policies — project members access their own add-on records ─────────
+-- ── 7. RLS policies   project members access their own add-on records ─────────
 DO $$
 DECLARE
   tbl text;
@@ -142,7 +142,7 @@ BEGIN
   END LOOP;
 END $$;
 
--- Addon subscriptions — org admin access
+-- Addon subscriptions   org admin access
 CREATE POLICY "org admin access addon_subscriptions"
   ON public.addon_subscriptions FOR ALL
   USING (

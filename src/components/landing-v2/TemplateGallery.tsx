@@ -61,7 +61,7 @@ export const TemplateGallery = () => {
           <span className="section-title__accent">Pixel-perfect design systems from real brands.</span>
         </h2>
         <p className="section-sub">
-          Each template passes a complete design spec — typography, colors, spacing, components — to the agent. One click and your site matches the quality of ElevenLabs, Nike, Mintlify, or xAI.
+          Each template passes a complete design spec   typography, colors, spacing, components   to the agent. One click and your site matches the quality of ElevenLabs, Nike, Mintlify, or xAI.
         </p>
       </div>
       <div className="tpl__grid">

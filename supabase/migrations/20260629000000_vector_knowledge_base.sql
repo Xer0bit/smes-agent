@@ -18,7 +18,7 @@ create table if not exists project_file_embeddings (
   unique(project_id, file_path)
 );
 
--- HNSW index — 10x faster than IVFFlat for < 1M vectors, no training needed
+-- HNSW index   10x faster than IVFFlat for < 1M vectors, no training needed
 create index if not exists idx_file_embeddings_hnsw
   on project_file_embeddings
   using hnsw (embedding vector_cosine_ops)

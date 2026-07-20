@@ -1,7 +1,7 @@
 /**
  * Server-side proxy for the VPS4 hosting service (custom domains + published
  * builds). Previously src/eCG/Publish/domainService.ts called HOSTING_BASE
- * directly from the browser with VITE_HOSTING_SERVICE_SECRET attached — Vite
+ * directly from the browser with VITE_HOSTING_SERVICE_SECRET attached   Vite
  * bundles that into the public JS, so anyone could pull the secret out of the
  * built output and hit the hosting service directly. The secret stays
  * server-side now; each route below enforces the authorization the direct
@@ -26,7 +26,7 @@ function hostingHeaders(): Record<string, string> {
   return headers;
 }
 
-// Every route below deploys, activates a domain, or removes one — all writes,
+// Every route below deploys, activates a domain, or removes one   all writes,
 // so this requires edit access (owner/admin/editor), not just view access.
 // A viewer/client collaborator must not be able to deploy or reconfigure domains.
 async function ownsProject(projectId: string, userId: string): Promise<boolean> {
@@ -111,7 +111,7 @@ router.post('/:projectId/activate-domain', async (req: AuthenticatedRequest, res
 });
 
 // ── DELETE /api/v1/hosting/:projectId/domain/:domain ────────────────────────
-// Project-owner removing their own custom domain — verified against
+// Project-owner removing their own custom domain   verified against
 // project_custom_domains before forwarding, so one owner can't remove a
 // domain that belongs to someone else's project.
 router.delete('/:projectId/domain/:domain', async (req: AuthenticatedRequest, res: Response) => {

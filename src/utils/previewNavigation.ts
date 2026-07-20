@@ -8,7 +8,7 @@
  */
 export function normalizePreviewRoute(raw: string): string {
   if (!raw) return '/';
-  // If it contains a '#', the route lives after it — strip everything before.
+  // If it contains a '#', the route lives after it   strip everything before.
   const hashIdx = raw.indexOf('#');
   if (hashIdx >= 0) return raw.slice(hashIdx + 1) || '/';
   // If it's a /preview/{uuid}/sub-path, strip the prefix.
@@ -35,7 +35,7 @@ export function buildPreviewNavigationUrl(
     ? (cleanBase + (cleanBase.includes('?') ? '&' : '?') + `t=${Date.now()}`)
     : cleanBase + '/';
 
-  // Generated apps use HashRouter — navigate via hash fragment, not pathname
+  // Generated apps use HashRouter   navigate via hash fragment, not pathname
   if (routePath && routePath !== '/') {
     const normalized = routePath.startsWith('/') ? routePath : `/${routePath}`;
     result = `${result.replace(/\/$/, '')}/#${normalized}`;

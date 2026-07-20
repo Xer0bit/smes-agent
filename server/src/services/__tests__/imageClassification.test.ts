@@ -58,7 +58,7 @@ describe('isReferenceScreenshot', () => {
     expect(isReferenceScreenshot('isolated logo asset for the brand, icon-only version')).toBe(false);
   });
 
-  // Bug fix A/B tests — diagrams/wireframes must now return TRUE
+  // Bug fix A/B tests   diagrams/wireframes must now return TRUE
   it('FIX: returns true for a diagram description', () => {
     expect(isReferenceScreenshot('This is a diagram showing the system architecture')).toBe(true);
   });

@@ -27,7 +27,7 @@ export async function authMiddleware(
 
         const token = authHeader.substring(7);
 
-        // Verify token with Supabase — bound to 10s so a Supabase outage
+        // Verify token with Supabase   bound to 10s so a Supabase outage
         // doesn't hang every request indefinitely.
         const authResult = await Promise.race([
             supabaseAuth.auth.getUser(token),
@@ -96,7 +96,7 @@ export async function optionalAuthMiddleware(
 }
 
 // Lets a deployed eCG dashboard call ecg-proxy/ecg-chat without an eComGear
-// account, via the token issued by POST /api/v1/ecg-access. Never rejects —
+// account, via the token issued by POST /api/v1/ecg-access. Never rejects  
 // route handlers decide what to do when dashboardAccessProjectId is unset.
 export function dashboardAccessMiddleware(
     req: AuthenticatedRequest,

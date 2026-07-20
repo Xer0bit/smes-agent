@@ -248,7 +248,7 @@ export default function AdminInvitations() {
                                                         {inv.status}
                                                     </Badge>
                                                 </TableCell>
-                                                <TableCell className="text-sm text-gray-400 font-mono text-xs">{inv.inviter_email || '—'}</TableCell>
+                                                <TableCell className="text-sm text-gray-400 font-mono text-xs">{inv.inviter_email || ' '}</TableCell>
                                                 <TableCell className="text-xs text-gray-500 font-medium">{formatDate(inv.expires_at)}</TableCell>
                                                 <TableCell className="text-right">
                                                     <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">

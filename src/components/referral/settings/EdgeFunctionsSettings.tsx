@@ -21,7 +21,7 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
   const { hasFeature } = useSubscription();
   const isPaid = hasFeature("ecomgear_cloud");
 
-  // Functions are project-scoped, not database-scoped — no provisioned
+  // Functions are project-scoped, not database-scoped   no provisioned
   // database is required to list, invoke (if the function doesn't touch a
   // DB), or delete a function. Only db.* calls inside a function's own code
   // need one.
@@ -65,7 +65,7 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
 
   useEffect(() => { load(); }, [load]);
 
-  // Load the full source for whichever function is selected — the list
+  // Load the full source for whichever function is selected   the list
   // endpoint only returns name/description/is_active, never the code itself.
   useEffect(() => {
     if (!selected) { setCode(null); return; }
@@ -96,7 +96,7 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
       <div className="space-y-6">
         <div>
           <h2 className="text-xl font-semibold text-white/85 mb-1">Edge Functions</h2>
-          <p className="text-sm text-white/45">Serverless functions your AI agent writes and your app can invoke — no database required.</p>
+          <p className="text-sm text-white/45">Serverless functions your AI agent writes and your app can invoke   no database required.</p>
         </div>
         <Card className="bg-workspace-surface border-indigo-500/25">
           <CardHeader>
@@ -104,7 +104,7 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
               <Lock className="h-4 w-4 text-primary" />
               <CardTitle className="text-base">Pro or Agency plan required</CardTitle>
             </div>
-            <CardDescription>Edge functions are part of eComGear Cloud — upgrade to unlock them.</CardDescription>
+            <CardDescription>Edge functions are part of eComGear Cloud   upgrade to unlock them.</CardDescription>
           </CardHeader>
         </Card>
       </div>
@@ -117,7 +117,7 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-semibold text-white/85 mb-1">Edge Functions</h2>
-        <p className="text-sm text-white/45">Serverless functions your AI agent writes and your app can invoke — no database required.</p>
+        <p className="text-sm text-white/45">Serverless functions your AI agent writes and your app can invoke   no database required.</p>
       </div>
 
       <Card className="bg-workspace-surface border-white/[0.07]">
@@ -163,7 +163,7 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
 
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-white/45 font-medium">Source (read-only — ask the agent to change it)</span>
+                      <span className="text-xs text-white/45 font-medium">Source (read-only   ask the agent to change it)</span>
                     </div>
                     <div className="rounded-lg border border-white/[0.07] bg-black/40 max-h-56 overflow-y-auto">
                       {codeLoading ? (

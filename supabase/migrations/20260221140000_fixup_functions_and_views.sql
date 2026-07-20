@@ -1,5 +1,5 @@
 -- =============================================================================
--- EcomGear DB Fixup — run after pending migrations
+-- EcomGear DB Fixup   run after pending migrations
 -- Fixes: has_project_access function, RLS policies, admin role, views
 -- =============================================================================
 

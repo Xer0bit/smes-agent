@@ -3,7 +3,7 @@ import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 
 // ---------------------------------------------------------------------------
-// Config — all from env vars
+// Config   all from env vars
 // ---------------------------------------------------------------------------
 function cfg() {
   const host     = process.env.TENANT_DB_HOST;
@@ -39,7 +39,7 @@ async function pool(): Promise<import('pg').Pool> {
 }
 
 // ---------------------------------------------------------------------------
-// JWT helpers — HS256, no external dep
+// JWT helpers   HS256, no external dep
 // ---------------------------------------------------------------------------
 function b64url(s: string): string {
   return Buffer.from(s).toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -133,7 +133,7 @@ export interface TenantTable {
 }
 
 // ---------------------------------------------------------------------------
-// SQL literal formatting — used by dumpDatabase for INSERT statements
+// SQL literal formatting   used by dumpDatabase for INSERT statements
 // ---------------------------------------------------------------------------
 function sqlLiteral(value: unknown): string {
   if (value === null || value === undefined) return 'NULL';
@@ -145,12 +145,12 @@ function sqlLiteral(value: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Platform auth secrets — VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are the
+// Platform auth secrets   VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are the
 // EcomGear platform's OWN Supabase instance (used for user sign-up/login in
 // generated apps), NOT the per-project hosted database. Nothing else in the
 // codebase ever wrote these into project_secrets, so every generated app's
 // `createClient(import.meta.env.VITE_SUPABASE_URL, ...)` call got `undefined`
-// and threw "supabaseUrl is required" — the system prompt told the agent to
+// and threw "supabaseUrl is required"   the system prompt told the agent to
 // use these env vars, but they never actually existed anywhere. Every project
 // gets these regardless of plan tier or hosted-database status (auth works
 // even on free/no-DB projects).
@@ -159,7 +159,7 @@ export async function syncPlatformAuthSecrets(projectId: string): Promise<void> 
   const url = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
   if (!url || !anonKey) {
-    logger.warn('[databaseService] SUPABASE_URL/SUPABASE_ANON_KEY not set on server — cannot sync platform auth secrets');
+    logger.warn('[databaseService] SUPABASE_URL/SUPABASE_ANON_KEY not set on server   cannot sync platform auth secrets');
     return;
   }
   const { error } = await supabase.from('project_secrets').upsert(
@@ -181,10 +181,10 @@ export interface ProjectSecret {
 // SINGLE SOURCE OF TRUTH for every env var injected into the agent's prompt
 // context. Previously ai.routes.ts independently re-derived VITE_FUNCTIONS_API_URL
 // / VITE_DB_* with its own fallback logic and disagreed with this file (used
-// gen.ecomgear.dev — the wrong server — as a fallback, and injected the
+// gen.ecomgear.dev   the wrong server   as a fallback, and injected the
 // full-privilege service_key under a VITE_ name). Every caller that needs "what
 // env vars does this project have" MUST go through this function instead of
-// recomputing anything locally — that's how the two diverged last time.
+// recomputing anything locally   that's how the two diverged last time.
 // ---------------------------------------------------------------------------
 export async function buildProjectEnvSecrets(userId: string, projectId: string): Promise<ProjectSecret[]> {
   const { data: userRows } = await supabase
@@ -196,7 +196,7 @@ export async function buildProjectEnvSecrets(userId: string, projectId: string):
 
   const derived: ProjectSecret[] = [];
 
-  // Platform auth — every project gets this, regardless of plan tier or
+  // Platform auth   every project gets this, regardless of plan tier or
   // hosted-database status (also persisted via syncPlatformAuthSecrets, fired
   // below, so it self-heals in project_secrets for the NEXT run too).
   const authUrl = process.env.SUPABASE_URL;
@@ -207,11 +207,11 @@ export async function buildProjectEnvSecrets(userId: string, projectId: string):
   }
   syncPlatformAuthSecrets(projectId).catch(() => {});
 
-  // Hosted DB — getCredentials() is a no-op (returns null) without an active
+  // Hosted DB   getCredentials() is a no-op (returns null) without an active
   // database, and already upserts these same rows into project_secrets.
   const dbCreds = await databaseService.getCredentials(userId, projectId);
   if (dbCreds) {
-    // Edge functions execute on VPS5, next to the tenant database — never on
+    // Edge functions execute on VPS5, next to the tenant database   never on
     // api.ecomgear.dev, which is reserved for EcomGear's own platform API.
     // dbCreds.api_url already carries the tenant schema segment
     // (https://cloud.ecomgear.app/tenant_xxxx), so /functions lands on the
@@ -221,7 +221,7 @@ export async function buildProjectEnvSecrets(userId: string, projectId: string):
     derived.push({ key_name: 'VITE_DB_ANON_KEY', key_value: dbCreds.anon_key });
     derived.push({ key_name: 'VITE_DB_SCHEMA', key_value: dbCreds.schema });
     derived.push({ key_name: 'VITE_FUNCTIONS_API_URL', key_value: functionsApiUrl });
-    // service_key is deliberately NOT included — a full-privilege credential must
+    // service_key is deliberately NOT included   a full-privilege credential must
     // never carry a VITE_ prefix (Vite would bundle it straight into the browser).
     // Edge functions already get privileged db.* access server-side; nothing
     // needs the raw key in agent-visible context.
@@ -238,7 +238,7 @@ export const databaseService = {
 
   // ── Status ──────────────────────────────────────────────────────────────
   // Look up by project_id first (new rows), fall back to user_id (legacy rows
-  // provisioned before the project_id migration — those have project_id = NULL).
+  // provisioned before the project_id migration   those have project_id = NULL).
   async getStatus(userId: string, projectId?: string): Promise<TenantDb | null> {
     if (projectId) {
       const { data } = await supabase
@@ -252,7 +252,7 @@ export const databaseService = {
       if (data) return data as TenantDb;
     }
 
-    // Fallback: legacy rows only (project_id IS NULL) — provisioned before the
+    // Fallback: legacy rows only (project_id IS NULL)   provisioned before the
     // project_id migration. Must NOT match on user_id alone: a user with
     // multiple projects each provisioned under their own project_id would
     // otherwise get a DIFFERENT project's schema/credentials returned here
@@ -283,7 +283,7 @@ export const databaseService = {
     // api_url carries the tenant's schema AS PART OF THE PATH
     // (https://cloud.ecomgear.app/tenant_xxxx), not just the bare shared host.
     // Old convention required every caller to remember a separate
-    // Accept-Profile/Content-Profile header naming the schema — forget it (as
+    // Accept-Profile/Content-Profile header naming the schema   forget it (as
     // generated frontend code repeatedly did) and PostgREST 404s/406s silently
     // routing to the wrong schema. VPS5's nginx now reads the tenant segment
     // out of the URL itself and sets those headers server-side, so a caller
@@ -302,7 +302,7 @@ export const databaseService = {
     if (projectId) {
       // VITE_FUNCTIONS_API_URL: edge functions execute on VPS5 (the
       // function-runner in vps5-functions-runner/), reached through the same
-      // tenant-scoped cloud.ecomgear.app path as the DB — never api.ecomgear.dev,
+      // tenant-scoped cloud.ecomgear.app path as the DB   never api.ecomgear.dev,
       // which stays reserved for EcomGear's own platform API. Synced here so
       // the env var the system prompt tells the agent to use actually exists.
       const functionsApiUrl = `${creds.api_url}/functions`;
@@ -337,7 +337,7 @@ export const databaseService = {
     const ownerPass   = Buffer.from((projectId ?? userId) + process.env.TENANT_DB_JWT_SECRET!).toString('base64').slice(0, 24);
     const { user: superuser } = cfg();
 
-    // Upsert tracking record — reuses an existing deprovisioned row with the same
+    // Upsert tracking record   reuses an existing deprovisioned row with the same
     // schema_name instead of inserting a duplicate (which would violate the unique constraint).
     const { data: row, error: insertErr } = await supabase
       .from('tenant_databases')
@@ -368,30 +368,30 @@ export const databaseService = {
 
         // 2b. Grant SET privilege to the provisioner role itself. PostgreSQL 16+
         // auto-grants CREATEROLE creators ADMIN on roles they create, but NOT
-        // INHERIT/SET — without this, both `SET ROLE` (used by runQuery()) and
+        // INHERIT/SET   without this, both `SET ROLE` (used by runQuery()) and
         // `ALTER DEFAULT PRIVILEGES FOR ROLE` (used below) fail with
         // "permission denied".
         await c.query(`GRANT "${anonRole}"    TO "${superuser}" WITH INHERIT TRUE, SET TRUE`);
         await c.query(`GRANT "${serviceRole}" TO "${superuser}" WITH INHERIT TRUE, SET TRUE`);
         await c.query(`GRANT "${ownerRole}"   TO "${superuser}" WITH INHERIT TRUE, SET TRUE`);
 
-        // 3. Permissions — anon + service: no public schema access so neither role
+        // 3. Permissions   anon + service: no public schema access so neither role
         // can enumerate ecg_tenant_registry or read other tenants' objects.
         await c.query(`REVOKE ALL ON SCHEMA public FROM "${anonRole}"`);
         await c.query(`REVOKE ALL ON SCHEMA public FROM "${serviceRole}"`);
         await c.query(`GRANT USAGE ON SCHEMA "${schema}" TO "${anonRole}"`);
 
-        // 4. Permissions — service: full on their own schema only
+        // 4. Permissions   service: full on their own schema only
         await c.query(`GRANT USAGE, CREATE ON SCHEMA "${schema}" TO "${serviceRole}"`);
 
-        // 5. Permissions — owner: full + login
+        // 5. Permissions   owner: full + login
         await c.query(`GRANT USAGE, CREATE ON SCHEMA "${schema}" TO "${ownerRole}"`);
 
         // 5b. Default privileges, scoped to the roles that actually CREATE tables
-        // (serviceRole — used by the agent's query_database tool — and ownerRole —
+        // (serviceRole   used by the agent's query_database tool   and ownerRole  
         // used by direct postgres:// connections). `ALTER DEFAULT PRIVILEGES` with
         // no `FOR ROLE` only applies to objects the EXECUTING role (the provisioner)
-        // creates, which never happens in practice — without `FOR ROLE` here, anon
+        // creates, which never happens in practice   without `FOR ROLE` here, anon
         // and the other roles get NO access to tables created later by service/owner,
         // and PostgREST returns "permission denied" on every table.
         for (const creator of [serviceRole, ownerRole]) {
@@ -415,11 +415,11 @@ export const databaseService = {
         await c.query(`GRANT "${serviceRole}" TO authenticator`);
 
         // 8. Register schema in the tenant registry (updates PostgREST config).
-        // `id` MUST be unique per schema, not per user — a user provisioning a
+        // `id` MUST be unique per schema, not per user   a user provisioning a
         // SECOND project previously reused `id = userId`, which collided with
         // their first project's row under `ON CONFLICT (id) DO NOTHING` and
         // silently skipped the insert. The new schema never entered the
-        // registry, so it was never added to PostgREST's exposed schema list —
+        // registry, so it was never added to PostgREST's exposed schema list  
         // every table request against that project's DB permanently 404'd
         // with PGRST106 "Invalid schema", even though tenant_databases showed
         // status 'active'. schema_name already has its own unique constraint;
@@ -551,7 +551,7 @@ export const databaseService = {
     return { rows: dataRes.rows, total: countRes.rows[0].count };
   },
 
-  // ── Connection check — live ping, separate from the stored provisioning status ──
+  // ── Connection check   live ping, separate from the stored provisioning status ──
   async testConnection(userId: string, projectId?: string): Promise<{ connected: boolean; latencyMs?: number; error?: string }> {
     const record = await this.getStatus(userId, projectId);
     if (!record || record.status !== 'active') return { connected: false, error: 'No active database' };
@@ -650,7 +650,7 @@ export const databaseService = {
 
     // For service role, split on semicolons so the agent can pass full migration
     // scripts (multiple DDL/DML statements) in one call. Each statement runs inside
-    // the same transaction — if any fails the whole batch rolls back.
+    // the same transaction   if any fails the whole batch rolls back.
     const statements = role === 'service'
       ? trimmed.split(/;\s*\n|;\s*$|;(?=\s*[A-Za-z])/).map(s => s.trim()).filter(Boolean)
       : [trimmed];
@@ -670,7 +670,7 @@ export const databaseService = {
       await c.query('COMMIT');
 
       // DDL run through here (agent's query_database tool creating/altering
-      // tables) changes the schema but PostgREST caches its schema at startup —
+      // tables) changes the schema but PostgREST caches its schema at startup  
       // without a reload, the new table 404s with PGRST205 "not in schema
       // cache" on every REST call until something unrelated (a provision/
       // deprovision elsewhere) happens to trigger a reload. Only provision()/
@@ -705,7 +705,7 @@ export const databaseService = {
   // This was previously fire-and-forget: one attempt, no response-status check,
   // any failure silently swallowed. A transient network blip between VPS1 and
   // VPS5 meant the schema got registered in ecg_tenant_registry correctly but
-  // PostgREST never actually picked it up — the project showed "active" and
+  // PostgREST never actually picked it up   the project showed "active" and
   // every request against it 404'd with PGRST106 "Invalid schema" until someone
   // noticed and ran the reload manually. Retries 3x with backoff and throws on
   // total failure so provision() can surface it instead of reporting success.

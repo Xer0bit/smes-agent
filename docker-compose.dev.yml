@@ -1,5 +1,5 @@
 # =============================================================================
-# docker-compose.dev.yml — LOCAL DEV: Preview Service only
+# docker-compose.dev.yml   LOCAL DEV: Preview Service only
 # =============================================================================
 # Frontend  → runs on HOST:  npm run dev          (http://localhost:8080)
 # Preview   → runs in Docker: docker compose -f docker-compose.dev.yml up
@@ -12,7 +12,7 @@
 
 services:
   # ---------------------------------------------------------------------------
-  # Preview Service — per-project Vite sandboxes
+  # Preview Service   per-project Vite sandboxes
   # ---------------------------------------------------------------------------
   preview-service:
     build:
@@ -36,7 +36,7 @@ services:
       start_period: 20s
 
   # ---------------------------------------------------------------------------
-  # Hosting Service — local dev (no Caddy, file-based, auto-verify DNS)
+  # Hosting Service   local dev (no Caddy, file-based, auto-verify DNS)
   # ---------------------------------------------------------------------------
   hosting-service:
     build:

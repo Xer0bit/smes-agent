@@ -79,7 +79,7 @@ serve(async (req) => {
       },
     });
 
-    // Extract the raw JWT and pass it directly — getUser() without args uses the
+    // Extract the raw JWT and pass it directly   getUser() without args uses the
     // stored session which is empty on a fresh client, causing spurious 401s.
     const jwt = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
     const {
@@ -103,7 +103,7 @@ serve(async (req) => {
 
     if (organizationId && serviceRoleKey) {
       // Enforce org-level create access explicitly when using service role.
-      // Allow: org creator, admin, billing_admin, member — all active org participants.
+      // Allow: org creator, admin, billing_admin, member   all active org participants.
       const [{ data: ownedOrg, error: ownedOrgError }, { data: memberRow, error: memberError }] = await Promise.all([
         dbClient
           .from('organizations')

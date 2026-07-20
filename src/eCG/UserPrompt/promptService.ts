@@ -104,7 +104,7 @@ export const promptService = {
     const userMessage = { role: 'user' as const, content: promptText };
     onMessageAdd(userMessage);
 
-    // Save user message to database (skip for guests — no DB row)
+    // Save user message to database (skip for guests   no DB row)
     if (!fingerprint) {
       await messageService.saveUserMessage(projectId, promptText);
       await messageService.incrementProjectMessageCount(projectId);
@@ -116,7 +116,7 @@ export const promptService = {
     try {
       console.log('[PromptService] Starting agent stream generation...');
 
-      // Verify user session — guests are allowed without session
+      // Verify user session   guests are allowed without session
       if (!fingerprint) {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.access_token) {
@@ -167,7 +167,7 @@ export const promptService = {
           },
           onError: (message) => {
             void onSystemMessage(`Agent error: ${message}`);
-            // Persist whatever was streamed so far — otherwise a reload silently
+            // Persist whatever was streamed so far   otherwise a reload silently
             // erases the agent's partial reply, leaving only the user's prompt.
             if (!fingerprint && accumulatedText.trim()) {
               void messageService.saveAssistantMessage(projectId, `${accumulatedText}\n\n*[error]*`, userId).catch(err => {

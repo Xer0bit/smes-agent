@@ -75,7 +75,7 @@ function ConnectionBadge({ ping, checking }: { ping: PingResult | null; checking
   );
 }
 
-// ── DB Info Panel (name + status only — no keys exposed) ─────────────────────
+// ── DB Info Panel (name + status only   no keys exposed) ─────────────────────
 function DbInfoPanel({ schemaName }: { schemaName: string }) {
   return (
     <div className="rounded-lg border border-white/[0.07] bg-white/[0.03] p-4 space-y-3">
@@ -388,7 +388,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
         method: 'POST', body: JSON.stringify({ organization_id: currentOrganizationId || null }),
       }, 30_000, projectId);
       setDb(res.database);
-      // Push the new credentials to the live preview immediately — without this
+      // Push the new credentials to the live preview immediately   without this
       // the app keeps hitting "Database API URL is not configured" until the
       // owner separately clicks Sync.
       await apiFetch('/sync-secrets', { method: 'POST' }, 20_000, projectId).catch(() => {});
@@ -422,7 +422,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
             <CardTitle className="text-base">Pro or Agency plan required</CardTitle>
           </div>
           <CardDescription>
-            Get a dedicated schema with REST API, schema browser, SQL editor, and full AI agent access. Zero setup — instant connection string.
+            Get a dedicated schema with REST API, schema browser, SQL editor, and full AI agent access. Zero setup   instant connection string.
           </CardDescription>
         </CardHeader>
         <CardContent>

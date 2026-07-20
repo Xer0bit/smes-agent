@@ -4,10 +4,10 @@ import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
 import { logger } from './logger.js';
 
 // Falls back to a random per-process secret if unset, so a missing env var
-// can never mean "predictable secret" — it just means tokens don't survive a restart.
+// can never mean "predictable secret"   it just means tokens don't survive a restart.
 const SECRET = process.env.DASHBOARD_ACCESS_SECRET || randomBytes(32).toString('hex');
 if (!process.env.DASHBOARD_ACCESS_SECRET) {
-  logger.warn('DASHBOARD_ACCESS_SECRET not set — using a random per-process secret. Dashboard access tokens will invalidate on every restart.');
+  logger.warn('DASHBOARD_ACCESS_SECRET not set   using a random per-process secret. Dashboard access tokens will invalidate on every restart.');
 }
 const TTL_MS = 12 * 60 * 60 * 1000; // 12h
 

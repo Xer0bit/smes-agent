@@ -1,5 +1,5 @@
 /**
- * Design templates — curated design system prompts from real-world sites.
+ * Design templates   curated design system prompts from real-world sites.
  * Each template's `prompt` is the full design.md that gets passed to the agent
  * when creating a project from this template.
  *
@@ -91,7 +91,7 @@ export function buildTemplatePrompt(
   const scaffold = [
     '',
     '',
-    '# MANDATORY File Scaffold (follow EXACTLY — do not rename or skip files)',
+    '# MANDATORY File Scaffold (follow EXACTLY   do not rename or skip files)',
     '',
     '## Required dependencies',
     'Add these with `add_dependency` BEFORE writing any file that imports them:',
@@ -121,7 +121,7 @@ export function buildTemplatePrompt(
     '- Every import path MUST match a file you already created ABOVE it in the sequence.',
     '- Use @/ alias (configured in vite.config) for deep imports: `import X from "@/components/X"`.',
     '- Do NOT create files not listed above unless absolutely necessary (e.g. a shared data file).',
-    '- Do NOT use `BrowserRouter` — use `HashRouter` (preview runs in an iframe without server routing).',
+    '- Do NOT use `BrowserRouter`   use `HashRouter` (preview runs in an iframe without server routing).',
     '- Call `get_build_errors` after writing ALL files. Fix any errors before finishing.',
   ].join('\n');
 
@@ -190,7 +190,7 @@ Near-white canvas (#ffffff, #f5f5f5) with warm stone undertones (#f5f2ef). Typog
 # Design System Inspired by Nike
 
 ## Visual Theme
-Monochromatic (black/white/grey) retail cathedral. UI disappears to let product photography dominate. Aggressively minimal — product is the only color source.
+Monochromatic (black/white/grey) retail cathedral. UI disappears to let product photography dominate. Aggressively minimal   product is the only color source.
 
 ## Typography
 - Display: Condensed sans-serif (Futura-style), uppercase, 96px, weight 700-900, line-height 0.90, tight tracking
@@ -207,9 +207,9 @@ Monochromatic (black/white/grey) retail cathedral. UI disappears to let product 
 - Borders: #CACACB secondary, #111111 active
 
 ## Components
-- Pill buttons (30px radius) — primary: #111 bg, #fff text
-- Full-bleed imagery with NO border radius — edges fill completely
-- No shadows, no gradients — surface differentiation through grey shifts only
+- Pill buttons (30px radius)   primary: #111 bg, #fff text
+- Full-bleed imagery with NO border radius   edges fill completely
+- No shadows, no gradients   surface differentiation through grey shifts only
 - Category cards: large image + text overlay
 - Clean product grid: image + name + price, minimal ornamentation
 
@@ -237,7 +237,7 @@ Monochromatic (black/white/grey) retail cathedral. UI disappears to let product 
 Documentation-as-product. White airy surface with dark atmospheric hero section. Green brand accent (#18E299). Calm, confident, engineered for legibility. Cloud-like gradient hero transitioning to clean white sections.
 
 ## Typography
-- Display: Inter 64px, weight 600, line-height 1.15, letter-spacing -1.28px — compressed hero headlines
+- Display: Inter 64px, weight 600, line-height 1.15, letter-spacing -1.28px   compressed hero headlines
 - Section Heading: Inter 40px, weight 600, tracking -0.8px
 - Body: Inter 16-18px, weight 400, line-height 1.5
 - Code/Labels: Geist Mono 12px, weight 500, uppercase, letter-spacing 0.6px
@@ -248,7 +248,7 @@ Documentation-as-product. White airy surface with dark atmospheric hero section.
 - Green variants: #d4fae8 light, #0fa76e deep
 - Neutrals: #333333, #666666, #888888, #e5e5e5, #f5f5f5
 - Borders: rgba(0,0,0,0.05) subtle, rgba(0,0,0,0.08) medium
-- Shadows: Barely-there — rgba(0,0,0,0.03) for ambient lift
+- Shadows: Barely-there   rgba(0,0,0,0.03) for ambient lift
 
 ## Components
 - Full-round buttons (9999px): #0d0d0d bg, #fff text for primary CTA
@@ -278,13 +278,13 @@ Documentation-as-product. White airy surface with dark atmospheric hero section.
 # Design System Inspired by xAI
 
 ## Visual Theme
-Dark-first brutalist minimalism. Almost-black background (#1f2228), pure white text. Terminal-inspired, high-contrast. Zero decorative elements — no shadows, no gradients, no colored accents. Communicates through absence.
+Dark-first brutalist minimalism. Almost-black background (#1f2228), pure white text. Terminal-inspired, high-contrast. Zero decorative elements   no shadows, no gradients, no colored accents. Communicates through absence.
 
 ## Typography
-- Display: Monospace font at extreme sizes (up to 320px), weight 300 — monospace as luxury
+- Display: Monospace font at extreme sizes (up to 320px), weight 300   monospace as luxury
 - Section Heading: Clean sans-serif, 30px, weight 400, line-height 1.2
 - Body: Sans-serif 16px, weight 400, line-height 1.5
-- Buttons: Monospace 14px, weight 400, UPPERCASE, letter-spacing 1.4px — commanding, technical
+- Buttons: Monospace 14px, weight 400, UPPERCASE, letter-spacing 1.4px   commanding, technical
 - Two-font clarity: monospace for impact + interaction, sans-serif for reading
 
 ## Color Palette

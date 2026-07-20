@@ -1,5 +1,5 @@
 /**
- * grep tool — search for text patterns in the project workspace.
+ * grep tool   search for text patterns in the project workspace.
  * Uses execFileSync (no shell) to prevent command injection from AI-supplied patterns.
  */
 import { execFileSync } from 'node:child_process';
@@ -23,7 +23,7 @@ export const grepTool: ToolDefinition<z.infer<typeof schema>> = {
   execute: async (args, ctx: AgentContext) => {
     const searchPath = args.path ? safeJoin(ctx.appPath, args.path) : ctx.appPath;
 
-    // Build args array — execFileSync bypasses shell entirely,
+    // Build args array   execFileSync bypasses shell entirely,
     // so patterns with $(), backticks, pipes, etc. are safe.
     const grepArgs: string[] = ['-rn'];
     if (!args.case_sensitive) grepArgs.push('-i');
@@ -54,10 +54,10 @@ export const grepTool: ToolDefinition<z.infer<typeof schema>> = {
       const rawMsg: string = e.message ?? String(err);
       // Give the agent actionable context rather than a raw grep error
       if (rawMsg.includes('No such file') || rawMsg.includes('no such file')) {
-        return `Error: Path does not exist — "${args.path ?? '.'}". Check the file tree with list_files and use a valid path.`;
+        return `Error: Path does not exist   "${args.path ?? '.'}". Check the file tree with list_files and use a valid path.`;
       }
       if (rawMsg.includes('Invalid') || rawMsg.includes('repetition') || rawMsg.includes('range')) {
-        return `Error: Invalid regex pattern — "${args.pattern}". Simplify the pattern or escape special characters.`;
+        return `Error: Invalid regex pattern   "${args.pattern}". Simplify the pattern or escape special characters.`;
       }
       return `Error running grep: ${rawMsg}`;
     }

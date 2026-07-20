@@ -1,5 +1,5 @@
 -- ============================================================================
--- Multi-Server Tenant Lifecycle — hosting_servers, tenant_deployments, tenant_domains
+-- Multi-Server Tenant Lifecycle   hosting_servers, tenant_deployments, tenant_domains
 -- ============================================================================
 
 -- ── hosting_servers ─────────────────────────────────────────────────────────

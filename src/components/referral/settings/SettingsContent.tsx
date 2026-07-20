@@ -128,7 +128,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
       return (
         <Card className="bg-workspace-surface border-indigo-500/30">
           <CardHeader>
-            <CardTitle className="text-base text-white/85">{title} — Paid Plan Feature</CardTitle>
+            <CardTitle className="text-base text-white/85">{title}   Paid Plan Feature</CardTitle>
             <CardDescription className="text-xs text-white/45">
               {description} Upgrade from {tierLabel} to unlock this feature.
             </CardDescription>
@@ -560,7 +560,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
     }
   };
 
-  // SEO panel owns its own two-pane layout + independent scroll regions —
+  // SEO panel owns its own two-pane layout + independent scroll regions  
   // wrapping it in the standard p-6/ScrollArea shell would break that layout.
   if (activeSection === "project-seo") {
     return <div className="h-full w-full">{renderContent()}</div>;

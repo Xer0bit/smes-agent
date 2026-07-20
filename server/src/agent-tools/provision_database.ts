@@ -1,5 +1,5 @@
 /**
- * provision_database tool — auto-provision the project's hosted PostgreSQL database
+ * provision_database tool   auto-provision the project's hosted PostgreSQL database
  * if the user has a paid plan and hasn't provisioned one yet.
  */
 import { z } from 'zod';
@@ -19,7 +19,7 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
   description:
     "Provision a hosted PostgreSQL database for the project if one doesn't exist yet. " +
     "Call this when the user asks for persistent data storage and get_database_schema reports no database is provisioned. " +
-    "Requires the user to be on a Pro or Agency plan — if they are on a free plan, tell them to upgrade and do NOT call this. " +
+    "Requires the user to be on a Pro or Agency plan   if they are on a free plan, tell them to upgrade and do NOT call this. " +
     "After provisioning, call get_database_schema to confirm and then proceed with CREATE TABLE statements.",
   inputSchema: schema,
   getConsentPreview: () => 'Provision hosted PostgreSQL database',
@@ -33,7 +33,7 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
       return `Database is already provisioned (schema: ${existing.schema_name}). Call get_database_schema to see the current tables.`;
     }
 
-    // Resolve organization_id — use provided or look up the user's org
+    // Resolve organization_id   use provided or look up the user's org
     let orgId = args.organization_id ?? null;
     if (!orgId) {
       const { data } = await supabase
@@ -55,7 +55,7 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
 
     try {
       const record = await databaseService.provision(ctx.userId, orgId, ctx.projectId);
-      // getCredentials() also upserts VITE_DB_* into project_secrets — call it
+      // getCredentials() also upserts VITE_DB_* into project_secrets   call it
       // immediately so secrets exist even if the agent never reaches get_database_schema.
       await databaseService.getCredentials(ctx.userId, ctx.projectId);
 
@@ -63,7 +63,7 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
       // use them immediately. Without this, import.meta.env.VITE_DB_API_URL
       // stays undefined in the running app ("Database API URL is not
       // configured") even though the row exists in project_secrets. The
-      // frontend "Sync" button does the same thing — we replicate it here so
+      // frontend "Sync" button does the same thing   we replicate it here so
       // one-click provisioning from the agent actually works end-to-end.
       try {
         const secrets = await buildProjectEnvSecrets(ctx.userId, ctx.projectId);

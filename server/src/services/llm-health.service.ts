@@ -33,8 +33,8 @@ async function testAnthropic(apiKey: string): Promise<{ ok: boolean; reason: str
 
     if (res.status === 200) return { ok: true, reason: 'OK' };
     if (res.status === 401) return { ok: false, reason: 'Invalid API key (401)' };
-    if (res.status === 403) return { ok: false, reason: 'Forbidden — check billing or permissions (403)' };
-    if (res.status === 529) return { ok: true, reason: 'Anthropic API overloaded (529) — key valid, transient issue' };
+    if (res.status === 403) return { ok: false, reason: 'Forbidden   check billing or permissions (403)' };
+    if (res.status === 529) return { ok: true, reason: 'Anthropic API overloaded (529)   key valid, transient issue' };
     if (res.status === 400) {
       // 400 is normally "bad request body but key valid", EXCEPT when Anthropic disables the org
       try {
@@ -44,12 +44,12 @@ async function testAnthropic(apiKey: string): Promise<{ ok: boolean; reason: str
           return { ok: false, reason: `Anthropic organization disabled: ${msg}` };
         }
       } catch {}
-      return { ok: true, reason: 'HTTP 400 — key accepted' };
+      return { ok: true, reason: 'HTTP 400   key accepted' };
     }
     // 5xx = server error, not a key issue
-    return { ok: true, reason: `HTTP ${res.status} — key accepted` };
+    return { ok: true, reason: `HTTP ${res.status}   key accepted` };
   } catch (err: any) {
-    // Network/timeout errors at startup are transient — don't disable a valid key
+    // Network/timeout errors at startup are transient   don't disable a valid key
     return { ok: true, reason: `Network check skipped: ${err?.message ?? 'timeout'}` };
   }
 }
@@ -72,9 +72,9 @@ async function testDeepSeek(apiKey: string): Promise<{ ok: boolean; reason: stri
 
     if (res.status === 200) return { ok: true, reason: 'OK' };
     if (res.status === 401) return { ok: false, reason: 'Invalid API key (401)' };
-    if (res.status === 402) return { ok: false, reason: 'Insufficient balance — top up DeepSeek account (402)' };
+    if (res.status === 402) return { ok: false, reason: 'Insufficient balance   top up DeepSeek account (402)' };
     if (res.status === 403) return { ok: false, reason: 'Forbidden (403)' };
-    return { ok: true, reason: `HTTP ${res.status} — key accepted` };
+    return { ok: true, reason: `HTTP ${res.status}   key accepted` };
   } catch (err: any) {
     return { ok: true, reason: `Network check skipped: ${err?.message ?? 'timeout'}` };
   }
@@ -101,13 +101,13 @@ async function testGemini(apiKey: string): Promise<{ ok: boolean; reason: string
       if (body.includes('API key not valid') || body.includes('API_KEY_INVALID')) {
         return { ok: false, reason: 'Invalid API key' };
       }
-      return { ok: true, reason: 'HTTP 400 — key accepted' };
+      return { ok: true, reason: 'HTTP 400   key accepted' };
     }
-    if (res.status === 403) return { ok: false, reason: 'Forbidden — check API key permissions (403)' };
-    // 5xx, 429, etc. are transient — key is likely valid
-    return { ok: true, reason: `HTTP ${res.status} — key accepted` };
+    if (res.status === 403) return { ok: false, reason: 'Forbidden   check API key permissions (403)' };
+    // 5xx, 429, etc. are transient   key is likely valid
+    return { ok: true, reason: `HTTP ${res.status}   key accepted` };
   } catch (err: any) {
-    // Network/timeout errors at startup are transient — don't disable a valid key
+    // Network/timeout errors at startup are transient   don't disable a valid key
     return { ok: true, reason: `Network check skipped: ${err?.message ?? 'timeout'}` };
   }
 }
@@ -132,7 +132,7 @@ async function testZai(apiKey: string): Promise<{ ok: boolean; reason: string }>
     if (res.status === 401) return { ok: false, reason: 'Invalid API key (401)' };
     if (res.status === 402) return { ok: false, reason: 'Insufficient balance (402)' };
     if (res.status === 403) return { ok: false, reason: 'Forbidden (403)' };
-    return { ok: true, reason: `HTTP ${res.status} — key accepted` };
+    return { ok: true, reason: `HTTP ${res.status}   key accepted` };
   } catch (err: any) {
     return { ok: true, reason: `Network check skipped: ${err?.message ?? 'timeout'}` };
   }
@@ -190,7 +190,7 @@ export async function testAndAutoDisableProviders(): Promise<AllProviderResults>
     if (result.ok) {
       logger.info(`[LlmHealth] ✓ ${provider}: ${result.reason}`);
     } else {
-      logger.warn(`[LlmHealth] ✗ ${provider}: ${result.reason} — disabling`);
+      logger.warn(`[LlmHealth] ✗ ${provider}: ${result.reason}   disabling`);
     }
   }
 
@@ -222,7 +222,7 @@ export async function testAndAutoDisableProviders(): Promise<AllProviderResults>
     .filter(([, r]) => !r.ok).map(([p]) => p);
 
   if (passing.length > 0) logger.info(`[LlmHealth] Enabled providers: ${passing.join(', ')}`);
-  if (failing.length > 0) logger.warn(`[LlmHealth] Disabled providers: ${failing.join(', ')} — admin can re-enable from Settings after fixing.`);
+  if (failing.length > 0) logger.warn(`[LlmHealth] Disabled providers: ${failing.join(', ')}   admin can re-enable from Settings after fixing.`);
   if (passing.length === 0) logger.error('[LlmHealth] No LLM providers are functional. All AI features disabled.');
 
   return results;

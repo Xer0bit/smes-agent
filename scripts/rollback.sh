@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# EcomGear — Instant Rollback Script
+# EcomGear   Instant Rollback Script
 # Usage: ./scripts/rollback.sh [vps1|vps2|vps3|all]
 #
 # Each deploy keeps a *.old backup on the server.
@@ -49,19 +49,19 @@ ssh_vps3() { ssh_exec "$VPS3_USER" "$VPS3_IP" "$VPS3_KEY_PATH" "${VPS3_PASS:-}" 
 
 # ── VPS1: swap dist.old back into place ──────────────────────────────────────
 rollback_vps1() {
-    step "VPS1 — rolling back frontend..."
+    step "VPS1   rolling back frontend..."
     ssh_vps1 "bash -s" << 'REMOTE'
 set -e
 cd /var/www/ecomgear
 if [ ! -d dist.old ]; then
-    echo "ERROR: no dist.old backup found — cannot rollback"
+    echo "ERROR: no dist.old backup found   cannot rollback"
     exit 1
 fi
 rm -rf dist.failed
 [ -d dist ] && mv dist dist.failed
 mv dist.old dist
 nginx -t && systemctl reload nginx
-echo "VPS1 rollback complete — now serving dist/ (was dist.old)"
+echo "VPS1 rollback complete   now serving dist/ (was dist.old)"
 echo "Failed build preserved at dist.failed"
 REMOTE
     success "VPS1 rollback complete → https://ecomgear.dev"
@@ -69,12 +69,12 @@ REMOTE
 
 # ── VPS2: swap preview-service.old back into place ───────────────────────────
 rollback_vps2() {
-    step "VPS2 — rolling back preview service..."
+    step "VPS2   rolling back preview service..."
     ssh_vps2 "bash -s" << 'REMOTE'
 set -e
 cd /var/www/ecomgear
 if [ ! -d preview-service.old ]; then
-    echo "ERROR: no preview-service.old backup found — cannot rollback"
+    echo "ERROR: no preview-service.old backup found   cannot rollback"
     exit 1
 fi
 
@@ -107,12 +107,12 @@ REMOTE
 
 # ── VPS3: swap server.old back into place ────────────────────────────────────
 rollback_vps3() {
-    step "VPS3 — rolling back API server..."
+    step "VPS3   rolling back API server..."
     ssh_vps3 "bash -s" << 'REMOTE'
 set -e
 cd /var/www/ecomgear
 if [ ! -d server.old ]; then
-    echo "ERROR: no server.old backup found — cannot rollback"
+    echo "ERROR: no server.old backup found   cannot rollback"
     exit 1
 fi
 rm -rf server.failed

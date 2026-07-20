@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 4001;
 const TENANT_DB_JWT_SECRET = process.env.TENANT_DB_JWT_SECRET;
 const FUNCTIONS_INTERNAL_SECRET = process.env.FUNCTIONS_INTERNAL_SECRET;
 
-// Same Postgres instance PostgREST already serves tenant schemas from — this
+// Same Postgres instance PostgREST already serves tenant schemas from   this
 // service reads/writes its own tables here (public.tenant_functions,
 // public.tenant_secrets), never anything under a tenant_xxxx schema itself.
 const PG_HOST = process.env.TENANT_DB_HOST || '127.0.0.1';
@@ -49,7 +49,7 @@ async function ensureSchema() {
   `);
 }
 
-// Ported from database.service.ts's verifyTenantJwt — must stay byte-for-byte
+// Ported from database.service.ts's verifyTenantJwt   must stay byte-for-byte
 // compatible since both sides sign/verify against the same shared secret.
 function verifyTenantJwt(token) {
   try {
@@ -80,7 +80,7 @@ app.use(express.json({ limit: '2mb' }));
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// ── POST /:schema/functions/_sync — internal-only, called by
+// ── POST /:schema/functions/_sync   internal-only, called by
 // write_edge_function.ts right after it saves to the platform DB. This is the
 // only write path for a function's VPS5-side copy. ──────────────────────────
 app.post('/:schema/functions/_sync', requireInternalSecret, async (req, res) => {
@@ -103,7 +103,7 @@ app.post('/:schema/functions/_sync', requireInternalSecret, async (req, res) => 
   }
 });
 
-// ── POST /:schema/secrets/_sync — internal-only, called by set_secret.ts.
+// ── POST /:schema/secrets/_sync   internal-only, called by set_secret.ts.
 // Full-replace semantics (delete + insert), matching the preview-service
 // secrets push this mirrors. ─────────────────────────────────────────────────
 app.post('/:schema/secrets/_sync', requireInternalSecret, async (req, res) => {
@@ -131,7 +131,7 @@ app.post('/:schema/secrets/_sync', requireInternalSecret, async (req, res) => {
   }
 });
 
-// ── POST /:schema/functions/:name/invoke — public path, a generated app's own
+// ── POST /:schema/functions/:name/invoke   public path, a generated app's own
 // end users call this with the project's anon/service key. Fully local: reads
 // tenant_functions/tenant_secrets from this box's own Postgres, never calls
 // api.ecomgear.dev. ──────────────────────────────────────────────────────────
@@ -171,7 +171,7 @@ app.post('/:schema/functions/:name/invoke', async (req, res) => {
 
     const apiUrl = `${req.protocol}://${req.get('host')}/${schema}`.replace(/^http:/, 'https:');
     const dbCtx = { apiUrl, schema, anonKey: '', serviceKey: token };
-    // Note: serviceKey here is whichever key the caller authenticated with —
+    // Note: serviceKey here is whichever key the caller authenticated with  
     // db.* calls made from a function invoked with the anon key run with
     // anon-level Postgres GRANTs, not elevated service-role access. This
     // matches the documented no-RLS, GRANT-scoped isolation model.

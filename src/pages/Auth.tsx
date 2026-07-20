@@ -171,7 +171,7 @@ export default function Auth() {
         localStorage.setItem('ecg-auth-user-email', data.user.email);
 
         // The eCG Auth tokens ARE real Supabase-issued tokens, but supabase-js
-        // doesn't know about them until we hand them over explicitly —
+        // doesn't know about them until we hand them over explicitly  
         // RequireAuth (and everything else gating on supabase.auth.getSession())
         // stays "unauthenticated" without this, bouncing straight back to /auth.
         await supabase.auth.setSession({
@@ -264,7 +264,7 @@ export default function Auth() {
       }
 
       if (data.accessToken && data.refreshToken) {
-        // Auto-login successful — store tokens
+        // Auto-login successful   store tokens
         localStorage.setItem('ecg-auth-access-token', data.accessToken);
         localStorage.setItem('ecg-auth-user-id', data.user.id);
         localStorage.setItem('ecg-auth-user-email', data.user.email);
@@ -357,7 +357,7 @@ export default function Auth() {
         throw new Error(data.error || '2FA verification failed');
       }
 
-      // 2FA succeeded — store tokens and navigate
+      // 2FA succeeded   store tokens and navigate
       localStorage.setItem('ecg-auth-access-token', data.accessToken);
       localStorage.setItem('ecg-auth-user-id', data.user.id);
       localStorage.setItem('ecg-auth-user-email', data.user.email);

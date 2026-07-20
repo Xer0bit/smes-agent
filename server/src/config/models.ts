@@ -7,7 +7,7 @@
  * 400s at call time. `canonicalizeModelId` maps any known-stale or unknown ID to a
  * valid one so a bad value can never reach a provider.
  *
- * gemini-3.1-pro-preview is a thinking model — it always reasons before responding.
+ * gemini-3.1-pro-preview is a thinking model   it always reasons before responding.
  * Never pass thinkingBudget: 0 to it; it requires maxOutputTokens >= 8000.
  */
 
@@ -96,7 +96,7 @@ export function canonicalizeModelId(input: unknown, fallback: string = DEFAULT_P
   if (VALID_IDS.has(id)) return id;
   if (STALE_ID_MAP[id]) return STALE_ID_MAP[id];
 
-  // Unknown ID — map by provider family to a safe default.
+  // Unknown ID   map by provider family to a safe default.
   const lower = id.toLowerCase();
   if (lower.startsWith('glm')) return lower.includes('flash') ? DEFAULT_FREE_MODEL : DEFAULT_PRIMARY_MODEL;
   if (lower.includes('gemini')) {

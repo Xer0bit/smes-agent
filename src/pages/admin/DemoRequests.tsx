@@ -175,7 +175,7 @@ export default function DemoRequests() {
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>
-                {selected.company_name} — {selected.email}
+                {selected.company_name}   {selected.email}
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-2">

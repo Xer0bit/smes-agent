@@ -35,11 +35,11 @@ jobs:
           if [ -n "${{ github.event.inputs.target }}" ]; then
             echo "targets=${{ github.event.inputs.target }}" >> "$GITHUB_OUTPUT"
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "Manual override — target: ${{ github.event.inputs.target }}"
+            echo "Manual override   target: ${{ github.event.inputs.target }}"
             exit 0
           fi
 
-          # github.event.before only exists for push events — workflow_dispatch
+          # github.event.before only exists for push events   workflow_dispatch
           # (manual run with no target input) has no "before" SHA, so fall back
           # to diffing the last commit instead of silently finding nothing.
           BEFORE="${{ github.event.before }}"
@@ -52,7 +52,7 @@ jobs:
           echo "$CHANGED"
 
           TARGETS=""
-          # Must always return 0 — under `bash -e`, a caller pattern like
+          # Must always return 0   under `bash -e`, a caller pattern like
           # `grep ... && add vpsN` treats add()'s exit status as the whole
           # statement's exit status. The dedup check below is legitimately
           # false whenever a target is added a second time (e.g. a push that
@@ -60,24 +60,24 @@ jobs:
           # without this, that "no-op" trips set -e and aborts the whole job.
           add() { [[ ",$TARGETS," != *",$1,"* ]] && TARGETS="$TARGETS,$1"; return 0; }
 
-          # VPS1 — frontend + Supabase edge (React SPA, migrations also applied here)
-          # + ecomgear-api (server/, everything except LLM generation — see app.ts SERVICE_ROLE)
+          # VPS1   frontend + Supabase edge (React SPA, migrations also applied here)
+          # + ecomgear-api (server/, everything except LLM generation   see app.ts SERVICE_ROLE)
           echo "$CHANGED" | grep -qE '^(src/|index\.html|public/|vite\.config|tsconfig[^/]*\.json$|package[^/]*\.json$|infrastructure/nginx/vps1-|server/)' \
             && add vps1
           echo "$CHANGED" | grep -qE '^supabase/(migrations|functions)/' \
             && add vps1
 
-          # VPS2 — preview service
+          # VPS2   preview service
           echo "$CHANGED" | grep -qE '^(preview-service/|infrastructure/nginx/vps2-)' \
             && add vps2
 
-          # VPS3 — gen/agent server, generation-only (also gets supabase functions + migrations)
+          # VPS3   gen/agent server, generation-only (also gets supabase functions + migrations)
           echo "$CHANGED" | grep -qE '^(server/|infrastructure/nginx/vps3-)' \
             && add vps3
           echo "$CHANGED" | grep -qE '^supabase/(migrations|functions)/' \
             && add vps3
 
-          # VPS4 — enterprise hosting service
+          # VPS4   enterprise hosting service
           echo "$CHANGED" | grep -qE '^(hosting-service/|infrastructure/nginx/vps4-)' \
             && add vps4
 
@@ -85,14 +85,14 @@ jobs:
           echo "$CHANGED" | grep -qE '^ecosystem\.config\.cjs$' \
             && { add vps1; add vps2; add vps3; add vps4; }
 
-          # VPS5 is a passive DB endpoint — never auto-deployed, dispatch only.
+          # VPS5 is a passive DB endpoint   never auto-deployed, dispatch only.
 
           TARGETS="${TARGETS#,}"
 
           if [ -z "$TARGETS" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "targets=" >> "$GITHUB_OUTPUT"
-            echo "No deploy-relevant files changed — skipping."
+            echo "No deploy-relevant files changed   skipping."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "targets=$TARGETS" >> "$GITHUB_OUTPUT"
@@ -112,21 +112,21 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Root — install, typecheck (advisory), test (blocking), lint (advisory)
+      - name: Root   install, typecheck (advisory), test (blocking), lint (advisory)
         run: |
           npm ci --legacy-peer-deps
           # tsc -p tsconfig.app.json was never actually invokable before this
           # workflow (an invalid ignoreDeprecations value in tsconfig.app.json
-          # made it hard-fail immediately) — now that it runs, it surfaces
+          # made it hard-fail immediately)   now that it runs, it surfaces
           # ~16 pre-existing type errors scattered across unrelated files.
           # Report only until those are cleaned up; don't block deploys on unrelated debt.
           npx tsc --noEmit -p tsconfig.app.json || echo "::warning::root typecheck has pre-existing errors (non-blocking)"
           # server/** is a separate package with its own node_modules (pg,
-          # electron-log, etc. that root doesn't have) — it gets its own
+          # electron-log, etc. that root doesn't have)   it gets its own
           # vitest run in the Server step below. Root only covers root tests.
           npx vitest run --exclude 'server/**'
           # Repo has ~1000 pre-existing lint errors unrelated to any single
-          # change — report only, don't block deploys on unrelated debt.
+          # change   report only, don't block deploys on unrelated debt.
           npm run lint || echo "::warning::root lint has pre-existing errors (non-blocking)"
 
       - uses: actions/setup-node@v4
@@ -135,7 +135,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: server/package-lock.json
 
-      - name: Server — install, typecheck (blocking), test (blocking), lint (advisory)
+      - name: Server   install, typecheck (blocking), test (blocking), lint (advisory)
         run: |
           cd server
           npm ci
@@ -212,8 +212,8 @@ jobs:
           echo "::error::Deployment failed for targets: $TARGETS. Logs: $RUN_URL"
           if [ -n "$WEBHOOK_URL" ]; then
             curl -sf -X POST "$WEBHOOK_URL" -H 'Content-Type: application/json' \
-              -d "{\"text\": \"🔴 ecomgear deploy FAILED — targets: ${TARGETS} — ${RUN_URL}\", \"content\": \"🔴 ecomgear deploy FAILED — targets: ${TARGETS} — ${RUN_URL}\"}" \
+              -d "{\"text\": \"🔴 ecomgear deploy FAILED   targets: ${TARGETS}   ${RUN_URL}\", \"content\": \"🔴 ecomgear deploy FAILED   targets: ${TARGETS}   ${RUN_URL}\"}" \
               || echo "::warning::webhook notification failed (deploy failure already logged above)"
           else
-            echo "::warning::DEPLOY_ALERT_WEBHOOK_URL secret not set — no webhook alert sent"
+            echo "::warning::DEPLOY_ALERT_WEBHOOK_URL secret not set   no webhook alert sent"
           fi

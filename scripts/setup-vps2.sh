@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# VPS2 Setup — 72.62.126.99 (Indonesia)
+# VPS2 Setup   72.62.126.99 (Indonesia)
 # Roles: Preview Hosting + Generated App serving
 # Domains: preview.ecomgear.app  *.preview.ecomgear.app  (wildcard SSL)
 # Run as root: bash setup-vps2.sh

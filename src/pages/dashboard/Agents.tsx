@@ -167,7 +167,7 @@ const NODE_STYLES: Record<string, { bg: string; border: string; text: string }> 
 function WorkflowCanvas() {
   return (
     <Card className="relative overflow-hidden rounded-none border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))] shadow-[0_16px_48px_rgba(3,12,27,0.25)]">
-      {/* dot grid background — n8n style */}
+      {/* dot grid background   n8n style */}
       <div
         className="pointer-events-none absolute inset-0"
         style={{
@@ -311,8 +311,8 @@ function AgentCardItem({ agent, onClick }: { agent: AgentCard; onClick: () => vo
 function QuickStats() {
   const stats = [
     { label: 'Agents Available', value: '2', sub: 'of 9', icon: Bot, color: 'text-cyan-400' },
-    { label: 'Workflows Run', value: '—', sub: 'start building', icon: Workflow, color: 'text-violet-400' },
-    { label: 'Sites Generated', value: '—', sub: 'this month', icon: Globe, color: 'text-emerald-400' },
+    { label: 'Workflows Run', value: ' ', sub: 'start building', icon: Workflow, color: 'text-violet-400' },
+    { label: 'Sites Generated', value: ' ', sub: 'this month', icon: Globe, color: 'text-emerald-400' },
     { label: 'Avg Build Time', value: '~30s', sub: 'per site', icon: Clock, color: 'text-amber-400' },
   ];
 
@@ -369,7 +369,7 @@ export default function DashboardAgents() {
       {/* quick stats row */}
       <QuickStats />
 
-      {/* pipeline canvas — n8n-style */}
+      {/* pipeline canvas   n8n-style */}
       <div className="mt-6">
         <WorkflowCanvas />
       </div>
@@ -414,7 +414,7 @@ export default function DashboardAgents() {
           <div className="flex-1">
             <h3 className="text-base font-semibold">More agents are on the way</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              We're building a full ecosystem of AI agents — from SEO optimization to email automation.
+              We're building a full ecosystem of AI agents   from SEO optimization to email automation.
               Upgrade your plan to unlock agents as they launch.
             </p>
           </div>

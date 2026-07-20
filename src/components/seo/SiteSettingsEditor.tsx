@@ -10,7 +10,7 @@ import { RefreshCw, CheckCircle2, AlertCircle, Upload, Loader2, Image } from "lu
 import { getApiServerUrl } from "@/config/external-api";
 import { revisionService } from "@/services/revisionService";
 
-// Truly site-wide settings — everything page-specific (title, description, OG,
+// Truly site-wide settings   everything page-specific (title, description, OG,
 // robots, structured data) lives per-route now, including for "/" itself. Only
 // favicon and Google Search Console verification stay here since they genuinely
 // apply to the whole site, not to any one page.
@@ -45,7 +45,7 @@ export function SiteSettingsEditor({ projectId }: { projectId?: string }) {
     },
   });
 
-  // Only hydrate once — a background refetch (e.g. refetchOnWindowFocus)
+  // Only hydrate once   a background refetch (e.g. refetchOnWindowFocus)
   // landing mid-edit would otherwise overwrite an in-progress edit with the
   // pre-edit DB row before the autosave debounce has committed.
   const hydrated = useRef(false);
@@ -86,7 +86,7 @@ export function SiteSettingsEditor({ projectId }: { projectId?: string }) {
   const dataRef = useRef(data);
   useEffect(() => { dataRef.current = data; }, [data]);
 
-  // Blur/close/hard-refresh flush — see HeaderIntegrationsSettings for why:
+  // Blur/close/hard-refresh flush   see HeaderIntegrationsSettings for why:
   // without this, an edit sitting in the 800ms debounce window is lost if
   // the user navigates away or refreshes before it fires.
   const flushSave = () => {
@@ -134,7 +134,7 @@ export function SiteSettingsEditor({ projectId }: { projectId?: string }) {
       );
       const revisions = await revisionService.getRevisions(projectId, 1, 0);
       const latest = revisions[0];
-      if (!latest) throw new Error("No revisions found — generate the project first.");
+      if (!latest) throw new Error("No revisions found   generate the project first.");
       const files = await revisionService.getRevisionFilesForExport(projectId, latest.id);
       const indexHtml = files.find((f) => f.path === "index.html")?.content;
       if (!indexHtml) throw new Error("index.html not found in the latest revision.");
@@ -169,7 +169,7 @@ export function SiteSettingsEditor({ projectId }: { projectId?: string }) {
       <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-2">
           <CardTitle className="text-base text-white/85">Favicon</CardTitle>
-          <CardDescription className="text-white/45 text-xs">Shown in browser tabs and bookmarks — applies site-wide.</CardDescription>
+          <CardDescription className="text-white/45 text-xs">Shown in browser tabs and bookmarks   applies site-wide.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-1.5">
           <div className="flex gap-2 items-center">
@@ -214,7 +214,7 @@ export function SiteSettingsEditor({ projectId }: { projectId?: string }) {
         <div className="flex items-center gap-1.5 text-[11px]">
           {syncStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3 w-3" />Auto-saved</span>}
           {syncStatus === 'live' && <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3 w-3" />Live on site</span>}
-          {syncStatus === 'synced' && <span className="flex items-center gap-1 text-amber-400"><CheckCircle2 className="h-3 w-3" />Saved — re-publish to go live</span>}
+          {syncStatus === 'synced' && <span className="flex items-center gap-1 text-amber-400"><CheckCircle2 className="h-3 w-3" />Saved   re-publish to go live</span>}
           {syncStatus === 'error' && <span className="flex items-center gap-1 text-red-400"><AlertCircle className="h-3 w-3" />Sync failed</span>}
           {(syncStatus === 'idle' || saving) && <span className="text-white/30">{saving ? 'Saving…' : 'Changes auto-save'}</span>}
         </div>
@@ -228,7 +228,7 @@ export function SiteSettingsEditor({ projectId }: { projectId?: string }) {
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
           <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
           <div className="text-xs text-amber-300">
-            <p className="font-semibold">Saved — re-publish to go live.</p>
+            <p className="font-semibold">Saved   re-publish to go live.</p>
             <p className="text-amber-400/80 mt-0.5">Click <strong>Publish</strong> in the editor toolbar to rebuild and deploy.</p>
           </div>
         </div>

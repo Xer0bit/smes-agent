@@ -190,7 +190,7 @@ export default function Users() {
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      toast.success('User deleted — email is now free to re-register');
+      toast.success('User deleted   email is now free to re-register');
       loadUsers();
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete user');
@@ -268,7 +268,7 @@ export default function Users() {
                       {(user.email?.[0] || '?').toUpperCase()}
                     </div>
                     <div>
-                      <p className="text-sm text-white font-medium">{user.full_name || '—'}</p>
+                      <p className="text-sm text-white font-medium">{user.full_name || ' '}</p>
                       <p className="text-xs text-gray-500">{user.email}</p>
                     </div>
                   </div>
@@ -353,7 +353,7 @@ export default function Users() {
       <Dialog open={!!roleUser} onOpenChange={() => setRoleUser(null)}>
         <DialogContent className="bg-[#111318] border-white/10 text-white">
           <DialogHeader>
-            <DialogTitle className="text-white">Manage Role — {roleUser?.email}</DialogTitle>
+            <DialogTitle className="text-white">Manage Role   {roleUser?.email}</DialogTitle>
           </DialogHeader>
           <div className="py-2">
             <Label className="text-gray-300 mb-2 block">Role</Label>

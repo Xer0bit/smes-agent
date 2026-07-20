@@ -1,5 +1,5 @@
 -- Tracks provisioned tenant database schemas on the VPS5 tenant DB server.
--- No passwords or JWT secrets are stored here — they are derived on-demand.
+-- No passwords or JWT secrets are stored here   they are derived on-demand.
 CREATE TABLE IF NOT EXISTS tenant_databases (
   id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id          UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,

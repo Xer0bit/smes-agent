@@ -1,5 +1,5 @@
 /**
- * rename_file tool — rename or move a file within the project workspace.
+ * rename_file tool   rename or move a file within the project workspace.
  * Ported from server/src/agent/.../tools/rename_file.ts (Electron removed).
  */
 import fs from 'node:fs';

@@ -109,7 +109,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
   const { projectId } = req.params;
   try {
     try {
-      // Injects arbitrary <script> into the published site — viewer/client
+      // Injects arbitrary <script> into the published site   viewer/client
       // collaborators must not be able to do this, only owner/admin/editor.
       await projectService.assertCanEditProject(projectId, req.user!.id);
     } catch (projErr) {
@@ -125,8 +125,8 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
       .eq('setting_key', 'header_integrations')
       .maybeSingle();
 
-    // The project's real index.html lives on VPS2 (preview-service) — the
-    // live dev-server source that /export builds from — not on this server's
+    // The project's real index.html lives on VPS2 (preview-service)   the
+    // live dev-server source that /export builds from   not on this server's
     // disk. The client sends its current content (same source the editor and
     // preview already use) so we can inject/update the integration snippets.
     const original = req.body?.indexHtml as string | undefined;
@@ -144,7 +144,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
     const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || '';
 
     if (updated === original) {
-      res.json({ message: 'index.html already up to date — no changes needed.', changed: false });
+      res.json({ message: 'index.html already up to date   no changes needed.', changed: false });
       return;
     }
 
@@ -154,7 +154,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
     }
 
     // Write the updated index.html into the live preview project before
-    // exporting — /export builds from that source directory.
+    // exporting   /export builds from that source directory.
     const updateRes = await fetch(`${PREVIEW_BASE}/preview/${projectId}/update`, {
       method: 'POST',
       headers: {
@@ -176,7 +176,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
       productionDeployed,
       deployError,
       message: productionDeployed
-        ? 'Integrations synced and production site rebuilt — live immediately.'
+        ? 'Integrations synced and production site rebuilt   live immediately.'
         : deployError
           ? `Integrations saved to source. Production redeploy failed: ${deployError}. Re-publish your app to go live.`
           : 'Integrations synced to source. Re-publish your app from the editor to push changes live.',

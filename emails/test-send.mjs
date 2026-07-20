@@ -13,7 +13,7 @@ if (!KEY) { console.error('Missing RESEND_API_KEY'); process.exit(1); }
 
 const emails = [
   { file: '1-confirm-email.html',    from: 'EcomGear <noreply@ecomgear.dev>',         subject: 'Confirm your EcomGear email address' },
-  { file: '2-welcome.html',          from: 'EcomGear <noreply@ecomgear.dev>',         subject: 'Welcome to EcomGear — your account is ready' },
+  { file: '2-welcome.html',          from: 'EcomGear <noreply@ecomgear.dev>',         subject: 'Welcome to EcomGear   your account is ready' },
   { file: '3-password-reset.html',   from: 'EcomGear <noreply@ecomgear.dev>',         subject: 'Reset your EcomGear password' },
   { file: '4-project-invitation.html', from: 'EcomGear Invites <invite@ecomgear.dev>', subject: 'Jane Smith invited you to collaborate on "My Storefront"' },
   { file: '5-org-invitation.html',   from: 'EcomGear Invites <invite@ecomgear.dev>', subject: 'Jane Smith invited you to join Acme Co on EcomGear' },
@@ -41,7 +41,7 @@ for (const email of emails) {
     const id = await send(email);
     console.log(`  ✓  ${email.file.replace('.html', '')}  (${id})`);
   } catch (e) {
-    console.error(`  ✗  ${email.file.replace('.html', '')}  — ${e.message}`);
+    console.error(`  ✗  ${email.file.replace('.html', '')}    ${e.message}`);
   }
   await sleep(600); // stay under Resend's 2 req/sec limit
 }

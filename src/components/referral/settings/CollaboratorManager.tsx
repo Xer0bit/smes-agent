@@ -67,13 +67,13 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
     }
   }, [projectId]);
 
-  // canInviteMember() is an async, org-scoped seat check (RPC-backed) — it was
+  // canInviteMember() is an async, org-scoped seat check (RPC-backed)   it was
   // previously destructured straight off useSubscription() as if it were a
   // precomputed boolean, which doesn't exist there. That silently resolved to
   // `undefined` (falsy) forever, permanently disabling the invite button and
   // permanently blocking handleSendInvite for EVERY non-superadmin user on
   // EVERY tier, including paid ones with open seats. Seats are an
-  // organization-level concept — a project with no organization (personal
+  // organization-level concept   a project with no organization (personal
   // project) has no seat ceiling to check, so this defaults to allowed.
   useEffect(() => {
     if (!organizationId) { setSeatStatus({ allowed: true }); return; }
@@ -210,7 +210,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
         return;
       }
       // Re-check the specific role being granted, not just whether inviting is
-      // allowed at all — canAddCollaborators only reflects invite_editors, so
+      // allowed at all   canAddCollaborators only reflects invite_editors, so
       // without this a starter/professional-tier user could still pick
       // "Client" in the dropdown (a hidden-but-selectable option) even though
       // their tier doesn't include invite_clients.
@@ -256,7 +256,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
       });
 
       if (fnErr) {
-        // Email failed — clean up the invite record so they can retry
+        // Email failed   clean up the invite record so they can retry
         await supabase.from('project_invitations').delete().eq('token', inv.token);
         throw new Error('Failed to send invitation email. Please try again.');
       }
@@ -339,7 +339,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Shield className="h-4 w-4 text-primary" />
-              Collaborators — Paid Plan Feature
+              Collaborators   Paid Plan Feature
             </CardTitle>
             <CardDescription className="text-xs">
               Upgrade from {tierLabel} to invite collaborators to your projects.
@@ -543,7 +543,7 @@ export const CollaboratorManager = ({ projectId }: CollaboratorManagerProps) => 
                       <Badge variant="secondary" className="capitalize">{collaborator.role}</Badge>
                     </TableCell>
                     <TableCell className="text-sm text-white/45">
-                      {collaborator.granted_at ? format(new Date(collaborator.granted_at), 'MMM d, yyyy') : '—'}
+                      {collaborator.granted_at ? format(new Date(collaborator.granted_at), 'MMM d, yyyy') : ' '}
                     </TableCell>
                     {canManage && (
                       <TableCell className="text-right">

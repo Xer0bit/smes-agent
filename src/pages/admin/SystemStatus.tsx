@@ -34,7 +34,7 @@ function SupabaseStatusCard() {
   const runChecks = async () => {
     setChecks({ db: 'checking', auth: 'checking', edgeFunctions: 'checking' });
 
-    // DB — query a lightweight system table via REST
+    // DB   query a lightweight system table via REST
     const dbOk = await (async () => {
       try {
         const { error } = await supabase.from('organizations').select('id').limit(1);
@@ -42,7 +42,7 @@ function SupabaseStatusCard() {
       } catch { return false; }
     })();
 
-    // Auth — get current session (non-network if already cached, but validates client)
+    // Auth   get current session (non-network if already cached, but validates client)
     const authOk = await (async () => {
       try {
         const { error } = await supabase.auth.getSession();
@@ -50,9 +50,9 @@ function SupabaseStatusCard() {
       } catch { return false; }
     })();
 
-    // Edge Functions — probe signup-complete (always deployed).
+    // Edge Functions   probe signup-complete (always deployed).
     // Any HTTP response other than a network error means the edge runtime is up.
-    // We expect a 400/422 (missing required fields) — that's fine, it proves the
+    // We expect a 400/422 (missing required fields)   that's fine, it proves the
     // function exists and is executing.
     const edgeOk = await (async () => {
       try {
@@ -228,9 +228,9 @@ function TroubleshootPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       }),
-      // Gen API health (no auth needed) — VPS3, generation-only now
+      // Gen API health (no auth needed)   VPS3, generation-only now
       probe('Gen API (/health)', getGenServerUrl('/health')),
-      // API server health — VPS1, everything else
+      // API server health   VPS1, everything else
       probe('API Server (/health)', getApiServerUrl('/health')),
       // API server LLM status (admin auth required)
       probe('API Server (LLM status)', getApiServerUrl('/api/v1/system/llm/status'), { headers: authHeader }),

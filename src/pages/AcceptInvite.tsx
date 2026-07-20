@@ -122,7 +122,7 @@ export default function AcceptInvite() {
         try {
             setAccepting(true);
 
-            // Use SECURITY DEFINER RPC — handles org membership, project access grants,
+            // Use SECURITY DEFINER RPC   handles org membership, project access grants,
             // and invitation status update, all bypassing client-side RLS restrictions.
             const { data, error: rpcErr } = await supabase
                 .rpc('accept_org_invitation', { p_token: invitation.token });

@@ -9,7 +9,7 @@ router.use(authMiddleware);
 
 // Admin actions on a tenant database not owned by the calling user. All reads
 // (listing tenant_databases) already work for admins via RLS directly from
-// the frontend — these routes only cover the writes RLS blocks.
+// the frontend   these routes only cover the writes RLS blocks.
 async function getOwner(id: string): Promise<{ user_id: string; project_id: string | null } | null> {
   const { data } = await supabase
     .from('tenant_databases')

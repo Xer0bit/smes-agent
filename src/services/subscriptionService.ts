@@ -1,5 +1,5 @@
 /**
- * Subscription service — reads plan limits, checks quotas, tracks usage.
+ * Subscription service   reads plan limits, checks quotas, tracks usage.
  * All reads go through SECURITY DEFINER RPCs (bypasses RLS recursion issues).
  */
 
@@ -198,7 +198,7 @@ function normalizeOrgLimits(limits: OrgLimits): OrgLimits {
   };
 }
 
-// ── Request cache — dedup concurrent calls, 2-min TTL ────────────────────────
+// ── Request cache   dedup concurrent calls, 2-min TTL ────────────────────────
 // All components share this module-level cache, so mounting 10 components that
 // all call fetchOrgLimits() for the same org fires exactly ONE network request.
 
@@ -235,7 +235,7 @@ export function invalidateOrgCache(orgId: string) {
 
 /**
  * Fetch the current limits for an org (via SECURITY DEFINER RPC).
- * Results are cached for 2 minutes — concurrent callers share one in-flight request.
+ * Results are cached for 2 minutes   concurrent callers share one in-flight request.
  */
 export async function fetchOrgLimits(orgId: string): Promise<OrgLimits | null> {
   return cached(`limits:${orgId}`, limitsCache, async () => {
@@ -250,7 +250,7 @@ export async function fetchOrgLimits(orgId: string): Promise<OrgLimits | null> {
 
 /**
  * Count projects for an org (bypasses RLS).
- * Results are cached for 2 minutes — concurrent callers share one in-flight request.
+ * Results are cached for 2 minutes   concurrent callers share one in-flight request.
  */
 export async function countOrgProjects(orgId: string): Promise<number> {
   return cached(`projects:${orgId}`, projectsCache, async () => {
@@ -317,7 +317,7 @@ export async function canInviteMember(orgId: string): Promise<{
 }
 
 /**
- * Track a usage event (fire-and-forget — won't block the UI).
+ * Track a usage event (fire-and-forget   won't block the UI).
  */
 export function trackUsage(
   userId: string,
@@ -356,10 +356,10 @@ export async function checkAndIncrementPublishLines(orgId: string | null, lines:
 
 /**
  * Increment usage counter. Returns false if over limit.
- * Call this BEFORE sending to AI — if false, block & show upgrade prompt.
+ * Call this BEFORE sending to AI   if false, block & show upgrade prompt.
  */
 export async function checkAndIncrementAIGen(orgId: string | null, usageUnits: number = 1): Promise<boolean> {
-  if (!orgId) return true; // personal / no org — allow freely
+  if (!orgId) return true; // personal / no org   allow freely
 
   const safeUsageUnits = Math.max(0, usageUnits);
   const { data, error } = await supabase.rpc('increment_ai_gen', {

@@ -1,5 +1,5 @@
 /**
- * read_files tool — read multiple files in one step.
+ * read_files tool   read multiple files in one step.
  * Collapses N sequential read_file calls into a single step,
  * saving N-1 agent steps on multi-file exploration.
  */

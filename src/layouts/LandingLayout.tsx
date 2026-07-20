@@ -28,7 +28,7 @@ export const LandingLayout = () => {
         });
 
         return () => subscription.unsubscribe();
-    // refreshOrganization is intentionally omitted — it is a stable async function
+    // refreshOrganization is intentionally omitted   it is a stable async function
     // that doesn't change identity, and including it would re-subscribe on every render
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);

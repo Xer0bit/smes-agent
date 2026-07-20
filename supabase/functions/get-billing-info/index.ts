@@ -176,7 +176,7 @@ serve(async (req) => {
     // When admin manually assigned the plan, skip Stripe sync to preserve it
     const isAdminManaged = org.admin_managed === true;
     if (isAdminManaged) {
-      logStep('Skipping Stripe sync — admin_managed plan', { plan_tier: org.plan_tier });
+      logStep('Skipping Stripe sync   admin_managed plan', { plan_tier: org.plan_tier });
     }
 
     if (stripeKey && orgBilling?.stripe_customer_id && !isAdminManaged) {
@@ -233,7 +233,7 @@ serve(async (req) => {
               .eq('id', organization_id);
           }
         } else if (org.plan_tier !== 'free' || org.status !== 'active') {
-          // No active Stripe subscription — downgrade to free only when NOT admin-managed
+          // No active Stripe subscription   downgrade to free only when NOT admin-managed
           effectivePlanTier = 'free';
           effectiveStatus = 'active';
 

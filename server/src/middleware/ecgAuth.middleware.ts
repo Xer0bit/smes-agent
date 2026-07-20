@@ -1,5 +1,5 @@
 /**
- * eCG Auth middleware — drop-in replacement for authMiddleware.
+ * eCG Auth middleware   drop-in replacement for authMiddleware.
  *
  * Verifies Bearer tokens by first trying eCG Auth, then falling back to
  * Supabase Auth.  This way both eCG Auth sessions and legacy Supabase
@@ -77,7 +77,7 @@ export async function ecgAuthMiddleware(
 }
 
 /**
- * Optional auth — passes through regardless, but sets req.user if a valid
+ * Optional auth   passes through regardless, but sets req.user if a valid
  * token is found (tries eCG Auth first, then Supabase).
  */
 export async function ecgOptionalAuthMiddleware(

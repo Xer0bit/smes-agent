@@ -1,9 +1,9 @@
 /**
- * Main retrieval API — combines vector search + graph expansion.
+ * Main retrieval API   combines vector search + graph expansion.
  *
  * Two public surfaces:
- *   indexFile()             — called on every file write (background, non-blocking)
- *   retrieveRelevantFiles() — called before each agent run to select context files
+ *   indexFile()               called on every file write (background, non-blocking)
+ *   retrieveRelevantFiles()   called before each agent run to select context files
  *
  * Graceful degradation:
  *   If Supabase/embedding is unavailable, falls back to recency-based selection
@@ -54,16 +54,16 @@ export async function indexFile(
   filePath: string,
   content: string,
 ): Promise<void> {
-  // Only index source files — skip binaries, lockfiles, generated output
+  // Only index source files   skip binaries, lockfiles, generated output
   if (!isIndexableFile(filePath)) return;
 
-  // Symbol graph is pure static analysis — no embedding provider required,
+  // Symbol graph is pure static analysis   no embedding provider required,
   // so it runs even on the bm25 (no-embedding) path below.
   try {
     upsertSymbolGraph(projectId, filePath, extractSymbols(content)).catch(() => {});
-  } catch { /* non-fatal — regex extraction should never throw, but never risk indexFile on it */ }
+  } catch { /* non-fatal   regex extraction should never throw, but never risk indexFile on it */ }
 
-  // BM25 is pure in-memory — storing its vectors in Supabase adds no value
+  // BM25 is pure in-memory   storing its vectors in Supabase adds no value
   // (cosine sim on random-hash vectors is meaningless) and wastes 2 DB round-trips per file.
   if (getProvider() === 'bm25') return;
 
@@ -84,7 +84,7 @@ export async function indexFile(
 
     await upsertFileEmbedding(projectId, filePath, content, embedding);
   } catch (err) {
-    // Non-fatal — agent still runs without KB
+    // Non-fatal   agent still runs without KB
     console.warn('[kb/retrieval] indexFile failed for', filePath, err);
   }
 }
@@ -151,7 +151,7 @@ export async function retrieveRelevantFiles(
 
   const provider = getProvider();
 
-  // BM25 is pure in-memory — skip the Supabase round-trip entirely and score directly.
+  // BM25 is pure in-memory   skip the Supabase round-trip entirely and score directly.
   if (provider === 'bm25') {
     const bm25Results = scoreFilesLocally(prompt, allFiles, maxFiles);
     for (const r of bm25Results) if (r.score > 0) add(r.path, r.score, 'recency');
@@ -175,18 +175,18 @@ export async function retrieveRelevantFiles(
       }
     }
 
-    // 3. Graph expansion — add direct imports of vector-found files
+    // 3. Graph expansion   add direct imports of vector-found files
     if (graphExpansion && vectorPaths.length > 0) {
       const [imports, dependents] = await Promise.all([
         getDirectImports(projectId, vectorPaths),
         getDirectDependents(projectId, vectorPaths),
       ]);
 
-      // Imports are more useful than dependents — include up to 2
+      // Imports are more useful than dependents   include up to 2
       for (const p of resolveExtensions(imports, existingPaths).slice(0, 2)) {
         add(p, 0.7, 'graph-import');
       }
-      // Dependents (files that use the found files) — include 1
+      // Dependents (files that use the found files)   include 1
       for (const p of dependents.slice(0, 1)) {
         add(p, 0.6, 'graph-dependent');
       }
@@ -195,7 +195,7 @@ export async function retrieveRelevantFiles(
     console.warn('[kb/retrieval] vector/graph retrieval failed, falling back to BM25:', err);
   }
 
-  // 4. BM25 in-memory scoring — used when no real embedding provider is configured,
+  // 4. BM25 in-memory scoring   used when no real embedding provider is configured,
   // or when vector search returned no results above the similarity threshold.
   if (results.filter(r => r.reason !== 'mentioned').length === 0) {
     const bm25Results = scoreFilesLocally(prompt, allFiles, maxFiles);
@@ -241,7 +241,7 @@ export async function retrieveRelevantFiles(
 // ─── In-memory BM25 fallback (no DB required) ────────────────────────────────
 
 /**
- * Pure in-memory relevance scoring — works without any DB or API.
+ * Pure in-memory relevance scoring   works without any DB or API.
  * Used when projectId is unknown or Supabase is not configured.
  */
 export function scoreFilesLocally(

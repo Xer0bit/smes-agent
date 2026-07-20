@@ -48,7 +48,7 @@ function getToken(projectId: string): string | undefined {
 
 /**
  * Call the preview-service to create / retrieve a 2-hour session token.
- * Safe to call even when the server doesn't require tokens — it will just
+ * Safe to call even when the server doesn't require tokens   it will just
  * return a token that the server ignores.
  */
 export async function createPreviewSession(projectId: string): Promise<SessionInfo | null> {
@@ -95,7 +95,7 @@ function scheduleAutoRenew(projectId: string, expiresAt: number) {
 
     const renewIn = expiresAt - Date.now() - SESSION_RENEW_THRESHOLD_MS;
     if (renewIn <= 0) {
-        // already close to expiry — renew now
+        // already close to expiry   renew now
         renewPreviewSession(projectId);
         return;
     }
@@ -150,7 +150,7 @@ export async function checkPreviewHealth(projectId: string): Promise<PreviewHeal
             const controller = new AbortController();
             timeoutId = setTimeout(() => controller.abort(), 10000);
 
-            // Only check the service /health endpoint — fetching the project URL
+            // Only check the service /health endpoint   fetching the project URL
             // triggers Vite server creation which is slow and can cause NetworkError
             // on first access. If /health responds, Docker is available.
             const serviceHealthUrl = `${DOCKER_PREVIEW_URL}/health`;
@@ -220,7 +220,7 @@ export async function refreshPreviewHealth(projectId: string): Promise<PreviewHe
  * @param fullSync When true (default), the preview prunes files not in the
  *                 `files` array and does a full Vite reload. When false, only
  *                 the provided files are patched and Vite's HMR hot-replaces
- *                 just the changed modules — no full reload, feels instant.
+ *                 just the changed modules   no full reload, feels instant.
  *                 Pass false for single-file edits during a chat turn; pass
  *                 true for structural changes (new/deleted files, multi-file).
  */
@@ -236,8 +236,8 @@ export async function updateDockerPreview(projectId: string, files: { path: stri
 
             // Proxied through the API server (holds PREVIEW_UPDATE_SECRET server-side)
             // instead of calling the preview service directly with a client-bundled
-            // secret — see server/src/routes/database.routes.ts's /preview-update.
-            // /api/v1/database/* only runs on the API server (VPS1, SERVICE_ROLE=api) —
+            // secret   see server/src/routes/database.routes.ts's /preview-update.
+            // /api/v1/database/* only runs on the API server (VPS1, SERVICE_ROLE=api)  
             // NOT the gen server (VPS3, SERVICE_ROLE=gen only mounts /api/v1/ai). Using
             // getGenServerUrl here 404'd in production.
             const { getApiServerUrl } = await import('@/config/external-api');
@@ -316,7 +316,7 @@ export async function updateDockerPreview(projectId: string, files: { path: stri
 
 export const PREVIEW_DOCKER_URL = DOCKER_PREVIEW_URL;
 
-/** Returns session info for a project — useful for UI countdown timers. */
+/** Returns session info for a project   useful for UI countdown timers. */
 export function getSessionInfo(projectId: string): SessionInfo | null {
     return getStoredSession(projectId);
 }

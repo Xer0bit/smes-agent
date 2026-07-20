@@ -29,7 +29,7 @@ function getProjectId(req: AuthenticatedRequest): string | undefined {
 // service key (VITE_DB_ANON_KEY / VITE_DB_SERVICE_KEY) ──────────────────────
 // Management routes (list/create/update/delete/logs) stay owner-only via
 // authMiddleware. Invocation is the one path a generated app's own end users
-// must be able to reach — they never have an EcomGear platform session, so
+// must be able to reach   they never have an EcomGear platform session, so
 // they authenticate with the same public anon key already used for PostgREST
 // calls, exactly like the hosted-database REST access pattern.
 async function resolveInvokeAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
@@ -72,7 +72,7 @@ async function resolveInvokeAuth(req: AuthenticatedRequest, res: Response, next:
   res.status(401).json({ error: 'Invalid credentials' });
 }
 
-// Edge functions are project-scoped, not database-scoped — a function that
+// Edge functions are project-scoped, not database-scoped   a function that
 // doesn't touch the DB (e.g. a pure webhook handler) should be listable/
 // manageable without one provisioned. Only /invoke needs DB credentials, and
 // only lazily (if the function's own code calls db.*).
@@ -92,7 +92,7 @@ router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response)
   if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
   if (!(await requireProjectAccess(req.user!.id, projectId, res))) return;
   try {
-    // Scoped by project_id only, not user_id — write_edge_function.ts saves
+    // Scoped by project_id only, not user_id   write_edge_function.ts saves
     // rows under the PROJECT OWNER's user_id, not whoever's chatting, so a
     // collaborator viewing this list under their own req.user.id would see
     // nothing despite requireProjectAccess already confirming they may view
@@ -148,7 +148,7 @@ router.patch('/:name', authMiddleware, (_req: AuthenticatedRequest, res: Respons
 
 // ── DELETE /api/v1/functions/:name ──────────────────────────────────────────
 // Locked: edge functions can only be deleted by the AI agent, same as create/
-// modify above — a user manually deleting one out from under the agent's own
+// modify above   a user manually deleting one out from under the agent's own
 // understanding of the project is exactly the kind of drift this project
 // keeps needing an audit to catch.
 router.delete('/:name', authMiddleware, (_req: AuthenticatedRequest, res: Response) => {
@@ -157,7 +157,7 @@ router.delete('/:name', authMiddleware, (_req: AuthenticatedRequest, res: Respon
   });
 });
 
-// ── Shared bundle resolution — used by both the local /invoke route and the
+// ── Shared bundle resolution   used by both the local /invoke route and the
 // internal /_internal/bundle route the VPS5 function-runner calls. Pulled out
 // so relocating execution to VPS5 doesn't duplicate this lookup logic. ──────
 interface FunctionBundle {
@@ -176,7 +176,7 @@ async function resolveFunctionBundle(
   // Resolve the project OWNER's user_id so credential lookups and function
   // fetches hit the right rows regardless of who is invoking. A collaborator
   // calling via their own platform session has a different user_id than the
-  // owner who owns the edge_functions row + tenant_databases row — without
+  // owner who owns the edge_functions row + tenant_databases row   without
   // this resolution they get a false 404.
   let ownerId = callerId;
   if (invokeProjectId) {
@@ -184,13 +184,13 @@ async function resolveFunctionBundle(
       const project = await projectService.getProject(invokeProjectId, callerId);
       ownerId = project.user_id;
     } catch {
-      // getProject throws if the caller has no access — but a tenant-public
+      // getProject throws if the caller has no access   but a tenant-public
       // caller was already validated via getOwnerBySchema before this is called.
       // Fall through with the original user id.
     }
   }
 
-  // Optional — a function that never calls db.* should run fine without a
+  // Optional   a function that never calls db.* should run fine without a
   // provisioned database. runEdgeFunction only errors on db.* calls if this
   // is undefined.
   const creds = await databaseService.getCredentials(ownerId, invokeProjectId);
@@ -200,7 +200,7 @@ async function resolveFunctionBundle(
     .select('id, code, is_active')
     .eq('user_id', ownerId)
     .eq('name', name);
-  // Legacy rows written before project scoping have project_id NULL — only
+  // Legacy rows written before project scoping have project_id NULL   only
   // match those when no project_id is known, never mix scoped/unscoped rows.
   fnQuery = invokeProjectId ? fnQuery.eq('project_id', invokeProjectId) : fnQuery.is('project_id', null);
   const { data: fn, error } = await fnQuery.maybeSingle();
@@ -236,7 +236,7 @@ async function resolveFunctionBundle(
   } : undefined;
 
   // Expose all saved project secrets as `secrets.KEY_NAME` inside the function
-  // sandbox — values never leave this process, they're just readable by the
+  // sandbox   values never leave this process, they're just readable by the
   // function's own server-side code.
   let secrets: Record<string, string> | undefined;
   if (invokeProjectId) {
@@ -267,7 +267,7 @@ function persistInvokeLog(userId: string, projectId: string | undefined, functio
 
 // ── POST /api/v1/functions/:name/invoke ─────────────────────────────────────
 // Public path: a generated app's own end users call this with the project's
-// VITE_DB_ANON_KEY (or VITE_DB_SERVICE_KEY) — see resolveInvokeAuth above.
+// VITE_DB_ANON_KEY (or VITE_DB_SERVICE_KEY)   see resolveInvokeAuth above.
 router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const invokeProjectId = getProjectId(req);
@@ -290,7 +290,7 @@ router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: Authe
 });
 
 // Note: edge-function EXECUTION happens entirely on VPS5 (see
-// vps5-functions-runner/), not here — api.ecomgear.dev is reserved for
+// vps5-functions-runner/), not here   api.ecomgear.dev is reserved for
 // EcomGear's own platform API and never serves tenant/end-user traffic.
 // write_edge_function.ts and set_secret.ts push code/secrets directly to
 // VPS5 (POST https://cloud.ecomgear.app/<schema>/functions/_sync and

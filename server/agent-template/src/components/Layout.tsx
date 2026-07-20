@@ -20,10 +20,10 @@ const ALL_NAV = [
 ];
 
 // Order follows ECG.modules (set by drag-and-drop reordering in Dashboard
-// Creator), not ALL_NAV's fixed declaration order — the always-shown tabs
+// Creator), not ALL_NAV's fixed declaration order   the always-shown tabs
 // (Home, Assistant first; Settings last) stay pinned regardless of module
 // order. Previously this used ALL_NAV.find(n => n.always), which only ever
-// returns the FIRST always-item — Settings silently never made it into the
+// returns the FIRST always-item   Settings silently never made it into the
 // sidebar at all. filter() picks up every always-item instead.
 const NAV = [
   ...ALL_NAV.filter(n => n.always && n.id !== 'settings'),

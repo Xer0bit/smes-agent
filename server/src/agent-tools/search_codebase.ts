@@ -1,9 +1,9 @@
 /**
- * search_codebase tool — semantic + graph search over the project's own files,
+ * search_codebase tool   semantic + graph search over the project's own files,
  * for mid-run lookups the agent can't answer from files already in context.
  *
  * Reuses the same vector+graph engine (server/src/knowledgebase/retrieval.ts)
- * that already selects initial context files before a run starts — this just
+ * that already selects initial context files before a run starts   this just
  * exposes it as an on-demand tool call, so a mid-run "where does X live" no
  * longer has to fall back to blind grep/read_file loops.
  */
@@ -40,7 +40,7 @@ export function collectWorkspaceFiles(root: string): WorkspaceFile[] {
       try {
         const content = fs.readFileSync(fp, 'utf8');
         out.push({ path: path.relative(root, fp), content });
-      } catch { /* unreadable — skip */ }
+      } catch { /* unreadable   skip */ }
     }
   };
   walk(root);
@@ -50,7 +50,7 @@ export function collectWorkspaceFiles(root: string): WorkspaceFile[] {
 export const searchCodebaseTool: ToolDefinition<z.infer<typeof schema>> = {
   name: 'search_codebase',
   description:
-    'Semantic + graph search over the project\'s own files — finds files relevant to a natural-language description (e.g. "where is the cart total calculated") without needing to know exact file names. Prefer this over repeated grep/read_file guessing when looking for functionality rather than an exact string. Returns matched file paths with a short preview; use read_file for full content.',
+    'Semantic + graph search over the project\'s own files   finds files relevant to a natural-language description (e.g. "where is the cart total calculated") without needing to know exact file names. Prefer this over repeated grep/read_file guessing when looking for functionality rather than an exact string. Returns matched file paths with a short preview; use read_file for full content.',
   inputSchema: schema,
   getConsentPreview: (args) => `Search codebase: "${args.query}"`,
 

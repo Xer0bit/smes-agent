@@ -41,7 +41,7 @@ export function ProjectMemberAccess({ projectId, organizationId }: ProjectMember
 
             // Fetch org members with role 'member' only (admins already have full access)
             // org_members.user_id has no FK to public.profiles (it references auth.users),
-            // so PostgREST can't resolve an embedded profiles:user_id(...) join — fetch separately.
+            // so PostgREST can't resolve an embedded profiles:user_id(...) join   fetch separately.
             const { data: membersData, error: membersError } = await supabase
                 .from('org_members')
                 .select('id, user_id, role')
@@ -89,7 +89,7 @@ export function ProjectMemberAccess({ projectId, organizationId }: ProjectMember
             setToggling(userId);
 
             // getUser() re-validates the token against Supabase's auth server on every
-            // call — on the admin app (long-lived tabs, infrequent interaction) this
+            // call   on the admin app (long-lived tabs, infrequent interaction) this
             // occasionally raced with token refresh and spuriously reported "not
             // authenticated" even though the session was genuinely still valid.
             // getSession() reads the already-verified local session instead (same

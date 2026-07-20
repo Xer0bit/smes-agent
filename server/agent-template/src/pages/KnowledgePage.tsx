@@ -5,7 +5,7 @@ import { ecgApi } from '../lib/ecgClient';
 const TYPE_ICONS: Record<string, string> = { document: '📄', url: '🔗', text: '📝' };
 
 // The proxy's GET /knowledge (ecgData.listKnowledge on the portal side) only
-// returns {id, name, type, status, createdAt} — no file size and no kbId, so
+// returns {id, name, type, status, createdAt}   no file size and no kbId, so
 // files can't be grouped/filtered by knowledge base or show a size here the
 // way the real portal's Knowledge page does. Status badge + upload date are
 // the real fields actually available.

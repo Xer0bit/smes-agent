@@ -28,7 +28,7 @@ export interface AgentContext {
    * overwriting it, preventing it from clobbering unread content.
    */
   readFiles?: Set<string>;
-  /** Per-run change journal — records every read/write/edit for journal injection into prepareStep. */
+  /** Per-run change journal   records every read/write/edit for journal injection into prepareStep. */
   ledger?: RunStateLedger;
   /**
    * Reverse import graph: for each file path, the set of files that import it.
@@ -55,7 +55,7 @@ export interface AgentContext {
   buildErrorCallCount?: number;
   /** URL of the preview service, e.g. http://localhost:3001 */
   previewServiceUrl?: string;
-  /** Authenticated user id — required by database_query / get_database_schema to scope tenant DB access. */
+  /** Authenticated user id   required by database_query / get_database_schema to scope tenant DB access. */
   userId?: string;
   /** Tracks how many times query_database has been called in this run, to cap runaway query loops. */
   dbQueryCallCount?: number;

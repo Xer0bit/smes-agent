@@ -1,5 +1,5 @@
 /**
- * eCG Auth service — HTTP client for the centralised eCG Auth API.
+ * eCG Auth service   HTTP client for the centralised eCG Auth API.
  *
  * Every call includes the X-API-Key header.  All functions return a result
  * tuple `{ ok, data, error, status, code }` instead of throwing so callers
@@ -64,7 +64,7 @@ export function isEcgAuth2faActive(): boolean {
   return config.ecgAuth2faActive;
 }
 
-/** Internal fetch wrapper — never throws. */
+/** Internal fetch wrapper   never throws. */
 async function ecgFetch<T = unknown>(
   method: string,
   path: string,

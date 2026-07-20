@@ -17,7 +17,7 @@ interface FileTreeProps {
 }
 
 // One muted color for every file type, matching the editor's own dark theme
-// and the rest of this panel's white/opacity palette — no per-extension
+// and the rest of this panel's white/opacity palette   no per-extension
 // rainbow. Selected-row state still gets its own accent (see isSelected below).
 const FILE_ICON_COLOR = 'text-white/35';
 

@@ -93,10 +93,10 @@ export default {
       },
       // 'smooth' used to live under transitionProperty mapped straight to the
       // --transition-smooth CSS var, whose value is a full shorthand ("all 0.3s
-      // cubic-bezier(...)") — invalid for transition-property, which only takes
+      // cubic-bezier(...)")   invalid for transition-property, which only takes
       // property names. That produced `transition-property: var(--transition-smooth)`
       // (a malformed value) plus Tailwind's own default 150ms duration, so the
-      // class silently never gave the intended 300ms — confirmed by compiling it
+      // class silently never gave the intended 300ms   confirmed by compiling it
       // directly and inspecting the output. Never used anywhere in the app, so
       // this had never been caught. Tailwind's default transitionTimingFunction
       // (cubic-bezier(0.4,0,0.2,1)) already matches what --transition-smooth

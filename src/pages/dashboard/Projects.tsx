@@ -139,7 +139,7 @@ export default function DashboardProjects() {
     const latest = projects.find((p) => p.id === selectedProject.id);
     if (latest) {
       // Merge stats/counts from the fresh DB record but preserve any name
-      // the user just saved locally — avoids a flicker where the DB echo
+      // the user just saved locally   avoids a flicker where the DB echo
       // arrives before the optimistic update settles.
       setSelectedProject(prev => prev ? { ...latest, name: prev.name } : latest);
     }
@@ -149,7 +149,7 @@ export default function DashboardProjects() {
     checkAuthAndLoad();
   }, []);
 
-  // Real-time subscription for revision/project updates — debounced to avoid
+  // Real-time subscription for revision/project updates   debounced to avoid
   // a full reload for every row in a batch change.
   const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debouncedReload = () => {
@@ -240,7 +240,7 @@ export default function DashboardProjects() {
 
       if (error) throw error;
 
-      // Use counts/sizes already stored on the projects row — avoids N×3 extra requests.
+      // Use counts/sizes already stored on the projects row   avoids N×3 extra requests.
       const projectsWithCounts = (data || []).map((project) => ({
         ...project,
         message_count: project.message_count || 0,
@@ -284,7 +284,7 @@ export default function DashboardProjects() {
         user_org_role: p.organization_id ? userOrgRoles[p.organization_id] : null
       }));
 
-      // Client-side role-based filtering (safety net — RLS handles this server-side)
+      // Client-side role-based filtering (safety net   RLS handles this server-side)
       // Billing admins should not see any projects
       const filteredByRole = allProjects.filter((p) => {
         if (p.user_org_role === 'billing_admin') return false;
@@ -309,18 +309,18 @@ export default function DashboardProjects() {
 
       // Auto-trigger thumbnail capture for projects that have a preview URL but no thumbnail yet.
       // Falls back to the predictable preview URL format when the RPC returns nothing.
-      // Fire-and-forget — the real-time projects subscription will reload when thumbnails land.
+      // Fire-and-forget   the real-time projects subscription will reload when thumbnails land.
       const session = (await supabase.auth.getSession()).data.session;
       if (session?.access_token) {
         const { getApiServerUrl, PREVIEW_CONFIG } = await import('@/config/external-api');
         const needsCapture = allProjects.filter(p => !p.thumbnail_url);
         for (const p of needsCapture) {
-          // Omit previewUrl — server will look it up from revisions table
+          // Omit previewUrl   server will look it up from revisions table
           fetch(getApiServerUrl(`/api/v1/projects/${p.id}/capture-thumbnail`), {
             method: 'POST',
             headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(urls[p.id] ? { previewUrl: urls[p.id] } : {}),
-          }).catch(() => { /* silent — thumbnail is best-effort */ });
+          }).catch(() => { /* silent   thumbnail is best-effort */ });
         }
       }
     } catch (error) {
@@ -389,7 +389,7 @@ export default function DashboardProjects() {
       if (error) {
         // 401 from the edge function means the session JWT couldn't be validated
         // server-side (common after local Supabase restarts). Fall back to a direct
-        // authenticated insert — the projects RLS allows users to create their own.
+        // authenticated insert   the projects RLS allows users to create their own.
         const isAuthError = error.message?.includes('non-2xx') || error.message?.includes('401');
         if (!isAuthError) throw error;
 
@@ -689,14 +689,14 @@ export default function DashboardProjects() {
 
     const projectId = deleteProjectId;
 
-    // 1. Instant UI — remove from list and close dialogs before the network call
+    // 1. Instant UI   remove from list and close dialogs before the network call
     setProjects((prev) => prev.filter((p) => p.id !== projectId));
     setDeleteProjectId(null);
     setIsViewOpen(false);
     setSelectedProject(null);
     toast.success('Project deleted');
 
-    // 2. Fire the backend delete — show error and restore project in list if it fails
+    // 2. Fire the backend delete   show error and restore project in list if it fails
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return;
 
@@ -735,7 +735,7 @@ export default function DashboardProjects() {
 
     // When an org workspace is selected, show ONLY that org's projects.
     // Never leak projects from other organizations into the current workspace view.
-    // Note: don't fall back to created_by here — a project keeps its creator's id
+    // Note: don't fall back to created_by here   a project keeps its creator's id
     // forever, even after being reassigned to an organization, so matching on
     // created_by would leak reassigned projects back into the personal workspace.
     const matchesWorkspace = currentOrganizationId

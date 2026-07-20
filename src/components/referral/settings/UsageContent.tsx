@@ -34,7 +34,7 @@ export const UsageContent = () => {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold">Eco Usage</h2>
-        <p className="text-white/45">Every AI action spends <span className="font-semibold text-primary">eco</span> — 1 eco per code action, 0.5 eco per general question.</p>
+        <p className="text-white/45">Every AI action spends <span className="font-semibold text-primary">eco</span>   1 eco per code action, 0.5 eco per general question.</p>
       </div>
 
       {/* Current Usage Card */}
@@ -203,7 +203,7 @@ export const UsageContent = () => {
               </div>
               <div className="text-right">
                 <p className={`text-sm font-semibold ${tier === 'agency' ? 'text-primary' : ''}`}>
-                  {(tierLimits as any).publish_lines_limit ?? '—'} lines / mo
+                  {(tierLimits as any).publish_lines_limit ?? ' '} lines / mo
                 </p>
                 <p className="text-xs text-white/45">
                   {tierLimits.ai_gens_limit >= 999999 ? '∞' : tierLimits.ai_gens_limit.toLocaleString()} eco / month

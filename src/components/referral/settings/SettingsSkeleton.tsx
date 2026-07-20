@@ -1,7 +1,7 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
-/** Generic loading placeholder for settings panels — a header line plus N card-shaped blocks. */
+/** Generic loading placeholder for settings panels   a header line plus N card-shaped blocks. */
 export function SettingsSkeleton({ cards = 2 }: { cards?: number }) {
   return (
     <div className="space-y-6">
