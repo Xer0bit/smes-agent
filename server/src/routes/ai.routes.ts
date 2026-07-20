@@ -985,7 +985,25 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         // These MUST use the user's selected model with full context   routing them to a cheap
         // model with a stripped prompt is what causes infinite repair loops.
         const isRepairPrompt = /build errors that could not be auto-repaired|please fix all of them|auto.?repair|🔧/i.test(prompt);
-        const requestTier = isRepairPrompt ? 'feature' : classifyRequest(prompt, !projectHasFiles);
+
+        // Asset-swap fast path: an attached image + explicit swap intent is a
+        // single place_asset call, not a 25-step edit-tier task. intentClassifier's
+        // MICRO_RE deliberately excludes "logo" (too ambiguous on its own   "logo
+        // section", "resize the logo") so this normally falls through to EDIT_RE's
+        // "replace" match and gets the full-price Claude Sonnet edit tier. Confirmed
+        // live: a plain "use this logo for X" run burned 11 steps / $1.55 (only 3
+        // steps did real work; the rest was think/get_build_errors overhead at the
+        // edit tier's ~40k-token-per-step baseline cost). Requiring an actual image
+        // attachment in the SAME request   not just the word "logo"   keeps this
+        // narrower than the original exclusion worried about; a bare "change the
+        // logo section" with no attachment still falls through to the normal
+        // classifier untouched. projectHasFiles gate: never fires on a brand-new
+        // empty project, which genuinely needs the full build tier regardless.
+        const hasImageAttachment = Array.isArray(attachments) && attachments.some((a) => a.category === 'image');
+        const ASSET_SWAP_RE = /\b(use|replace|swap)\b[^.!?]{0,40}\b(this|it)\b[^.!?]{0,20}\b(for|as|with)\b|\b(replace|swap|update|change)\b[^.!?]{0,40}\b(logo|image|photo|picture|icon|banner|avatar)\b/i;
+        const isAssetSwap = hasImageAttachment && projectHasFiles && ASSET_SWAP_RE.test(prompt);
+
+        const requestTier = isRepairPrompt ? 'feature' : isAssetSwap ? 'micro' : classifyRequest(prompt, !projectHasFiles);
 
         // Tier-based model routing:
         //   micro → Gemini Flash  (visual tweaks, $0.075/MTok   40× cheaper than Sonnet)
