@@ -981,36 +981,46 @@ async function getOrCreateServer(projectId) {
     window.parent.postMessage({ type: 'PREVIEW_BLANK' }, '*');
   }
 
-  function checkBlank() {
+  // A blank reading on the FIRST check is only a suspicion, not a verdict   a
+  // cold preview server (Vite still transforming/optimizing deps after the
+  // project was idle) can easily take longer than a few seconds to paint
+  // anything, and that used to get misreported as a real crash. Only report
+  // once a check is still blank on the CONFIRM pass, several seconds later.
+  function checkBlank(confirm) {
     if (_blankReported) return;
     try {
       var root = document.getElementById('root') || document.getElementById('app');
       var target = root || document.body;
       var isBlank = (target.children.length === 0) || !hasRealContent(target, 6);
       if (isBlank) {
-        reportBlank();
+        if (confirm) {
+          reportBlank();
+        } else {
+          scheduleCheck(7000, true);
+        }
       } else {
         _hadContent = true; // app has rendered at least once   resets observer guard
       }
     } catch(e) {}
   }
 
-  function scheduleCheck(delay) {
+  function scheduleCheck(delay, confirm) {
     if (_blankReported) return;
     clearTimeout(_reportTimer);
-    _reportTimer = setTimeout(checkBlank, delay);
+    _reportTimer = setTimeout(function() { checkBlank(confirm); }, delay);
   }
 
-  // Initial checks: 2.5s and 6s after page load
+  // Initial suspicion check at 5s (soft   just schedules a confirm pass if
+  // still blank), confirmed at +7s (12s total) before actually flagging.
   window.addEventListener('load', function() {
-    scheduleCheck(2500);
-    setTimeout(checkBlank, 6000);
+    scheduleCheck(5000, false);
   });
 
-  // Re-check after any route change (React Router / hash nav / back-forward)
-  // Delay 1.5s so the new page has time to render
-  window.addEventListener('hashchange', function() { if (!_blankReported) scheduleCheck(1500); });
-  window.addEventListener('popstate',   function() { if (!_blankReported) scheduleCheck(1500); });
+  // Re-check after any route change (React Router / hash nav / back-forward).
+  // The app already proved it can render once, so a shorter confirm window
+  // is fine here   this path is for genuine post-navigation crashes.
+  window.addEventListener('hashchange', function() { if (!_blankReported) scheduleCheck(1500, true); });
+  window.addEventListener('popstate',   function() { if (!_blankReported) scheduleCheck(1500, true); });
 
   // Watch for the React root being emptied AFTER it previously had content.
   // This catches: HMR update failures, React crashes, route components that
@@ -1020,7 +1030,7 @@ async function getOrCreateServer(projectId) {
     var observer = new MutationObserver(function() {
       if (_blankReported || !_hadContent) return;
       // Debounce: give React 2s to re-render after the DOM change before flagging
-      scheduleCheck(2000);
+      scheduleCheck(2000, true);
     });
     observer.observe(root, { childList: true, subtree: false });
   } catch(e) {}

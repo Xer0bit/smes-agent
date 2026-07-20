@@ -314,6 +314,22 @@ When a build requires 5 or more new files, you MUST chunk the work. You have a h
 
 **CRITICAL**: Write each file COMPLETELY. You MUST include multiple \`write_file\` calls in each step   writing one file per step is NOT acceptable for large builds. A 12-file app should take 3–4 steps, not 12.
 
+## Scope Check Before Large Requests (MANDATORY)
+
+Every run has a hard token/cost budget; hitting it mid-task kills the run with no
+finished result. Before diving into a request that touches many files or systems
+(a site-wide redesign, wiring auth/analytics across every page, a large refactor),
+use your first \`think\` call to estimate the real file count and step count.
+
+- If it plainly fits in one run (chunking protocol above handles this): proceed normally.
+- If your own estimate is large (roughly 15+ files, or work that clearly spans
+  several unrelated areas of the app), say so in your FIRST response before writing
+  anything: name the rough scope, propose a concrete split into stages (e.g. "step 1:
+  X pages, step 2: Y"), and do stage one only. Don't silently grind through the whole
+  thing and let the budget cap cut it off deep into unrelated files   an upfront
+  "this is bigger than one pass, here's the plan" is strictly better than a run that
+  dies with half-finished changes and no explanation.
+
 ## Installing npm Packages
 
 Check "Pre-installed Packages" first   many common packages are already available.
@@ -996,7 +1012,10 @@ When building complex apps (chat apps, dashboards, e-commerce, social clones, mu
 - \`list_files\`   List directory contents
 - \`delete_file\`   Delete a file or directory
 - \`rename_file\`   Move/rename a file
-- \`grep\`   Search file contents with regex
+- \`grep\`   Search file contents with regex. Use output_mode="files_with_matches" for cheap file-path-only results, or context_lines to see surrounding code
+- \`glob_files\`   Find files by name/path pattern (e.g. "**/*.test.ts", "**/Header.tsx") without listing the whole tree. Prefer this over list_files(recursive=true) when you roughly know the filename
+- \`search_codebase\`   Semantic + graph search for "where does X live" by natural-language description. Prefer this over grep/read_file guessing when you don't know the exact file/symbol name — it's far cheaper than reading files one by one to find the right one
+- \`find_symbol_usages\`   Call-graph lookup: where a function/component is defined and everywhere it's called. Use this BEFORE renaming, changing a signature, or deleting a symbol, instead of grepping the whole project for callers
 - \`get_build_errors\`   Query the live Vite preview for real errors
 - \`set_secret\` / \`list_secrets\`   Save/list project secrets (API keys). Values are write-only: never echo them in chat or write them into files
 - \`write_edge_function\`   Deploy server-side logic that reads those secrets (see Edge functions section)

@@ -2097,9 +2097,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // do next.
     const madeNoChanges = !anySuccessfulWriteThisRun && filesToWrite.length === 0 && filesEdited.length === 0;
     if (stuckAnalysisAbortReason && !summary.trim()) {
+      // Surface what was actually investigated instead of just pushing the
+      // question back to the user   they weren't the one reading files, the
+      // agent was, so the agent should report where it looked before asking
+      // for more specificity.
+      const examined = Array.from(ctx.readFiles ?? []).slice(0, 10);
+      const examinedNote = examined.length > 0
+        ? `\n\nFiles I looked at before getting stuck:\n${examined.map((f) => `   • ${f}`).join('\n')}` +
+          `\nIf the bug isn't in one of these, that's exactly why I couldn't pin it down   tell me which file it's actually in.`
+        : '';
       summary = `I got stuck re-analyzing this without actually making a change, so I stopped instead of ` +
         `continuing to spin. ${madeNoChanges ? 'Nothing was changed.' : 'What I did change so far is saved.'} ` +
-        `Could you give me a more specific instruction, or point me at the exact file/behavior to change?`;
+        `Could you give me a more specific instruction, or point me at the exact file/behavior to change?${examinedNote}`;
     } else if (budgetAbortReason && !summary.trim()) {
       summary = madeNoChanges
         ? `This request turned out to be bigger than I could finish in one go, and nothing was changed yet. ` +
