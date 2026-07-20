@@ -357,15 +357,19 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // to an action or say you're stuck" directive, same delivery mechanism as
   // circuitBreakerNote.
   let stepsSinceLastWrite = 0;
-  // Lowered from 6 → 4 (2026-07-15), then 4 → 3 (2026-07-20): still recurring  
-  // the 4-step/3-nudge combo let a run burn up to 16 steps (nudges at 4/8/12,
-  // abort at 12+) before stopping, on runs where the user's instruction was a
-  // single specific, well-scoped change that should resolve in 1-3 steps.
-  // Firing sooner costs one nudge's worth of false-positive risk on genuinely
-  // multi-step tasks (already mitigated by STATE_MODIFYING_TOOLS recognizing
-  // edge-function/asset writes, not just write_file/edit_file) against real
-  // dollars burned per ignored nudge on a stuck run.
-  const STUCK_ANALYSIS_THRESHOLD = 3;
+  // History: 6 -> 4 (2026-07-15) -> 3 (2026-07-20 AM), reverted 3 -> 6 (2026-07-20 PM).
+  // The 3-step version was tuned against a leftover-nudge-count bug (fixed same
+  // day by resetting stuckAnalysisFireCount on every successful write) and, once
+  // that fix landed, started killing completely legitimate multi-file
+  // investigation instead: confirmed live on a real run that spent 6 steps on
+  // think/read_files/read_file/read_file/get_build_errors/read_file -- normal
+  // "understand the codebase before editing" behavior on anything non-trivial,
+  // not a stuck loop -- and got hard-stopped after costing only $0.19, nowhere
+  // near runaway spend. The token-budget-critical fast path below (>65% of the
+  // tier'''s token cap with no write) is the real safety net for genuinely
+  // expensive stuck runs; this threshold only needs to catch a run that NEVER
+  // converges, so it can afford real investigation room.
+  const STUCK_ANALYSIS_THRESHOLD = 6;
   // Lighter, earlier nudge than the full stuck-analysis detector below: fires
   // the moment the model calls `think` twice in a row with no other tool in
   // between (re-reasoning about the same thing instead of acting), instead of
@@ -382,11 +386,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // and been ignored twice (i.e. firing a 3rd time), stop nudging and abort
   // the run cleanly instead of letting it grind to the hard cap regardless.
   let stuckAnalysisFireCount = 0;
-  // Lowered 3 → 2 (2026-07-20) alongside STUCK_ANALYSIS_THRESHOLD: one ignored
-  // nudge is now enough to abort instead of two, since the whole point of the
-  // nudge is "commit to an action or say you're blocked"   a model that
-  // ignores that once already showed it isn't going to self-correct.
-  const STUCK_ANALYSIS_HARD_STOP_FIRINGS = 2;
+  // History: 3 -> 2 (2026-07-20 AM), reverted 2 -> 3 (2026-07-20 PM) alongside
+  // STUCK_ANALYSIS_THRESHOLD -- see that constant's comment. One ignored nudge
+  // is not enough signal to abort a run that may just be doing legitimate deep
+  // investigation; require two ignored nudges before giving up on it.
+  const STUCK_ANALYSIS_HARD_STOP_FIRINGS = 3;
   let stuckAnalysisAbortReason: string | null = null;
   // Live signal for "did this run actually change anything"   filesToWrite/
   // filesEdited below are only populated from XML tags in the model's FINAL
