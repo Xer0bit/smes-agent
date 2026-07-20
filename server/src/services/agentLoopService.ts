@@ -51,7 +51,7 @@ const SUPPRESS_RECOVERY_UI = (process.env.AGENT_SUPPRESS_RECOVERY_UI ?? '1') !==
 
 // Self-healing backfill for projects that had edge functions written before
 // the __edge_functions__/ mirror existed. Runs once at the start of every
-// agent run — cheap (single query, early-exits when nothing's missing) and
+// agent run   cheap (single query, early-exits when nothing's missing) and
 // spreads the fix across every existing project the next time each one is
 // actually used, instead of a one-off bulk migration touching every live
 // preview at once.
@@ -71,19 +71,19 @@ async function backfillEdgeFunctionMirrors(appPath: string, projectId: string): 
       try {
         fs.mkdirSync(path.dirname(mirrorPath), { recursive: true });
         fs.writeFileSync(mirrorPath, fn.code, 'utf8');
-      } catch { /* best-effort — a write failure here shouldn't block the run */ }
+      } catch { /* best-effort   a write failure here shouldn't block the run */ }
     }
-  } catch { /* best-effort — DB unavailable shouldn't block the run */ }
+  } catch { /* best-effort   DB unavailable shouldn't block the run */ }
 }
 
 // ─── Per-project KB batch-index guard ────────────────────────────────────────
 // Tracks which projects have had their full file tree indexed this server process.
-// Prevents re-scanning on every request — individual file writes handle updates.
+// Prevents re-scanning on every request   individual file writes handle updates.
 const kbBatchIndexedProjects = new Set<string>();
 
 // ─── Event sink ──────────────────────────────────────────────────────────────
 // The loop doesn't know or care whether it's streamed over SSE, collected in a
-// test array, or piped somewhere else — it just calls sink.emit/heartbeat.
+// test array, or piped somewhere else   it just calls sink.emit/heartbeat.
 
 export interface AgentEventSink {
   emit(event: string, data: unknown): void;
@@ -111,7 +111,7 @@ export interface AgentRunParams {
   existingFiles?: Array<{ path: string; content: string }>;
   /**
    * Recent conversation history (already-cleaned, no ecomgear tags).
-   * The current user prompt is NOT included — it is always appended last.
+   * The current user prompt is NOT included   it is always appended last.
    * Max recommended: last 6 messages (3 user+assistant pairs).
    */
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -124,7 +124,7 @@ export interface AgentRunParams {
   promptIntent?: {
     isWebsiteBuild?: boolean;
     hasIntegrationRequest?: boolean;
-    /** Cost-routing tier from intentClassifier — drives MAX_STEPS and model override */
+    /** Cost-routing tier from intentClassifier   drives MAX_STEPS and model override */
     requestTier?: 'micro' | 'fix' | 'edit' | 'feature' | 'build';
   };
   /** Files attached by the user in the chat message (images, docs, etc.) */
@@ -139,7 +139,7 @@ export interface AgentRunParams {
     customSystemPrompt: string;
     contextNotes: string;
   };
-  /** Project secrets — injected as env var hints for the agent, never echoed to user */
+  /** Project secrets   injected as env var hints for the agent, never echoed to user */
   projectSecrets?: Array<{ key_name: string; key_value: string }>;
   /** Event sink the run streams progress through (production: SSE over Express; tests: an in-memory collector) */
   sink: AgentEventSink;
@@ -151,7 +151,7 @@ export interface AgentRunParams {
    * Token for the DB-backed `agent_locks` row this run holds (see
    * ai.routes.ts's tryAcquireAgentLock). Sent as `x-agent-lock-token` on every
    * preview-service push below so preview-service can tell "this push came
-   * from the run that holds the lock" apart from any other actor — including
+   * from the run that holds the lock" apart from any other actor   including
    * a direct manual push racing this same run.
    */
   agentLockToken?: string;
@@ -190,7 +190,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   beginNarration(projectId, prompt);
 
   // Backfill __edge_functions__/ mirrors for any function written before
-  // that mirror pattern existed — see backfillEdgeFunctionMirrors above.
+  // that mirror pattern existed   see backfillEdgeFunctionMirrors above.
   await backfillEdgeFunctionMirrors(appPath, projectId);
 
   // Dynamic step budget: map request tier to a proportionate step ceiling.
@@ -205,20 +205,20 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
                   : ((promptIntent?.isWebsiteBuild ?? false) || prompt.length > 600) ? 45 : 25;
 
   // Tier-based token cap. The USD cost cap ($1.50) is the ultimate backstop.
-  // These limits just prevent runaway loops — they must be high enough that
+  // These limits just prevent runaway loops   they must be high enough that
   // the final response step is never cut off (agent does work then goes silent).
   // Observed abort patterns: fix hits 124-130K, edit hits 239K → raised accordingly.
   //
   // Doubled 2026-07-15: these counts are RAW tokens (input+output+cacheRead+
-  // cacheWrite) — cacheRead counts fully even though it bills at ~10% of a
+  // cacheWrite)   cacheRead counts fully even though it bills at ~10% of a
   // fresh token. Once the mid-run Anthropic cache-breakpoint fix landed, a
   // real edit-tier run got killed at 536K raw tokens while only costing
-  // $0.4691 — 31% of the $1.50 cost cap, nowhere near the "ultimate backstop"
+  // $0.4691   31% of the $1.50 cost cap, nowhere near the "ultimate backstop"
   // this comment describes. The original values were tuned when caching was
   // effectively zero (raw tokens ≈ cost 1:1); now that caching works, they
   // fire before the cost cap ever does, on exactly the cheap/well-cached runs
   // that should be allowed to keep going. Doubling restores the original
-  // intent — cost governs, this is just the runaway-loop backstop again. An
+  // intent   cost governs, this is just the runaway-loop backstop again. An
   // uncached run would still hit the $1.50 cost cap well before these new
   // ceilings, so this doesn't loosen the actual worst-case protection.
   const TIER_TOKEN_CAP = _tier === 'micro'   ?  160_000
@@ -238,7 +238,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
 
   let requestedModelId = canonicalizeModelId(model || process.env.AI_MODEL, DEFAULT_PRIMARY_MODEL);
 
-  // Per-model kill switch — separate from AI_DISABLE_GEMINI (which disables the
+  // Per-model kill switch   separate from AI_DISABLE_GEMINI (which disables the
   // whole provider). Needed because the client sends an explicit `model` on
   // every request, so a server-side AI_MODEL env change alone doesn't stop a
   // request for a specific quota-exhausted model id (confirmed live 2026-07-17:
@@ -249,7 +249,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   );
   if (disabledModelIds.has(requestedModelId)) {
     const substitute = canonicalizeModelId(process.env.AI_FALLBACK_MODEL, DEFAULT_FALLBACK_MODEL);
-    console.warn(`[AgentLoop] Requested model ${requestedModelId} is disabled (AI_DISABLED_MODEL_IDS) — substituting ${substitute}`);
+    console.warn(`[AgentLoop] Requested model ${requestedModelId} is disabled (AI_DISABLED_MODEL_IDS)   substituting ${substitute}`);
     requestedModelId = substitute;
   }
 
@@ -264,7 +264,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // Tracks whether this run ends up on a different provider/model than requested
   // (either right away, e.g. a billing circuit already open, or mid-stream via the
   // recovery paths below). Used to give an honest reason when a run stops early
-  // with few steps — a real mid-run failover vs. simply the intentionally-assigned
+  // with few steps   a real mid-run failover vs. simply the intentionally-assigned
   // tier model (e.g. glm-4.5-flash on the micro tier) not being capable enough.
   let providerFellBackThisRun = modelId !== requestedModelId;
 
@@ -316,7 +316,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // ── Tool-failure circuit breaker ──────────────────────────────────────────
   // Keyed on toolName, tracks the last error message and how many times in a
   // row it repeated VERBATIM. A tool returning a NEW/different error each time
-  // is normal iteration (e.g. fixing one syntax issue reveals another) — only
+  // is normal iteration (e.g. fixing one syntax issue reveals another)   only
   // the exact same failure repeating is a sign the model is stuck retrying an
   // approach that structurally cannot work (it should stop and try something
   // fundamentally different, or tell the user it's blocked, instead of
@@ -330,16 +330,16 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // The identical-error circuit breaker above only fires when a TOOL returns
   // the exact same error string repeatedly. It does NOT catch a different,
   // equally real failure mode: the model re-reading/re-diagnosing the same
-  // problem in DIFFERENT words each time (read_file, get_build_errors, think —
+  // problem in DIFFERENT words each time (read_file, get_build_errors, think  
   // "let me check X... I see Y... let me try Z...") without ever committing to
   // a write_file/edit_file that actually lands. No tool is erroring, so the
-  // error-based breaker never trips, but the run is just as stuck — burning a
+  // error-based breaker never trips, but the run is just as stuck   burning a
   // full step/token budget in circles. Track steps since the last SUCCESSFUL
   // write/edit; once it crosses a threshold, force a "stop analyzing, commit
   // to an action or say you're stuck" directive, same delivery mechanism as
   // circuitBreakerNote.
   let stepsSinceLastWrite = 0;
-  // Lowered from 6 → 4 (2026-07-15), then 4 → 3 (2026-07-20): still recurring —
+  // Lowered from 6 → 4 (2026-07-15), then 4 → 3 (2026-07-20): still recurring  
   // the 4-step/3-nudge combo let a run burn up to 16 steps (nudges at 4/8/12,
   // abort at 12+) before stopping, on runs where the user's instruction was a
   // single specific, well-scoped change that should resolve in 1-3 steps.
@@ -352,13 +352,13 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // the moment the model calls `think` twice in a row with no other tool in
   // between (re-reasoning about the same thing instead of acting), instead of
   // waiting for 6 unproductive steps to accumulate. Directly addresses "why
-  // is it thinking so much" — most of that is redundant re-analysis the model
+  // is it thinking so much"   most of that is redundant re-analysis the model
   // could skip by either acting on what it already figured out, or persisting
   // the key fact via save_memory so it doesn't re-derive it next step.
   let consecutiveThinkOnlySteps = 0;
   let thinkStreakNoteFiredAt = -1;
   let stuckAnalysisNoteFiredAt = -1; // step number of last firing, so it can re-fire later in a long run
-  // A soft nudge alone isn't enough — a real incident (2026-07-12) showed the
+  // A soft nudge alone isn't enough   a real incident (2026-07-12) showed the
   // model ignore it 3 times in a row (fired at steps 6, 12, 18) and burn the
   // entire token cap on nothing but `think` calls. After the nudge has fired
   // and been ignored twice (i.e. firing a 3rd time), stop nudging and abort
@@ -366,17 +366,17 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   let stuckAnalysisFireCount = 0;
   // Lowered 3 → 2 (2026-07-20) alongside STUCK_ANALYSIS_THRESHOLD: one ignored
   // nudge is now enough to abort instead of two, since the whole point of the
-  // nudge is "commit to an action or say you're blocked" — a model that
+  // nudge is "commit to an action or say you're blocked"   a model that
   // ignores that once already showed it isn't going to self-correct.
   const STUCK_ANALYSIS_HARD_STOP_FIRINGS = 2;
   let stuckAnalysisAbortReason: string | null = null;
-  // Live signal for "did this run actually change anything" — filesToWrite/
+  // Live signal for "did this run actually change anything"   filesToWrite/
   // filesEdited below are only populated from XML tags in the model's FINAL
   // text, which is empty on an aborted run even if native write_file/edit_file
   // tool calls already succeeded earlier in the same run. Track that directly.
   let anySuccessfulWriteThisRun = false;
 
-  // Set when onStepFinish aborts the run for hitting the token/cost cap — lets
+  // Set when onStepFinish aborts the run for hitting the token/cost cap   lets
   // the summary-building code downstream tell the difference between "the
   // model produced nothing" (safety block / provider failure, already has its
   // own error message) and "budget ran out mid-task" (previously silent: the
@@ -393,7 +393,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const filesEdited: string[] = [];
   let summary = '';
 
-  // Per-run change journal — created early so tools can record into it from the first step
+  // Per-run change journal   created early so tools can record into it from the first step
   const runLedger = new RunStateLedger();
 
   // Build AgentContext
@@ -436,7 +436,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   if (_tier === 'micro') {
     // ── MICRO FAST PATH ──────────────────────────────────────────────────────
     // A color/text/spacing change touches exactly one file. Find it with a
-    // targeted scan — no full disk read, no import graph, no KB query.
+    // targeted scan   no full disk read, no import graph, no KB query.
     const promptWords = promptLower.split(/[\s,./'"!?()[\]{}]+/).filter(w => w.length > 2);
     const findMentioned = (dir: string): void => {
       let entries: fs.Dirent[];
@@ -486,14 +486,14 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       ? existingFiles
       : Array.from(preAgentDiskSnapshot.entries()).map(([p, c]) => ({ path: p, content: c }));
 
-  // KB batch index — runs once per project per server boot in the background.
+  // KB batch index   runs once per project per server boot in the background.
   // Skip for micro (snapshot is partial) and fix (no benefit for error diagnosis).
   if (_tier !== 'micro' && _tier !== 'fix' && projectId && !kbBatchIndexedProjects.has(projectId) && fileSources.length > 0) {
     kbBatchIndexedProjects.add(projectId);
     indexFiles(projectId, fileSources).catch(() => {});
   }
 
-  // Build a lightweight import graph — skip for micro (single file, no cross-file analysis needed).
+  // Build a lightweight import graph   skip for micro (single file, no cross-file analysis needed).
   const importGraph = new Map<string, Set<string>>();
   const reverseGraph = new Map<string, Set<string>>(); // importers of each file
   if (_tier !== 'micro') {
@@ -533,7 +533,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     if (fname && promptLower.includes(fname)) directlyMentioned.add(f.path);
   }
 
-  // Expand to imports/importers of mentioned files (1 hop) — skip for micro
+  // Expand to imports/importers of mentioned files (1 hop)   skip for micro
   const relatedByImport = new Set<string>();
   const importersOfMentioned = new Set<string>();
   if (_tier !== 'micro') {
@@ -549,7 +549,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // Always-include critical files
   const criticalFiles = new Set(['src/App.tsx', 'src/index.css', 'src/lib/utils.ts', 'package.json']);
 
-  // KB vector retrieval — skip for micro (partial snapshot) and fix (2s latency with no benefit;
+  // KB vector retrieval   skip for micro (partial snapshot) and fix (2s latency with no benefit;
   // fix agent calls get_build_errors first and reads only the broken file).
   const kbScores = new Map<string, number>(); // path → 0-50 bonus points
   if (_tier !== 'micro' && _tier !== 'fix' && projectId) {
@@ -562,11 +562,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         }),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('kb timeout')), 2000)),
       ]);
-      // Multiply by 80 so a strong KB hit (score 0.8) = 64 pts — enough to beat the
+      // Multiply by 80 so a strong KB hit (score 0.8) = 64 pts   enough to beat the
       // criticalFiles baseline (60) and actually influence file selection.
       for (const r of kbResults) kbScores.set(r.path, Math.round(r.score * 80));
     } catch {
-      // Non-fatal — heuristic sort still works without KB
+      // Non-fatal   heuristic sort still works without KB
     }
   }
 
@@ -591,7 +591,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     return a.content.length - b.content.length;
   });
 
-  // GitHub Copilot-style context selection: small focused working set — agent uses
+  // GitHub Copilot-style context selection: small focused working set   agent uses
   // read_file/list_files tools to pull anything else it needs.
   const MAX_CONTEXT_CHARS = parseInt(process.env.AI_MAX_CONTEXT_CHARS || '8000', 10);
   const MAX_CONTEXT_FILES = parseInt(process.env.AI_MAX_CONTEXT_FILES || '4', 10);
@@ -614,7 +614,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       : MAX_FILE_CONTEXT_CHARS;
     const truncated = file.content.length > perFileCap;
     const contextContent = truncated
-      ? `${file.content.slice(0, perFileCap)}\n\n/* peek only — call read_file("${file.path}") before editing */`
+      ? `${file.content.slice(0, perFileCap)}\n\n/* peek only   call read_file("${file.path}") before editing */`
       : file.content;
     const entryChars = contextContent.length + file.path.length + 10;
 
@@ -641,7 +641,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       path: file.path,
       content: file.content,
       contextContent: truncated
-        ? `${file.content.slice(0, perFileCap)}\n\n/* peek only — call read_file("${file.path}") before editing */`
+        ? `${file.content.slice(0, perFileCap)}\n\n/* peek only   call read_file("${file.path}") before editing */`
         : file.content,
       truncated,
     });
@@ -651,7 +651,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     .map((f) => `=== ${f.path} ===\n${f.contextContent}`)
     .join('\n\n');
 
-  // Pre-mark non-truncated context files as already read — full content is in prompt.
+  // Pre-mark non-truncated context files as already read   full content is in prompt.
   for (const f of cappedFiles) {
     if (!f.truncated && ctx.readFiles) ctx.readFiles.add(f.path);
   }
@@ -666,7 +666,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
 
   // Signature-only preview for excluded files: symbol names + kind, no bodies.
   // Cheap (regex, already-in-memory content, no DB round-trip) and gives the
-  // model enough to judge relevance without loading full text it may not need —
+  // model enough to judge relevance without loading full text it may not need  
   // it still MUST call read_file before importing/editing, per the warning below.
   const MAX_SIGNATURE_FILES = 40;
   const signatureLines: string[] = [];
@@ -676,7 +676,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       const symbols = extractSymbols(f.content);
       if (symbols.length === 0) { signatureLines.push(f.path); continue; }
       const sig = symbols.map(s => `${s.name}:${s.kind}`).join(', ');
-      signatureLines.push(`${f.path} — ${sig}`);
+      signatureLines.push(`${f.path}   ${sig}`);
     } catch {
       signatureLines.push(f.path);
     }
@@ -684,10 +684,10 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const remainingCount = excludedFiles.length - signatureLines.length;
 
   const excludedFilesNote = excludedFiles.length > 0
-    ? `\n\n**WARNING: ${excludedFiles.length} file(s) exist in the project but their FULL contents are NOT shown above — only symbol signatures.** ` +
+    ? `\n\n**WARNING: ${excludedFiles.length} file(s) exist in the project but their FULL contents are NOT shown above   only symbol signatures.** ` +
       `If you need to import from or edit any of these files, call \`read_file\` FIRST to see their actual content. ` +
-      `NEVER guess implementation details of a file you haven't read — the signatures below only tell you WHAT exists, not HOW it works.\n` +
-      `Files not in context (path — exported symbols:kind):\n${signatureLines.join('\n')}` +
+      `NEVER guess implementation details of a file you haven't read   the signatures below only tell you WHAT exists, not HOW it works.\n` +
+      `Files not in context (path   exported symbols:kind):\n${signatureLines.join('\n')}` +
       (remainingCount > 0 ? `\n(and ${remainingCount} more file(s) not shown)` : '')
     : '';
   const truncatedFilesNote = truncatedFiles.length > 0
@@ -696,12 +696,12 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       `Truncated files: ${truncatedFiles.slice(0, 20).join(', ')}${truncatedFiles.length > 20 ? ` (and ${truncatedFiles.length - 20} more)` : ''}`
     : '';
 
-  // Always build a live file tree from disk — cheap and always accurate.
+  // Always build a live file tree from disk   cheap and always accurate.
   // This is the agent's authoritative source for "what files exist right now."
   const liveFileTree = getProjectFileTree(appPath);
 
   // Build attachment context for the AI prompt.
-  // Files live on disk in /tmp — read directly. No HTTP round-trip needed.
+  // Files live on disk in /tmp   read directly. No HTTP round-trip needed.
   // Text-based docs are inlined so the model can read them.
   // Images stay in /tmp until the agent explicitly calls place_asset to embed them.
   // This prevents any image from silently overwriting project assets before the agent
@@ -718,7 +718,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       // Validate tempPath exists and is under /tmp to prevent path traversal
       const resolvedPath = path.resolve(att.tempPath);
       if (!resolvedPath.startsWith(os.tmpdir()) || !fs.existsSync(resolvedPath)) {
-        parts.push(`- **${att.name}** — file not found or access denied`);
+        parts.push(`- **${att.name}**   file not found or access denied`);
         continue;
       }
 
@@ -726,34 +726,34 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         try {
           const safeName = att.name.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-          // Read bytes upfront — needed for both vision analysis and preview push
+          // Read bytes upfront   needed for both vision analysis and preview push
           let imgBytes: Buffer | null = null;
           try { imgBytes = await fs.promises.readFile(resolvedPath); } catch { /* best-effort */ }
 
-          // ── Vision analysis — ALWAYS run for vision-capable models ──────────────────
+          // ── Vision analysis   ALWAYS run for vision-capable models ──────────────────
           // The LLM must see the image to understand what it is:
           //   • A bug/UI screenshot shared to explain a problem
           //   • A diagram or annotated explanation
           //   • A logo / asset the user wants placed in the project
-          // Never skip vision for filename heuristics alone — a file named
+          // Never skip vision for filename heuristics alone   a file named
           // "screenshot_logo.png" might actually be a brand asset.
           let inlineAnalysis: string | null = null;
           let isRefScreenshot = false;
 
           if (visionCapable && imgBytes) {
-            // Always hit the model — let it classify the image
+            // Always hit the model   let it classify the image
             inlineAnalysis = await analyzeImageWithVision(
               imgBytes.toString('base64'), att.type, att.name, aiProvider, abortSignal,
             );
             // The user's own explicit words ("use this as my logo") win over an
-            // ambiguous vision read — vision classifies what the image IS, not
+            // ambiguous vision read   vision classifies what the image IS, not
             // what the user wants done with it.
             isRefScreenshot = isReferenceScreenshot(inlineAnalysis) && !hasEmbedIntent(prompt);
           } else if (!visionCapable) {
-            // No vision — fall back to filename heuristic + prompt intent
+            // No vision   fall back to filename heuristic + prompt intent
             if (isScreenshotFilename(att.name) || !hasEmbedIntent(prompt)) {
               isRefScreenshot = true;
-              inlineAnalysis = 'No vision model available — treated as reference context based on filename/prompt.';
+              inlineAnalysis = 'No vision model available   treated as reference context based on filename/prompt.';
             }
           }
 
@@ -771,16 +771,16 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
           }
 
           if (isRefScreenshot) {
-            // User shared a screenshot, diagram, or wireframe as visual context — reference only.
+            // User shared a screenshot, diagram, or wireframe as visual context   reference only.
             // Do NOT copy to public/assets/; instruct the agent to use it as context only.
             parts.push(
-              `- **Visual Context**: "${att.name}" — this image has been sent to you inline so you can SEE it.\n` +
+              `- **Visual Context**: "${att.name}"   this image has been sent to you inline so you can SEE it.\n` +
               `  Visual analysis: ${inlineAnalysis ?? 'see image inline'}\n` +
-              `  **Classification: reference context only.** Use it to understand the bug, UI state, layout intention, or explanation the user is describing. If this is a diagram or wireframe, use it to understand WHAT to build — do not embed the diagram itself in the project.\n` +
+              `  **Classification: reference context only.** Use it to understand the bug, UI state, layout intention, or explanation the user is describing. If this is a diagram or wireframe, use it to understand WHAT to build   do not embed the diagram itself in the project.\n` +
               `  **Do NOT call place_asset or embed this image in any project file.**`,
             );
           } else {
-            // ── Image stays in /tmp — agent uses place_asset tool to explicitly place it ──
+            // ── Image stays in /tmp   agent uses place_asset tool to explicitly place it ──
             // This prevents any image from silently overwriting project assets (e.g. logos)
             // before the agent understands the user's intent.
 
@@ -816,7 +816,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
               `  2. If replacing an existing asset: call delete_file("old/path/here") FIRST\n` +
               `  3. Call place_asset(tmpPath: "${resolvedPath}", destName: "${safeName}") to copy it to public/assets/${safeName}\n` +
               `  4. Update every component/file that referenced the old asset to use the new filename\n` +
-              `  Path rules after placing (MUST follow — preview runs at non-root base URL):\n` +
+              `  Path rules after placing (MUST follow   preview runs at non-root base URL):\n` +
               `  • CORRECT: <img src={\`\${import.meta.env.BASE_URL}assets/${safeName}\`} />\n` +
               `  • WRONG:   <img src="/assets/${safeName}" />  (404 in preview)\n` +
               `  • WRONG:   any hardcoded http:// or localhost URL\n` +
@@ -824,7 +824,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
             );
           }
         } catch (copyErr: any) {
-          parts.push(`- **Image**: "${att.name}" — failed to process: ${copyErr.message}`);
+          parts.push(`- **Image**: "${att.name}"   failed to process: ${copyErr.message}`);
         }
       } else if (TEXT_TYPES.has(att.type)) {
         // Inline text content so the AI can read it
@@ -835,10 +835,10 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
             `- **Document**: "${att.name}" (${att.type})\n\n\`\`\`\n${text}\n\`\`\``
           );
         } catch (readErr: any) {
-          parts.push(`- **Document**: "${att.name}" — failed to read: ${readErr.message}`);
+          parts.push(`- **Document**: "${att.name}"   failed to read: ${readErr.message}`);
         }
       } else {
-        // Binary docs (PDF, DOCX, XLSX) — try to extract text for the AI, also copy into project
+        // Binary docs (PDF, DOCX, XLSX)   try to extract text for the AI, also copy into project
         try {
           const assetsDir = path.join(appPath, 'public', 'assets');
           await fs.promises.mkdir(assetsDir, { recursive: true });
@@ -853,7 +853,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
               let text = extractedText;
               if (text.length > 30_000) text = text.slice(0, 30_000) + '\n\n… (truncated)';
               parts.push(
-                `- **Document**: "${att.name}" (${att.type}) → copied to \`public/assets/${safeName}\`\n  Also available as downloadable file at \`\${import.meta.env.BASE_URL}assets/${safeName}\`. NEVER use \`/assets/${safeName}\` with a leading slash — the preview uses a non-root base URL.\n\n  **Extracted Text Content:**\n\n\`\`\`\n${text}\n\`\`\``
+                `- **Document**: "${att.name}" (${att.type}) → copied to \`public/assets/${safeName}\`\n  Also available as downloadable file at \`\${import.meta.env.BASE_URL}assets/${safeName}\`. NEVER use \`/assets/${safeName}\` with a leading slash   the preview uses a non-root base URL.\n\n  **Extracted Text Content:**\n\n\`\`\`\n${text}\n\`\`\``
               );
             } else {
               parts.push(
@@ -866,11 +866,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
             );
           }
         } catch (copyErr: any) {
-          parts.push(`- **Document**: "${att.name}" — failed to copy: ${copyErr.message}`);
+          parts.push(`- **Document**: "${att.name}"   failed to copy: ${copyErr.message}`);
         }
       }
     }
-    attachmentContext = `\n\n# User-Attached Files\n\nThe user attached the following files with this message.\n\n**IMPORTANT — Images are NOT yet in the project.** Each image stays in a temporary path until you explicitly call \`place_asset\` to copy it to \`public/assets/\`. You MUST call \`place_asset\` before you can reference an image in any component.\n\n**YOUR OBLIGATION:** You MUST act on these files as the user instructs. Do not just acknowledge them — actually use them in the code.\n\nCommon scenarios — execute immediately:\n- "use as logo / header logo" → call place_asset to place the image, then update the Navbar/Header component to render an \`<img>\` using it\n- "use as favicon" → call place_asset, then write to \`public/favicon.ico\` (or .png) and update \`index.html\` \`<link rel="icon">\`\n- "use as hero / banner" → call place_asset, then place in the hero section of the relevant page\n- "use as background" → call place_asset, then apply as CSS \`background-image\` on the specified element\n- "use this data / content" → parse the document content and populate the UI with it\n- General "use this" → infer the best placement from context and the image description\n\nAlways modify the actual component files to reference the image. An image that was never placed with \`place_asset\` cannot be referenced in code.\n\n${parts.join('\n\n')}`;
+    attachmentContext = `\n\n# User-Attached Files\n\nThe user attached the following files with this message.\n\n**IMPORTANT   Images are NOT yet in the project.** Each image stays in a temporary path until you explicitly call \`place_asset\` to copy it to \`public/assets/\`. You MUST call \`place_asset\` before you can reference an image in any component.\n\n**YOUR OBLIGATION:** You MUST act on these files as the user instructs. Do not just acknowledge them   actually use them in the code.\n\nCommon scenarios   execute immediately:\n- "use as logo / header logo" → call place_asset to place the image, then update the Navbar/Header component to render an \`<img>\` using it\n- "use as favicon" → call place_asset, then write to \`public/favicon.ico\` (or .png) and update \`index.html\` \`<link rel="icon">\`\n- "use as hero / banner" → call place_asset, then place in the hero section of the relevant page\n- "use as background" → call place_asset, then apply as CSS \`background-image\` on the specified element\n- "use this data / content" → parse the document content and populate the UI with it\n- General "use this" → infer the best placement from context and the image description\n\nAlways modify the actual component files to reference the image. An image that was never placed with \`place_asset\` cannot be referenced in code.\n\n${parts.join('\n\n')}`;
     attachmentContext = clampContextSection('Attachment context', attachmentContext, MAX_ATTACHMENT_CONTEXT_CHARS);
   }
 
@@ -879,7 +879,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // This gives the agent a concrete textual understanding of the image content
   // ("company logo with a blue shield and white text 'EcomGear'") so it can
   // decide the correct action without guessing from the filename alone.
-  // Only runs when the selected model supports vision (Claude, Gemini — not DeepSeek).
+  // Only runs when the selected model supports vision (Claude, Gemini   not DeepSeek).
   if (visionCapable && imageVisionData.length > 0) {
     const analysisParts: string[] = [];
     for (const img of imageVisionData) {
@@ -902,7 +902,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   }
 
   // Detect if this is the first build on an empty/new project.
-  // Use fileSources (full relative paths like src/pages/Home.tsx) NOT liveFileTree —
+  // Use fileSources (full relative paths like src/pages/Home.tsx) NOT liveFileTree  
   // the tree is indent-formatted so full paths like "src/pages/Home.tsx" never appear in it.
   const hasUserFiles = fileSources.some(f =>
     /^src\/pages\//.test(f.path) ||
@@ -919,12 +919,12 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const modeInstruction = runtimeMode === 'plan'
     ? `\n\n# Runtime Mode Instruction
 
-You are operating in **PLAN MODE**. You are a strategic planning assistant — your role is to think, discuss, advise, and help the user design their project. You do NOT make any changes to files.
+You are operating in **PLAN MODE**. You are a strategic planning assistant   your role is to think, discuss, advise, and help the user design their project. You do NOT make any changes to files.
 
 ## Hard rules
 - NEVER call write_file, edit_file, delete_file, or any file-modification tool.
 - NEVER emit <ecomgear-write>, <ecomgear-edit>, or any operational tags.
-- Do NOT produce code blocks that represent final implementation — only illustrative snippets to explain a concept.
+- Do NOT produce code blocks that represent final implementation   only illustrative snippets to explain a concept.
 - Do NOT emit any <ecomgear-*> tags.
 
 ## What you CAN do
@@ -934,17 +934,17 @@ You are operating in **PLAN MODE**. You are a strategic planning assistant — y
 - Answer questions about technology choices, best practices, UX patterns.
 - Help the user refine requirements and spot gaps or conflicts.
 - Produce structured plans, site maps, or feature lists when helpful.
-- Be concise — bullet points over paragraphs where possible.
+- Be concise   bullet points over paragraphs where possible.
 
 ## If the user asks you to make changes or implement something
 Respond briefly. Acknowledge what they want, then say:
-> "I'm in **Plan mode** — I can only plan and advise here. Switch to **Build mode** to implement this."
+> "I'm in **Plan mode**   I can only plan and advise here. Switch to **Build mode** to implement this."
 Keep that redirect to one or two sentences. Do not lecture or repeat it.
 
 ## Tone
-Conversational, sharp, helpful. Think of yourself as a senior technical co-founder reviewing the project with the user — not a code generator. Stay focused on what the user is asking.`
+Conversational, sharp, helpful. Think of yourself as a senior technical co-founder reviewing the project with the user   not a code generator. Stay focused on what the user is asking.`
     : shouldConfirmFirst
-    ? '\n\n# Runtime Mode Instruction\n\nMode: BUILD (confirm-first). This is a NEW empty project — the user\'s first request.\n\n' +
+    ? '\n\n# Runtime Mode Instruction\n\nMode: BUILD (confirm-first). This is a NEW empty project   the user\'s first request.\n\n' +
       'IMPORTANT EXCEPTION: If the user\'s message is a simple greeting ("hi", "hello", "hey", etc.), general chat, or does NOT describe what they want to build, respond with a friendly welcome and ask what they\'d like to build. Do NOT invent or assume a project idea. Do NOT call any tools.\n\n' +
       'MANDATORY FLOW (only when the user describes what they want to build):\n' +
       '1. Call `think` to plan the full architecture.\n' +
@@ -952,20 +952,20 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       '3. Do NOT write any files yet. Do NOT call write_file, edit_file, or any file-modification tools.\n' +
       '4. End by asking the user to confirm or adjust the plan.\n' +
       '5. When the user confirms in the NEXT message, you will receive BUILD mode and should execute immediately.'
-    : '\n\n# Runtime Mode Instruction\n\nMode is locked to BUILD by backend policy. Do not self-switch modes.\n\nHard requirements:\n- Execute now: use tools and produce real file changes immediately.\n- Do NOT ask for confirmation to start coding (unless the user\'s intent is genuinely unclear — see EXCEPTION below).\n- Do NOT end with planning-only instructions.\n- PHASED BUILD: If the conversation history contains a phase plan (look for "## Phases" and "Phase N —" lines), you are in phased build mode. Count how many "Phase N done ✓" messages already appear in the history to determine which phase is current. Build ONLY the files for that phase — do NOT build files from future phases. When all files for the current phase are written and verified, end your final message with exactly: "Phase N done ✓ — ready to build Phase N+1 ([one-line description])? Reply **continue** to proceed." If this is the last phase, write instead: "All phases complete ✓ — your app is ready." IMPORTANT: In phased mode the rule below about writing ALL files is scoped to the current phase only.\n- NON-PHASED BUILD: You MUST write ALL files the app needs before finishing — pages, components, utilities, AND src/App.tsx. Never stop after writing just a few files. A partial build = broken preview.\n- STRICTLY FORBIDDEN: Never say "I didn\'t make any changes", "I haven\'t changed anything", "no changes were made", or any equivalent. If you ran without writing files, you failed — do not announce it, just start writing.\n- ALSO FORBIDDEN: Never output a future-tense promise like "Let me do this", "I\'ll implement that", "I will go ahead and", "I\'m going to build" unless you IMMEDIATELY follow it with actual file writes in the same response. If you say it and then stop with no files written — that is a failure. Either write files right away or ask what the user wants.\n- EXCEPTION (greetings only): If the user\'s message is EXCLUSIVELY a greeting ("hi", "hello", "hey", "how are you") or an identity question ("who are you", "what are you") with NO build request attached — respond with a short text answer only and do NOT call tools. This exception does NOT apply to any message that contains a feature request, a page name, a description, a confirmation ("ok", "yes", "go", "proceed", "build it", "do it"), or ANY reference to the project.\n- EXCEPTION (ambiguous statement): If the user\'s message is a vague statement with NO specific build content (no feature name, page, component, or change described) AND you cannot identify a pending plan in the conversation history to execute — ask ONE short clarifying question about what they\'d like you to build or change. Do NOT invent a task. Do NOT write files for a made-up goal.\n- If the user confirmed a plan you already presented (e.g. "ok", "yes", "go ahead", "looks good", "build it") — that IS a build command. Execute immediately.\n- BRAIN MEMORY: Your older tool call history is automatically compacted to save tokens. Use `save_memory` after your initial `think` to persist key architecture decisions, file purposes, and user requirements so they survive compaction.';
+    : '\n\n# Runtime Mode Instruction\n\nMode is locked to BUILD by backend policy. Do not self-switch modes.\n\nHard requirements:\n- Execute now: use tools and produce real file changes immediately.\n- Do NOT ask for confirmation to start coding (unless the user\'s intent is genuinely unclear   see EXCEPTION below).\n- Do NOT end with planning-only instructions.\n- PHASED BUILD: If the conversation history contains a phase plan (look for "## Phases" and "Phase N  " lines), you are in phased build mode. Count how many "Phase N done ✓" messages already appear in the history to determine which phase is current. Build ONLY the files for that phase   do NOT build files from future phases. When all files for the current phase are written and verified, end your final message with exactly: "Phase N done ✓   ready to build Phase N+1 ([one-line description])? Reply **continue** to proceed." If this is the last phase, write instead: "All phases complete ✓   your app is ready." IMPORTANT: In phased mode the rule below about writing ALL files is scoped to the current phase only.\n- NON-PHASED BUILD: You MUST write ALL files the app needs before finishing   pages, components, utilities, AND src/App.tsx. Never stop after writing just a few files. A partial build = broken preview.\n- STRICTLY FORBIDDEN: Never say "I didn\'t make any changes", "I haven\'t changed anything", "no changes were made", or any equivalent. If you ran without writing files, you failed   do not announce it, just start writing.\n- ALSO FORBIDDEN: Never output a future-tense promise like "Let me do this", "I\'ll implement that", "I will go ahead and", "I\'m going to build" unless you IMMEDIATELY follow it with actual file writes in the same response. If you say it and then stop with no files written   that is a failure. Either write files right away or ask what the user wants.\n- EXCEPTION (greetings only): If the user\'s message is EXCLUSIVELY a greeting ("hi", "hello", "hey", "how are you") or an identity question ("who are you", "what are you") with NO build request attached   respond with a short text answer only and do NOT call tools. This exception does NOT apply to any message that contains a feature request, a page name, a description, a confirmation ("ok", "yes", "go", "proceed", "build it", "do it"), or ANY reference to the project.\n- EXCEPTION (ambiguous statement): If the user\'s message is a vague statement with NO specific build content (no feature name, page, component, or change described) AND you cannot identify a pending plan in the conversation history to execute   ask ONE short clarifying question about what they\'d like you to build or change. Do NOT invent a task. Do NOT write files for a made-up goal.\n- If the user confirmed a plan you already presented (e.g. "ok", "yes", "go ahead", "looks good", "build it")   that IS a build command. Execute immediately.\n- BRAIN MEMORY: Your older tool call history is automatically compacted to save tokens. Use `save_memory` after your initial `think` to persist key architecture decisions, file purposes, and user requirements so they survive compaction.';
 
-  // Efficiency instruction — scope it to the tier so micro/fix stay fast but edit
+  // Efficiency instruction   scope it to the tier so micro/fix stay fast but edit
   // still verifies imports (skipping that check is the #1 source of build errors).
-  // In plan mode, tier instructions must be suppressed — they reference file-modification
+  // In plan mode, tier instructions must be suppressed   they reference file-modification
   // workflows (touch, read, write) that contradict plan-mode restrictions.
   const tierInstruction = runtimeMode === 'plan' ? ''
     : _tier === 'micro'
-      ? '\n\n# Efficiency Mode\nDo NOT write any text before your first tool call. Call `think` once (≤40 words), read the file, make the change, done.\n\n**REQUIRED final message** — write exactly this format:\n"I\'ve [verb] [what] in [filename]. [One sentence on what the user will now see.]"\nExample: "I\'ve changed the button color to indigo in Header.tsx. The nav bar buttons now match the brand palette."\nFORBIDDEN: "Done.", "OK.", empty message, or any single-word reply.'
+      ? '\n\n# Efficiency Mode\nDo NOT write any text before your first tool call. Call `think` once (≤40 words), read the file, make the change, done.\n\n**REQUIRED final message**   write exactly this format:\n"I\'ve [verb] [what] in [filename]. [One sentence on what the user will now see.]"\nExample: "I\'ve changed the button color to indigo in Header.tsx. The nav bar buttons now match the brand palette."\nFORBIDDEN: "Done.", "OK.", empty message, or any single-word reply.'
       : _tier === 'fix'
-        ? '\n\n# Fix Mode\nDo NOT write any text before your first tool call. Start with tools directly. Call `think` once — identify root cause, read the broken file, fix it, verify with `get_build_errors`.\n\n**Progress narration** — after each file you fix, write one short sentence like "Fixed the import error in Navbar.tsx — now checking the build." before moving to the next file.\n\n**REQUIRED final message** — AT LEAST 2 sentences:\n1. What the error was and which file it was in.\n2. What you changed to fix it.\nFORBIDDEN: "Done.", "Fixed.", "OK.", or any single-word reply.'
+        ? '\n\n# Fix Mode\nDo NOT write any text before your first tool call. Start with tools directly. Call `think` once   identify root cause, read the broken file, fix it, verify with `get_build_errors`.\n\n**Progress narration**   after each file you fix, write one short sentence like "Fixed the import error in Navbar.tsx   now checking the build." before moving to the next file.\n\n**REQUIRED final message**   AT LEAST 2 sentences:\n1. What the error was and which file it was in.\n2. What you changed to fix it.\nFORBIDDEN: "Done.", "Fixed.", "OK.", or any single-word reply.'
         : _tier === 'edit'
-          ? '\n\n# Edit Mode\nDo NOT write any text before your first tool call. Start with tool calls directly. Call `think` once — list the 1–3 files you will touch.\n\n**Progress narration (REQUIRED)** — after each file you write or edit, output one short sentence telling the user what you just did and what you\'re doing next. Examples:\n- "Updated the Navbar — now working on the hero section."\n- "Added the cart drawer to CartDrawer.tsx — updating the context next."\nThis keeps the user informed while you work.\n\n**HARD FILE LIMIT** — more than 5 files? STOP after the 5th, tell the user what changed and what remains.\n\n**REQUIRED final message** — AT LEAST 2 sentences: what changed and what the user will see differently.\nFORBIDDEN: "Done.", "OK.", any single word, or any message under 15 words.'
-          : '\n\nDo NOT write any text before your first tool call. Start with tool calls directly.\n\n**Progress narration (REQUIRED)** — after each file you write or create, output one short sentence telling the user what you just did and what comes next. Keep it brief and specific. Examples:\n- "Built the Navbar with sticky positioning and a cart icon — now creating the hero banner."\n- "Added HeroBanner.tsx with a full-width gradient — moving on to the categories section."\n- "Categories grid done — now wiring up the product cards."\nThis narration shows the user the build is progressing in real time.\n\n**REQUIRED final message** — AT LEAST 3 sentences after ALL changes:\n1. What you built and in which files.\n2. How the feature works from the user\'s perspective.\n3. Any important decisions the user should know.\nFORBIDDEN: "Done.", "Complete.", or any response under 20 words.';
+          ? '\n\n# Edit Mode\nDo NOT write any text before your first tool call. Start with tool calls directly. Call `think` once   list the 1–3 files you will touch.\n\n**Progress narration (REQUIRED)**   after each file you write or edit, output one short sentence telling the user what you just did and what you\'re doing next. Examples:\n- "Updated the Navbar   now working on the hero section."\n- "Added the cart drawer to CartDrawer.tsx   updating the context next."\nThis keeps the user informed while you work.\n\n**HARD FILE LIMIT**   more than 5 files? STOP after the 5th, tell the user what changed and what remains.\n\n**REQUIRED final message**   AT LEAST 2 sentences: what changed and what the user will see differently.\nFORBIDDEN: "Done.", "OK.", any single word, or any message under 15 words.'
+          : '\n\nDo NOT write any text before your first tool call. Start with tool calls directly.\n\n**Progress narration (REQUIRED)**   after each file you write or create, output one short sentence telling the user what you just did and what comes next. Keep it brief and specific. Examples:\n- "Built the Navbar with sticky positioning and a cart icon   now creating the hero banner."\n- "Added HeroBanner.tsx with a full-width gradient   moving on to the categories section."\n- "Categories grid done   now wiring up the product cards."\nThis narration shows the user the build is progressing in real time.\n\n**REQUIRED final message**   AT LEAST 3 sentences after ALL changes:\n1. What you built and in which files.\n2. How the feature works from the user\'s perspective.\n3. Any important decisions the user should know.\nFORBIDDEN: "Done.", "Complete.", or any response under 20 words.';
 
   const boundedFileTree = clampContextSection('Project file tree', liveFileTree, MAX_FILE_TREE_CHARS);
 
@@ -979,11 +979,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
   // Tier-based prompt selection (smallest prompt that can handle the task):
   //   micro  →  ~600 tokens   (color/text/spacing tweaks)
-  //   fix    →  ~3K tokens    (error fixes — no design/new-project sections)
-  //   edit   →  ~4K tokens    (changes to existing apps — strips registry/chunking/new-project)
-  //   build  →  ~6-10K tokens (new projects / features — context-stripped build prompt)
+  //   fix    →  ~3K tokens    (error fixes   no design/new-project sections)
+  //   edit   →  ~4K tokens    (changes to existing apps   strips registry/chunking/new-project)
+  //   build  →  ~6-10K tokens (new projects / features   context-stripped build prompt)
   //   other  →  full prompt   (plan/confirm profiles)
-  // Plan mode must never receive tier-specific build/edit/fix prompts — they contain
+  // Plan mode must never receive tier-specific build/edit/fix prompts   they contain
   // file-write instructions that directly conflict with plan-mode restrictions.
   const staticSystemPrompt = runtimeMode === 'plan'
     ? getAppBuilderSystemPrompt('plan')
@@ -1021,15 +1021,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       parts.push(`## Project Context Notes\n\n${projectKnowledge.contextNotes}`);
     }
     return parts.length > 0
-      ? `\n\n# Project Knowledge\n\nThe project owner has set the following custom instructions and context. Follow them throughout this entire session — they take precedence over default behavior.\n\n${parts.join('\n\n')}`
+      ? `\n\n# Project Knowledge\n\nThe project owner has set the following custom instructions and context. Follow them throughout this entire session   they take precedence over default behavior.\n\n${parts.join('\n\n')}`
       : '';
   })();
 
-  // Inject project secrets as env var context — agent may reference them in code
+  // Inject project secrets as env var context   agent may reference them in code
   // but MUST NEVER echo, print, log, or reveal their values in chat responses.
   //
   // Also injects the REAL current schema (table names/columns/row counts)
-  // directly into every request when a hosted DB exists — previously the agent
+  // directly into every request when a hosted DB exists   previously the agent
   // only saw the schema if it remembered to call get_database_schema first,
   // and skipping that call was the single biggest cause of it guessing wrong
   // column names or inventing tables that don't exist. This makes schema
@@ -1044,10 +1044,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     const sbNote = hasSb
       ? (hasDb
-          ? '\n\nUse `import.meta.env.VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for AUTHENTICATION ONLY (sign up, log in, log out, session/user). This project also has its own hosted database (below) — ALL application data (tables like posts, products, orders, profiles, etc.) MUST go through `VITE_DB_API_URL`, NEVER through Supabase. Do not create or query app-data tables against Supabase when a hosted database is present. NEVER hardcode any `*.supabase.co` URL — it will cause CORS errors in the preview.'
-          : '\n\nFor Supabase auth/data in generated code ALWAYS use `import.meta.env.VITE_SUPABASE_URL` and `import.meta.env.VITE_SUPABASE_ANON_KEY`. NEVER hardcode any `*.supabase.co` URL — it will cause CORS errors in the preview.')
+          ? '\n\nUse `import.meta.env.VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for AUTHENTICATION ONLY (sign up, log in, log out, session/user). This project also has its own hosted database (below)   ALL application data (tables like posts, products, orders, profiles, etc.) MUST go through `VITE_DB_API_URL`, NEVER through Supabase. Do not create or query app-data tables against Supabase when a hosted database is present. NEVER hardcode any `*.supabase.co` URL   it will cause CORS errors in the preview.'
+          : '\n\nFor Supabase auth/data in generated code ALWAYS use `import.meta.env.VITE_SUPABASE_URL` and `import.meta.env.VITE_SUPABASE_ANON_KEY`. NEVER hardcode any `*.supabase.co` URL   it will cause CORS errors in the preview.')
       : '';
-    // Fetch the real current schema unconditionally — don't rely on the agent
+    // Fetch the real current schema unconditionally   don't rely on the agent
     // remembering to call get_database_schema. Best-effort: a fetch failure
     // here just means no live schema block, never blocks the run.
     let liveSchemaBlock = '';
@@ -1060,39 +1060,39 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               const cols = t.columns.map((c) => `${c.name} ${c.type}${c.nullable ? '' : ' NOT NULL'}`).join(', ');
               return `- ${t.name} (${t.row_count ?? '?'} rows): ${cols}`;
             }).join('\n') +
-            '\n\nUse these EXACT table/column names — never guess or invent one. If you need to change the schema, call `query_database`, then re-check via `get_database_schema` before writing dependent code.';
+            '\n\nUse these EXACT table/column names   never guess or invent one. If you need to change the schema, call `query_database`, then re-check via `get_database_schema` before writing dependent code.';
       } catch {
-        // Non-fatal — agent can still call get_database_schema itself
+        // Non-fatal   agent can still call get_database_schema itself
       }
     }
 
     const dbNote = hasDb
-      ? '\n\nThis project\'s hosted database is the ONLY place for application data (any table the user asks for — posts, products, orders, custom records, etc.).' +
-        '\n\n**⚠️ CRITICAL — this database has NO row-level security.** `VITE_DB_ANON_KEY` is bundled straight into the public JS bundle (anyone can read it via devtools), and its role has a flat `GRANT SELECT` on every table — not scoped per user, per row, or by ownership. There is no `auth.uid()`-style policy layer like real Supabase. Direct client-side PostgREST access lets every visitor read or corrupt every table in full, public data or not — there is nothing stopping them. This is why direct frontend database access is never used here (see the rule right below): edge functions are the only place `db.*` access is safe to grant.' +
-        '\n\n**ALL database work MUST go through edge functions — never call the database directly from frontend code, including read-only data.** Use `write_edge_function` for every read and write: user-specific/private data (orders, profiles, messages, anything with an owner), ALL writes (INSERT/UPDATE/DELETE from the browser bypasses any validation you meant to enforce), anything requiring authorization logic ("only the owner can see this"), AND plain public reads (a product catalog, public blog posts, a leaderboard) — there is no exception for "it\'s just public read-only data." The frontend must never construct a `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` fetch itself; every piece of data the UI needs comes from an edge function you write and the frontend invokes via the pattern below. Inside an edge function, `VITE_DB_API_URL` is never needed — the privileged `db.*` helper is already scoped to this project\'s isolated schema.' + liveSchemaBlock +
-        (hasSb ? ' This hosted database has NO auth/login server of its own — it is Postgres + PostgREST only. Never attempt to hit `VITE_DB_API_URL/auth/...` — that endpoint does not exist here; auth always goes through Supabase (above).' : '') +
-        '\n\n**Login/signup/password checks are SECURITY-CRITICAL and MUST be an edge function — never a direct client-side PostgREST call.** Querying `users?email=eq.X&password=eq.Y` straight from the browser puts the password in the URL (logged everywhere) and exposes the whole table to anyone with the anon key. Write an edge function that looks up the user via `db.select` and compares a HASHED password server-side; return only a session token/user object.\n' +
-        '\n\n**Edge functions** — use `write_edge_function` for server-side logic the browser should never run directly: auth/password checks (above), any user-specific or private data access, any write, code that needs a secret API key, webhook handlers, scheduled/triggered jobs, or any multi-step backend operation. Do NOT put that logic in frontend code just because it seems simpler — if it touches private/owned data, writes anything, needs a secret, touches passwords, or must run server-side, it MUST be an edge function. Inside the function, read saved secrets with the EXACT key name they were saved under, including a `VITE_` prefix if that\'s how it\'s stored — `secrets.VITE_DB_API_URL`, not `secrets.DB_API_URL`. Guessing a shortened name silently breaks every call in the function (the "secrets not configured" guard trips immediately) with no visible error until someone actually tests it. Check the actual secret list above instead of assuming a name (save new keys with `set_secret` first — never paste key values into function code or frontend files).\n' +
-        '\n\n**Writing an edge function is not the task — wiring it up is.** A function that exists in the database but that no frontend code ever calls does nothing; the app keeps using whatever it was using before, and it will look to the user like "the edge function isn\'t doing anything" even though the function itself is fine. Every time you write or update an edge function for an existing feature, in the SAME turn: (1) find every place in the frontend that currently does this work directly (a raw fetch, a `getDbUrl(...)` call, inline logic) and (2) replace it with an invoke call to the function, deleting the old direct-access code path. Never leave a newly written function orphaned while the old code keeps running.\n' +
-        '\n\n**Do not write a generic pass-through proxy** (e.g. one function that accepts an arbitrary `path`/`method`/`body` and forwards it straight to the database) as a way to satisfy "route through edge functions." That technically avoids a direct frontend fetch but adds zero real authorization or validation — it\'s functionally identical to direct client access, just relocated. Each edge function should implement one specific operation (or a small, named set of operations) with real server-side logic: check who\'s asking, validate the input, only allow what that specific operation actually needs.\n' +
-        'Invoke a written function from the frontend with:\n```ts\nconst res = await fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/api/v1/functions/<name>/invoke`, {\n  method: \'POST\',\n  headers: { \'Content-Type\': \'application/json\', apikey: import.meta.env.VITE_DB_ANON_KEY },\n  body: JSON.stringify({ params: { /* ... */ } }),\n});\n```\nNo project_id is needed — the anon key itself identifies which project\'s function to run.\n' +
-        'This endpoint is public and rate-limited (30 req/min) — it authenticates with the SAME `VITE_DB_ANON_KEY` used for the database, not a login session, so it works for anonymous visitors of the generated app, not just its owner.'
+      ? '\n\nThis project\'s hosted database is the ONLY place for application data (any table the user asks for   posts, products, orders, custom records, etc.).' +
+        '\n\n**⚠️ CRITICAL   this database has NO row-level security.** `VITE_DB_ANON_KEY` is bundled straight into the public JS bundle (anyone can read it via devtools), and its role has a flat `GRANT SELECT` on every table   not scoped per user, per row, or by ownership. There is no `auth.uid()`-style policy layer like real Supabase. Direct client-side PostgREST access lets every visitor read or corrupt every table in full, public data or not   there is nothing stopping them. This is why direct frontend database access is never used here (see the rule right below): edge functions are the only place `db.*` access is safe to grant.' +
+        '\n\n**ALL database work MUST go through edge functions   never call the database directly from frontend code, including read-only data.** Use `write_edge_function` for every read and write: user-specific/private data (orders, profiles, messages, anything with an owner), ALL writes (INSERT/UPDATE/DELETE from the browser bypasses any validation you meant to enforce), anything requiring authorization logic ("only the owner can see this"), AND plain public reads (a product catalog, public blog posts, a leaderboard)   there is no exception for "it\'s just public read-only data." The frontend must never construct a `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` fetch itself; every piece of data the UI needs comes from an edge function you write and the frontend invokes via the pattern below. Inside an edge function, `VITE_DB_API_URL` is never needed   the privileged `db.*` helper is already scoped to this project\'s isolated schema.' + liveSchemaBlock +
+        (hasSb ? ' This hosted database has NO auth/login server of its own   it is Postgres + PostgREST only. Never attempt to hit `VITE_DB_API_URL/auth/...`   that endpoint does not exist here; auth always goes through Supabase (above).' : '') +
+        '\n\n**Login/signup/password checks are SECURITY-CRITICAL and MUST be an edge function   never a direct client-side PostgREST call.** Querying `users?email=eq.X&password=eq.Y` straight from the browser puts the password in the URL (logged everywhere) and exposes the whole table to anyone with the anon key. Write an edge function that looks up the user via `db.select` and compares a HASHED password server-side; return only a session token/user object.\n' +
+        '\n\n**Edge functions**   use `write_edge_function` for server-side logic the browser should never run directly: auth/password checks (above), any user-specific or private data access, any write, code that needs a secret API key, webhook handlers, scheduled/triggered jobs, or any multi-step backend operation. Do NOT put that logic in frontend code just because it seems simpler   if it touches private/owned data, writes anything, needs a secret, touches passwords, or must run server-side, it MUST be an edge function. Inside the function, read saved secrets with the EXACT key name they were saved under, including a `VITE_` prefix if that\'s how it\'s stored   `secrets.VITE_DB_API_URL`, not `secrets.DB_API_URL`. Guessing a shortened name silently breaks every call in the function (the "secrets not configured" guard trips immediately) with no visible error until someone actually tests it. Check the actual secret list above instead of assuming a name (save new keys with `set_secret` first   never paste key values into function code or frontend files).\n' +
+        '\n\n**Writing an edge function is not the task   wiring it up is.** A function that exists in the database but that no frontend code ever calls does nothing; the app keeps using whatever it was using before, and it will look to the user like "the edge function isn\'t doing anything" even though the function itself is fine. Every time you write or update an edge function for an existing feature, in the SAME turn: (1) find every place in the frontend that currently does this work directly (a raw fetch, a `getDbUrl(...)` call, inline logic) and (2) replace it with an invoke call to the function, deleting the old direct-access code path. Never leave a newly written function orphaned while the old code keeps running.\n' +
+        '\n\n**Do not write a generic pass-through proxy** (e.g. one function that accepts an arbitrary `path`/`method`/`body` and forwards it straight to the database) as a way to satisfy "route through edge functions." That technically avoids a direct frontend fetch but adds zero real authorization or validation   it\'s functionally identical to direct client access, just relocated. Each edge function should implement one specific operation (or a small, named set of operations) with real server-side logic: check who\'s asking, validate the input, only allow what that specific operation actually needs.\n' +
+        'Invoke a written function from the frontend with:\n```ts\nconst res = await fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/api/v1/functions/<name>/invoke`, {\n  method: \'POST\',\n  headers: { \'Content-Type\': \'application/json\', apikey: import.meta.env.VITE_DB_ANON_KEY },\n  body: JSON.stringify({ params: { /* ... */ } }),\n});\n```\nNo project_id is needed   the anon key itself identifies which project\'s function to run.\n' +
+        'This endpoint is public and rate-limited (30 req/min)   it authenticates with the SAME `VITE_DB_ANON_KEY` used for the database, not a login session, so it works for anonymous visitors of the generated app, not just its owner.'
       : '';
     const ecgNote = hasEcg
-      ? '\n\n## eCG Agents Portal Integration\n\nThis project is linked to the eCG Agents Portal. Follow these rules strictly:\n\n**Frontend (React) code** — NEVER call the portal API directly from the browser. All portal data goes through the eComGear server proxy:\n```ts\n// In src/lib/ecgClient.ts — already configured\nconst url = `${import.meta.env.VITE_ECG_PROXY_URL}/api/v1/ecg-proxy${path}?projectId=${import.meta.env.VITE_PROJECT_ID}`;\n```\nUse `ecgApi` from `src/lib/ecgClient.ts` for all data fetching. Do not use `ECG_PORTAL_TOKEN` — it is server-side only.\n\n**Edge functions** — use the pre-injected `ecg` helper (not `fetch`). ECG credentials are injected server-side:\n```js\n// Agents\nconst agents = await ecg.get(\'/agents\');\n// Approve a post\nawait ecg.patch(\'/planned-posts/\' + params.postId, { status: \'approved\' });\n// Run history\nconst runs = await ecg.get(\'/runs\');\n// LLM call (uses the configured AI model, key stays server-side)\nconst reply = await ecg.llm([\n  { role: \'user\', content: \'Summarize agent performance\' }\n], \'You are an eCG assistant.\');\n```\n`ecg` is `null` for projects without portal integration — check before using.\n\n**AI chat** — the dashboard has a built-in `src/pages/ChatPage.tsx` (the "Assistant" nav tab, mounted at `/`) that calls `chat()` from `src/lib/ecgClient.ts`, which hits `/api/v1/ecg-chat` — an agentic tool-calling endpoint (list/create/run agents, approve/reject posts, trigger schedulers, etc., defined server-side in `ecg-chat.routes.ts`). Extend `ChatPage.tsx`/`ecg-chat.routes.ts`, do not duplicate it. Do not confuse this with `/api/v1/ecg-proxy/ai-chat` — that is a separate, tool-less plain LLM passthrough that the template does not use.\n\n**Security rule** — NEVER expose `ECG_PORTAL_TOKEN`, `ECG_LLM_API_KEY`, or any `ECG_*` secret in frontend code, logs, or responses.' +
-        (hasEcgMcp ? '\n\n**Knowledge base** — you have a `search_org_knowledge` tool. Use it to ground generated UI copy and content (brand voice, product descriptions, business context) in the organization\'s real knowledge instead of inventing generic placeholder text.' : '')
+      ? '\n\n## eCG Agents Portal Integration\n\nThis project is linked to the eCG Agents Portal. Follow these rules strictly:\n\n**Frontend (React) code**   NEVER call the portal API directly from the browser. All portal data goes through the eComGear server proxy:\n```ts\n// In src/lib/ecgClient.ts   already configured\nconst url = `${import.meta.env.VITE_ECG_PROXY_URL}/api/v1/ecg-proxy${path}?projectId=${import.meta.env.VITE_PROJECT_ID}`;\n```\nUse `ecgApi` from `src/lib/ecgClient.ts` for all data fetching. Do not use `ECG_PORTAL_TOKEN`   it is server-side only.\n\n**Edge functions**   use the pre-injected `ecg` helper (not `fetch`). ECG credentials are injected server-side:\n```js\n// Agents\nconst agents = await ecg.get(\'/agents\');\n// Approve a post\nawait ecg.patch(\'/planned-posts/\' + params.postId, { status: \'approved\' });\n// Run history\nconst runs = await ecg.get(\'/runs\');\n// LLM call (uses the configured AI model, key stays server-side)\nconst reply = await ecg.llm([\n  { role: \'user\', content: \'Summarize agent performance\' }\n], \'You are an eCG assistant.\');\n```\n`ecg` is `null` for projects without portal integration   check before using.\n\n**AI chat**   the dashboard has a built-in `src/pages/ChatPage.tsx` (the "Assistant" nav tab, mounted at `/`) that calls `chat()` from `src/lib/ecgClient.ts`, which hits `/api/v1/ecg-chat`   an agentic tool-calling endpoint (list/create/run agents, approve/reject posts, trigger schedulers, etc., defined server-side in `ecg-chat.routes.ts`). Extend `ChatPage.tsx`/`ecg-chat.routes.ts`, do not duplicate it. Do not confuse this with `/api/v1/ecg-proxy/ai-chat`   that is a separate, tool-less plain LLM passthrough that the template does not use.\n\n**Security rule**   NEVER expose `ECG_PORTAL_TOKEN`, `ECG_LLM_API_KEY`, or any `ECG_*` secret in frontend code, logs, or responses.' +
+        (hasEcgMcp ? '\n\n**Knowledge base**   you have a `search_org_knowledge` tool. Use it to ground generated UI copy and content (brand voice, product descriptions, business context) in the organization\'s real knowledge instead of inventing generic placeholder text.' : '')
       : '';
 
-    const noHardcodeRule = '\n\n**NEVER hardcode any secret value from this list as a string literal anywhere in generated code — not even as a fallback/default for a missing env var (e.g. `getEnvVar(\'X\', \'<real value>\')`).** Always reference `import.meta.env.VITE_XXX` / `process.env.XXX` directly. A hardcoded fallback that happens to be a real credential from THIS project can end up copied into a DIFFERENT project by mistake, silently pointing that other project at this one\'s database or auth — this has happened before. If an env var might be missing, fail loudly (throw/log an error) instead of falling back to a real value.' +
-      '\n\n**The same rule applies to EcomGear platform URLs.** `api.ecomgear.dev`, `gen.ecomgear.dev`, `preview.ecomgear.app`, and `apps.ecomgear.app` are EcomGear\'s own infrastructure servers — they are NOT part of the user\'s app and must NEVER appear as string literals in generated code, not even as env-var fallbacks like `import.meta.env.X || \'https://api.ecomgear.dev\'`. The hosted database endpoint (`db.ecomgear.app` / `cloud.ecomgear.app`) is only ever reached through `import.meta.env.VITE_DB_API_URL` — never hardcode it either. Never invent placeholder values like `\'dummy\'` for keys. If an integration\'s env var is NOT in the list below, that integration is not configured for this project — do not guess a URL or key; tell the user what needs to be set up instead.';
+    const noHardcodeRule = '\n\n**NEVER hardcode any secret value from this list as a string literal anywhere in generated code   not even as a fallback/default for a missing env var (e.g. `getEnvVar(\'X\', \'<real value>\')`).** Always reference `import.meta.env.VITE_XXX` / `process.env.XXX` directly. A hardcoded fallback that happens to be a real credential from THIS project can end up copied into a DIFFERENT project by mistake, silently pointing that other project at this one\'s database or auth   this has happened before. If an env var might be missing, fail loudly (throw/log an error) instead of falling back to a real value.' +
+      '\n\n**The same rule applies to EcomGear platform URLs.** `api.ecomgear.dev`, `gen.ecomgear.dev`, `preview.ecomgear.app`, and `apps.ecomgear.app` are EcomGear\'s own infrastructure servers   they are NOT part of the user\'s app and must NEVER appear as string literals in generated code, not even as env-var fallbacks like `import.meta.env.X || \'https://api.ecomgear.dev\'`. The hosted database endpoint (`db.ecomgear.app` / `cloud.ecomgear.app`) is only ever reached through `import.meta.env.VITE_DB_API_URL`   never hardcode it either. Never invent placeholder values like `\'dummy\'` for keys. If an integration\'s env var is NOT in the list below, that integration is not configured for this project   do not guess a URL or key; tell the user what needs to be set up instead.';
 
-    return `\n\n# Project Environment Variables\n\nThe following secrets are available as \`import.meta.env.VITE_XXX\` (frontend) or \`process.env.XXX\` (backend). NEVER echo, print, log, or reveal their values in chat responses — treat them as confidential.${noHardcodeRule}${sbNote}${dbNote}${ecgNote}\n\n\`\`\`\n${lines}\n\`\`\``;
+    return `\n\n# Project Environment Variables\n\nThe following secrets are available as \`import.meta.env.VITE_XXX\` (frontend) or \`process.env.XXX\` (backend). NEVER echo, print, log, or reveal their values in chat responses   treat them as confidential.${noHardcodeRule}${sbNote}${dbNote}${ecgNote}\n\n\`\`\`\n${lines}\n\`\`\``;
   })();
 
   // micro: no modeInstruction (MICRO_SYSTEM_PROMPT already embeds directives)
-  // edit: compact instruction — no phased build, no verbose rules (saves ~1,500 tokens)
-  // plan mode always wins — tier instructions must never override plan-mode restrictions
-  const EDIT_MODE_INSTRUCTION = '\n\n# Runtime Mode Instruction\nExecute immediately — start with tool calls directly. Do NOT write any text before your first tool call. No "I\'ll...", no "Let me...", no acknowledgments before tools. Do NOT ask for confirmation. Do NOT rewrite files not involved in the change. If intent is unclear, ask one short question before calling tools.\n\n**Progress narration (REQUIRED)** — after each file you edit or create, write one short sentence telling the user what you just changed and what you\'re doing next. Example: "Updated the header in Navbar.tsx — now fixing the color in HeroBanner.tsx." This keeps the user informed while you work.\n\n**REQUIRED final message** — once all changes are done, write AT LEAST 2 full sentences. Start with "I\'ve [verb]..." and name the files and exact changes. Then explain what the user will see differently. FORBIDDEN: "Done.", "OK.", "Updated.", any single word, or any message shorter than 15 words.';
+  // edit: compact instruction   no phased build, no verbose rules (saves ~1,500 tokens)
+  // plan mode always wins   tier instructions must never override plan-mode restrictions
+  const EDIT_MODE_INSTRUCTION = '\n\n# Runtime Mode Instruction\nExecute immediately   start with tool calls directly. Do NOT write any text before your first tool call. No "I\'ll...", no "Let me...", no acknowledgments before tools. Do NOT ask for confirmation. Do NOT rewrite files not involved in the change. If intent is unclear, ask one short question before calling tools.\n\n**Progress narration (REQUIRED)**   after each file you edit or create, write one short sentence telling the user what you just changed and what you\'re doing next. Example: "Updated the header in Navbar.tsx   now fixing the color in HeroBanner.tsx." This keeps the user informed while you work.\n\n**REQUIRED final message**   once all changes are done, write AT LEAST 2 full sentences. Start with "I\'ve [verb]..." and name the files and exact changes. Then explain what the user will see differently. FORBIDDEN: "Done.", "OK.", "Updated.", any single word, or any message shorter than 15 words.';
   const effectiveModeInstruction = runtimeMode === 'plan' ? modeInstruction
     : _tier === 'micro' ? ''
     : _tier === 'edit' ? EDIT_MODE_INSTRUCTION
@@ -1116,8 +1116,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       ? `\n\n# Earlier Conversation Summary\n\nThis is a summary of older messages in this conversation. Use it to maintain continuity:\n\n${boundedOlderSummary}`
       : '') +
     (boundedFileTree
-      ? `\n\n# Project File Tree\n\nThese are ALL the files currently on disk. This is authoritative — if a file is not listed here, it does NOT exist. Use this to verify imports and plan which files to create or edit.\n\n\`\`\`\n${boundedFileTree}\n\`\`\``
-      : '\n\n# Project File Tree\n\nThe project directory is empty — this is a fresh project. You must create all files from scratch.') +
+      ? `\n\n# Project File Tree\n\nThese are ALL the files currently on disk. This is authoritative   if a file is not listed here, it does NOT exist. Use this to verify imports and plan which files to create or edit.\n\n\`\`\`\n${boundedFileTree}\n\`\`\``
+      : '\n\n# Project File Tree\n\nThe project directory is empty   this is a fresh project. You must create all files from scratch.') +
     (effectiveFilesContext
       ? `\n\n# Current Project File Contents\n\nFocused previews of the most relevant project files. Use these to get oriented quickly, then call \`read_file\` for any file you need in full before editing.\n\n${effectiveFilesContext}${_tier !== 'micro' ? truncatedFilesNote + excludedFilesNote : ''}`
       : '') +
@@ -1138,14 +1138,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   const systemPrompt = enforcePlanMode(assemblePrompt(staticSystemPrompt));
   const dynamicContext = enforcePlanMode(assemblePrompt(''));
 
-  // Per-run brain memory — survives context compaction across steps.
+  // Per-run brain memory   survives context compaction across steps.
   // Hoisted above the Gemini cache block because buildToolSet needs it.
   const brainMemory: string[] = [];
   const toolSet = runtimeMode === 'plan' ? undefined : buildToolSet(ctx, brainMemory, _tier);
 
   // ── Gemini run-level context cache ───────────────────────────────────────
-  // Plan mode has no tools — cache just the system prompt (createGeminiRunCache).
-  // Build/edit/fix/feature modes have tools — Gemini rejects generateContent
+  // Plan mode has no tools   cache just the system prompt (createGeminiRunCache).
+  // Build/edit/fix/feature modes have tools   Gemini rejects generateContent
   // requests that pass tools alongside cachedContent, so those must be baked
   // into the cache itself (createGeminiToolCache). The stripToolsForCache
   // middleware then removes `tools` from the outbound wire request while
@@ -1155,12 +1155,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // DISABLED (production incident): Gemini's cachedContent API rejects ANY
   // generateContent request that also sets system_instruction, tools, OR
   // tool_config. The AI SDK's `system` param always becomes system_instruction
-  // when non-empty — so there is no way to send per-request dynamic context
+  // when non-empty   so there is no way to send per-request dynamic context
   // (file tree, project files) through `system` while a tool-cache is active.
   // Sending dynamicContext via `system` (as the previous fix attempted) hit
   // this exact 400 in production. Reusing a cache correctly requires routing
   // dynamic content through `messages` instead of `system`, which is a real
-  // rework, not a hotfix — disabling the tool-cache path entirely until that
+  // rework, not a hotfix   disabling the tool-cache path entirely until that
   // lands. Plan mode is unaffected (never sends tools, so no conflict there).
   const geminiToolCacheName: string | null = null;
   if (providerName === 'gemini' && runtimeMode === 'plan') {
@@ -1170,7 +1170,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     }
   }
   // Wrap the provider so the outbound request omits `tools`/`toolConfig`
-  // whenever a tool cache is active — only affects the wire request, not
+  // whenever a tool cache is active   only affects the wire request, not
   // local tool-call dispatch (streamText still receives `tools: toolSet` below).
   const streamingProvider = geminiToolCacheName
     ? wrapLanguageModel({ model: aiProvider, middleware: createStripToolsForCacheMiddleware() })
@@ -1181,25 +1181,25 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // frozen once for the originally-requested provider. Bug found live
   // 2026-07-14: a Gemini→Claude fallback (happening on most runs while
   // Gemini's billing circuit trips) reused the Gemini-shaped system message
-  // (no cacheControl) even though Claude was the one actually executing —
+  // (no cacheControl) even though Claude was the one actually executing  
   // every fallback-to-Claude run paid full price with zero cache hits,
   // silently, for however long this had been wrong.
   function buildSystemMessagesFor(pName: string): Array<{ role: 'system'; content: string; providerOptions?: Record<string, any> }> {
     if (pName === 'anthropic') {
       return [
-        // Static part — cached by Anthropic (identical across all requests)
+        // Static part   cached by Anthropic (identical across all requests)
         {
           role: 'system' as const,
           content: staticSystemPrompt,
           providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
         },
-        // Dynamic part — changes per request (file tree, project files, attachments)
+        // Dynamic part   changes per request (file tree, project files, attachments)
         // Also cached: it's stable across all steps of this run, so subsequent steps are cache hits.
         ...(dynamicContext.trim() ? [{ role: 'system' as const, content: dynamicContext, providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } }] : []),
       ];
     }
     return geminiRunCacheName
-      ? [] // plan mode: the FULL system prompt lives in the cache — sending it again would conflict
+      ? [] // plan mode: the FULL system prompt lives in the cache   sending it again would conflict
       : [{ role: 'system' as const, content: systemPrompt }];
   }
   const systemMessages = buildSystemMessagesFor(providerName);
@@ -1228,18 +1228,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
   const agentTimeoutId = AGENT_TIMEOUT_MS > 0 ? setTimeout(async () => {
     if (abortController.signal.aborted) return;
-    console.warn(`[AgentLoop] Timeout hit after ${AGENT_TIMEOUT_MS}ms — salvaging files before aborting`);
+    console.warn(`[AgentLoop] Timeout hit after ${AGENT_TIMEOUT_MS}ms   salvaging files before aborting`);
 
     try {
       // Prefer the known-clean pre-agent snapshot over a fresh disk scan. A
-      // fresh scan can catch the project mid-repair — e.g. after a mechanical
-      // brace-balancer has already run but before the repair loop finished —
+      // fresh scan can catch the project mid-repair   e.g. after a mechanical
+      // brace-balancer has already run but before the repair loop finished  
       // and would ship that half-broken intermediate state as if it were a
       // safe "partial progress" checkpoint. The pre-agent snapshot is always
       // syntactically valid (it's whatever was on disk before this run
       // touched anything), so on timeout it's the safer choice whenever it's
       // a FULL snapshot. It's only partial for the micro tier (single
-      // mentioned file only) — using a partial file set here would delete
+      // mentioned file only)   using a partial file set here would delete
       // the rest of the project on the next fullSync, so micro tier keeps
       // the original disk-scan fallback.
       const useCleanSnapshot = _tier !== 'micro' && preAgentDiskSnapshot.size > 0;
@@ -1325,7 +1325,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     };
     let streamError: any = null;
 
-    // Only snapshot in build mode — plan mode never touches files so there's nothing to restore.
+    // Only snapshot in build mode   plan mode never touches files so there's nothing to restore.
     const snapshotId = runtimeMode !== 'plan' ? `${projectId}_${randomUUID().replace(/-/g, '')}` : null;
     const snapshotDir = snapshotId ? path.join(SNAPSHOTS_DIR, snapshotId) : null;
     if (snapshotDir) {
@@ -1371,11 +1371,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // across recent runs, some individual calls running 9x over their own
     // stated word budget. `clear_thinking_20251015` uses Anthropic's own
     // server-side context management to drop old thinking turns instead of
-    // them accumulating in history forever — deliberately NOT touching the
+    // them accumulating in history forever   deliberately NOT touching the
     // existing compactStepMessages/tool-use compaction in this pass; mixing
     // native and hand-rolled compaction in the same change is a separate,
     // riskier step. The `think` TOOL stays in the toolset (used by non-
-    // Anthropic providers, and as a fallback) — this is additive, not a
+    // Anthropic providers, and as a fallback)   this is additive, not a
     // removal, so a mid-run provider fallback away from Anthropic loses
     // nothing.
     const anthropicProviderOptions = {
@@ -1389,7 +1389,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     const attemptStream = async (provider: any, attempt: number, pName = providerName): Promise<ReturnType<typeof streamText>> => {
       // DeepSeek caps max_tokens at 8192; other providers can handle 16384+.
-      // Anthropic gets extra headroom when native thinking is active — thinking
+      // Anthropic gets extra headroom when native thinking is active   thinking
       // and the actual response (tool calls, file content) share the same
       // maxOutputTokens ceiling, and a large write_file competing with thinking
       // for the same 16384-token budget raises real truncation risk on exactly
@@ -1410,13 +1410,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         maxOutputTokens: outputLimit,
         maxRetries: 0, // We handle retries + fallback ourselves
         // stuckAnalysisAbortReason is a closure over a `let` set inside
-        // onStepFinish — checking it here (SDK's own between-steps stop hook)
+        // onStepFinish   checking it here (SDK's own between-steps stop hook)
         // is what actually prevents a new step from being dispatched at all.
         // abortController.abort() alone is NOT enough: it doesn't stop the SDK
         // from starting one more full (billed) step already in flight, whose
-        // tool call then gets silently discarded once the abort is noticed —
+        // tool call then gets silently discarded once the abort is noticed  
         // confirmed live 2026-07-14: step 7 called write_file, cost $0.16,
-        // and the run still reported "No file operations — skipping preview
+        // and the run still reported "No file operations   skipping preview
         // push" because that step's execute() never actually ran.
         stopWhen: [stepCountIs(MAX_STEPS), () => stuckAnalysisAbortReason !== null],
         abortSignal: abortController.signal,
@@ -1435,18 +1435,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const shouldWarnLowSteps = stepNumber === LOW_STEPS_THRESHOLD;
           const stepsLeft = MAX_STEPS - stepNumber;
           const lowStepsWarning = shouldWarnLowSteps
-            ? `\n\n⚠️ STEP BUDGET WARNING: You have ${stepsLeft} steps remaining (used ${stepNumber}/${MAX_STEPS}).\n\nIMMEDIATE PRIORITY — check the file tree right now:\n1. If src/App.tsx is still the Welcome stub → write all missing page files THEN write src/App.tsx IMMEDIATELY. Do NOT write more utility or component files first.\n2. If pages exist but App.tsx is missing routes → fix App.tsx NOW.\n3. If App.tsx is complete → continue normal work.\n\nDo NOT let the step limit expire without writing a proper src/App.tsx. A partial build = broken preview.`
+            ? `\n\n⚠️ STEP BUDGET WARNING: You have ${stepsLeft} steps remaining (used ${stepNumber}/${MAX_STEPS}).\n\nIMMEDIATE PRIORITY   check the file tree right now:\n1. If src/App.tsx is still the Welcome stub → write all missing page files THEN write src/App.tsx IMMEDIATELY. Do NOT write more utility or component files first.\n2. If pages exist but App.tsx is missing routes → fix App.tsx NOW.\n3. If App.tsx is complete → continue normal work.\n\nDo NOT let the step limit expire without writing a proper src/App.tsx. A partial build = broken preview.`
             : '';
 
           // Mark the second-to-last message as an Anthropic cache breakpoint on every
           // step. Without this, only the pre-run `history` ever got a cache_control
-          // marker (see conversationMessages setup above) — everything this run's OWN
+          // marker (see conversationMessages setup above)   everything this run's OWN
           // steps add (tool calls, tool results, think text) was resent uncached on
           // every subsequent step, even once compaction made it byte-stable. Confirmed
           // live 2026-07-15: Claude-fallback runs showed cacheR flat at the pre-run
           // history size across all 9 steps of a run, never growing, while `in` climbed
-          // 22k→45k — the run's own history was never once served from cache. Marking
-          // the second-to-last message (not the last — the last is what THIS step is
+          // 22k→45k   the run's own history was never once served from cache. Marking
+          // the second-to-last message (not the last   the last is what THIS step is
           // about to respond to, still being read fresh) lets the next step's request
           // hit cache for everything up to here, as long as compaction left it unchanged.
           const markAnthropicBreakpoint = (arr: Array<any>): Array<any> => {
@@ -1462,7 +1462,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // Append at the very end rather than splicing into the middle of the
             // conversation. The journal changes every step (it embeds the step
             // counter), so splicing it mid-history broke the Anthropic/Gemini
-            // prompt-cache prefix on every step — the model re-paid full price
+            // prompt-cache prefix on every step   the model re-paid full price
             // for the entire conversation instead of getting a cache hit on
             // everything before this step. Appending keeps that whole prefix
             // byte-identical across steps; only this trailing message is new.
@@ -1481,7 +1481,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           return isAnthropicModel ? { messages: markAnthropicBreakpoint(messages) } : {};
         },
         // NOTE: AI SDK v6 renamed `experimental_providerMetadata` to `providerMetadata`
-        // (see ai/dist/index.d.ts's StepResult type) — reading the old name here
+        // (see ai/dist/index.d.ts's StepResult type)   reading the old name here
         // silently always returned undefined, so cache stats (cacheR/cacheW) were
         // always logged as 0 regardless of whether Anthropic actually cached anything.
         onStepFinish: ({ text, toolCalls, toolResults, usage, providerMetadata, reasoningText }: any) => {
@@ -1490,7 +1490,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const toolNames = (toolCalls ?? []).map((tc: any) => tc.toolName);
           // NOTE: AI SDK v6 renamed the tool-result field from `result` to `output`
           // (StaticToolResult/DynamicToolResult in ai/dist/index.d.ts). Both checks
-          // below read `.output` — reading `.result` here would silently always be
+          // below read `.output`   reading `.result` here would silently always be
           // undefined and never match, which is exactly what happened before.
           const failedEdits = (toolResults ?? [])
             .filter((tr: any) => typeof tr?.output === 'string' && tr.output.startsWith('Error'))
@@ -1521,20 +1521,20 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               circuitBreakerNote =
                 `⚠️ REPEATED FAILURE DETECTED: "${toolName}" has now failed ${streak.count} times in a row ` +
                 `with the EXACT SAME error:\n\n"${streak.message.slice(0, 300)}"\n\n` +
-                `Retrying the same call again will almost certainly fail the same way — this is a structural ` +
+                `Retrying the same call again will almost certainly fail the same way   this is a structural ` +
                 `problem (wrong approach, wrong tier/table, a platform limitation), not something that will ` +
                 `resolve by repeating the identical action. STOP retrying this exact approach. Either: ` +
                 `(a) diagnose the actual root cause and try something fundamentally different, or ` +
                 `(b) tell the user plainly that this is blocked and why, instead of continuing to retry silently.`;
               // Reset so this doesn't re-fire every single step if the model
-              // (correctly) keeps trying variations that still happen to fail —
+              // (correctly) keeps trying variations that still happen to fail  
               // only re-trip after another full streak of identical repeats.
               toolFailureStreak.delete(toolName);
             }
           }
 
           // ── Stuck-analysis detector: no successful write/edit for N steps ──
-          // Must recognize EVERY state-modifying tool, not just write_file/edit_file —
+          // Must recognize EVERY state-modifying tool, not just write_file/edit_file  
           // a run that's productively calling write_edge_function repeatedly (e.g.
           // building 6 edge functions in a row) was being misclassified as "stuck"
           // and hard-stopped mid-way, even though each call was succeeding. Confirmed
@@ -1554,6 +1554,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           if (hadSuccessfulWriteThisStep) {
             stepsSinceLastWrite = 0;
             anySuccessfulWriteThisRun = true;
+            // A successful write proves the model isn't stuck — any nudge fired
+            // during an earlier, now-resolved investigation phase shouldn't count
+            // against a later, unrelated one. Without this reset, a run that
+            // investigates for 3 steps, writes successfully, then investigates
+            // the NEXT file for 3 more steps (completely normal multi-file work)
+            // hits the hard-stop on the second phase purely because it "used up"
+            // its nudge budget on the first — killing productive runs, not stuck ones.
+            stuckAnalysisFireCount = 0;
           } else {
             stepsSinceLastWrite++;
           }
@@ -1570,7 +1578,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             thinkStreakNoteFiredAt = stepCount;
             const thinkStreakNote =
               `You've called \`think\` ${consecutiveThinkOnlySteps} times in a row with no other tool in between. ` +
-              `If you already worked out what to change, stop reasoning and call write_file/edit_file/etc. now — ` +
+              `If you already worked out what to change, stop reasoning and call write_file/edit_file/etc. now   ` +
               `don't re-derive the same conclusion again. If you genuinely need to keep exploring across several ` +
               `steps, call \`save_memory\` with the key facts now so you don't have to re-think them next step.`;
             circuitBreakerNote = circuitBreakerNote ? `${circuitBreakerNote}\n\n${thinkStreakNote}` : thinkStreakNote;
@@ -1578,11 +1586,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
           // ── Over-budget think nudge ─────────────────────────────────────────
           // think.ts's own description sets a 60/400-word budget depending on task
-          // size, but that's just prompt text — nothing enforces it. Confirmed live
+          // size, but that's just prompt text   nothing enforces it. Confirmed live
           // 2026-07-15: a single think call ran to 4,661 OUTPUT tokens (~3,500+
           // words), ~9x over even the 400-word ceiling, on a step that produced zero
           // code. Can't un-bill tokens already generated, but a same-run corrective
-          // nudge measurably shortens the NEXT think call — cheaper than hoping the
+          // nudge measurably shortens the NEXT think call   cheaper than hoping the
           // static prompt line gets followed, which it evidently isn't.
           const OVERBUDGET_WORD_THRESHOLD = 600;
           for (const tc of (toolCalls ?? []) as any[]) {
@@ -1592,7 +1600,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const wordCount = thought.trim().split(/\s+/).filter(Boolean).length;
             if (wordCount > OVERBUDGET_WORD_THRESHOLD) {
               const overBudgetNote =
-                `Your last \`think\` call was ~${wordCount} words — way over the 60/400-word budget in that tool's ` +
+                `Your last \`think\` call was ~${wordCount} words   way over the 60/400-word budget in that tool's ` +
                 `own instructions. Long reasoning text doesn't improve the outcome and burns real cost. Keep future ` +
                 `think calls to short bullet points, not prose paragraphs.`;
               circuitBreakerNote = circuitBreakerNote ? `${circuitBreakerNote}\n\n${overBudgetNote}` : overBudgetNote;
@@ -1600,13 +1608,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             }
           }
           // Budget-aware early exit: with prompt caching disabled (cacheR is
-          // consistently 0 — see cost audit), every step re-pays for the FULL
+          // consistently 0   see cost audit), every step re-pays for the FULL
           // context from scratch, so cumulative usage can compound past the
           // token cap well before STUCK_ANALYSIS_HARD_STOP_FIRINGS worth of
           // steps elapses (observed 2026-07-12: cap hit at step 12, before the
           // 3rd nudge at step 18 could ever fire). If we're already stuck AND
           // already deep into the budget, don't wait for more nudges to be
-          // ignored — stop now, before the run burns the rest for nothing.
+          // ignored   stop now, before the run burns the rest for nothing.
           const stuckAndBudgetCritical =
             stepsSinceLastWrite >= STUCK_ANALYSIS_THRESHOLD && runTokens.total > RUN_TOKEN_CAP * 0.65;
           if (
@@ -1631,7 +1639,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 `⚠️ STUCK IN ANALYSIS: You've spent ${stepsSinceLastWrite} steps reading/checking/reasoning without ` +
                 `a single write_file or edit_file actually landing. Re-reading the same file or re-stating the same ` +
                 `diagnosis in different words is NOT progress. Right now, on your very next step: either call ` +
-                `write_file/edit_file with your best understanding of the fix — even if you're not 100% certain — or, ` +
+                `write_file/edit_file with your best understanding of the fix   even if you're not 100% certain   or, ` +
                 `if you genuinely cannot determine the fix, STOP and tell the user plainly what's blocking you instead ` +
                 `of continuing to investigate silently. This is your final warning before the run is stopped automatically.`;
               circuitBreakerNote = circuitBreakerNote ? `${circuitBreakerNote}\n\n${stuckNote}` : stuckNote;
@@ -1640,10 +1648,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
           // ── Surface real agent reasoning to the UI ──────────────────────
           // The `think` tool's actual argument (the model's real reasoning) used
-          // to be discarded entirely — thinkTool.execute ignores its args and just
+          // to be discarded entirely   thinkTool.execute ignores its args and just
           // returns "OK", so the user never saw real thinking, only generic canned
           // status strings. Emit it as a dedicated, live-only SSE event so the
-          // frontend can show the real content transiently — never persisted to
+          // frontend can show the real content transiently   never persisted to
           // the saved chat transcript.
           for (const tc of (toolCalls ?? []) as any[]) {
             if (tc?.toolName === 'think' && tc?.input?.thought) {
@@ -1651,7 +1659,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             }
           }
           // Native Anthropic extended-thinking text (see anthropicProviderOptions
-          // above) — same SSE event as the think tool, so the frontend needs no
+          // above)   same SSE event as the think tool, so the frontend needs no
           // changes to display it. Only present on steps where Claude actually
           // used native reasoning in place of (or alongside) a think tool call.
           if (typeof reasoningText === 'string' && reasoningText.trim()) {
@@ -1662,15 +1670,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const stepInpRaw = (usage?.promptTokens     ?? usage?.inputTokens     ?? 0) as number;
           const stepOut    = (usage?.completionTokens ?? usage?.outputTokens    ?? 0) as number;
           const { cacheRead: stepCacheR, cacheWrite: stepCacheW } = extractCacheUsage(providerMetadata);
-          // Gemini reports promptTokens as the FULL prompt (fresh + cached combined) —
+          // Gemini reports promptTokens as the FULL prompt (fresh + cached combined)  
           // cachedContentTokenCount is a SUBSET of it, not an additional amount. Anthropic
           // is the opposite: input_tokens is fresh-only, cache_read_input_tokens is a
           // genuinely separate additive count (confirmed against @ai-sdk/anthropic's own
-          // convertAnthropicMessagesUsage — inputTokens = usage.input_tokens directly, no
+          // convertAnthropicMessagesUsage   inputTokens = usage.input_tokens directly, no
           // cache folded in). Adding stepInpRaw AND stepCacheR into the running total
-          // unconditionally double-counted every Gemini cache-read token — confirmed live
+          // unconditionally double-counted every Gemini cache-read token   confirmed live
           // 2026-07-15: a run logged cost $1.0018, but recomputing with cache correctly
-          // treated as a subset (not additive) gives $0.4826 — the buggy formula was
+          // treated as a subset (not additive) gives $0.4826   the buggy formula was
           // inflating Gemini run cost by ~2x, silently, since Gemini caching started
           // working. This has been true since before today's token-cap change; the cap
           // increase just made the inflated total visible sooner by letting runs go longer.
@@ -1686,7 +1694,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const runCost     = calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens);
 
           // Status narration is now handled in real-time by the status service
-          // (generateStatus) on each tool-call stream part — see the tool-call
+          // (generateStatus) on each tool-call stream part   see the tool-call
           // handler in consumeResultStream. The step-finish event below carries
           // token accounting only; no canned status string is emitted here.
 
@@ -1721,7 +1729,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const reason = runCost > HARD_COST_CAP
               ? `cost cap $${HARD_COST_CAP} hit ($${runCost.toFixed(3)} spent)`
               : `token cap ${RUN_TOKEN_CAP} hit (${runTokens.total} used)`;
-            console.warn(`[AgentLoop] Run aborted — ${reason} (user=${userId ?? 'unknown'})`);
+            console.warn(`[AgentLoop] Run aborted   ${reason} (user=${userId ?? 'unknown'})`);
             budgetAbortReason = reason;
             generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
               if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
@@ -1746,7 +1754,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             }
           } else if (part.type === 'tool-call') {
             // ── Real-time narration microservice ──────────────────────────
-            // The model just decided to call a tool — narrate it NOW, in human
+            // The model just decided to call a tool   narrate it NOW, in human
             // words, before the tool runs. Captures think() reasoning so the
             // narrator is grounded in the agent's actual intent. Fire-and-forget,
             // 2.5s capped, never blocks the stream.
@@ -1765,7 +1773,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           } else if (part.type === 'finish') {
             lastFinishReason = (part as any).finishReason;
             outerFinishReason = lastFinishReason;
-            // Final overall finish — log cumulative run totals (onStepFinish already
+            // Final overall finish   log cumulative run totals (onStepFinish already
             // captured per-step detail; this is the authoritative end-of-run summary).
             const u    = (part as any).usage;
             const finishCache = extractCacheUsage((part as any).providerMetadata);
@@ -1784,7 +1792,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               (userId ? ` | user=${userId}` : '') +
               (agentRunId ? ` | runId=${agentRunId}` : ''),
             );
-            // Warn when model produces nothing — helps diagnose Gemini empty-response issues
+            // Warn when model produces nothing   helps diagnose Gemini empty-response issues
             if (totalOut === 0) {
               console.warn(
                 `[AgentLoop] ⚠️  Model produced 0 output tokens (finishReason=${lastFinishReason ?? 'unknown'}).` +
@@ -1812,28 +1820,28 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         result = await attemptStream(streamingProvider, attempt);
-        // Test the stream by consuming the first chunk — if it throws, we catch it here
+        // Test the stream by consuming the first chunk   if it throws, we catch it here
         lastStreamError = null;
         break;
       } catch (err: any) {
         lastStreamError = err;
         if (abortController.signal.aborted) throw err; // Don't retry on abort
         if (providerName === 'anthropic' && isRateLimitError(err)) {
-          console.warn('[AgentLoop] Anthropic rate-limited — skipping same-provider retries and switching to fallback');
+          console.warn('[AgentLoop] Anthropic rate-limited   skipping same-provider retries and switching to fallback');
           generateStatus(projectId, { kind: 'lifecycle', phase: 'provider-fallback' }).then((s) => {
             if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
           }).catch(() => {});
           break;
         }
-        // Network errors (DNS, connection refused) won't resolve with retries — go straight to fallback.
+        // Network errors (DNS, connection refused) won't resolve with retries   go straight to fallback.
         if (isNetworkError(err)) {
-          console.warn(`[AgentLoop] Network error on ${providerName} — skipping retries, going to fallback: ${err?.message}`);
+          console.warn(`[AgentLoop] Network error on ${providerName}   skipping retries, going to fallback: ${err?.message}`);
           break;
         }
-        // Auth/billing errors (org disabled, 401, 403) won't resolve with retries — go straight to fallback.
+        // Auth/billing errors (org disabled, 401, 403) won't resolve with retries   go straight to fallback.
         if (isAuthOrBillingError(err)) {
           tripBillingCircuit(providerName);
-          console.warn(`[AgentLoop] Auth/billing error on ${providerName} — circuit-breaking provider for this session: ${err?.message}`);
+          console.warn(`[AgentLoop] Auth/billing error on ${providerName}   circuit-breaking provider for this session: ${err?.message}`);
           break;
         }
         if (!isRetryableError(err) || attempt === MAX_RETRIES) break;
@@ -1841,7 +1849,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // If retry-after is meaningfully long it's better to fall back than hold the UI open.
         const retryAfterMs = isRateLimitError(err) ? getRetryAfterMs(err) : null;
         if (retryAfterMs !== null && retryAfterMs > 10_000) {
-          console.warn(`[AgentLoop] Rate limit: retry-after=${Math.ceil(retryAfterMs / 1000)}s — skipping retries, trying fallback providers`);
+          console.warn(`[AgentLoop] Rate limit: retry-after=${Math.ceil(retryAfterMs / 1000)}s   skipping retries, trying fallback providers`);
           break;
         }
         // Other retryable errors (500/529/overloaded) use shorter backoff (2s/4s/8s).
@@ -1895,7 +1903,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       let errMsg = 'Model orchestration exhausted all available providers. Please try again.';
       if (isRateLimit && retryAfterMs && retryAfterMs > 30_000) {
         const waitSec = Math.ceil(retryAfterMs / 1000);
-        errMsg = `AI rate limit exceeded — too many tokens this minute. Please wait ~${waitSec} seconds and try again.`;
+        errMsg = `AI rate limit exceeded   too many tokens this minute. Please wait ~${waitSec} seconds and try again.`;
       } else if (lastStreamError) {
         const detail = sanitizeErrorMessage(lastStreamError);
         errMsg = `${errMsg} Last provider error: ${detail}`;
@@ -1952,7 +1960,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // If the timeout handler already sent a 'done' event, suppress re-throwing so the
       // route-level catch doesn't emit a second 'error' SSE that overwrites the done result.
       if (timeoutDoneSent || (streamError as any)?.isAgentTimeout) {
-        console.log('[AgentLoop] Timeout abort — swallowing streamError, done already sent.');
+        console.log('[AgentLoop] Timeout abort   swallowing streamError, done already sent.');
         return { filesToWrite: [], filesToDelete: [], renames: [], dependencies: [], summary: '' };
       }
       throw streamError;
@@ -1961,7 +1969,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // ─── Hallucinated-completion guard ──────────────────────────────────────
     // Some runs end with the model narrating a file change in prose ("I've
     // updated X to do Y") without ever calling write_file/edit_file, and
-    // without the legacy <ecomgear-write> tag protocol either — i.e. nothing
+    // without the legacy <ecomgear-write> tag protocol either   i.e. nothing
     // was actually saved, but the text reads exactly like a real completion.
     // Detect that specific pattern and force one corrective continuation
     // (spending steps we already have budget for) instead of silently
@@ -1974,7 +1982,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     if (runtimeMode !== 'plan' && !wroteAnythingSoFar && !hasLegacyWriteTags && claimsCompletedEdit
         && stepsRemaining >= 3 && !abortController.signal.aborted) {
-      console.warn(`[AgentLoop] Hallucinated completion claim detected (zero writes, text claims a change) — forcing corrective continuation. user=${userId ?? 'unknown'}`);
+      console.warn(`[AgentLoop] Hallucinated completion claim detected (zero writes, text claims a change)   forcing corrective continuation. user=${userId ?? 'unknown'}`);
       generateStatus(projectId, { kind: 'lifecycle', phase: 'post-gen-verify' }).then((s) => {
         if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
       }).catch(() => {});
@@ -1984,7 +1992,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         { role: 'assistant' as const, content: accumulatedText },
         {
           role: 'user' as const,
-          content: 'You just described a code change but never called write_file or edit_file — nothing was actually saved. ' +
+          content: 'You just described a code change but never called write_file or edit_file   nothing was actually saved. ' +
             'If you intended to make that change, call the appropriate tool now to actually apply it. ' +
             'If you cannot or should not make the change, say so plainly instead of describing it as already done.',
         },
@@ -2006,7 +2014,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // ─── Empty-response guard ────────────────────────────────────────────────
     // Some provider failures (Gemini safety block, malformed function-call
     // response, etc.) end the stream with a `finish` part carrying finishReason
-    // 'error'/'content-filter'/'other' WITHOUT throwing — the run "succeeds"
+    // 'error'/'content-filter'/'other' WITHOUT throwing   the run "succeeds"
     // with zero visible text, zero tool calls, and nothing written. Usage
     // tokens (and cost) are still burned, and the user got nothing but the
     // generic "didn't respond" fallback with no explanation and no retry.
@@ -2016,7 +2024,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       const suspiciousFinish = outerFinishReason === 'error' || outerFinishReason === 'other' || outerFinishReason === 'content-filter';
       const producedNothing = !accumulatedText.trim() && !wroteAnythingSoFar && !hasLegacyWriteTags;
       if (producedNothing && suspiciousFinish && !abortController.signal.aborted) {
-        console.warn(`[AgentLoop] Empty run detected (finishReason=${outerFinishReason}, zero text/tools/writes) — retrying once via fallback provider. user=${userId ?? 'unknown'}`);
+        console.warn(`[AgentLoop] Empty run detected (finishReason=${outerFinishReason}, zero text/tools/writes)   retrying once via fallback provider. user=${userId ?? 'unknown'}`);
         let recovered = false;
         for (const fallbackModelId of buildFallbackCandidates(providerName, modelId)) {
           const fallbackInfo = createProviderForModel(fallbackModelId);
@@ -2055,11 +2063,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     // Budget-abort with nothing to show: the model was still mid-tool-calls
     // (reading files, editing) when the token/cost cap hit, so it never got to
-    // produce a final text response — summary is empty here. Without this, the
+    // produce a final text response   summary is empty here. Without this, the
     // frontend falls through every fallback to a generic "didn't respond, try
     // rephrasing" message that has nothing to do with what actually happened
     // and gives the user no way to know a retry with the same prompt will
-    // likely hit the exact same wall. Plain, non-technical wording only — the
+    // likely hit the exact same wall. Plain, non-technical wording only   the
     // user doesn't need to see raw numbers like "token cap 450000 hit
     // (472100 used)"; they need to know whether anything changed and what to
     // do next.
@@ -2072,7 +2080,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       summary = madeNoChanges
         ? `This request turned out to be bigger than I could finish in one go, and nothing was changed yet. ` +
           `Try breaking it into smaller, more specific steps.`
-        : `This request turned out to be bigger than I could finish in one go. What I changed so far is saved — ` +
+        : `This request turned out to be bigger than I could finish in one go. What I changed so far is saved   ` +
           `send me a follow-up for the rest.`;
     }
 
@@ -2082,7 +2090,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // ─── Post-generation App.tsx validation ────────────────────────────────────
     // Detects when the agent wrote page files but forgot to update App.tsx.
     // System-prompt instructions alone are unreliable under step-limit pressure
-    // or context-compaction drift — this enforces it programmatically.
+    // or context-compaction drift   this enforces it programmatically.
     if (runtimeMode === 'build' && !abortController.signal.aborted) {
       const normPath = (p: string) => p.replace(/\\/g, '/');
 
@@ -2098,7 +2106,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         );
 
       if (newPageFiles.length > 0 && !appTsxWasUpdated) {
-        console.log(`[AgentLoop] Post-gen validation: ${newPageFiles.length} page(s) written but App.tsx not updated — codegenerating App.tsx`);
+        console.log(`[AgentLoop] Post-gen validation: ${newPageFiles.length} page(s) written but App.tsx not updated   codegenerating App.tsx`);
         generateStatus(projectId, { kind: 'lifecycle', phase: 'router-wiring', detail: `${newPageFiles.length} ${newPageFiles.length === 1 ? 'page' : 'pages'}` }).then((s) => {
           if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
         }).catch(() => {});
@@ -2115,7 +2123,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
         const pagesForRouter = allPagesOnDisk.length > 0 ? allPagesOnDisk : newPageFiles;
 
-        // Deterministic codegen — zero LLM calls, zero wiring failures. Replaces
+        // Deterministic codegen   zero LLM calls, zero wiring failures. Replaces
         // the old generateText-based "App.tsx fix pass", which could hallucinate
         // routes, forget imports, or truncate mid-file like any other LLM write.
         try {
@@ -2126,7 +2134,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           if (existing >= 0) filesToWrite[existing].content = generatedAppTsx;
           else filesToWrite.push({ path: 'src/App.tsx', content: generatedAppTsx });
           if (ctx.pendingPreviewFiles) ctx.pendingPreviewFiles.set('src/App.tsx', generatedAppTsx);
-          console.log(`[AgentLoop] App.tsx codegen completed — ${pagesForRouter.length} route(s) wired`);
+          console.log(`[AgentLoop] App.tsx codegen completed   ${pagesForRouter.length} route(s) wired`);
         } catch (appFixErr) {
           console.warn('[AgentLoop] App.tsx codegen failed (non-fatal):', appFixErr);
         }
@@ -2134,7 +2142,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     }
     // ─── End App.tsx validation ─────────────────────────────────────────────────
 
-    // Constants for binary handling — declared before use in agentWrittenFiles filter.
+    // Constants for binary handling   declared before use in agentWrittenFiles filter.
     const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.tmp', 'coverage']);
     const SKIP_FILES = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
     const BINARY_EXTS_SET = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.webp', '.mp4', '.mp3', '.pdf', '.zip']);
@@ -2147,7 +2155,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     }
 
     // Agent-written files: read fresh from disk (most authoritative).
-    // Skip binary files — they are handled by collectDiskFiles as base64.
+    // Skip binary files   they are handled by collectDiskFiles as base64.
     const agentWrittenFiles = Array.from(latestWriteByPath.entries())
       .filter(([relativePath]) => {
         const ext = path.extname(relativePath).toLowerCase();
@@ -2206,7 +2214,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     }
     const mergedWrites = Array.from(diskFilesMap.entries()).map(([p, c]) => ({ path: p, content: c }));
 
-    // Background KB indexing — fire-and-forget, never blocks the agent response
+    // Background KB indexing   fire-and-forget, never blocks the agent response
     if (projectId && mergedWrites.length > 0) {
       Promise.allSettled(
         mergedWrites.map(f => indexFile(projectId, f.path, f.content))
@@ -2215,21 +2223,21 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     // Scope the sanitize pass to files THIS run actually touched. `mergedWrites`
     // is the whole project (collectDiskFiles scans everything on disk) merged
-    // with this run's writes — sanitizing every file in that set, including
+    // with this run's writes   sanitizing every file in that set, including
     // ones this run never looked at, meant a persistently-broken file from a
     // PAST run could get re-discovered, "fixed" by a naive bracket-counting
     // heuristic that doesn't repair real structural errors, and written back
-    // to disk STILL broken — every single run, forever, on files nobody asked
+    // to disk STILL broken   every single run, forever, on files nobody asked
     // to change. Worse: the push/repair/rollback safety net below is gated on
     // agentWroteFiles (this run's own tracked writes), so a sanitize-caused
-    // bad write to an untouched file got zero safety net — the run would just
+    // bad write to an untouched file got zero safety net   the run would just
     // skip the preview push entirely ("No file operations") and leave the
     // broken write sitting on disk.
-    // Count real TS syntax errors — used to make sure the mechanical sanitize
+    // Count real TS syntax errors   used to make sure the mechanical sanitize
     // pass below never makes a file WORSE. sanitizeFileContent's bracket-depth
     // heuristic (sanitize.ts, "orphan closer" detection) tracks braces and
     // parens with a single shared counter and has no special handling for
-    // `${...}` template-literal interpolations containing their own braces —
+    // `${...}` template-literal interpolations containing their own braces  
     // it can misfire on a file that was already perfectly valid, "fixing" a
     // false positive by appending or stripping closers, which actively
     // CORRUPTS the file. Previously that corrupted result was written to disk
@@ -2247,7 +2255,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         });
         return (result.diagnostics ?? []).length;
       } catch {
-        return 0; // transpileModule exceptions are rare — don't treat as an error signal
+        return 0; // transpileModule exceptions are rare   don't treat as an error signal
       }
     };
 
@@ -2260,20 +2268,20 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const errorsBefore = countSyntaxErrors(f.path, f.content);
           const errorsAfter = countSyntaxErrors(f.path, sanitized);
           if (errorsAfter > errorsBefore) {
-            // The "fix" made things worse (or broke a previously-valid file) —
+            // The "fix" made things worse (or broke a previously-valid file)  
             // reject it and keep the original content untouched.
-            console.warn(`[AgentLoop] Final sanitize REJECTED for ${f.path} — would have made syntax errors worse (${errorsBefore} → ${errorsAfter}); keeping original content. Attempted fixes: ${fixes.join(', ')}`);
+            console.warn(`[AgentLoop] Final sanitize REJECTED for ${f.path}   would have made syntax errors worse (${errorsBefore} → ${errorsAfter}); keeping original content. Attempted fixes: ${fixes.join(', ')}`);
           } else {
             f.content = sanitized;
             try {
               const fullPath = safeJoin(appPath, f.path);
               fs.writeFileSync(fullPath, sanitized, 'utf8');
             } catch {}
-            console.log(`[AgentLoop] Final sanitize: ${f.path} — ${fixes.join(', ')}`);
+            console.log(`[AgentLoop] Final sanitize: ${f.path}   ${fixes.join(', ')}`);
           }
         }
 
-        // TS syntax check — only run on React source files under src/ to avoid
+        // TS syntax check   only run on React source files under src/ to avoid
         // noisy config/tooling diagnostics from vite/tailwind/postcss config files.
         const normalizedPath = f.path.replace(/\\/g, '/');
         const isReactSource = /(^|\/)src\/.*\.(tsx|jsx)$/i.test(normalizedPath);
@@ -2293,7 +2301,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 .slice(0, 2)
                 .map(d => ts.flattenDiagnosticMessageText(d.messageText, ' '))
                 .join('; ');
-              console.warn(`[AgentLoop] Final syntax check failed for ${f.path}: ${errors} — repair loop will fix`);
+              console.warn(`[AgentLoop] Final syntax check failed for ${f.path}: ${errors}   repair loop will fix`);
             }
           } catch { /* don't block push on transpileModule exceptions */ }
         }
@@ -2306,7 +2314,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const fullPath = safeJoin(appPath, f.path);
             fs.writeFileSync(fullPath, repaired, 'utf8');
           } catch {}
-          console.log(`[AgentLoop] Config repair: ${f.path} — ${fixes.join(', ')}`);
+          console.log(`[AgentLoop] Config repair: ${f.path}   ${fixes.join(', ')}`);
         }
       }
     }
@@ -2422,11 +2430,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               .map(f => {
                 if (brokenFiles.has(f.path)) {
                   if (preAgentMap.has(f.path)) {
-                    // File existed before agent — restore original version
+                    // File existed before agent   restore original version
                     reverted++;
                     return { path: f.path, content: preAgentMap.get(f.path)! };
                   } else {
-                    // File is NEW (created by agent) and broken — remove from push
+                    // File is NEW (created by agent) and broken   remove from push
                     removed++;
                     return null;
                   }
@@ -2439,7 +2447,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               console.log(`[AgentLoop] Surgical revert: reverted ${reverted}, removed ${removed} broken file(s): ${[...brokenFiles].join(', ')}`);
               const revertAttempt = await httpPost(updateUrl, JSON.stringify({ files: revertedMerged, fullSync: true }));
               if (revertAttempt.status === 200) {
-                console.log(`[AgentLoop] Surgical revert succeeded — preview is healthy`);
+                console.log(`[AgentLoop] Surgical revert succeeded   preview is healthy`);
                 // Update mergedWrites so 'done' sends the reverted set
                 mergedWrites.length = 0;
                 revertedMerged.forEach(f => mergedWrites.push(f));
@@ -2452,7 +2460,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                       fs.writeFileSync(fullFilePath, preContent, 'utf8');
                     } catch { /* best-effort disk revert */ }
                   } else {
-                    // New file created by agent — delete from disk
+                    // New file created by agent   delete from disk
                     try {
                       const fullFilePath = safeJoin(appPath, brokenPath);
                       fs.unlinkSync(fullFilePath);
@@ -2466,12 +2474,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 ].filter(Boolean).join(' and ');
                 console.log(`[AgentLoop] Surgical revert complete (silent): ${revertMsg} file(s)`);
               } else {
-                console.warn(`[AgentLoop] Surgical revert still failed (${revertAttempt.status}) — falling to LLM repair`);
+                console.warn(`[AgentLoop] Surgical revert still failed (${revertAttempt.status})   falling to LLM repair`);
               }
             }
           }
         } catch {
-          // 422 body parse failed — fall through to LLM repair
+          // 422 body parse failed   fall through to LLM repair
         }
       } else {
         console.warn(`[AgentLoop] Preview push returned ${firstAttempt.status}`);
@@ -2480,7 +2488,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       const pushWasTransportFailure = firstAttempt.status !== 200 && firstAttempt.status !== 422 && !previewPushOk;
 
       let repairDiagnosticKind: string = 'build';
-      // Captures last known errors from repair loop — used by salvage block (outer scope)
+      // Captures last known errors from repair loop   used by salvage block (outer scope)
       let lastRepairErrors: string[] = [];
 
       if (previewPushOk) {
@@ -2495,7 +2503,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const hint = status.errors.slice(0, 1).join('\n') || 'unknown preview error';
           console.warn(`[AgentLoop] Preview reported unhealthy after successful push (${repairDiagnosticKind}): ${hint}`);
         } else {
-          // Second check at 1.2s total — catches slower Vite transforms on production
+          // Second check at 1.2s total   catches slower Vite transforms on production
           await new Promise<void>(r => setTimeout(r, 600));
           status = await getPreviewStatus();
           if (!status.healthy) {
@@ -2515,7 +2523,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         }
         // Skip all repair attempts if already over token budget
         if (abortController.signal.aborted || runTokens.total >= RUN_TOKEN_CAP) {
-          console.warn('[AgentLoop] Skipping build repair — token budget already exhausted');
+          console.warn('[AgentLoop] Skipping build repair   token budget already exhausted');
         } else {
         let repairFiles = [...mergedWrites];
         let prevErrorCount = Infinity;
@@ -2550,13 +2558,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             .sort()
             .join('|');
           if (prevErrorSignature && errorSignature === prevErrorSignature) {
-            console.warn(`[AgentLoop] Repair repeating identical error signature (${errors.length} errors) — stopping early`);
+            console.warn(`[AgentLoop] Repair repeating identical error signature (${errors.length} errors)   stopping early`);
             break;
           }
 
           // Progress check: if error count didn't decrease, bail early
           if (repairAttempt > 0 && errors.length >= prevErrorCount) {
-            console.warn(`[AgentLoop] Repair made no progress (${errors.length} errors, was ${prevErrorCount}) — stopping`);
+            console.warn(`[AgentLoop] Repair made no progress (${errors.length} errors, was ${prevErrorCount})   stopping`);
             break;
           }
           prevErrorCount = errors.length;
@@ -2606,7 +2614,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
           // ── PASS -1: Failure memory (zero LLM tokens, cheaper than mechanical) ──
           // Check whether this exact error signature has a previously-VERIFIED
-          // fix from any prior run (any project). Only applies llm_diff fixes here —
+          // fix from any prior run (any project). Only applies llm_diff fixes here  
           // mechanical fixes are already covered by PASS 0's sanitizeFileContent,
           // which runs unconditionally and for free, so re-applying a remembered
           // mechanical fix would be redundant.
@@ -2623,7 +2631,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 const diffMatch = /<<<<<<< SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE/.exec(remembered.fixContent);
                 if (!diffMatch) continue;
                 const [, searchText, replaceText] = diffMatch;
-                if (!original.includes(searchText)) continue; // signature matched but file content differs too much — skip, let normal passes handle it
+                if (!original.includes(searchText)) continue; // signature matched but file content differs too much   skip, let normal passes handle it
                 const patched = original.replace(searchText, replaceText);
                 fs.writeFileSync(fullFilePath, patched, 'utf8');
                 const memPush = await httpPost(updateUrl, JSON.stringify({ files: [{ path: relPath, content: patched }], fullSync: false }));
@@ -2631,14 +2639,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                   await new Promise<void>(r => setTimeout(r, 400));
                   const memHealth = await getPreviewStatus();
                   if (memHealth.healthy) {
-                    console.log(`[AgentLoop] Failure-memory fix applied for ${relPath} (hit #${remembered.hitCount + 1}) — LLM repair skipped`);
+                    console.log(`[AgentLoop] Failure-memory fix applied for ${relPath} (hit #${remembered.hitCount + 1})   LLM repair skipped`);
                     const idx = mergedWrites.findIndex(f => f.path === relPath);
                     if (idx >= 0) mergedWrites[idx].content = patched;
                     else mergedWrites.push({ path: relPath, content: patched });
                     previewPushOk = true;
                   }
                 }
-              } catch { /* remembered fix didn't apply cleanly — fall through to normal repair passes */ }
+              } catch { /* remembered fix didn't apply cleanly   fall through to normal repair passes */ }
               if (previewPushOk) break;
             }
           }
@@ -2646,7 +2654,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
           // ── PASS 0: Mechanical repair (zero LLM tokens) ────────────────────
           // Run sanitizeFileContent on broken .tsx/.ts files BEFORE invoking LLM.
-          // Fixes: orphan closers, duplicate React imports, truncated JSX — for free.
+          // Fixes: orphan closers, duplicate React imports, truncated JSX   for free.
           // If ALL errors are cleared this way, the LLM call is skipped entirely.
           if (currentKind === 'build' && brokenFileLocations.size > 0) {
             const mechPatched: Array<{ path: string; content: string }> = [];
@@ -2659,7 +2667,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 if (fixes.length > 0) {
                   fs.writeFileSync(fullFilePath, fixed, 'utf8');
                   mechPatched.push({ path: relPath, content: fixed });
-                  console.log(`[AgentLoop] Mechanical fix: ${relPath} — ${fixes.join(', ')}`);
+                  console.log(`[AgentLoop] Mechanical fix: ${relPath}   ${fixes.join(', ')}`);
                 }
               } catch { /* skip unreadable */ }
             }
@@ -2670,7 +2678,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 await new Promise<void>(r => setTimeout(r, 400));
                 const mechHealth = await getPreviewStatus();
                 if (mechHealth.healthy) {
-                  console.log(`[AgentLoop] Mechanical repair cleared all errors — LLM skipped`);
+                  console.log(`[AgentLoop] Mechanical repair cleared all errors   LLM skipped`);
                   for (const p of mechPatched) {
                     const idx = mergedWrites.findIndex(f => f.path === p.path);
                     if (idx >= 0) mergedWrites[idx].content = p.content;
@@ -2692,7 +2700,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           if (brokenFileLocations.size > 0 && brokenFileLocations.size <= 10) {
             const contextParts: string[] = [];
             for (const [relPath, errorLine] of brokenFileLocations) {
-              // Skip npm packages — they can't be fixed by editing source files
+              // Skip npm packages   they can't be fixed by editing source files
               if (!relPath.startsWith('src/') && !relPath.startsWith('./')) continue;
               try {
                 const fullFilePath = safeJoin(appPath, relPath);
@@ -2736,13 +2744,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
           const repairSystemPrompt = repairDiagnosticKind === 'runtime'
             ? (
-'You are a runtime-error repair agent. Tool calls only — ZERO chat text.\n\n' +
+'You are a runtime-error repair agent. Tool calls only   ZERO chat text.\n\n' +
 'RULES: edit_file for targeted fixes; write_file only for full rewrites. Fix ONLY the crash.\n' +
-'Files must be complete — no placeholders like `// rest of code`.\n\n' +
+'Files must be complete   no placeholders like `// rest of code`.\n\n' +
 'ERROR → FIX:\n' +
 '- "Cannot read properties of undefined/null" → add `?.` or `if (!x) return null`\n' +
-'- "X is not a function" → wrong import (default vs named) — read_file the source\n' +
-'- "Element type is invalid" → component exported wrong — read_file source\n' +
+'- "X is not a function" → wrong import (default vs named)   read_file the source\n' +
+'- "Element type is invalid" → component exported wrong   read_file source\n' +
 '- "React Hook called conditionally" → move ALL hooks before any if/early return\n' +
 '- "Maximum update depth exceeded" → fix useEffect deps array\n' +
 '- "Objects are not valid as React child" → extract string property, not whole object\n' +
@@ -2751,7 +2759,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 'PROTOCOL: think → read_file crashing file → edit_file root cause → get_build_errors once.\n' +
 'Budget: 10 tool calls max.'
             ) : (
-'You are a build-error repair agent. Tool calls only — ZERO chat text.\n\n' +
+'You are a build-error repair agent. Tool calls only   ZERO chat text.\n\n' +
 'RULES: write_file for broken files (complete, no placeholders). edit_file for tiny patches.\n' +
 'No explicit React import needed (Vite JSX transform). shadcn: `import * as React from "react"`.\n' +
 'Export name must match filename: HomePage.tsx → export default function HomePage().\n\n' +
@@ -2763,7 +2771,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 '- "Duplicate identifier" → remove the duplicate\n' +
 '- "JSX unclosed tag" → write_file the whole component\n' +
 '- "Type X not assignable" → read BOTH files, align the types\n\n' +
-'PROTOCOL: think (find ROOT CAUSE — one bad export causes 20 cascade errors) → list_files once\n' +
+'PROTOCOL: think (find ROOT CAUSE   one bad export causes 20 cascade errors) → list_files once\n' +
 '→ read_file broken files → fix ALL in one batch → get_build_errors once to verify.\n' +
 'Budget: 12 tool calls max.'
             );
@@ -2822,7 +2830,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           mergedWrites.length = 0;
           repairFiles.forEach(f => mergedWrites.push(f));
           if (repairPush.status === 200) {
-            // Push returning 200 does NOT guarantee the build is healthy —
+            // Push returning 200 does NOT guarantee the build is healthy  
             // quickViteBuildCheck may have found esbuild errors and stored them
             // in projectDiagnostics while still returning 200. Verify /status.
             await new Promise<void>(r => setTimeout(r, 800));
@@ -2833,7 +2841,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               console.log(`[AgentLoop] Auto-repair ${repairAttempt + 1} resolved all errors (silent).`);
 
               // ── Store verified fix in failure memory for next occurrence ──────
-              // Only store when the diff is small and clean — a full-file rewrite
+              // Only store when the diff is small and clean   a full-file rewrite
               // makes a poor SEARCH/REPLACE template for a different file's content.
               for (const [relPath, errorLine] of brokenFileLocations) {
                 const before = preRepairContent.get(relPath);
@@ -2850,19 +2858,19 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             } else {
               // Update kind for the next repair pass
               if (repairHealth.diagnosticKind) repairDiagnosticKind = repairHealth.diagnosticKind;
-              console.warn(`[AgentLoop] Auto-repair ${repairAttempt + 1} push OK but preview still unhealthy (${repairHealth.errors.slice(0, 1).join('; ')}) — continuing repair`);
+              console.warn(`[AgentLoop] Auto-repair ${repairAttempt + 1} push OK but preview still unhealthy (${repairHealth.errors.slice(0, 1).join('; ')})   continuing repair`);
             }
           } else {
             console.warn(`[AgentLoop] Auto-repair ${repairAttempt + 1} did not pass validation (${repairPush.status})`);
           }
         }
         } // end token-budget guard for repair loop
-      } // end if (!previewPushOk && !pushWasTransportFailure) — repair section
+      } // end if (!previewPushOk && !pushWasTransportFailure)   repair section
 
       if (!previewPushOk && !pushWasTransportFailure) {
           // All repair attempts exhausted. Silently restore the pre-agent state so
           // the user sees a clean working preview instead of broken generated code.
-          console.warn('[AgentLoop] All repair attempts exhausted — silently restoring pre-agent state');
+          console.warn('[AgentLoop] All repair attempts exhausted   silently restoring pre-agent state');
 
           // Notify frontend so it can show the Auto-fix button
           if (lastRepairErrors.length > 0) {
@@ -2871,11 +2879,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
           if (preAgentDiskSnapshot.size > 0) {
             // Restore disk files to pre-agent state on THIS server's own disk
-            // (appPath — the canonical project directory the agent tools read/write
+            // (appPath   the canonical project directory the agent tools read/write
             // directly). This used to be silent best-effort: any failure here left
             // this server's disk holding the run's bad content while the SEPARATE
             // network push below could still succeed in restoring the preview
-            // service to clean — the two copies silently drifting out of sync with
+            // service to clean   the two copies silently drifting out of sync with
             // zero visibility into why. Track and log failures instead of
             // swallowing them.
             let diskRestoreFailures = 0;
@@ -2886,7 +2894,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 fs.writeFileSync(fullFilePath, preContent, 'utf8');
               } catch (diskErr) {
                 diskRestoreFailures++;
-                console.error(`[AgentLoop] Pre-agent disk restore FAILED for ${relPath} — this server's own copy may still hold broken content`, diskErr);
+                console.error(`[AgentLoop] Pre-agent disk restore FAILED for ${relPath}   this server's own copy may still hold broken content`, diskErr);
               }
             }
             if (diskRestoreFailures > 0) {
@@ -2896,7 +2904,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             mergedWrites.length = 0;
             preAgentFiles.forEach(f => mergedWrites.push(f));
             // Push the clean pre-agent state to the preview service. This is the
-            // last line of defense when repair fails — if it silently fails too,
+            // last line of defense when repair fails   if it silently fails too,
             // the live preview stays broken with nothing telling the user. Retry
             // with backoff and verify a 200 status (httpPost resolves with
             // {status, body} rather than throwing on non-2xx, so the old
@@ -2921,13 +2929,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             if (restorePushOk) {
               console.log(`[AgentLoop] Pre-agent state restored to preview (${preAgentFiles.length} files)`);
             } else {
-              console.error(`[AgentLoop] Pre-agent restore push FAILED after 3 attempts (last status: ${lastRestoreStatus ?? 'none'}) — live preview may still show broken code for project=${projectId}`);
+              console.error(`[AgentLoop] Pre-agent restore push FAILED after 3 attempts (last status: ${lastRestoreStatus ?? 'none'})   live preview may still show broken code for project=${projectId}`);
               sink.emit('repair-failed', {
-                errors: ['Restore to last known-good state failed to reach the preview service — the preview may still show broken code. Try again or manually refresh.'],
+                errors: ['Restore to last known-good state failed to reach the preview service   the preview may still show broken code. Try again or manually refresh.'],
               });
             }
           } else {
-            // No pre-agent snapshot available — scan disk and push whatever is there
+            // No pre-agent snapshot available   scan disk and push whatever is there
             const salvageDiskMap = new Map<string, string>();
             const collectSalvage = (dir: string) => {
               let entries: fs.Dirent[];
@@ -2965,30 +2973,30 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         throw pushErr;
       }
     } else if (runtimeMode === 'build' && !agentWroteFiles) {
-      console.log(`[AgentLoop] No file operations — skipping preview push`);
+      console.log(`[AgentLoop] No file operations   skipping preview push`);
       if (outerFinishReason === 'tool-calls') {
         // finishReason 'tool-calls' with zero files written can mean two very
         // different things, and telling them apart matters for what the user
         // should actually do next:
         //  - stepCount is near MAX_STEPS: the run genuinely used its whole
-        //    budget mid-task — "try again" is honest advice, it'll pick up
+        //    budget mid-task   "try again" is honest advice, it'll pick up
         //    roughly where it left off.
         //  - stepCount is low (observed: 5 of 25): the model itself gave up
         //    early, most often right after a provider fallback to a weaker
         //    model (e.g. the primary provider's billing circuit was open).
-        //    Claiming "ran out of steps" here is simply false — it burns the
+        //    Claiming "ran out of steps" here is simply false   it burns the
         //    user's trust and points them at the wrong fix ("just resend")
         //    when the real issue is a degraded model, not a budget limit.
         const genuinelyOutOfSteps = stepCount >= MAX_STEPS - 1;
         // Only blame "a fallback provider" when one actually ran this turn
-        // (providerFellBackThisRun) — otherwise this was the tier-assigned model
+        // (providerFellBackThisRun)   otherwise this was the tier-assigned model
         // (e.g. glm-4.5-flash on the micro tier, max 8 steps) simply not finishing
         // on its own, which is a different, honest thing to tell the user.
         const text = genuinelyOutOfSteps
           ? '\n\n> I ran out of steps before completing the changes. Please send your request again and I\'ll continue from where I left off.'
           : providerFellBackThisRun
-          ? `\n\n> I stopped without finishing this change (after ${stepCount} step${stepCount === 1 ? '' : 's'}) — a backup AI provider took over partway through this run and didn't complete the change. Nothing was changed. Please send your request again.`
-          : `\n\n> I stopped without finishing this change (after ${stepCount} step${stepCount === 1 ? '' : 's'} of ${MAX_STEPS}) — the assigned model gave up early rather than running out of budget. Nothing was changed. Please send your request again; a more detailed request sometimes routes to a stronger model.`;
+          ? `\n\n> I stopped without finishing this change (after ${stepCount} step${stepCount === 1 ? '' : 's'})   a backup AI provider took over partway through this run and didn't complete the change. Nothing was changed. Please send your request again.`
+          : `\n\n> I stopped without finishing this change (after ${stepCount} step${stepCount === 1 ? '' : 's'} of ${MAX_STEPS})   the assigned model gave up early rather than running out of budget. Nothing was changed. Please send your request again; a more detailed request sometimes routes to a stronger model.`;
         sink.emit('text-delta', { text });
       }
     }
@@ -3003,14 +3011,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const unsupportedPreviewDependencies = doneDependencies.filter((pkg) => !PRE_INSTALLED_PACKAGES.includes(pkg));
 
     if (unsupportedPreviewDependencies.length > 0) {
-      // Legacy XML-declared packages not in the pre-installed set — these should now
+      // Legacy XML-declared packages not in the pre-installed set   these should now
       // be installed via run_command by the agent. Show a mild warning for visibility.
       sink.emit('text-delta', {
         text: `\n> *Note: ${unsupportedPreviewDependencies.join(', ')} ${unsupportedPreviewDependencies.length === 1 ? 'was' : 'were'} declared via legacy <ecomgear-add-dependency>. In future runs, use \`run_command\` to install packages directly.*\n\n`,
       });
     }
 
-    // NOW send 'done' — preview is synced, frontend shows correct state
+    // NOW send 'done'   preview is synced, frontend shows correct state
     sink.emit('done', {
       ghostRun: runtimeMode === 'build' && !agentWroteFiles,
       filesToWrite: doneFilesToWrite,
@@ -3098,7 +3106,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             (e: any) => console.warn('[AgentLoop] revision preview_url update rejected:', e?.message)
           );
 
-        // Capture a screenshot thumbnail — fire-and-forget, never blocks the response
+        // Capture a screenshot thumbnail   fire-and-forget, never blocks the response
         captureThumbnail(projectId, revisionPreviewUrl, supabase);
       }
 
@@ -3178,8 +3186,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // Network errors: give a clear, actionable message instead of the raw DNS error
     if (isNetworkError(err)) {
       if (isTransientStreamDrop(err)) {
-        // Mid-stream connection reset — transient, not a server connectivity issue
-        errorMessage = 'Connection to AI provider dropped mid-generation (network blip). This is usually temporary — please try again.';
+        // Mid-stream connection reset   transient, not a server connectivity issue
+        errorMessage = 'Connection to AI provider dropped mid-generation (network blip). This is usually temporary   please try again.';
       } else {
         errorMessage = 'Could not reach the AI provider (network error). Check your server\'s internet connectivity or configure a different model in Admin → Settings.';
       }
