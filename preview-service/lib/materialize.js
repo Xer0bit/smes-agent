@@ -519,6 +519,28 @@ function preprocessFile(filePath, content) {
         }
     }
 
+    // Fix 7: Repair edge-function invoke response unwrap. The server always
+    // wraps a function's result as { result, logs, durationMs } (see
+    // vps5-functions-runner/runEdgeFunction.js) -- a helper that fetches
+    // .../invoke, parses the JSON, and returns it raw silently breaks every
+    // caller expecting the unwrapped value (an array to .map(), an object
+    // to read fields from). Confirmed live twice in different projects:
+    // the model wrote its own custom invoke wrapper instead of following
+    // the documented `const { result, error } = await res.json()` pattern
+    // and forgot to unwrap. Self-heal it here instead of hand-patching each
+    // occurrence -- a manual fix gets silently reverted the next time an
+    // agent run rewrites the same file.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        fixed = fixed.replace(
+            /(\/invoke[\s\S]{0,600}?(?:const|let)\s+(\w+)\s*=\s*await\s+[\w.]+\.json\(\)\s*;(?:(?!\breturn\b)[\s\S]){0,300}?)\breturn\s+\2\s*;/g,
+            (_match, prefix, varName) => `${prefix}return ${varName}.result;`
+        );
+        if (fixed !== before) {
+            issues.push('Unwrapped edge-function invoke response (.result)');
+        }
+    }
+
     return { content: fixed, issues };
 }
 
