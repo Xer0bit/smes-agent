@@ -379,15 +379,18 @@ async function isWithinEcoPolicyLimit(orgId: string): Promise<boolean> {
     return used < policyLimit;
 }
 
-async function incrementEcoUsage(orgId: string): Promise<{ allowed: boolean; source: 'v2' | 'legacy'; error?: string }> {
-    // Each code-writing run costs exactly 1 eco unit regardless of token count.
-    // Token-based scaling was removed because thinking models (gemini-3.1-pro-preview)
-    // can use 100K+ tokens per run, which would drain free-tier budgets in a single request.
+async function incrementEcoUsage(orgId: string, ecoAmount: number): Promise<{ allowed: boolean; source: 'v2' | 'legacy'; error?: string }> {
+    // Eco cost is computed server-side in agentLoopService.ts's computeEcoCost():
+    // actual run cost ($) / $0.05, clamped to [0.5, 2.0] eco. A PURE token/cost-based
+    // charge was tried before and reverted because a single "thinking" model run
+    // (gemini-3.1-pro-preview) can burn 100K+ tokens and would drain an entire
+    // free-tier month in one request   the clamp keeps pricing proportional to
+    // usage while bounding the worst case at 2 eco/run.
     // The DB function increment_ai_gen already enforces the limit atomically with FOR UPDATE,
     // so the redundant pre-check here is omitted.
     const v2 = await supabase.rpc('increment_ai_gen', {
         p_org_id: orgId,
-        p_tokens: 1,
+        p_tokens: ecoAmount,
     } as any);
 
     if (!v2.error) {
@@ -1091,8 +1094,9 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         const wroteFiles = (agentResult?.filesToWrite?.length ?? 0) > 0
             || (agentResult?.filesToDelete?.length ?? 0) > 0;
         if (ecoOrgId && wroteFiles) {
-            // 1 eco per code-writing run (flat). Token-based scaling removed   see incrementEcoUsage.
-            incrementEcoUsage(ecoOrgId).catch((err) =>
+            // Cost-based, clamped eco amount computed server-side   see incrementEcoUsage.
+            const ecoAmount = agentResult?.ecoUsed ?? 1;
+            incrementEcoUsage(ecoOrgId, ecoAmount).catch((err) =>
                 logger.warn(`[agent-stream] Eco charge failed for org ${ecoOrgId}: ${(err as Error).message}`),
             );
         }

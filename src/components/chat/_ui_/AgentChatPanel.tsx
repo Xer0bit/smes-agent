@@ -406,7 +406,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                       );
                     }
                     onGenerationComplete?.(result.tokensUsed ?? 0);
-                    refreshUsage().catch(() => {});
+                    if (!isGuest) refreshUsage().catch(() => {});
+                    if (!isGuest && result.ecoUsed && result.ecoUsed > 0) {
+                      toast.success(`Used ${result.ecoUsed.toFixed(1)} eco`, { duration: 3000 });
+                    }
                   },
                   onError: () => {
                     if (cancelled) return;
@@ -874,6 +877,9 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               onGenerationComplete?.(result.tokensUsed ?? 0);
               // Refresh eco usage display after generation
               if (!isGuest) refreshUsage().catch(() => {});
+              if (!isGuest && result.ecoUsed && result.ecoUsed > 0) {
+                toast.success(`Used ${result.ecoUsed.toFixed(1)} eco`, { duration: 3000 });
+              }
               if (result.ghostRun) {
                 // Agent produced text but wrote no files   this is a normal conversational
                 // response (question, clarification, limitation) OR a run that fumbled tool

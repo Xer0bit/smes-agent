@@ -94,6 +94,20 @@ export interface AgentEventSink {
 // straight from this module without knowing it now lives in agentSnapshot.ts.
 export { snapshotProject, restoreSnapshot };
 
+// ─── Eco pricing ────────────────────────────────────────────────────────────
+// Eco = the AI-generation credit unit charged per run (ai_gens_used/limit on
+// organizations). Derived from actual run cost instead of a flat 1/run, but
+// clamped to [0.5, 2.0] — a PURE cost-based formula was tried before and
+// reverted (see ai.routes.ts's incrementEcoUsage) because a single "thinking"
+// model run (e.g. gemini-3.1-pro-preview) can burn 100K+ tokens and would
+// otherwise drain an entire free-tier month in one request. The clamp keeps
+// pricing usage-proportional while bounding the worst case.
+function computeEcoCost(costUsd: number): number {
+  const raw = costUsd / 0.05;
+  const clamped = Math.min(2.0, Math.max(0.5, raw));
+  return Math.round(clamped * 10) / 10;
+}
+
 // ─── Agent params / result types ──────────────────────────────────────────────
 
 export interface AgentRunParams {
@@ -164,6 +178,10 @@ export interface AgentRunResult {
   renames: Array<{ from: string; to: string }>;
   dependencies: string[];
   summary: string;
+  /** Actual USD cost of this run (0 on timeout/no-charge paths) */
+  costUsd: number;
+  /** Eco credits charged for this run, see computeEcoCost() */
+  ecoUsed: number;
 }
 
 export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResult> {
@@ -1291,6 +1309,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             ? 'Agent timed out mid-repair. Reverted to the last known-good state.'
             : 'Agent timed out. Partial progress was saved.',
           tokensUsed: 0,
+          costUsd: 0,
+          ecoUsed: 0,
           snapshotId: `${projectId}_${randomUUID().replace(/-/g, '')}`,
         });
         timeoutDoneSent = true;
@@ -1961,7 +1981,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // route-level catch doesn't emit a second 'error' SSE that overwrites the done result.
       if (timeoutDoneSent || (streamError as any)?.isAgentTimeout) {
         console.log('[AgentLoop] Timeout abort   swallowing streamError, done already sent.');
-        return { filesToWrite: [], filesToDelete: [], renames: [], dependencies: [], summary: '' };
+        return { filesToWrite: [], filesToDelete: [], renames: [], dependencies: [], summary: '', costUsd: 0, ecoUsed: 0 };
       }
       throw streamError;
     }
@@ -3018,6 +3038,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       });
     }
 
+    // Eco is only charged when the run actually wrote/deleted files (ghost
+    // runs   text-only answers, plan proposals   stay free), mirroring the
+    // wroteFiles gate in ai.routes.ts's incrementEcoUsage call site.
+    const chargeableRun = doneFilesToWrite.length > 0 || doneFilesToDelete.length > 0;
+    const finalCostUsd = chargeableRun
+      ? calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens)
+      : 0;
+    const finalEcoUsed = chargeableRun ? computeEcoCost(finalCostUsd) : 0;
+
     // NOW send 'done'   preview is synced, frontend shows correct state
     sink.emit('done', {
       ghostRun: runtimeMode === 'build' && !agentWroteFiles,
@@ -3028,6 +3057,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       mode: runtimeMode,
       summary,
       tokensUsed: runTokens.total || 0,
+      costUsd: finalCostUsd,
+      ecoUsed: finalEcoUsed,
       // Only expose snapshot to frontend when code actually changed
       snapshotId: doneFilesToWrite.length > 0 ? snapshotId : null,
       previewPushed: previewPushOk,
@@ -3150,7 +3181,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     if (agentTimeoutId) clearTimeout(agentTimeoutId);
     clearInterval(heartbeatId);
-    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary };
+    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     if (agentTimeoutId) clearTimeout(agentTimeoutId);
