@@ -134,7 +134,20 @@ export function compactStepMessages(
   // Each completed step adds 2 messages: assistant (tool calls) + tool (results)
   const stepMsgCount = msgs.length - stepStartIdx;
   const completedStepPairs = Math.floor(stepMsgCount / 2);
-  const compactUpTo = Math.max(0, completedStepPairs - KEEP_RECENT_STEPS);
+  const compactUpToRaw = Math.max(0, completedStepPairs - KEEP_RECENT_STEPS);
+  // Round down to the nearest KEEP_RECENT_STEPS batch instead of letting the
+  // boundary advance by 1 every single step. Anthropic prompt caching needs
+  // an exact byte-identical prefix; recomputing compactUpTo fresh from
+  // completedStepPairs each call meant a DIFFERENT message crossed from full
+  // to truncated on every step once compaction started, breaking the cache
+  // prefix and forcing a full (expensive) cache rewrite every step for the
+  // rest of the run instead of just once. Confirmed live: a 12-step run
+  // showed cacheWrite on nearly every step post-compaction (not just step 1)
+  // with input tokens climbing 28K->63K instead of flattening once cached --
+  // a "small" task ended up costing $1.50+ because caching never stabilized.
+  // Batching the boundary keeps the prefix byte-stable for KEEP_RECENT_STEPS-
+  // step stretches, so cache reads actually accumulate between moves.
+  const compactUpTo = Math.floor(compactUpToRaw / KEEP_RECENT_STEPS) * KEEP_RECENT_STEPS;
 
   if (stepNumber >= COMPACT_AFTER_STEP && compactUpTo > 0) {
     for (let pairIdx = 0; pairIdx < compactUpTo; pairIdx++) {
