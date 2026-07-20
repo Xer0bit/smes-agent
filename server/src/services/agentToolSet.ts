@@ -10,6 +10,7 @@ import { listFilesTool } from '../agent-tools/list_files.js';
 import { deleteFileTool } from '../agent-tools/delete_file.js';
 import { renameFileTool } from '../agent-tools/rename_file.js';
 import { grepTool } from '../agent-tools/grep.js';
+import { globFilesTool } from '../agent-tools/glob_files.js';
 import { searchCodebaseTool } from '../agent-tools/search_codebase.js';
 import { findSymbolUsagesTool } from '../agent-tools/find_symbol_usages.js';
 import { editFileTool } from '../agent-tools/edit_file.js';
@@ -53,6 +54,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
     renameFileTool,
     placeAssetTool,
     grepTool,
+    globFilesTool,
     searchCodebaseTool,
     findSymbolUsagesTool,
     editFileTool,

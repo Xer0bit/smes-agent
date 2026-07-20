@@ -132,3 +132,54 @@ export function readProjectFile(
   ctx.ledger?.recordRead(relPath, totalLines);
   return { content, totalLines };
 }
+
+// ─── Reference-scan helper ───────────────────────────────────────────────────
+
+const REF_SCAN_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.cache', '__edge_functions__']);
+const REF_SCAN_TEXT_EXTS = new Set(['.tsx', '.ts', '.jsx', '.js', '.css', '.scss', '.html', '.json']);
+const REF_SCAN_MAX_FILES = 2000;
+
+/**
+ * Finds other project files that still reference a given path   either as a
+ * code import (`from './logo'`) or as an asset path string (`src="/assets/
+ * logo.png"`, `url(...)`). Shared by delete_file (where it originated   see
+ * that tool's history for the incident this fixed: a deleted logo image left
+ * an <img src="..."> pointing at nothing, with no warning) and rename_file
+ * (which had no equivalent check at all   a rename could silently break
+ * every importer's `from './OldName'`, identified as a real gap in a code-
+ * quality audit since delete_file already had this exact protection).
+ */
+export function findReferencesToPath(appPath: string, targetRelPath: string): string[] {
+  const basename = path.basename(targetRelPath);
+  const needles = [basename, `/${targetRelPath}`, targetRelPath].filter((n, i, arr) => arr.indexOf(n) === i);
+  const referencing: string[] = [];
+  let scanned = 0;
+
+  const walk = (dir: string): void => {
+    if (scanned >= REF_SCAN_MAX_FILES) return;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (scanned >= REF_SCAN_MAX_FILES) return;
+      if (entry.isDirectory()) {
+        if (REF_SCAN_SKIP_DIRS.has(entry.name)) continue;
+        walk(path.join(dir, entry.name));
+        continue;
+      }
+      const ext = path.extname(entry.name).toLowerCase();
+      if (!REF_SCAN_TEXT_EXTS.has(ext)) continue;
+      const fullPath = path.join(dir, entry.name);
+      const relPath = path.relative(appPath, fullPath).replace(/\\/g, '/');
+      if (relPath === targetRelPath) continue;
+      scanned++;
+      try {
+        const content = fs.readFileSync(fullPath, 'utf8');
+        if (needles.some((n) => content.includes(n))) {
+          referencing.push(relPath);
+        }
+      } catch { /* unreadable   skip */ }
+    }
+  };
+  walk(appPath);
+  return referencing;
+}
