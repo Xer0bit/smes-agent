@@ -144,6 +144,74 @@ function sqlLiteral(value: unknown): string {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+/**
+ * Splits a multi-statement SQL script on top-level semicolons only, ignoring
+ * semicolons inside single-quoted string literals and $$/$tag$ dollar-quoted
+ * bodies (Postgres function/procedure definitions). The regex this replaced
+ * (`;\s*\n|;\s*$|;(?=\s*[A-Za-z])`) had no concept of dollar-quoting, so any
+ * CREATE FUNCTION ... AS $$ ... END; $$ body had its internal `stmt;\n`
+ * sequences treated as statement boundaries, shattering the function into
+ * invalid fragments. Confirmed live: an agent run burned 3 retries
+ * reformatting a syntactically-valid function body to dodge this splitter
+ * before landing on a shape it happened not to break.
+ */
+function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = '';
+  let i = 0;
+  let inSingleQuote = false;
+  let dollarTag: string | null = null;
+  const len = sql.length;
+
+  while (i < len) {
+    const ch = sql[i];
+
+    if (dollarTag) {
+      if (sql.startsWith(dollarTag, i)) {
+        current += dollarTag;
+        i += dollarTag.length;
+        dollarTag = null;
+      } else {
+        current += ch;
+        i++;
+      }
+      continue;
+    }
+
+    if (inSingleQuote) {
+      current += ch;
+      if (ch === "'") {
+        if (sql[i + 1] === "'") { current += "'"; i += 2; continue; } // escaped '' inside literal
+        inSingleQuote = false;
+      }
+      i++;
+      continue;
+    }
+
+    if (ch === "'") { inSingleQuote = true; current += ch; i++; continue; }
+
+    if (ch === '$') {
+      const m = /^\$[A-Za-z_]*\$/.exec(sql.slice(i));
+      if (m) { dollarTag = m[0]; current += m[0]; i += m[0].length; continue; }
+    }
+
+    if (ch === ';') {
+      const stmt = current.trim();
+      if (stmt) statements.push(stmt);
+      current = '';
+      i++;
+      continue;
+    }
+
+    current += ch;
+    i++;
+  }
+
+  const last = current.trim();
+  if (last) statements.push(last);
+  return statements;
+}
+
 // ---------------------------------------------------------------------------
 // Platform auth secrets   VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are the
 // EcomGear platform's OWN Supabase instance (used for user sign-up/login in
@@ -652,7 +720,7 @@ export const databaseService = {
     // scripts (multiple DDL/DML statements) in one call. Each statement runs inside
     // the same transaction   if any fails the whole batch rolls back.
     const statements = role === 'service'
-      ? trimmed.split(/;\s*\n|;\s*$|;(?=\s*[A-Za-z])/).map(s => s.trim()).filter(Boolean)
+      ? splitSqlStatements(trimmed)
       : [trimmed];
 
     const c = await pg.connect();
