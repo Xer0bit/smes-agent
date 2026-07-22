@@ -74,7 +74,11 @@ export function endRun(projectId: string): void {
 // local rather than importing agentLoopService's priceFor() to avoid a
 // cross-service dependency for three fixed, rarely-changing rates.
 const NARRATION_PRICING: Record<string, { input: number; output: number }> = {
-  'gemini-flash-latest':        { input: 0.075, output: 0.30 },
+  // "gemini-flash-latest" is a Google-managed alias   it moved 2.5 Flash ->
+  // 3.5 Flash -> 3.6 Flash (2026-07-21) while this rate stayed frozen at the
+  // original 2.5 Flash price, undercounting narration cost ~20x. Verified
+  // current rate for whatever model "-latest" resolves to today.
+  'gemini-flash-latest':        { input: 1.50,  output: 7.50 },
   'glm-4.5-flash':              { input: 0.60,  output: 2.20 },
   'claude-haiku-4-5-20251001':  { input: 1.00,  output: 5.00 },
 };

@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { activeServers } = require('./previewState');
 const { validateSourceFile, repairMalformedDefaultStringParams, trimTrailingOrphanClosers } = require('./validation');
+const { sendFullReload } = require('./instanceOps');
 
 // Base Tailwind + shadcn CSS — plain CSS vars, no @apply color-tokens
 const TAILWIND_CSS_BASE = `@tailwind base;
@@ -893,20 +894,16 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
         }
 
         const projectIdInstance = activeServers.get(projectId);
-        if (projectIdInstance && projectIdInstance.vite) {
-            try {
-                // Batch write complete: invalidate the whole module graph ONCE and send
-                // a SINGLE full-reload to the browser.
-                // Emitting one watcher 'change' event PER FILE caused N separate Vite HMR
-                // processing cycles — each .tsx file without a self-accepting HMR boundary
-                // triggered its own 'full-reload' WebSocket message (26 files = 26
-                // 'page reload' log entries). The Vite client debounces but the module
-                // graph ends in a partially-stale state causing cascading re-requests.
-                projectIdInstance.vite.moduleGraph.invalidateAll();
-                projectIdInstance.vite.ws.send({ type: 'full-reload', path: '*' });
-            } catch (err) {
-                console.warn('Failed to trigger Vite reload:', err);
-            }
+        if (projectIdInstance) {
+            // Batch write complete: invalidate the whole module graph ONCE and send
+            // a SINGLE full-reload to the browser (works for both a legacy
+            // in-process instance and a child-process instance, see instanceOps.js).
+            // Emitting one watcher 'change' event PER FILE caused N separate Vite HMR
+            // processing cycles — each .tsx file without a self-accepting HMR boundary
+            // triggered its own 'full-reload' WebSocket message (26 files = 26
+            // 'page reload' log entries). The Vite client debounces but the module
+            // graph ends in a partially-stale state causing cascading re-requests.
+            sendFullReload(projectIdInstance, projectId);
         }
     }
     // dryRun (used by /preview/:projectId/check): validation above already ran

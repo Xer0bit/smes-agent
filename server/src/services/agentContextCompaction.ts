@@ -65,12 +65,19 @@ export function compactToolCallArgs(part: any): void {
 /**
  * Shorten tool-result content in a tool message part.
  * Mutates `part.result` in-place.
+ *
+ * `supersededPath`: set when a LATER step in this same run touched the same
+ * file again (read/write/edit). A superseded read is pure waste   the model
+ * already has a fresher copy elsewhere in context   so it gets a terser stub
+ * that points at the newer version instead of inviting a redundant re-read.
  */
-export function compactToolResult(part: any): void {
+export function compactToolResult(part: any, supersededPath?: string | null): void {
   const result = typeof part.result === 'string' ? part.result : JSON.stringify(part.result ?? '');
   switch (part.toolName) {
     case 'read_file':
-      if (result.length > 300) {
+      if (supersededPath) {
+        part.result = `[content of ${supersededPath} superseded   see later version in this run]`;
+      } else if (result.length > 300) {
         const lines = result.split('\n').length;
         part.result = `[compacted] ${lines}-line file read   agent saw full content at step time. Call read_file again if current content needed.`;
       }
@@ -86,6 +93,29 @@ export function compactToolResult(part: any): void {
       break;
     // write_file, edit_file, delete_file, rename_file, think results are already short
   }
+}
+
+const FILE_TOUCH_TOOLS = new Set(['read_file', 'write_file', 'edit_file']);
+
+/**
+ * Maps file path -> last pairIdx (0-indexed, across the WHOLE run so far,
+ * not just the compacted range) that touched it via read/write/edit. Used to
+ * find reads that a later step already superseded, wherever "later" falls
+ * still in the kept recent window counts, since a stale read is waste
+ * regardless of which side of the compaction boundary the newer copy sits on.
+ */
+function buildFileTouchMap(msgs: any[], stepStartIdx: number, totalPairs: number): Map<string, number> {
+  const lastTouch = new Map<string, number>();
+  for (let pairIdx = 0; pairIdx < totalPairs; pairIdx++) {
+    const aMsg = msgs[stepStartIdx + pairIdx * 2];
+    if (!aMsg || !Array.isArray(aMsg.content)) continue;
+    for (const part of aMsg.content) {
+      if (part.type !== 'tool-call' || !FILE_TOUCH_TOOLS.has(part.toolName)) continue;
+      const path = typeof part.args?.path === 'string' ? part.args.path : undefined;
+      if (path) lastTouch.set(path, pairIdx);
+    }
+  }
+  return lastTouch;
 }
 
 /**
@@ -150,15 +180,30 @@ export function compactStepMessages(
   const compactUpTo = Math.floor(compactUpToRaw / KEEP_RECENT_STEPS) * KEEP_RECENT_STEPS;
 
   if (stepNumber >= COMPACT_AFTER_STEP && compactUpTo > 0) {
+    // Bounded to compactUpTo, NOT completedStepPairs: compactUpTo only moves
+    // at KEEP_RECENT_STEPS batch boundaries (see comment above), so this map
+    // is byte-stable for the same stretch of steps. Looking ahead into the
+    // still-growing recent window would flip a read's superseded/not status
+    // every single step as new steps complete, changing already-compacted
+    // message content without compactUpTo itself moving   silently breaking
+    // the exact cache-prefix stability this function was rewritten to fix.
+    const fileTouchMap = buildFileTouchMap(msgs, stepStartIdx, compactUpTo);
+
     for (let pairIdx = 0; pairIdx < compactUpTo; pairIdx++) {
       const assistantIdx = stepStartIdx + pairIdx * 2;
       const toolIdx = assistantIdx + 1;
 
       // Compact assistant message (tool call args   file contents, diffs)
       const aMsg = msgs[assistantIdx];
+      const pathByToolCallId = new Map<string, string>();
       if (aMsg && Array.isArray(aMsg.content)) {
         for (const part of aMsg.content) {
-          if (part.type === 'tool-call') compactToolCallArgs(part);
+          if (part.type === 'tool-call') {
+            if (part.toolName === 'read_file' && typeof part.args?.path === 'string' && part.toolCallId) {
+              pathByToolCallId.set(part.toolCallId, part.args.path);
+            }
+            compactToolCallArgs(part);
+          }
         }
         // Also compact any text parts (agent thinking/explanation between tool calls)
         for (const part of aMsg.content) {
@@ -172,7 +217,10 @@ export function compactStepMessages(
       const tMsg = msgs[toolIdx];
       if (tMsg && Array.isArray(tMsg.content)) {
         for (const part of tMsg.content) {
-          if (part.type === 'tool-result') compactToolResult(part);
+          if (part.type !== 'tool-result') continue;
+          const path = part.toolCallId ? pathByToolCallId.get(part.toolCallId) : undefined;
+          const isSuperseded = Boolean(path && (fileTouchMap.get(path) ?? -1) > pairIdx);
+          compactToolResult(part, isSuperseded ? path : null);
         }
       }
     }

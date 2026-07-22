@@ -46,7 +46,7 @@ const DEFAULT_MODELS: LlmModelEntry[] = [
   { id: 'gemini-3.1-pro-preview', provider: 'gemini', label: 'Gemini 3.1 Pro (Advanced)' },
   { id: 'gemini-2.5-pro',   provider: 'gemini',   label: 'Gemini 2.5 Pro' },
   { id: 'gemini-flash-latest', provider: 'gemini', label: 'Gemini Flash (Fast, latest)' },
-  { id: 'claude-sonnet-4-6', provider: 'anthropic', label: 'Claude Sonnet 4.6' },
+  { id: 'claude-sonnet-5', provider: 'anthropic', label: 'Claude Sonnet 5' },
   { id: 'glm-4.5-flash',    provider: 'zai',      label: 'GLM-4.5 Flash (Free tier)' },
   { id: 'glm-5.2',          provider: 'zai',      label: 'GLM-5.2' },
   { id: 'glm-5',            provider: 'zai',      label: 'GLM-5' },

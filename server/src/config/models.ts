@@ -26,7 +26,7 @@ export const CANONICAL_MODELS: ModelDef[] = [
   { id: 'gemini-2.5-pro',           provider: 'gemini',    label: 'Gemini 2.5 Pro' },
   { id: 'gemini-flash-latest',      provider: 'gemini',    label: 'Gemini Flash (Fast, latest)' },
   // ── Anthropic ─────────────────────────────────────────────────────────────
-  { id: 'claude-sonnet-4-6',        provider: 'anthropic', label: 'Claude Sonnet 4.6' },
+  { id: 'claude-sonnet-5',        provider: 'anthropic', label: 'Claude Sonnet 5' },
   // ── GLM / z.ai (free tier) ────────────────────────────────────────────────
   { id: 'glm-4.5-flash',    provider: 'zai', label: 'GLM-4.5 Flash (Free tier)' },
   // ── GLM / z.ai (paid resource packages required) ──────────────────────────
@@ -62,11 +62,11 @@ const STALE_ID_MAP: Record<string, string> = {
   'gemini-3-pro':                      'gemini-3.1-pro-preview',
   'gemini-1.5-flash':                  'gemini-flash-latest',
   'gemini-1.5-pro':                    'gemini-2.5-pro',
-  'claude-3-7-sonnet-latest':          'claude-sonnet-4-6',
-  'claude-3-5-sonnet-20241022':        'claude-sonnet-4-6',
-  'claude-3-5-sonnet-20241022-latest': 'claude-sonnet-4-6',
-  'claude-sonnet-4-5':                 'claude-sonnet-4-6',
-  'claude-sonnet-4-20250514':          'claude-sonnet-4-6',
+  'claude-3-7-sonnet-latest':          'claude-sonnet-5',
+  'claude-3-5-sonnet-20241022':        'claude-sonnet-5',
+  'claude-3-5-sonnet-20241022-latest': 'claude-sonnet-5',
+  'claude-sonnet-4-5':                 'claude-sonnet-5',
+  'claude-sonnet-4-20250514':          'claude-sonnet-5',
   'deepseek-reasoner':                 'deepseek-chat',
 };
 
@@ -104,7 +104,7 @@ export function canonicalizeModelId(input: unknown, fallback: string = DEFAULT_P
   }
   if (lower.includes('deepseek')) return 'deepseek-chat';
   if (lower.includes('claude') || lower.includes('sonnet') || lower.includes('haiku') || lower.includes('opus')) {
-    return 'claude-sonnet-4-6';
+    return 'claude-sonnet-5';
   }
   return fallback;
 }

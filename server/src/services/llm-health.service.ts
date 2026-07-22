@@ -24,7 +24,7 @@ async function testAnthropic(apiKey: string): Promise<{ ok: boolean; reason: str
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         max_tokens: 1,
         messages: [{ role: 'user', content: 'hi' }],
       }),

@@ -263,7 +263,11 @@ function checkCrossFileImports(projectRoot, requestFiles, fullSync) {
 // module graph. If it fails to transform, the project is broken.
 async function quickViteBuildCheck(projectId, projectRoot) {
     const instance = activeServers.get(projectId);
-    if (!instance || !instance.vite) return { ok: true, errors: [] };
+    // Guard is on instance existence only, not `.vite`   this check never
+    // touches instance.vite (it only needs getViteApi()'s transformWithEsbuild
+    // below), and a child-process instance ({proc, port}) has no `.vite` field
+    // at all despite being just as real/running as a legacy in-process one.
+    if (!instance) return { ok: true, errors: [] };
 
     // Scan ALL source files — not just entry points — so syntax errors in
     // pages / components are caught immediately (before the agent health-checks).

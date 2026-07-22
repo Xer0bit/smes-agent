@@ -237,7 +237,7 @@ export function buildFallbackCandidates(primaryProviderName: string, primaryMode
   const configuredFallback = process.env.AI_FALLBACK_MODEL || undefined;
   const candidates = Array.from(new Set([
     configuredFallback,
-    'claude-sonnet-4-6',
+    'claude-sonnet-5',
     'deepseek-chat',
     'gemini-2.5-pro',
     DEFAULT_FREE_MODEL,
@@ -311,7 +311,7 @@ export function resolveProviderWithFallback(requestedModelId: string): { provide
   const candidates = [
     normalizedRequested,
     process.env.AI_MODEL || undefined,
-    'claude-sonnet-4-6',
+    'claude-sonnet-5',
     'deepseek-chat',
     process.env.AI_FALLBACK_MODEL || undefined,
     DEFAULT_PRIMARY_MODEL,

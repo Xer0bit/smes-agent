@@ -355,13 +355,17 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // provider invoices (production audit 2026-07-21).
   function priceFor(mid: string): { input: number; output: number; cacheRead: number; cacheWrite: number } {
     return mid.includes('claude')
-      ? { input: 3.00,   output: 15.00,  cacheRead: 0.30,  cacheWrite: 3.75  }  // Claude Sonnet 4.6
+      ? { input: 3.00,   output: 15.00,  cacheRead: 0.30,  cacheWrite: 3.75  }  // Claude Sonnet 5
       : mid.includes('gemini-3.1-pro-preview')
       ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 3.1 Pro (thinking)
       : mid.includes('gemini-2.5-pro')
       ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 2.5 Pro
       : mid.includes('gemini')
-      ? { input: 0.075,  output: 0.30,   cacheRead: 0.01875, cacheWrite: 0.00 } // Gemini 2.5 Flash
+      // "gemini-flash-latest" is a Google-managed alias   it silently moved
+      // 2.5 Flash -> 3.5 Flash -> 3.6 Flash (2026-07-21) while this price
+      // stayed frozen at the original 2.5 Flash rate, a ~20x undercount on
+      // every narration call and 'micro'-tier run. Verified current rate.
+      ? { input: 1.50,   output: 7.50,   cacheRead: 0.375,   cacheWrite: 0.00 } // Gemini Flash (latest, currently 3.6)
       : mid.includes('deepseek')
       ? { input: 0.27,   output: 1.10,   cacheRead: 0.07,  cacheWrite: 0.00  }  // DeepSeek Chat
       : mid.toLowerCase().startsWith('glm')

@@ -5,7 +5,13 @@ const path = require('path');
 const http = require('http');
 const crypto = require('crypto');
 const { exec } = require('child_process');
+const httpProxy = require('http-proxy');
 const { getViteApi } = require('./lib/viteApi');
+const { createPortPool } = require('./lib/portPool');
+const {
+    spawnChildInstance, proxyRequest, proxyUpgrade,
+    sendFullReload, warmupInstance, closeInstance,
+} = require('./lib/instanceOps');
 const previewState = require('./lib/previewState');
 const {
     activeServers, projectErrors, projectDiagnostics, runtimeInstances,
@@ -23,14 +29,10 @@ const {
     materializeProjectFiles, pruneProjectFiles,
 } = require('./lib/materialize');
 const { snapshotProjectSrc, rollbackProjectSrc, cleanupSnapshot } = require('./lib/snapshot');
-
-// Client-side scripts injected into every generated project's index.html.
-// Read once at startup (not per-request/per-project)   see lib/client-scripts/.
-const CLIENT_SCRIPTS_DIR = path.join(__dirname, 'lib', 'client-scripts');
-const ERROR_REPORTER_SCRIPT = fs.readFileSync(path.join(CLIENT_SCRIPTS_DIR, 'error-reporter.js'), 'utf8');
-const INSPECTOR_SCRIPT = fs.readFileSync(path.join(CLIENT_SCRIPTS_DIR, 'inspector.js'), 'utf8');
-const NAV_PATCH_SCRIPT = fs.readFileSync(path.join(CLIENT_SCRIPTS_DIR, 'nav-patch.js'), 'utf8');
-const BLANK_CHECK_SCRIPT = fs.readFileSync(path.join(CLIENT_SCRIPTS_DIR, 'blank-check.js'), 'utf8');
+// buildViteConfig/COMMON_DEPS shared by both the legacy in-process path
+// (below) and the per-project child-process runner (lib/viteChildRunner.js)
+// so the two can never drift apart   see lib/viteConfig.js.
+const { buildViteConfig, COMMON_DEPS } = require('./lib/viteConfig');
 
 // Load .env.production (deployed) or .env (local dev) for server-side secrets
 // (Supabase keys etc.) if present. Neither is committed to git. .env is only
@@ -387,21 +389,11 @@ async function closeProjectServer(projectId, reason = 'cleanup') {
     if (!instance) return;
 
     closingServers.add(projectId);
-    try {
-        // Timeout: if Vite close() hangs (e.g. stuck HMR), force-continue after 10s
-        await Promise.race([
-            instance.vite.close(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Vite close timeout')), 10_000)),
-        ]);
-    } catch (error) {
-        console.warn(`[${projectId}] Failed to close Vite instance during ${reason}:`, error?.message || error);
-    }
-
-    try {
-        instance.server.close();
-    } catch (error) {
-        console.warn(`[${projectId}] Failed to close dummy server during ${reason}:`, error?.message || error);
-    }
+    // closeInstance handles both shapes: legacy in-process (vite.close() raced
+    // against a timeout) and child-process (IPC shutdown -> SIGTERM -> SIGKILL).
+    // The child's own 'exit' handler (registered at spawn time, see
+    // getOrCreateServer) releases its port back to the pool once it actually dies.
+    await closeInstance(instance, projectId, reason);
 
     activeServers.delete(projectId);
     projectErrors.delete(projectId);
@@ -704,26 +696,6 @@ export default {
     return projectRoot;
 }
 
-// Common dependencies to pre-bundle for faster builds
-const COMMON_DEPS = [
-    'react', 'react-dom', 'react-router-dom', 'lucide-react',
-    '@radix-ui/react-accordion', '@radix-ui/react-alert-dialog', '@radix-ui/react-aspect-ratio',
-    '@radix-ui/react-avatar', '@radix-ui/react-checkbox', '@radix-ui/react-collapsible',
-    '@radix-ui/react-context-menu', '@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu',
-    '@radix-ui/react-hover-card', '@radix-ui/react-label', '@radix-ui/react-menubar',
-    '@radix-ui/react-navigation-menu', '@radix-ui/react-popover', '@radix-ui/react-progress',
-    '@radix-ui/react-radio-group', '@radix-ui/react-scroll-area', '@radix-ui/react-select',
-    '@radix-ui/react-separator', '@radix-ui/react-slider', '@radix-ui/react-slot',
-    '@radix-ui/react-switch', '@radix-ui/react-tabs', '@radix-ui/react-toast',
-    '@radix-ui/react-toggle', '@radix-ui/react-toggle-group', '@radix-ui/react-tooltip',
-    'class-variance-authority', 'clsx', 'tailwind-merge', 'framer-motion', 'date-fns',
-    'recharts', 'sonner', 'embla-carousel-react', '@tanstack/react-query', '@tanstack/react-table',
-    'react-hook-form', '@hookform/resolvers', 'react-day-picker', 'cmdk', 'vaul',
-    'input-otp', 'react-resizable-panels', 'axios', 'lodash', 'uuid', 'zustand', 'zod',
-    '@supabase/supabase-js', 'next-themes', 'react-icons', 'react-markdown', 'react-hot-toast',
-    'react-dropzone', 'swr', 'i18next', 'react-i18next', '@heroicons/react',
-];
-
 // Production cleanup settings
 const MAX_INACTIVE_TIME_MS = IS_PRODUCTION ? 30 * 60 * 1000 : 60 * 60 * 1000; // 30min prod, 1hr dev
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
@@ -734,6 +706,32 @@ const _capSource =
     process.env.MAX_ACTIVE_SERVERS === undefined ? 'default (not set)' :
     _envCapValid ? 'env' : `default (env value "${process.env.MAX_ACTIVE_SERVERS}" rejected)`;
 console.log(`[Preview] MAX_ACTIVE_SERVERS = ${MAX_ACTIVE_SERVERS} (${_capSource})`);
+
+// ── Preview isolation, interim step: per-project child processes ────────────
+// PREVIEW_CHILD_PROCESS_MODE: "off" (default) keeps every project on the
+// legacy in-process Vite path. "all" moves every project to its own child
+// process. A comma-separated list of project IDs canaries just those
+// projects   a bare on/off flag would flip every live customer preview
+// simultaneously with no way to test against one real project first.
+const _childModeRaw = (process.env.PREVIEW_CHILD_PROCESS_MODE || 'off').trim();
+const _childModeAll = _childModeRaw === 'all';
+const _childModeAllowlist = _childModeAll || _childModeRaw === 'off'
+    ? new Set()
+    : new Set(_childModeRaw.split(',').map((s) => s.trim()).filter(Boolean));
+function isChildProcessMode(projectId) {
+    return _childModeAll || _childModeAllowlist.has(projectId);
+}
+console.log(`[Preview] PREVIEW_CHILD_PROCESS_MODE = ${_childModeRaw}`);
+
+const portPool = createPortPool(MAX_ACTIVE_SERVERS);
+const previewProxy = httpProxy.createProxyServer({});
+previewProxy.on('error', (err, req, res) => {
+    console.error('[proxy] error:', err?.message);
+    if (res && !res.headersSent && typeof res.writeHead === 'function') {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+    }
+    if (res && typeof res.end === 'function') res.end('Preview server unavailable');
+});
 
 // Cleanup inactive Vite servers to free memory
 async function cleanupInactiveServers() {
@@ -860,6 +858,43 @@ async function getOrCreateServer(projectId) {
     ensureEssentialFiles(projectRoot, []);
     const projectCacheDir = path.join(projectRoot, '.vite-cache');
 
+    // ── Child-process path (PREVIEW_CHILD_PROCESS_MODE) ─────────────────────
+    // Real OS process per project instead of an in-process Vite instance   see
+    // lib/viteChildRunner.js / lib/instanceOps.js for the split. No dummyServer
+    // trick needed here: the child's Vite binds its own real listen port, so
+    // its own WS server just works: the upgrade handler below proxies to it.
+    if (isChildProcessMode(projectId)) {
+        const port = portPool.allocate();
+        if (port == null) {
+            throw new Error(`No free ports in the preview child-process pool for ${projectId}`);
+        }
+        try {
+            const proc = await spawnChildInstance(projectId, projectRoot, port);
+            // Persistent cleanup: fires on both a deliberate closeInstance-driven
+            // exit AND an unexpected crash, so a crash doesn't leak the port or
+            // leave a stale activeServers entry blocking the next lazy recreate.
+            proc.on('exit', (code) => {
+                console.warn(`[${projectId}] Child Vite process exited (code ${code})`);
+                portPool.release(port);
+                const current = activeServers.get(projectId);
+                if (current && current.proc === proc) {
+                    activeServers.delete(projectId);
+                    projectErrors.delete(projectId);
+                    runtimeInstances.delete(projectId);
+                    recentUpdateFingerprints.delete(projectId);
+                }
+            });
+            const instance = { proc, port, lastAccessed: Date.now() };
+            activeServers.set(projectId, instance);
+            return instance;
+        } catch (error) {
+            portPool.release(port);
+            console.error(`[${projectId}] Failed to spawn Vite child process:`, error?.message || error);
+            throw error;
+        }
+    }
+
+    // ── Legacy in-process path (rollback fallback) ───────────────────────────
     // Create a dummy HTTP server for this instance to attach HMR to
     // We won't listen() on this, but we'll manually emit 'upgrade' events to it
     const dummyServer = http.createServer();
@@ -868,7 +903,7 @@ async function getOrCreateServer(projectId) {
     const hmrConfig = {
         server: dummyServer,
     };
-    
+
     // In production, configure HMR explicitly so the Vite client connects to the
     // nginx proxy (wss on port 443). Without explicit config, Vite auto-detects
     // location.port which is '' for default ports, producing a malformed WS URL
@@ -882,230 +917,15 @@ async function getOrCreateServer(projectId) {
     }
 
     try {
-        const { createViteServer, reactPluginFactory } = await getViteApi();
-        const vite = await createViteServer({
-            configFile: false,
-            plugins: [
-                reactPluginFactory(),
-                // ── Block __edge_functions__/ from ever being served ──────────────
-                // server.fs.deny does NOT reliably block requests here (verified  
-                // Vite's dev middleware still transformed and served the file even
-                // with fs.deny set). configureServer runs as real middleware inside
-                // Vite's own stack, so it applies regardless of which of the 3
-                // vite.middlewares(...) call sites in this file handled the request.
-                {
-                    name: 'ecomgear-block-edge-functions',
-                    configureServer(server) {
-                        server.middlewares.use((req, res, next) => {
-                            if (req.url && req.url.includes('__edge_functions__')) {
-                                res.statusCode = 403;
-                                res.end('Forbidden');
-                                return;
-                            }
-                            next();
-                        });
-                    },
-                },
-                // ── Transform error auto-repair plugin ────────────────────────────
-                // Returns repaired code in-memory ONLY. Do NOT write to disk here  
-                // any fs.writeFileSync during a transform triggers the file watcher
-                // (300ms polling), which emits a 'change' event → Vite sends
-                // 'page-reload' → browser reloads → requests files again → transform
-                // fires again → writes again → infinite reload loop.
-                {
-                    name: 'ecomgear-transform-repair',
-                    enforce: 'pre',
-                    async transform(code, id) {
-                        // Only process project source files
-                        if (!id.startsWith(projectRoot) || id.includes('node_modules')) return null;
-                        const ext = path.extname(id).toLowerCase();
-                        if (!['.tsx', '.ts', '.jsx', '.js'].includes(ext)) return null;
-
-                        const relPath = path.relative(projectRoot, id).replace(/\\/g, '/');
-                        const { content: repaired, issues } = preprocessFile(relPath, code);
-                        if (issues.length > 0) {
-                            console.log(`[${projectId}] Transform-repair ${relPath}: ${issues.join(', ')}`);
-                            // Return repaired code in-memory   NO disk write to avoid watcher loop
-                            return { code: repaired, map: null };
-                        }
-
-                        // Quick syntax check: try esbuild transform on the code
-                        try {
-                            const { transformWithEsbuild } = await getViteApi();
-                            await transformWithEsbuild(code, id, {
-                                loader: ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : ext === '.ts' ? 'ts' : 'js',
-                                jsx: 'automatic',
-                                sourcemap: false,
-                            });
-                        } catch (transformErr) {
-                            // Transform failed   attempt component-level fallback (in-memory only).
-                            // IMPORTANT: always record the error in projectDiagnostics so that
-                            // getProjectDiagnostics() returns healthy:false. This prevents the agent
-                            // loop from treating the fallback render as a successful build and stopping
-                            // prematurely. The repair loop will then read the error and fix the file.
-                            const errMsg = transformErr?.message || String(transformErr);
-                            const syntaxError = `Syntax error in ${relPath}: ${errMsg.split('\n')[0]}`;
-
-                            const isMainEntry = relPath === 'src/main.tsx' || relPath === 'src/main.jsx';
-                            if (isMainEntry) {
-                                const appImport = (code.match(/import\s+App\s+from\s+['"]([^'"]+)['"]/) || [])[1] || './App';
-                                const fallback = `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from '${appImport}'\nimport './index.css'\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n)\n`;
-                                console.warn(`[${projectId}] Auto-repaired broken ${relPath} at transform time`);
-                                appendProjectError(projectId, syntaxError, 'build');
-                                return { code: fallback, map: null };
-                            }
-
-                            // For component/page files, generate a safe placeholder
-                            if (/^src\/(pages|components|layouts|contexts|hooks)\//.test(relPath) ||
-                                relPath === 'src/App.tsx' || relPath === 'src/App.jsx') {
-                                const baseName = path.basename(relPath).replace(/\.(tsx|jsx|ts|js)$/i, '');
-                                const componentName = baseName.replace(/[^A-Za-z0-9_$]/g, '') || 'RecoveredComponent';
-                                const fallback = `export default function ${componentName}() {\n  return null;\n}\n`;
-                                console.warn(`[${projectId}] Auto-repaired broken component ${relPath} at transform time`);
-                                appendProjectError(projectId, syntaxError, 'build');
-                                return { code: fallback, map: null };
-                            }
-
-                            // For utility files (non-component), provide a minimal export
-                            if (/\.(ts|js)$/.test(relPath) && !/\.(tsx|jsx)$/.test(relPath)) {
-                                const fallback = `// Auto-recovered: original file had syntax errors\nexport {};\n`;
-                                console.warn(`[${projectId}] Auto-repaired broken utility ${relPath} at transform time`);
-                                appendProjectError(projectId, syntaxError, 'build');
-                                return { code: fallback, map: null };
-                            }
-                        }
-
-                        return null;
-                    },
-                },
-                // Runtime error reporter: inject a small script into index.html
-                // that catches window errors + unhandled rejections and POSTs them
-                // back to the preview service so they appear in the /status endpoint
-                // and trigger the Repair overlay (same as build errors).
-                {
-                    name: 'ecomgear-runtime-error-reporter',
-                    transformIndexHtml() {
-                        return [
-                            {
-                                tag: 'script',
-                                attrs: { type: 'text/javascript' },
-                                children: ERROR_REPORTER_SCRIPT.replaceAll('__PROJECT_ID__', projectId),
-                                injectTo: 'head-prepend',
-                            },
-                            {
-                                tag: 'script',
-                                attrs: { type: 'text/javascript' },
-                                children: INSPECTOR_SCRIPT,
-                                injectTo: 'head-prepend',
-                            },
-                            {
-                                tag: 'script',
-                                attrs: { type: 'text/javascript' },
-                                children: NAV_PATCH_SCRIPT,
-                                injectTo: 'head-prepend',
-                            },
-                            {
-                                tag: 'script',
-                                attrs: { type: 'text/javascript' },
-                                children: BLANK_CHECK_SCRIPT,
-                                injectTo: 'head-prepend',
-                            },
-                        ];
-                    },
-                },
-            ],
-            cacheDir: projectCacheDir,
-            server: {
-                middlewareMode: true,
-                host: '0.0.0.0',
-                cors: true,
-                allowOnlyFromPrivateIPs: false,
-                hmr: hmrConfig,
-                watch: {
-                    usePolling: true,
-                    interval: IS_PRODUCTION ? 300 : 100  // Slower polling in production
-                },
-            },
-            appType: 'spa',
-            root: projectRoot,
-            base: `/preview/${projectId}/`,
-            css: {
-                postcss: {
-                    plugins: [
-                        require('tailwindcss')({
-                            darkMode: ['class'],
-                            content: [
-                                path.join(projectRoot, 'index.html'),
-                                path.join(projectRoot, 'src/**/*.{js,jsx,ts,tsx,html}'),
-                            ],
-                            theme: {
-                                extend: {
-                                    colors: {
-                                        border: 'hsl(var(--border))',
-                                        input: 'hsl(var(--input))',
-                                        ring: 'hsl(var(--ring))',
-                                        background: 'hsl(var(--background))',
-                                        foreground: 'hsl(var(--foreground))',
-                                        primary: { DEFAULT: 'hsl(var(--primary))', foreground: 'hsl(var(--primary-foreground))' },
-                                        secondary: { DEFAULT: 'hsl(var(--secondary))', foreground: 'hsl(var(--secondary-foreground))' },
-                                        muted: { DEFAULT: 'hsl(var(--muted))', foreground: 'hsl(var(--muted-foreground))' },
-                                        accent: { DEFAULT: 'hsl(var(--accent))', foreground: 'hsl(var(--accent-foreground))' },
-                                        destructive: { DEFAULT: 'hsl(var(--destructive))', foreground: 'hsl(var(--destructive-foreground))' },
-                                        popover: { DEFAULT: 'hsl(var(--popover))', foreground: 'hsl(var(--popover-foreground))' },
-                                        card: { DEFAULT: 'hsl(var(--card))', foreground: 'hsl(var(--card-foreground))' },
-                                        sidebar: {
-                                            DEFAULT: 'hsl(var(--sidebar-background))',
-                                            foreground: 'hsl(var(--sidebar-foreground))',
-                                            primary: 'hsl(var(--sidebar-primary))',
-                                            'primary-foreground': 'hsl(var(--sidebar-primary-foreground))',
-                                            accent: 'hsl(var(--sidebar-accent))',
-                                            'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
-                                            border: 'hsl(var(--sidebar-border))',
-                                            ring: 'hsl(var(--sidebar-ring))',
-                                        },
-                                    },
-                                    borderRadius: {
-                                        lg: 'var(--radius)',
-                                        md: 'calc(var(--radius) - 2px)',
-                                        sm: 'calc(var(--radius) - 4px)',
-                                    },
-                                },
-                            },
-                            plugins: [require('tailwindcss-animate')],
-                        }),
-                        require('autoprefixer')(),
-                    ],
-                },
-            },
-            resolve: {
-                alias: {
-                    '@': path.join(projectRoot, 'src'),
-                },
-            },
-            optimizeDeps: {
-                include: COMMON_DEPS,
-                // Prevent re-bundling on every request
-                force: false,
-            },
-            // Better error handling for syntax issues
-            esbuild: {
-                logLevel: 'warning',
-                logOverride: {
-                    'this-is-undefined-in-esm': 'silent',
-                },
-            },
-            // Custom logger to capture build errors
-            customLogger: {
-                info: (msg) => console.log(`[${projectId}] ${msg}`),
-                warn: (msg) => console.warn(`[${projectId}] ${msg}`),
-                error: (msg) => {
-                    console.error(`[${projectId}] ${msg}`);
-                    appendProjectError(projectId, msg, 'build');
-                },
-                warnOnce: (msg) => console.warn(`[${projectId}] ${msg}`),
-            },
+        const vite = await buildViteConfig({
+            projectId,
+            projectRoot,
+            projectCacheDir,
+            hmrConfig,
+            middlewareMode: true,
+            isProduction: IS_PRODUCTION,
+            onDiagnostic: (msg, kind) => appendProjectError(projectId, msg, kind),
         });
-
         const instance = { vite, server: dummyServer, lastAccessed: Date.now() };
         activeServers.set(projectId, instance);
         return instance;
@@ -1344,12 +1164,7 @@ async function startMainServer() {
 
                 console.log(`[Packages] Installed ${pkgList}   invalidating Vite dep caches`);
                 for (const [projectId, instance] of activeServers.entries()) {
-                    try {
-                        instance.vite.moduleGraph.invalidateAll();
-                        instance.vite.ws.send({ type: 'full-reload', path: '*' });
-                    } catch (e) {
-                        console.warn(`[Packages] Cache invalidation failed for ${projectId}:`, e?.message);
-                    }
+                    sendFullReload(instance, projectId);
                 }
                 res.json({ success: true, installed: packages, output: finalOut.slice(0, 500) });
             };
@@ -1431,8 +1246,8 @@ async function startMainServer() {
         req.url = `/preview/${projectId}/`;
         console.log(`[Published] /p/${slug} → project ${projectId}`);
         try {
-            const { vite } = await getOrCreateServer(projectId);
-            vite.middlewares(req, res, next);
+            const instance = await getOrCreateServer(projectId);
+            proxyRequest(instance, projectId, req, res, next, previewProxy);
         } catch (e) {
             console.error(`[Published] Error serving ${slug}:`, e.message);
             next(e);
@@ -1468,8 +1283,8 @@ async function startMainServer() {
         }
         console.log(`[Subdomain] ${host} → project ${projectId} | ${req.url}`);
         try {
-            const { vite } = await getOrCreateServer(projectId);
-            vite.middlewares(req, res, next);
+            const instance = await getOrCreateServer(projectId);
+            proxyRequest(instance, projectId, req, res, next, previewProxy);
         } catch (e) {
             console.error(`[Subdomain] Error serving ${slug}:`, e.message);
             next(e);
@@ -2110,28 +1925,25 @@ export default App;
             }
 
             // Ensure server exists/restarts if config changed
-            const { vite: viteInstance } = await getOrCreateServer(projectId);
+            const instance = await getOrCreateServer(projectId);
 
             // ── Warmup: force dep optimization to finish before client loads ──
             // Vite doesn't pre-bundle deps until the first module request arrives.
             // Without warming up, the browser loads the preview URL and waits
             // 60-120 seconds while Vite optimizes deps   showing a blank page.
             //
-            // Strategy: call vite.transformRequest() on the entry points directly.
-            // This is the Vite-internal API that triggers dep discovery + bundling
-            // and actually WAITS for optimization to complete (unlike a fake HTTP
-            // request that only triggers the scan asynchronously).
+            // warmupInstance calls vite.transformRequest() directly for a legacy
+            // in-process instance, or round-trips the same call over IPC for a
+            // child-process instance   either way it actually WAITS for
+            // optimization to complete (unlike a fake HTTP request that only
+            // triggers the scan asynchronously).
             try {
                 const entryPoints = ['src/main.tsx', 'src/main.jsx', 'src/index.tsx'].filter((ep) => {
                     return fs.existsSync(path.join(projectRoot, ep));
                 });
                 const entryToWarm = entryPoints[0] || 'src/main.tsx';
 
-                // transformRequest with a 30s timeout   enough for large dep trees
-                await Promise.race([
-                    viteInstance.transformRequest(`/${entryToWarm}`),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('warmup timeout')), 30000)),
-                ]);
+                await warmupInstance(instance, entryToWarm, 30_000);
                 console.log(`[${projectId}] Warmup complete   Vite deps pre-bundled via transformRequest`);
             } catch (warmupErr) {
                 // Non-blocking: warmup failure does not prevent the update from succeeding.
@@ -2345,7 +2157,7 @@ export default App;
         console.log(`[${projectId}] Request: ${req.method} ${req.url} (Original: ${req.originalUrl})`);
 
         try {
-            const { vite } = await getOrCreateServer(projectId);
+            const instance = await getOrCreateServer(projectId);
             // Mounted route already strips `/preview/:projectId` from req.url.
             // Keep that value for Vite, otherwise source-module requests can fall
             // through to SPA HTML and trigger corrupted-content MIME errors.
@@ -2428,7 +2240,7 @@ export default App;
                 return originalEnd(chunk, ...args);
             };
 
-            vite.middlewares(req, res, next);
+            proxyRequest(instance, projectId, req, res, next, previewProxy);
         } catch (e) {
             console.error(`[${projectId}] Error handling request:`, e);
             next(e);
@@ -2442,10 +2254,8 @@ export default App;
         if (match) {
             const projectId = match[1];
             try {
-                const { server: dummyServer } = await getOrCreateServer(projectId);
-                // Emit upgrade on the specific project's dummy server
-                // Vite's WebSocket server is listening on this dummy server
-                dummyServer.emit('upgrade', req, socket, head);
+                const instance = await getOrCreateServer(projectId);
+                proxyUpgrade(instance, projectId, req, socket, head, previewProxy);
                 return;
             } catch (e) {
                 console.error(`[HMR] Failed to route upgrade for ${projectId}:`, e);
