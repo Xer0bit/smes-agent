@@ -145,6 +145,12 @@ export function isAuthOrBillingError(err: any): boolean {
     combined.includes('usage limits') ||
     combined.includes('api usage limit') ||
     combined.includes('regain access') ||
+    // Gemini monthly quota exhaustion ("You exceeded your current quota,
+    // please check your plan and billing details")   a 429 by status, but a
+    // billing condition in practice: it does not clear until the quota
+    // resets, so it must open the billing circuit, not be retried as
+    // "temporarily busy". Observed in production 2026-07-17.
+    combined.includes('exceeded your current quota') ||
     combined.includes('invalid.*api.*key') ||
     combined.includes('invalid api key') ||
     combined.includes('invalid x-api-key') ||

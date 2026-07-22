@@ -73,7 +73,7 @@ import { toast } from "sonner";
 import { promptService } from "@/eCG/UserPrompt";
 import { messageService } from "@/eCG/UserPrompt/messageService";
 import { generatePreview } from "@/eCG/Preview/previewGenerator";
-import { checkPreviewHealth, updateDockerPreview, getPreviewUrl, handlePreviewSessionExpired } from "@/services/previewHealthService";
+import { checkPreviewHealth, updateDockerPreview, getPreviewUrl, handlePreviewSessionExpired, createPreviewSession } from "@/services/previewHealthService";
 import { validateAndFixFiles, getFixedContent } from "@/services/fileValidationService";
 import { QuotaLimitDialog } from "@/components/QuotaLimitDialog";
 import { useSubscription } from "@/contexts/SubscriptionContext"; // single source   hasFeature/tier/tierLabel now on context
@@ -492,6 +492,17 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
+
+  // Bootstraps preview-service's access-controlled session as early as
+  // possible so it's already established (Set-Cookie landed) well before any
+  // of the many setPreviewUrl(...) call sites below ever point an iframe at
+  // it   avoids needing to touch each of those call sites individually.
+  // Fire-and-forget: the server's retry page (sendPreviewAuthPending) is the
+  // safety net for the remaining race on a cold page load.
+  useEffect(() => {
+    if (!projectId) return;
+    void createPreviewSession(projectId);
+  }, [projectId]);
 
   // Preview URL state
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);

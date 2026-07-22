@@ -592,7 +592,7 @@ export default function DashboardProjects() {
 
             await Promise.allSettled(
               invitedRecipients.map((recipient) =>
-                supabase.functions.invoke('send-project-invitation', {
+                supabase.functions.invoke('project-invitation', {
                   body: {
                     project_name: selectedProject.name || 'Project',
                     inviter_name: inviterName,

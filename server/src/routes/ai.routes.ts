@@ -3,7 +3,7 @@ import { authMiddleware, optionalAuthMiddleware, AuthenticatedRequest } from '..
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { getLlmControlState, getUserPlanTier } from '../services/llm-control.service.js';
-import { testAndAutoDisableProviders } from '../services/llm-health.service.js';
+import { testAndAutoDisableProviders, getLastHealthResults } from '../services/llm-health.service.js';
 import { runAgentLoop, restoreSnapshot } from '../services/agentLoopService.js';
 import { DEFAULT_FREE_MODEL } from '../config/models.js';
 import { projectService } from '../services/project.service.js';
@@ -259,7 +259,8 @@ async function releaseAgentLock(projectId: string): Promise<void> {
     const attempts = 3;
     for (let i = 1; i <= attempts; i++) {
         try {
-            await supabase.from('agent_locks').delete().eq('project_id', projectId);
+            const { error } = await supabase.from('agent_locks').delete().eq('project_id', projectId);
+            if (error) throw error;
             return;
         } catch (err) {
             if (i === attempts) {
@@ -396,7 +397,7 @@ async function resolveEffectiveOrgIdForEco(userId: string, projectId: string, re
 async function isWithinEcoPolicyLimit(orgId: string): Promise<boolean> {
     const { data, error } = await supabase
         .from('organizations')
-        .select('ai_gens_limit, ai_gens_used, ai_gens_reset_at')
+        .select('ai_gens_limit, ai_gens_used, ai_gens_reset_at, is_internal')
         .eq('id', orgId)
         .limit(1)
         .maybeSingle();
@@ -407,6 +408,11 @@ async function isWithinEcoPolicyLimit(orgId: string): Promise<boolean> {
     }
 
     const d = data as Record<string, unknown>;
+    // Internal/dogfooding orgs (migration 20260721090000) bypass the monthly eco
+    // budget entirely   rebuild plan Task 4.1 point 5. The $ safety ceiling in
+    // agentLoopService.ts (HARD_COST_CAP / AGENT_COST_CAP_USD_INTERNAL) still
+    // applies unchanged; this only lifts the consumer-facing monthly quota.
+    if (d.is_internal === true) return true;
     // Use the DB column (set by sync_org_plan_limits trigger) so admin overrides are respected.
     const policyLimit = Number(d.ai_gens_limit ?? 10);
     const used = Number(d.ai_gens_used ?? 0);
@@ -480,6 +486,23 @@ router.post('/generate', authMiddleware, async (req: AuthenticatedRequest, res: 
         apiVersion,
         migrationPath: '/api/v1/ai/agent-stream',
     });
+});
+
+// Cached provider health   read-only, never triggers a probe. Sanitized to
+// booleans + timestamps (raw failure reasons can contain provider billing
+// text and stay admin-only via /test-providers).
+router.get('/health', (_req, res: Response) => {
+    const results = getLastHealthResults();
+    if (!results) {
+        res.json({ success: true, checked: false, providers: [] });
+        return;
+    }
+    const providers = Object.entries(results).map(([provider, r]) => ({
+        provider,
+        ok: r?.ok ?? false,
+        testedAt: r?.testedAt ?? null,
+    }));
+    res.json({ success: true, checked: true, allOk: providers.every((p) => p.ok), providers });
 });
 
 // Re-test all LLM providers and auto-disable failing ones.
@@ -1011,6 +1034,16 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         //   fix   → fallback model (glm-5 by default   error diagnosis)
         //   edit/feature/build → user's selected model / admin primary
         // Guests always stay on GUEST_MODEL regardless.
+        // The model the user's plan actually entitles them to   escalation target.
+        // Downgrade-then-escalate cascade: a cheap model attempts first; if it
+        // lands ZERO changes (stuck/failed), one automatic retry runs on this
+        // model. Never escalates ABOVE the plan model, so a free-tier failure
+        // can't silently burn premium spend. Rationale (measured 2026-07-21):
+        // edit-tier on Claude averages $0.60-$1.66/request vs ~$0.02-$0.05 on
+        // Flash-class models   a failed cheap attempt is a rounding error next
+        // to a single Claude run, so cheap-first wins whenever the cheap model
+        // succeeds even a modest fraction of the time.
+        const entitledModel = effectiveModel;
         if (!isGuest) {
             if (isCheapTier(requestTier)) {
                 const cheapModel = process.env.CHEAP_TASK_MODEL || control.models.freeModel || DEFAULT_FREE_MODEL;
@@ -1020,6 +1053,17 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 const fixModel = process.env.FIX_TIER_MODEL || control.models.fallback || DEFAULT_FREE_MODEL;
                 logger.info(`[agent-stream] Tier=fix → fix model: ${fixModel} (was ${effectiveModel})`);
                 effectiveModel = fixModel;
+            } else if (
+                requestTier === 'edit' && !isRepairPrompt &&
+                process.env.EDIT_TIER_CHEAP_FIRST !== '0'
+            ) {
+                // Edit tier is the volume tier and was the only one still going
+                // straight to the expensive model. Cheap-first, escalate on failure.
+                const editFirstModel = process.env.EDIT_TIER_FIRST_MODEL || control.models.fallback || DEFAULT_FREE_MODEL;
+                if (editFirstModel !== effectiveModel) {
+                    logger.info(`[agent-stream] Tier=edit → cheap-first model: ${editFirstModel} (entitled: ${entitledModel})`);
+                    effectiveModel = editFirstModel;
+                }
             }
         }
 
@@ -1070,11 +1114,11 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             }
         }
 
-        agentResult = await runAgentLoop({
+        const buildAgentLoopParams = (model: string) => ({
             prompt,
             projectId,
             appPath,
-            model: effectiveModel,
+            model,
             mode: effectiveMode,
             existingFiles: Array.isArray(existingFiles) ? existingFiles : [],
             history: (() => {
@@ -1095,13 +1139,41 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 hasIntegrationRequest: /\b(database|supabase|api|connect|integration|webhook|backend)\b/i.test(prompt),
             },
             sink: {
-                emit: (event, data) => sseWrite(res, event, data),
+                emit: (event: string, data: any) => sseWrite(res, event, data),
                 heartbeat: () => { if (!res.writableEnded) res.write(': heartbeat\n\n'); },
             },
             userId,
             abortSignal: routeAbortController.signal,
             agentLockToken,
         });
+
+        agentResult = await runAgentLoop(buildAgentLoopParams(effectiveModel));
+
+        // ── Cheap-first escalation ───────────────────────────────────────────
+        // If the cheap-first attempt landed ZERO changes (stuck-aborted or
+        // just produced nothing), retry once on the model the user's plan
+        // actually entitles them to. A wasted cheap attempt costs ~$0.02-0.05;
+        // even a 100% escalation rate here still costs far less than sending
+        // every edit-tier request straight to Claude, and most requests won't
+        // need to escalate at all. Never escalates above the entitled model,
+        // and never escalates more than once (no cascades).
+        const cheapFirstMadeNoProgress = agentResult && (
+            agentResult.stuckAborted === true || (
+                (agentResult.filesToWrite?.length ?? 0) === 0 &&
+                (agentResult.filesToDelete?.length ?? 0) === 0 &&
+                (agentResult.renames?.length ?? 0) === 0
+            )
+        );
+        if (
+            effectiveModel !== entitledModel &&
+            cheapFirstMadeNoProgress &&
+            !routeAbortController.signal.aborted
+        ) {
+            logger.info(`[agent-stream] Cheap-first model (${effectiveModel}) made no changes   escalating to entitled model ${entitledModel}`);
+            sseWrite(res, 'status', { phase: 'escalating', message: 'Retrying with a stronger model...' });
+            effectiveModel = entitledModel;
+            agentResult = await runAgentLoop(buildAgentLoopParams(entitledModel));
+        }
 
         // Auto-reapply saved SEO settings whenever the agent writes a new index.html.
         // This prevents agent rebuilds from overwriting previously-synced SEO tags.

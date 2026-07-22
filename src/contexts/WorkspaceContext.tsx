@@ -196,7 +196,46 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
     const loadFromDatabase = useCallback(async (): Promise<boolean> => {
         setIsLoading(true);
         try {
-            console.log('[WorkspaceContext] Attempting to load files from Storage (user-projects-free)...');
+            // ── Latest revision FIRST ──────────────────────────────────────────
+            // Real bug (2026-07-21): every agent edit creates a new revision and
+            // uploads changed files to a REVISION-SCOPED path
+            // (projects/{id}/{revisionId}/{path}, via revisionService.createRevision
+            // -> storageService.saveProjectFiles). The code below this block reads
+            // a flat, non-revision-scoped path (projects/{id}/files/{path}) that
+            // NOTHING currently writing keeps updated   it only ever gets
+            // populated once, by the one-time legacy-migration fallback further
+            // down. Once that migration ran once, this function found a
+            // non-empty flat path forever after and used it, ignoring every
+            // subsequent revision. Users saw their latest change in the live
+            // preview (which reads the real files on the gen-server) but an old,
+            // frozen snapshot on every page refresh (which read this path).
+            // Fix: resolve the actual latest revision's manifest first; the flat
+            // path is now only a last-resort fallback for a project with zero
+            // revisions at all.
+            try {
+                const { data: latestRevisions } = await supabase
+                    .from('revisions')
+                    .select('id')
+                    .eq('project_id', projectId)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+                const latestRevisionId = latestRevisions?.[0]?.id;
+                if (latestRevisionId) {
+                    const { revisionService } = await import('@/services/revisionService');
+                    const revisionFiles = await revisionService.getRevisionFiles(projectId, latestRevisionId);
+                    if (revisionFiles.length > 0) {
+                        console.log(`[WorkspaceContext] Loaded ${revisionFiles.length} files from latest revision ${latestRevisionId}.`);
+                        manager.setFiles(revisionFiles);
+                        setLastSyncedAt(new Date());
+                        setIsLoading(false);
+                        return true;
+                    }
+                }
+            } catch (revErr) {
+                console.warn('[WorkspaceContext] Latest-revision load failed, falling back to legacy storage path:', revErr);
+            }
+
+            console.log('[WorkspaceContext] No usable revision found   falling back to legacy flat storage path (user-projects-free)...');
 
             // Recursive function to list all files in storage
             const loadFilesRecursively = async (basePath: string, relativePath: string = ''): Promise<{ path: string, content: string }[]> => {

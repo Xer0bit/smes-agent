@@ -36,6 +36,10 @@ interface RunState {
   lastStatus: string;
   /** Timestamp of last status emit, for throttle. */
   lastStatusAt: number;
+  /** Running cost of this run's narration LLM calls   own model choice, not
+   *  part of the main loop's token accounting (2026-07-21 audit: previously
+   *  uncosted call site). Read via getNarrationCost() before endRun() clears it. */
+  costUsd: number;
 }
 
 const states = new Map<string, RunState>();
@@ -46,7 +50,13 @@ export function beginRun(projectId: string, userPrompt: string): void {
     userPrompt: userPrompt.slice(0, 500),
     lastStatus: '',
     lastStatusAt: 0,
+    costUsd: 0,
   });
+}
+
+/** Accumulated cost (USD) of this run's narration calls so far. 0 if no run is active. */
+export function getNarrationCost(projectId: string): number {
+  return states.get(projectId)?.costUsd ?? 0;
 }
 
 export function updateThought(projectId: string, thought: string): void {
@@ -60,20 +70,29 @@ export function endRun(projectId: string): void {
 
 // ─── Provider ────────────────────────────────────────────────────────────────
 
-function getProvider() {
+// Per-1M-token pricing for narration's own (always-cheap) model choices   kept
+// local rather than importing agentLoopService's priceFor() to avoid a
+// cross-service dependency for three fixed, rarely-changing rates.
+const NARRATION_PRICING: Record<string, { input: number; output: number }> = {
+  'gemini-flash-latest':        { input: 0.075, output: 0.30 },
+  'glm-4.5-flash':              { input: 0.60,  output: 2.20 },
+  'claude-haiku-4-5-20251001':  { input: 1.00,  output: 5.00 },
+};
+
+function getProvider(): { model: any; priceTag: string } {
   const geminiKey = process.env.GEMINI_API_KEY;
   if (geminiKey && process.env.AI_DISABLE_GEMINI !== '1') {
-    return createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-flash-latest');
+    return { model: createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-flash-latest') as any, priceTag: 'gemini-flash-latest' };
   }
   const zaiKey = process.env.ZAI_API_KEY;
   if (zaiKey && process.env.AI_DISABLE_ZAI !== '1') {
-    return createOpenAI({ apiKey: zaiKey, baseURL: 'https://api.z.ai/api/paas/v4' }).chat('glm-4.5-flash');
+    return { model: createOpenAI({ apiKey: zaiKey, baseURL: 'https://api.z.ai/api/paas/v4' }).chat('glm-4.5-flash') as any, priceTag: 'glm-4.5-flash' };
   }
   const anthropicKey = process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (anthropicKey && process.env.AI_DISABLE_ANTHROPIC !== '1') {
-    return createAnthropic({ apiKey: anthropicKey })('claude-haiku-4-5-20251001');
+    return { model: createAnthropic({ apiKey: anthropicKey })('claude-haiku-4-5-20251001') as any, priceTag: 'claude-haiku-4-5-20251001' };
   }
-  return createGoogleGenerativeAI({ apiKey: geminiKey || 'missing' })('gemini-flash-latest');
+  return { model: createGoogleGenerativeAI({ apiKey: geminiKey || 'missing' })('gemini-flash-latest') as any, priceTag: 'gemini-flash-latest' };
 }
 
 // ─── Core: generate a status line ────────────────────────────────────────────
@@ -117,9 +136,10 @@ export async function generateStatus(projectId: string, what: StatusKind): Promi
 
   let status: string | null = null;
   try {
+    const { model, priceTag } = getProvider();
     const result = await Promise.race([
       generateText({
-        model: getProvider(),
+        model,
         messages: [{
           role: 'user',
           content: prompt,
@@ -129,6 +149,13 @@ export async function generateStatus(projectId: string, what: StatusKind): Promi
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('status timeout')), 2500)),
     ]);
     status = cleanLlmText(result.text ?? '');
+    if (state) {
+      const rate = NARRATION_PRICING[priceTag] ?? NARRATION_PRICING['gemini-flash-latest'];
+      const usage = result.usage as any;
+      const inTok = usage?.inputTokens ?? usage?.promptTokens ?? 0;
+      const outTok = usage?.outputTokens ?? usage?.completionTokens ?? 0;
+      state.costUsd += (inTok * rate.input + outTok * rate.output) / 1_000_000;
+    }
   } catch {
     status = null; // LLM unavailable   use fallback below
   }

@@ -57,13 +57,7 @@ verify_jwt = false
 [functions.signup-complete]
 verify_jwt = false
 
-[functions.confirm-email]
-verify_jwt = false
-
 [functions.welcome]
-verify_jwt = false
-
-[functions.password-reset]
 verify_jwt = false
 
 [functions.quota-alert]

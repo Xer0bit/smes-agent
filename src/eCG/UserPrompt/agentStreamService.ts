@@ -417,6 +417,8 @@ export async function streamAgentGeneration(params: {
                 ghostRun: payload.ghostRun === true,
                 costUsd: typeof payload.costUsd === 'number' ? payload.costUsd : undefined,
                 ecoUsed: typeof payload.ecoUsed === 'number' ? payload.ecoUsed : undefined,
+                needsAutoContinue: payload.needsAutoContinue === true,
+                continuationPrompt: typeof payload.continuationPrompt === 'string' ? payload.continuationPrompt : undefined,
               };
               callbacks.onDone?.(finalResult);
               break;

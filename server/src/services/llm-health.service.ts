@@ -225,5 +225,31 @@ export async function testAndAutoDisableProviders(): Promise<AllProviderResults>
   if (failing.length > 0) logger.warn(`[LlmHealth] Disabled providers: ${failing.join(', ')}   admin can re-enable from Settings after fixing.`);
   if (passing.length === 0) logger.error('[LlmHealth] No LLM providers are functional. All AI features disabled.');
 
+  lastResults = results;
   return results;
+}
+
+// ─── Recurring loop + cached read ─────────────────────────────────────────────
+// The startup check alone let mid-uptime credit exhaustion go unnoticed for
+// hours (Anthropic ran dry at least 9 times Jun 12 - Jul 17 2026 and users
+// found out before ops did   production audit 2026-07-21).
+
+let lastResults: AllProviderResults | null = null;
+let healthTimer: NodeJS.Timeout | null = null;
+const HEALTH_INTERVAL_MS = 60 * 60 * 1000; // hourly
+
+/** Most recent results without triggering a new (billed) probe. */
+export function getLastHealthResults(): AllProviderResults | null {
+  return lastResults;
+}
+
+/** Hourly re-check loop. Idempotent; call once after the startup check. */
+export function startLlmHealthLoop(): void {
+  if (healthTimer) return;
+  healthTimer = setInterval(() => {
+    testAndAutoDisableProviders().catch((err) =>
+      logger.warn('[LlmHealth] Hourly health check failed:', err?.message),
+    );
+  }, HEALTH_INTERVAL_MS);
+  healthTimer.unref?.();
 }

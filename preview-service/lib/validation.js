@@ -52,6 +52,16 @@ async function validateSourceFile(filePath, content) {
     const basename = path.basename(filePath);
     if (SKIP_VALIDATION_FILES.has(basename)) return [];
 
+    // Ambient declaration files (vite-env.d.ts, etc.) carry no runtime code,
+    // only type declarations   there's nothing to transpile/emit. Feeding one
+    // to ts.transpileModule() throws TypeScript's internal
+    // "Debug Failure. Output generation failed" (the emitter asserts against
+    // producing JS output for a file it detects as declaration-only via the
+    // .d.ts filename suffix). That crash was being recorded as a real build
+    // error, permanently marking every project unhealthy the moment its
+    // (perfectly valid, untouched) vite-env.d.ts got validated.
+    if (filePath.endsWith('.d.ts')) return [];
+
     const loader = getEsbuildLoader(filePath);
     if (!loader) return [];
 

@@ -110,26 +110,6 @@ const pl = `style="margin:0;font-size:15px;color:#475569;line-height:1.75;"`;
 // ── templates ─────────────────────────────────────────────────────────────────
 const templates = [
   {
-    name: '1-confirm-email',
-    subject: 'Confirm your EcomGear email address',
-    from: 'EcomGear <noreply@ecomgear.dev>',
-    html: baseTemplate({
-      title: 'Confirm your EcomGear email',
-      preheader: 'One click to activate your EcomGear account.',
-      body: `
-        <h1 ${h1}>Confirm your email address</h1>
-        <p ${p}>Hi Jane,</p>
-        <p ${pl}>
-          Thanks for creating an EcomGear account. Please confirm your email address
-          to activate your account and start building.
-        </p>
-      `,
-      button: { label: 'Confirm email address', url: `${FRONTEND_URL}/auth` },
-      footer: 'This link expires in 24 hours. If you did not create an EcomGear account, you can safely ignore this email.',
-      frontendUrl: FRONTEND_URL,
-    }),
-  },
-  {
     name: '2-welcome',
     subject: 'Welcome to EcomGear   your account is ready',
     from: 'EcomGear <noreply@ecomgear.dev>',
@@ -178,26 +158,6 @@ const templates = [
       `,
       button: { label: 'Go to Dashboard', url: `${FRONTEND_URL}/dashboard` },
       footer: "Questions? Just reply to this email   we're happy to help.",
-      frontendUrl: FRONTEND_URL,
-    }),
-  },
-  {
-    name: '3-password-reset',
-    subject: 'Reset your EcomGear password',
-    from: 'EcomGear <noreply@ecomgear.dev>',
-    html: baseTemplate({
-      title: 'Reset your EcomGear password',
-      preheader: 'Use this link to set a new password. Expires in 1 hour.',
-      body: `
-        <h1 ${h1}>Reset your password</h1>
-        <p ${p}>Hi Jane,</p>
-        <p ${pl}>
-          We received a request to reset the password on your EcomGear account.
-          Click the button below to choose a new one.
-        </p>
-      `,
-      button: { label: 'Reset password', url: `${FRONTEND_URL}/auth` },
-      footer: 'This link expires in 1 hour. If you did not request a password reset, no action is needed   your password remains unchanged.',
       frontendUrl: FRONTEND_URL,
     }),
   },

@@ -150,6 +150,11 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
       // Record the failed edit in the ledger so the journal shows ❌ at the next step
       const firstSearchLine = args.diff.match(/<<<<<<< SEARCH\n([\s\S]*?)\n=======/)?.[1] ?? '';
       ctx.ledger?.recordEditFailed(args.path, firstSearchLine, result.error ?? 'unknown error');
+      // Ops-visible signal: this failure is otherwise only returned to the
+      // model as a tool result and never appears in server logs, making the
+      // SEARCH-miss rate unmeasurable (confirmed: zero grep hits across 2
+      // months of production logs, audit 2026-07-21).
+      console.warn(`[edit_file] SEARCH_MISS project=${ctx.projectId} path=${args.path}`);
 
       // Include the first 100 lines of the current file so the agent can see
       // the exact content and correct the SEARCH text without an extra read_file call.

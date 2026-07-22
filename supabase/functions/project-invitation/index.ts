@@ -1,6 +1,5 @@
 // @ts-nocheck
 // Supabase Edge Function   project collaboration invitation
-// Refactored version of supabase/functions/send-project-invitation using shared base
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { corsHeaders, json } from '../_shared/email-cors.ts';
 import { baseTemplate, safe } from '../_shared/email-base-template.ts';

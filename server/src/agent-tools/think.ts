@@ -15,8 +15,15 @@
 import { z } from 'zod';
 import { ToolDefinition, AgentContext } from './types.js';
 
+// ~500 words at ~6 chars/word   generous over the stated 400-word budget below,
+// but a real limit. A prose-only "keep it under 400 words" was ignored badly
+// enough in production (one think call hit 4,661 tokens, ~9x over, on a step
+// that produced zero code) that it needs mechanical enforcement, not just a
+// description the model can drift past.
+const THOUGHT_MAX_CHARS = 3000;
+
 const schema = z.object({
-  thought: z.string().describe(
+  thought: z.string().max(THOUGHT_MAX_CHARS, 'Too long   keep reasoning under ~400 words, bullet points only, no prose.').describe(
     'Your internal reasoning. Use this to: (1) Plan which files to create/edit and in what order, ' +
     '(2) Analyze what the user actually wants vs. what they literally said, ' +
     '(3) Consider edge cases and potential build errors before writing code, ' +

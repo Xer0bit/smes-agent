@@ -229,6 +229,32 @@ export const promptService = {
         onMessageAdd,
       });
 
+      // ── Auto-continue on budget-cap-with-progress ────────────────────────
+      // The backend flags this when a run hit its token/cost cap mid-task
+      // but had already written real files (agentLoopService's
+      // needsAutoContinue). Rather than dead-ending with a message asking the
+      // user to notice and reply "continue", pick the rest of the task up
+      // automatically   same as a manual follow-up would, just without
+      // making the user do it. Capped so a genuinely oversized request still
+      // surfaces to the user instead of quietly burning the budget 3x over.
+      const MAX_AUTO_CONTINUES = 2;
+      const depth = params._autoContinueDepth ?? 0;
+      if (finalResult.needsAutoContinue && finalResult.continuationPrompt && depth < MAX_AUTO_CONTINUES) {
+        await onSystemMessage(
+          `Continuing automatically   picking up where the last run left off (${depth + 1}/${MAX_AUTO_CONTINUES})...`
+        );
+        return await this.handlePrompt(
+          {
+            ...params,
+            promptText: finalResult.continuationPrompt,
+            existingFiles: mergedFiles,
+            hasRealApp: true,
+            _autoContinueDepth: depth + 1,
+          },
+          callbacks
+        );
+      }
+
       return finalResult;
     } catch (error) {
       console.error('[PromptService] Error in prompt handling:', error);

@@ -43,6 +43,12 @@ export interface AgentContext {
    */
   pendingPreviewFiles?: Map<string, string>;
   /**
+   * Large-shrink notices from the truncation guard (agentToolSet), keyed by
+   * file path; appended to that file's successful write_file result so the
+   * model knows the rewrite dropped many lines and can restore if unintended.
+   */
+  pendingShrinkWarnings?: Map<string, string>;
+  /**
    * Tracks how many times edit_file has failed (SEARCH mismatch) per file path.
    * After 2 failures, the tool dispatch blocks edit_file and forces write_file.
    */

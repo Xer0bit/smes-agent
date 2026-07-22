@@ -19,22 +19,34 @@ const {
     quickViteBuildCheck,
 } = require('./lib/validation');
 const {
-    TAILWIND_CSS_BASE, preprocessFile, ensureEssentialFiles, isScaffoldOnly,
+    TAILWIND_CSS_BASE, preprocessFile, ensureEssentialFiles,
     materializeProjectFiles, pruneProjectFiles,
 } = require('./lib/materialize');
 const { snapshotProjectSrc, rollbackProjectSrc, cleanupSnapshot } = require('./lib/snapshot');
 
-// Load .env.production for server-side secrets (Supabase keys etc.) if present.
-// This file is written by the deploy script and never committed to git.
-try {
-    const envFile = path.join(__dirname, '.env.production');
-    if (fs.existsSync(envFile)) {
-        for (const line of fs.readFileSync(envFile, 'utf-8').split('\n')) {
-            const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-            if (m && !(m[1] in process.env)) process.env[m[1]] = m[2];
+// Client-side scripts injected into every generated project's index.html.
+// Read once at startup (not per-request/per-project)   see lib/client-scripts/.
+const CLIENT_SCRIPTS_DIR = path.join(__dirname, 'lib', 'client-scripts');
+const ERROR_REPORTER_SCRIPT = fs.readFileSync(path.join(CLIENT_SCRIPTS_DIR, 'error-reporter.js'), 'utf8');
+const INSPECTOR_SCRIPT = fs.readFileSync(path.join(CLIENT_SCRIPTS_DIR, 'inspector.js'), 'utf8');
+const NAV_PATCH_SCRIPT = fs.readFileSync(path.join(CLIENT_SCRIPTS_DIR, 'nav-patch.js'), 'utf8');
+const BLANK_CHECK_SCRIPT = fs.readFileSync(path.join(CLIENT_SCRIPTS_DIR, 'blank-check.js'), 'utf8');
+
+// Load .env.production (deployed) or .env (local dev) for server-side secrets
+// (Supabase keys etc.) if present. Neither is committed to git. .env is only
+// read when .env.production isn't there, so a real deploy is never shadowed.
+for (const envName of ['.env.production', '.env']) {
+    try {
+        const envFile = path.join(__dirname, envName);
+        if (fs.existsSync(envFile)) {
+            for (const line of fs.readFileSync(envFile, 'utf-8').split('\n')) {
+                const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+                if (m && !(m[1] in process.env)) process.env[m[1]] = m[2];
+            }
+            break;
         }
-    }
-} catch { /* ignore */ }
+    } catch { /* ignore */ }
+}
 
 // Production configuration from environment
 const PORT = process.env.PORT || 3001;
@@ -50,6 +62,207 @@ const HMR_PROTOCOL = process.env.VITE_HMR_PROTOCOL || undefined;
 // Used to recover project files that were pruned by the nightly cleanup.
 const SUPABASE_REST_URL = (process.env.SUPABASE_URL || 'https://api.ecomgear.dev').replace(/\/$/, '');
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+// ── Preview access control ────────────────────────────────────────────────────
+// Before today, /preview/:projectId served to anyone who had the URL   no
+// session, no ownership check. A copy-pasted preview link (browser history,
+// screenshot, shared chat) gave a stranger a live view of someone else's
+// project, permanently. This gates it on the SAME auth the main app uses:
+// the visitor's Supabase JWT must belong to a user who actually has access
+// to that project (owner, or org admin/member via project_member_access
+// mirrors server/src/services/project.service.ts's getProject() exactly, so
+// the two access models can't silently drift apart).
+//
+// Fails OPEN (same convention as the agent-lock check above) when
+// SUPABASE_SERVICE_KEY isn't configured, so environments that never set up
+// Supabase locally aren't newly broken by this. It fails CLOSED for every
+// environment that already has the key   which includes production today.
+// Bounces to the app's HOME page, not /login   a visitor without access might
+// already be logged in (just not a member of THIS project), so /login is the
+// wrong destination for them too; home is correct either way.
+const FRONTEND_HOME_URL = process.env.FRONTEND_HOME_URL
+    || (IS_PRODUCTION ? 'https://www.ecomgear.dev' : 'http://localhost:8080');
+
+// jwt → { userId, expiresAt } — avoids re-verifying the same token on every request.
+const jwtCache = new Map();
+const JWT_CACHE_TTL_MS = 5 * 60 * 1000;
+// "userId:projectId" → { allowed, expiresAt }
+const accessCache = new Map();
+const ACCESS_CACHE_TTL_MS = 2 * 60 * 1000;
+// Opaque per-browser session, set once a jwt+project pair is verified, so
+// every subsequent sub-resource request (JS modules, CSS, assets   dozens per
+// page load) doesn't need the JWT re-attached to its own URL.
+const previewSessions = new Map(); // sessionId → { projectId, userId, expiresAt }
+const SESSION_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours, matches the (currently dead) frontend session concept
+
+function parseCookies(req) {
+    const header = req.headers.cookie;
+    const out = {};
+    if (!header) return out;
+    for (const part of header.split(';')) {
+        const idx = part.indexOf('=');
+        if (idx === -1) continue;
+        out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+    }
+    return out;
+}
+
+async function verifySupabaseJwt(jwt) {
+    const cached = jwtCache.get(jwt);
+    if (cached && cached.expiresAt > Date.now()) return cached.userId;
+    try {
+        const res = await fetch(`${SUPABASE_REST_URL}/auth/v1/user`, {
+            headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${jwt}` },
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (!data?.id) return null;
+        jwtCache.set(jwt, { userId: data.id, expiresAt: Date.now() + JWT_CACHE_TTL_MS });
+        return data.id;
+    } catch (e) {
+        console.warn('[PreviewAuth] JWT verification failed:', e.message);
+        return null; // fail closed on error   an unverifiable token is not a valid one
+    }
+}
+
+/** Mirrors project.service.ts getProject()'s access rule: owner, org admin, or explicit project_member_access. */
+async function userCanAccessProject(userId, projectId) {
+    const cacheKey = `${userId}:${projectId}`;
+    const cached = accessCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.allowed;
+
+    const restHeaders = { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` };
+    let allowed = false;
+    try {
+        const projRes = await fetch(
+            `${SUPABASE_REST_URL}/rest/v1/projects?id=eq.${encodeURIComponent(projectId)}&select=user_id,created_by,organization_id`,
+            { headers: restHeaders },
+        );
+        const [project] = projRes.ok ? await projRes.json() : [];
+        if (project) {
+            if (project.user_id === userId || project.created_by === userId) {
+                allowed = true;
+            } else if (project.organization_id) {
+                const memRes = await fetch(
+                    `${SUPABASE_REST_URL}/rest/v1/org_members?org_id=eq.${encodeURIComponent(project.organization_id)}&user_id=eq.${encodeURIComponent(userId)}&select=role`,
+                    { headers: restHeaders },
+                );
+                const [membership] = memRes.ok ? await memRes.json() : [];
+                if (membership && membership.role !== 'billing_admin') {
+                    if (membership.role === 'admin') {
+                        allowed = true;
+                    } else {
+                        const pmaRes = await fetch(
+                            `${SUPABASE_REST_URL}/rest/v1/project_member_access?project_id=eq.${encodeURIComponent(projectId)}&user_id=eq.${encodeURIComponent(userId)}&select=id`,
+                            { headers: restHeaders },
+                        );
+                        const [pma] = pmaRes.ok ? await pmaRes.json() : [];
+                        allowed = Boolean(pma);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('[PreviewAuth] Project access check failed:', e.message);
+        allowed = false; // fail closed on error
+    }
+    accessCache.set(cacheKey, { allowed, expiresAt: Date.now() + ACCESS_CACHE_TTL_MS });
+    return allowed;
+}
+
+function setPreviewSessionCookie(res, projectId, sessionId) {
+    // SameSite=None;Secure is required for the cookie to survive when preview
+    // is embedded cross-domain (preview.ecomgear.app inside www.ecomgear.dev)
+    // in production; Lax is fine (and required, since Secure needs https) for
+    // local dev where everything is plain http on localhost.
+    const sameSite = IS_PRODUCTION ? 'SameSite=None; Secure' : 'SameSite=Lax';
+    res.setHeader('Set-Cookie', `ecg_pv_sess_${projectId}=${sessionId}; Path=/preview/${projectId}; HttpOnly; ${sameSite}; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
+}
+
+/**
+ * Verify a JWT + project access, mint a session, and set its cookie.
+ * Shared by the /session and /renew endpoints (both do the same thing today;
+ * "renew" doesn't need to preserve the old session id, just issue a fresh one).
+ */
+async function mintPreviewSession(req, res) {
+    const { projectId } = req.params;
+    const jwt = (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || null;
+    if (!jwt) return res.status(401).json({ error: 'Missing Authorization bearer token' });
+
+    const userId = await verifySupabaseJwt(jwt);
+    if (!userId) return res.status(401).json({ error: 'Invalid or expired session' });
+
+    const allowed = await userCanAccessProject(userId, projectId);
+    if (!allowed) return res.status(403).json({ error: 'No access to this project' });
+
+    const sessionId = crypto.randomBytes(24).toString('hex');
+    const expiresAt = Date.now() + SESSION_TTL_MS;
+    previewSessions.set(sessionId, { projectId, userId, expiresAt });
+    setPreviewSessionCookie(res, projectId, sessionId);
+    res.json({ token: sessionId, expiresAt });
+}
+
+/**
+ * Small retry page instead of an instant hard redirect: the frontend kicks
+ * off the /session cookie-bootstrap fetch just before pointing the iframe at
+ * this URL, so a cookie-less first request is often just that fetch not
+ * having landed yet, not a real unauthorized visitor. Retries a few times
+ * before giving up and bouncing the WHOLE tab (not just the iframe) to login
+ *   a real stranger's link converges here after the retries are exhausted.
+ */
+function sendPreviewAuthPending(res, projectId) {
+    // `attempts` lived in a plain JS variable in the first version of this page
+    // - meaningless, since window.location.reload() reruns the whole script
+    // from scratch every time, resetting it to 0 forever. Real regression this
+    // session: the page retried infinitely and never actually gave up. Using
+    // sessionStorage (survives a reload, scoped per-tab) makes the count real.
+    const storageKey = `ecg_pv_auth_attempts_${projectId}`;
+    res.status(401).set('Content-Type', 'text/html').send(
+        `<!doctype html><html><body style="font-family:system-ui;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">`
+        + `<p id="ecg-pv-msg">Loading…</p>`
+        + `<script>
+            const key = ${JSON.stringify(storageKey)};
+            const attempts = parseInt(sessionStorage.getItem(key) || '0', 10) + 1;
+            sessionStorage.setItem(key, String(attempts));
+            if (attempts > 6) {
+                sessionStorage.removeItem(key);
+                document.getElementById('ecg-pv-msg').textContent = 'No access to this project. Redirecting…';
+                setTimeout(() => { window.top.location.href = ${JSON.stringify(FRONTEND_HOME_URL)}; }, 3000);
+            } else {
+                setTimeout(() => window.location.reload(), 500);
+            }
+        </script>`
+        + `</body></html>`,
+    );
+}
+
+/**
+ * Express middleware: allow the request through only if this browser already
+ * has a live preview session cookie for :projectId. The JWT itself never
+ * appears here or in any URL   it's exchanged for this cookie exclusively via
+ * POST /session, sent as an Authorization header, never a query param.
+ */
+async function requirePreviewAccess(req, res, next) {
+    if (!SUPABASE_SERVICE_KEY) return next(); // fail OPEN   see comment above
+
+    const { projectId } = req.params;
+    const cookies = parseCookies(req);
+    const sessionId = cookies[`ecg_pv_sess_${projectId}`];
+    const session = sessionId ? previewSessions.get(sessionId) : null;
+    if (session && session.projectId === projectId && session.expiresAt > Date.now()) {
+        return next();
+    }
+    return sendPreviewAuthPending(res, projectId);
+}
+
+// Sweep expired sessions/caches every 10 minutes   in-memory, bounded by how
+// many distinct browsers/projects are actively viewed, never grows unbounded.
+setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of previewSessions) if (v.expiresAt <= now) previewSessions.delete(k);
+    for (const [k, v] of jwtCache) if (v.expiresAt <= now) jwtCache.delete(k);
+    for (const [k, v] of accessCache) if (v.expiresAt <= now) accessCache.delete(k);
+}, 10 * 60 * 1000).unref();
 
 // ── Internal update secret ────────────────────────────────────────────────────
 // Set PREVIEW_UPDATE_SECRET in .env.production on VPS2 and in the gen server env
@@ -225,53 +438,6 @@ async function checkAgentLock(projectId, providedToken) {
         return { ok: false };
     } catch {
         return { ok: true }; // fail open   never let lock-check errors block pushes
-    }
-}
-
-// Fetches the latest generated_files revision from Supabase and writes them to disk.
-// Called before Vite starts so the browser always gets the real app, not a blank scaffold.
-// Fails silently   Vite will still start with whatever files are present.
-async function autoRestoreFromSupabase(projectId, projectRoot) {
-    if (!SUPABASE_SERVICE_KEY) return;
-    if (!isScaffoldOnly(projectRoot)) return;
-
-    try {
-        const url = `${SUPABASE_REST_URL}/rest/v1/revisions?project_id=eq.${encodeURIComponent(projectId)}&select=generated_files&order=created_at.desc&limit=1`;
-        const res = await fetch(url, {
-            headers: {
-                apikey: SUPABASE_SERVICE_KEY,
-                Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-            },
-        });
-        if (!res.ok) {
-            console.warn(`[AutoRestore] ${projectId}   Supabase returned ${res.status}`);
-            return;
-        }
-        const rows = await res.json();
-        const generatedFiles = rows[0]?.generated_files;
-        // generated_files is stored as { files: [...], summary: "..." }
-        const files = Array.isArray(generatedFiles)
-            ? generatedFiles
-            : (Array.isArray(generatedFiles?.files) ? generatedFiles.files : null);
-        if (!rows.length || !files || !files.length) {
-            console.warn(`[AutoRestore] ${projectId}   no revision found in Supabase`);
-            return;
-        }
-        let written = 0;
-        for (const file of files) {
-            const safePath = (file.path || '').replace(/^\/+/, '');
-            if (!safePath || safePath.includes('..')) continue;
-            const absPath = path.join(projectRoot, safePath);
-            fs.mkdirSync(path.dirname(absPath), { recursive: true });
-            const content = file.encoding === 'base64'
-                ? Buffer.from(file.content, 'base64')
-                : file.content;
-            fs.writeFileSync(absPath, content);
-            written++;
-        }
-        console.log(`[AutoRestore] ${projectId}   restored ${written} files from Supabase`);
-    } catch (err) {
-        console.warn(`[AutoRestore] ${projectId}   failed: ${err.message}`);
     }
 }
 
@@ -678,9 +844,18 @@ async function getOrCreateServer(projectId) {
     // callers can await it and share the single Vite instance being created.
     const creationPromise = (async () => {
     const projectRoot = initProject(projectId);
-    // If the project only has blank scaffold files (e.g. after nightly cleanup pruned
-    // the real files), fetch the latest revision from Supabase before Vite starts.
-    await autoRestoreFromSupabase(projectId, projectRoot);
+    // autoRestoreFromSupabase() USED to run here unconditionally on every server
+    // (re)creation: if it heuristically decided the project "looked scaffold-only"
+    // it would silently overwrite on-disk files with whatever the DB's last
+    // saved revision was   an independent, autonomous pull with no coordination
+    // with the backend, which is the ONLY thing that should ever decide what a
+    // project's current files are. A restart-triggered false-positive on that
+    // heuristic overwrote hours of real work with an old snapshot in production
+    // testing on 2026-07-21 (see git blame). Preview-service must be a passive
+    // renderer: it displays whatever the backend pushes via /update, never
+    // pulls/decides on its own. Recovery-from-cleanup, if still needed, belongs
+    // in an explicit backend-initiated action, not an implicit background guess
+    // on every Vite (re)start.
     // Backfill compatibility files for older projects so module imports like /src/App.tsx resolve.
     ensureEssentialFiles(projectRoot, []);
     const projectCacheDir = path.join(projectRoot, '.vite-cache');
@@ -814,227 +989,25 @@ async function getOrCreateServer(projectId) {
                             {
                                 tag: 'script',
                                 attrs: { type: 'text/javascript' },
-                                children: `(function(){
-  var _reported = false;
-  function report(msg, src, line) {
-    if (_reported) return; _reported = true;
-    try {
-      fetch('/preview/${projectId}/runtime-error', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ message: String(msg), source: String(src||''), line: line||0 })
-      });
-    } catch(e) {}
-  }
-  window.addEventListener('error', function(e) {
-    // Skip resource load errors (images, fonts, etc.): e.error is null and e.filename is empty
-    if (!e.error && !e.filename) return;
-    report((e.error ? e.error.message : e.message) || String(e), e.filename, e.lineno);
-  }, true);
-  window.addEventListener('unhandledrejection', function(e) {
-    var msg = e.reason ? (e.reason.message || String(e.reason)) : 'Unhandled promise rejection';
-    report(msg, '', 0);
-  }, true);
-})();`,
+                                children: ERROR_REPORTER_SCRIPT.replaceAll('__PROJECT_ID__', projectId),
                                 injectTo: 'head-prepend',
                             },
                             {
                                 tag: 'script',
                                 attrs: { type: 'text/javascript' },
-                                children: `(function(){
-  // ── Click-to-select inspector ────────────────────────────────────
-  // Activated/deactivated via postMessage from the parent (MultiDevicePreview).
-  // When active, clicking an element posts its selector + rect + tagName back
-  // so the chat can scope the next prompt to that element (Lovable/v0 parity).
-  var _inspectActive = false;
-  var _overlay = null;
-
-  function clearOverlay() {
-    if (_overlay) { _overlay.remove(); _overlay = null; }
-  }
-
-  function highlight(el) {
-    if (!_overlay) {
-      _overlay = document.createElement('div');
-      _overlay.style.cssText = 'position:fixed;pointer-events:none;z-index:999999;border:2px solid #6366f1;background:rgba(99,102,241,0.12);transition:all 80ms ease;';
-      document.body.appendChild(_overlay);
-    }
-    var r = el.getBoundingClientRect();
-    _overlay.style.left = r.left + 'px';
-    _overlay.style.top = r.top + 'px';
-    _overlay.style.width = r.width + 'px';
-    _overlay.style.height = r.height + 'px';
-  }
-
-  function buildSelector(el) {
-    if (el.id) return '#' + el.id;
-    var parts = [];
-    while (el && el.nodeType === 1 && parts.length < 4) {
-      var part = el.tagName.toLowerCase();
-      if (el.className && typeof el.className === 'string') {
-        var cls = el.className.trim().split(/\\s+/).slice(0, 2).join('.');
-        if (cls) part += '.' + cls;
-      }
-      var parent = el.parentElement;
-      if (parent) {
-        var siblings = Array.from(parent.children).filter(function(c) { return c.tagName === el.tagName; });
-        if (siblings.length > 1) part += ':nth-of-type(' + (siblings.indexOf(el) + 1) + ')';
-      }
-      parts.unshift(part);
-      el = parent;
-    }
-    return parts.join(' > ');
-  }
-
-  window.addEventListener('message', function(e) {
-    if (e.data && e.data.type === 'ecg-inspect-mode') {
-      _inspectActive = e.data.active;
-      if (!_inspectActive) clearOverlay();
-    }
-  });
-
-  document.addEventListener('click', function(e) {
-    if (!_inspectActive) return;
-    e.preventDefault();
-    e.stopPropagation();
-    var el = e.target;
-    if (!el || el === document.body || el === document.documentElement) return;
-    var selector = buildSelector(el);
-    var r = el.getBoundingClientRect();
-    try {
-      window.parent.postMessage({
-        type: 'ecg-element-selected',
-        selector: selector,
-        tagName: el.tagName.toLowerCase(),
-        text: (el.innerText || '').slice(0, 100),
-        rect: { x: r.x, y: r.y, width: r.width, height: r.height }
-      }, '*');
-    } catch(err) {}
-  }, true);
-
-  document.addEventListener('mousemove', function(e) {
-    if (!_inspectActive) return;
-    var el = e.target;
-    if (el && el !== document.body && el !== document.documentElement) highlight(el);
-  });
-})();`,
+                                children: INSPECTOR_SCRIPT,
                                 injectTo: 'head-prepend',
                             },
                             {
                                 tag: 'script',
                                 attrs: { type: 'text/javascript' },
-                                children: `(function(){
-  function sendNav() {
-    try {
-      // Apps use HashRouter   the route lives in the hash fragment, not the pathname.
-      // Send only the route portion (e.g. "/post-gig") so the parent does not
-      // re-embed the full /preview/{id}/ path into a URL hash, causing duplication.
-      var hash = window.location.hash;
-      var routePath = hash ? hash.replace(/^#/, '') : '/';
-      if (!routePath || routePath === '') routePath = '/';
-      window.parent.postMessage({ type: 'navigation', pathname: routePath }, '*');
-    } catch(e) {}
-  }
-  // Patch pushState / replaceState so React Router link clicks are captured
-  function patchHistory(method) {
-    var original = window.history[method];
-    window.history[method] = function() {
-      original.apply(this, arguments);
-      sendNav();
-    };
-  }
-  patchHistory('pushState');
-  patchHistory('replaceState');
-  window.addEventListener('hashchange', sendNav);
-  window.addEventListener('popstate', sendNav);
-  // Send initial route after app has mounted
-  setTimeout(sendNav, 300);
-})();`,
+                                children: NAV_PATCH_SCRIPT,
                                 injectTo: 'head-prepend',
                             },
                             {
                                 tag: 'script',
                                 attrs: { type: 'text/javascript' },
-                                children: `(function(){
-  var _blankReported = false;
-  var _hadContent = false; // true once real content was seen
-  var _reportTimer = null;
-
-  // Walk the DOM tree up to 'depth' levels looking for an element with
-  // real rendered dimensions. Returns true when visible content is found.
-  function hasRealContent(el, depth) {
-    if (!el || depth <= 0) return false;
-    var s = window.getComputedStyle(el);
-    if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity||'1') < 0.05) return false;
-    var r = el.getBoundingClientRect();
-    // Element occupies at least 4x4 px of screen real estate   real content
-    if (r.width > 4 && r.height > 4) return true;
-    for (var i = 0; i < el.children.length; i++) {
-      if (hasRealContent(el.children[i], depth - 1)) return true;
-    }
-    return false;
-  }
-
-  function reportBlank() {
-    if (_blankReported) return;
-    _blankReported = true;
-    window.parent.postMessage({ type: 'PREVIEW_BLANK' }, '*');
-  }
-
-  // A blank reading on the FIRST check is only a suspicion, not a verdict   a
-  // cold preview server (Vite still transforming/optimizing deps after the
-  // project was idle) can easily take longer than a few seconds to paint
-  // anything, and that used to get misreported as a real crash. Only report
-  // once a check is still blank on the CONFIRM pass, several seconds later.
-  function checkBlank(confirm) {
-    if (_blankReported) return;
-    try {
-      var root = document.getElementById('root') || document.getElementById('app');
-      var target = root || document.body;
-      var isBlank = (target.children.length === 0) || !hasRealContent(target, 6);
-      if (isBlank) {
-        if (confirm) {
-          reportBlank();
-        } else {
-          scheduleCheck(7000, true);
-        }
-      } else {
-        _hadContent = true; // app has rendered at least once   resets observer guard
-      }
-    } catch(e) {}
-  }
-
-  function scheduleCheck(delay, confirm) {
-    if (_blankReported) return;
-    clearTimeout(_reportTimer);
-    _reportTimer = setTimeout(function() { checkBlank(confirm); }, delay);
-  }
-
-  // Initial suspicion check at 5s (soft   just schedules a confirm pass if
-  // still blank), confirmed at +7s (12s total) before actually flagging.
-  window.addEventListener('load', function() {
-    scheduleCheck(5000, false);
-  });
-
-  // Re-check after any route change (React Router / hash nav / back-forward).
-  // The app already proved it can render once, so a shorter confirm window
-  // is fine here   this path is for genuine post-navigation crashes.
-  window.addEventListener('hashchange', function() { if (!_blankReported) scheduleCheck(1500, true); });
-  window.addEventListener('popstate',   function() { if (!_blankReported) scheduleCheck(1500, true); });
-
-  // Watch for the React root being emptied AFTER it previously had content.
-  // This catches: HMR update failures, React crashes, route components that
-  // unmount everything, and Vite's dev-server error overlay replacing the app.
-  try {
-    var root = document.getElementById('root') || document.getElementById('app') || document.body;
-    var observer = new MutationObserver(function() {
-      if (_blankReported || !_hadContent) return;
-      // Debounce: give React 2s to re-render after the DOM change before flagging
-      scheduleCheck(2000, true);
-    });
-    observer.observe(root, { childList: true, subtree: false });
-  } catch(e) {}
-})();`,
+                                children: BLANK_CHECK_SCRIPT,
                                 injectTo: 'head-prepend',
                             },
                         ];
@@ -1227,6 +1200,7 @@ function corsOptions(req, callback) {
     if (!origin || IS_PRODUCTION === false) {
         return callback(null, {
             origin: true,
+            credentials: true,
             methods: allowMethods,
             allowedHeaders: allowHeaders,
             optionsSuccessStatus: 204,
@@ -1235,6 +1209,7 @@ function corsOptions(req, callback) {
     if (ALLOWED_ORIGINS.includes(origin)) {
         callback(null, {
             origin: true,
+            credentials: true,
             methods: allowMethods,
             allowedHeaders: allowHeaders,
             optionsSuccessStatus: 204,
@@ -1835,10 +1810,23 @@ async function startMainServer() {
     }
 
     app.options('/preview/:projectId/export', cors(corsOptions));
-    app.post('/preview/:projectId/export', async (req, res) => {
+    app.post('/preview/:projectId/export', cors(corsOptions), async (req, res) => {
         const { projectId } = req.params;
         if (!isValidProjectId(projectId)) {
             return res.status(400).json({ error: 'Invalid project ID' });
+        }
+        // Was completely unauthenticated   anyone who knew/guessed a project id
+        // could export its full source. Same-class bug as the preview-view gap,
+        // found while building that fix (2026-07-21). This is a one-off action
+        // call (publish/deploy flow, not a page load), so it checks the JWT
+        // directly rather than depending on the view-session cookie, which may
+        // never have been established if export is triggered from a page that
+        // never opened the editor.
+        if (SUPABASE_SERVICE_KEY) {
+            const jwt = (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || null;
+            const userId = jwt ? await verifySupabaseJwt(jwt) : null;
+            const allowed = userId ? await userCanAccessProject(userId, projectId) : false;
+            if (!allowed) return res.status(401).json({ error: 'Not authorized to export this project' });
         }
         const projectRoot = path.join(PROJECTS_ROOT, projectId);
         if (!fs.existsSync(projectRoot) || !fs.existsSync(path.join(projectRoot, 'src', 'main.tsx'))) {
@@ -2317,12 +2305,43 @@ export default App;
 </html>`);
         });
 
+    // Preview access-control session bootstrap. Called by the frontend via
+    // fetch (Authorization header, credentials:'include')   never a URL param.
+    // /session and /renew are identical today; kept as two routes to match
+    // the frontend's existing (previously dead) contract.
+    app.post('/preview/:projectId/session', cors(corsOptions), (req, res) => {
+        if (!isValidProjectId(req.params.projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+        mintPreviewSession(req, res);
+    });
+    app.post('/preview/:projectId/renew', cors(corsOptions), (req, res) => {
+        if (!isValidProjectId(req.params.projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+        mintPreviewSession(req, res);
+    });
+
     // Request Routing Middleware
-    app.use('/preview/:projectId', async (req, res, next) => {
-        const { projectId } = req.params;
-        if (!isValidProjectId(projectId)) {
+    app.use('/preview/:projectId', (req, res, next) => {
+        if (!isValidProjectId(req.params.projectId)) {
             return res.status(400).json({ error: 'Invalid project ID' });
         }
+        next();
+    });
+
+    // DISABLED 2026-07-21 (production incident): locked out real project
+    // owners/members in the editor's embedded preview iframe. Root cause:
+    // preview.ecomgear.app and ecomgear.dev are different registrable
+    // domains, so the session cookie set by POST /session is a third-party
+    // cookie from the iframe's perspective   blocked outright by browsers'
+    // third-party-cookie policies regardless of SameSite=None, not just in
+    // Safari (which was the only risk flagged pre-deploy; turned out broader
+    // in practice). Do not re-enable until the mechanism no longer depends on
+    // a cross-domain cookie (e.g. same-site preview domain, or a per-request
+    // signed token the served page's own script can attach). Server-side
+    // logic (requirePreviewAccess, mintPreviewSession, /session, /renew)
+    // stays in place and correct   this only stops it gating requests.
+    // app.use('/preview/:projectId', requirePreviewAccess);
+
+    app.use('/preview/:projectId', async (req, res, next) => {
+        const { projectId } = req.params;
         console.log(`[${projectId}] Request: ${req.method} ${req.url} (Original: ${req.originalUrl})`);
 
         try {

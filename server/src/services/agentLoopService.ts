@@ -18,7 +18,7 @@ import { canonicalizeModelId, DEFAULT_PRIMARY_MODEL, DEFAULT_FALLBACK_MODEL } fr
 import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols } from '../knowledgebase/index.js';
 import { captureThumbnail } from './thumbnailService.js';
 import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
-import { beginRun as beginNarration, updateThought, endRun as endNarration, generateStatus, type LifecyclePhase } from './narration.service.js';
+import { beginRun as beginNarration, updateThought, endRun as endNarration, generateStatus, getNarrationCost, type LifecyclePhase } from './narration.service.js';
 import { lookupFailureFix, storeFailureFix } from './failureMemory.service.js';
 import { databaseService } from './database.service.js';
 import {
@@ -182,6 +182,12 @@ export interface AgentRunResult {
   costUsd: number;
   /** Eco credits charged for this run, see computeEcoCost() */
   ecoUsed: number;
+  /** True when the run hit the budget cap mid-task but made real progress   safe to auto-continue */
+  needsAutoContinue?: boolean;
+  /** Ready-to-send prompt for the auto-continuation turn, set only when needsAutoContinue is true */
+  continuationPrompt?: string;
+  /** True when the stuck-analysis detector killed the run   the model spun without landing changes */
+  stuckAborted?: boolean;
 }
 
 export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResult> {
@@ -291,18 +297,45 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // Collected image data for (a) vision message content and (b) pre-flight analysis
   const imageVisionData: Array<{ name: string; type: string; base64: string; safeName: string }> = [];
 
+  // ── Project's org, for cost/abort attribution (Task 3.1 lean scope) ──────
+  let projectOrgId: string | null = null;
+  let orgIsInternal = false;
+  if (supabase) {
+    const { data: projectOrgRow } = await supabase
+      .from('projects')
+      .select('organization_id, organizations!inner(is_internal)')
+      .eq('id', projectId)
+      .maybeSingle();
+    projectOrgId = (projectOrgRow as any)?.organization_id ?? null;
+    orgIsInternal = Boolean((projectOrgRow as any)?.organizations?.is_internal);
+  }
+
   // ─── agent_runs tracking (fire-and-forget) ───────────────────────────────────
   let agentRunId: string | null = null;
   if (supabase && userId) {
     const { data } = await supabase
       .from('agent_runs')
-      .insert({ project_id: projectId, user_id: userId, prompt, model: modelId })
+      .insert({ project_id: projectId, user_id: userId, prompt, model: modelId, organization_id: projectOrgId })
       .select('id')
       .single();
     agentRunId = data?.id ?? null;
   }
 
   let stepCount = 0;
+
+  // ── Internal (dogfooding) account detection ──────────────────────────────
+  // Two independent signals, either one marks the run internal: the org's own
+  // is_internal flag (migration 20260721090000), or AGENT_INTERNAL_USER_IDS
+  // (a comma-separated env list   catches internal testers outside the two
+  // seeded orgs without a migration each time). Used to (a) tag run logs so
+  // cost/abort analysis can filter dogfooding traffic, (b) optionally lift
+  // the per-run cost cap for internal runs via AGENT_COST_CAP_USD_INTERNAL so
+  // testing stops dead-ending at the $1.50 customer wall (audit 2026-07-21:
+  // internal accounts were 81% of aborts).
+  const isInternalRun = orgIsInternal || Boolean(
+    userId && (process.env.AGENT_INTERNAL_USER_IDS ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean).includes(userId),
+  );
 
   // ── Per-run token accounting ──────────────────────────────────────────────
   // Tracks every token category across all steps so we can log cost per step
@@ -315,21 +348,33 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     get total()        { return this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens; },
   };
 
-  // Per-model pricing per 1M tokens
-  const PRICE = modelId.includes('claude')
-    ? { input: 3.00,   output: 15.00,  cacheRead: 0.30,  cacheWrite: 3.75  }  // Claude Sonnet 4.6
-    : modelId.includes('gemini-3.1-pro-preview')
-    ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 3.1 Pro (thinking)
-    : modelId.includes('gemini-2.5-pro')
-    ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 2.5 Pro
-    : modelId.includes('gemini')
-    ? { input: 0.075,  output: 0.30,   cacheRead: 0.01875, cacheWrite: 0.00 } // Gemini 2.5 Flash
-    : modelId.includes('deepseek')
-    ? { input: 0.27,   output: 1.10,   cacheRead: 0.07,  cacheWrite: 0.00  }  // DeepSeek Chat
-    : { input: 3.00,   output: 15.00,  cacheRead: 0.30,  cacheWrite: 3.75  };  // fallback: Claude
+  // Per-model pricing per 1M tokens. Keyed on the ACTUAL serving model, not
+  // the requested one   mid-run provider fallback (Anthropic circuit open →
+  // zai/gemini) used to price every step at the requested model's Claude
+  // rates, which is how the internal cost log drifted to 53% of the real
+  // provider invoices (production audit 2026-07-21).
+  function priceFor(mid: string): { input: number; output: number; cacheRead: number; cacheWrite: number } {
+    return mid.includes('claude')
+      ? { input: 3.00,   output: 15.00,  cacheRead: 0.30,  cacheWrite: 3.75  }  // Claude Sonnet 4.6
+      : mid.includes('gemini-3.1-pro-preview')
+      ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 3.1 Pro (thinking)
+      : mid.includes('gemini-2.5-pro')
+      ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 2.5 Pro
+      : mid.includes('gemini')
+      ? { input: 0.075,  output: 0.30,   cacheRead: 0.01875, cacheWrite: 0.00 } // Gemini 2.5 Flash
+      : mid.includes('deepseek')
+      ? { input: 0.27,   output: 1.10,   cacheRead: 0.07,  cacheWrite: 0.00  }  // DeepSeek Chat
+      : mid.toLowerCase().startsWith('glm')
+      ? { input: 0.60,   output: 2.20,   cacheRead: 0.11,  cacheWrite: 0.00  }  // z.ai GLM-4.5
+      : { input: 3.00,   output: 15.00,  cacheRead: 0.30,  cacheWrite: 3.75  };  // fallback: Claude
+  }
+  const PRICE = priceFor(modelId);
   function calcCost(inp: number, out: number, cacheR: number, cacheW: number): number {
     return (inp * PRICE.input + out * PRICE.output + cacheR * PRICE.cacheRead + cacheW * PRICE.cacheWrite) / 1_000_000;
   }
+  // Run cost accumulated per step at the SERVING model's price   the only
+  // number safe to compare against provider invoices on mixed-provider runs.
+  let runCostUsd = 0;
 
   // ── Tool-failure circuit breaker ──────────────────────────────────────────
   // Keyed on toolName, tracks the last error message and how many times in a
@@ -357,6 +402,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // to an action or say you're stuck" directive, same delivery mechanism as
   // circuitBreakerNote.
   let stepsSinceLastWrite = 0;
+  // Write attempts that a guard or the tool itself rejected (BLOCKED / PREFER
+  // EDIT / ERROR results on state-modifying tools). Fed into the stuck-abort
+  // reason so the user learns the run DID try to change files and what stopped
+  // it, instead of being asked for "a more specific instruction".
+  const rejectedWriteAttempts: string[] = [];
   // History: 6 -> 4 (2026-07-15) -> 3 (2026-07-20 AM), reverted 3 -> 6 (2026-07-20 PM).
   // The 3-step version was tuned against a leftover-nudge-count bug (fixed same
   // day by resetting stuckAnalysisFireCount on every successful write) and, once
@@ -766,6 +816,12 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
             // Always hit the model   let it classify the image
             inlineAnalysis = await analyzeImageWithVision(
               imgBytes.toString('base64'), att.type, att.name, aiProvider, abortSignal,
+              (usage) => {
+                const p = priceFor(modelId);
+                runTokens.inputTokens += usage.inputTokens;
+                runTokens.outputTokens += usage.outputTokens;
+                runCostUsd += (usage.inputTokens * p.input + usage.outputTokens * p.output) / 1_000_000;
+              },
             );
             // The user's own explicit words ("use this as my logo") win over an
             // ambiguous vision read   vision classifies what the image IS, not
@@ -910,6 +966,12 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       if (preAnalysis) continue; // already injected into the parts[] entry above
       const analysis = await analyzeImageWithVision(
         img.base64, img.type, img.name, aiProvider, abortSignal,
+        (usage) => {
+          const p = priceFor(modelId);
+          runTokens.inputTokens += usage.inputTokens;
+          runTokens.outputTokens += usage.outputTokens;
+          runCostUsd += (usage.inputTokens * p.input + usage.outputTokens * p.output) / 1_000_000;
+        },
       );
       analysisParts.push(`- **${img.name}**: ${analysis}`);
     }
@@ -1174,6 +1236,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // leaving local tool-call execution (via the `tools` object passed to
   // streamText) completely unaffected.
   let geminiRunCacheName: string | null = null;
+  // DECISION 2026-07-21 (rebuild plan Task 1.2): staying disabled. The API
+  // constraint below is real (commit a105eb8, Jul 3) and the fix is a
+  // restructure, not a flag. Gemini 2.5+ implicit caching is already active
+  // automatically (extractCacheUsage reads cachedContentTokenCount) and the
+  // per-step provider= logging now measures it   revisit explicit caching
+  // only if measured implicit hit-rates stay poor on Gemini-served steps.
   // DISABLED (production incident): Gemini's cachedContent API rejects ANY
   // generateContent request that also sets system_instruction, tools, OR
   // tool_config. The AI SDK's `system` param always becomes system_instruction
@@ -1206,13 +1274,25 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // (no cacheControl) even though Claude was the one actually executing  
   // every fallback-to-Claude run paid full price with zero cache hits,
   // silently, for however long this had been wrong.
+  // Claude runs with NATIVE adaptive thinking enabled (anthropicProviderOptions
+  // below), yet the shared system prompt still instructs "call think first"
+  // so it reasons twice and bills twice. Measured live 2026-07-21: 6 of 12
+  // steps in one edit run were think tool calls, ~$0.80 of a $1.66 run that
+  // then died on the cost cap right after finishing the actual work. This
+  // static suffix (byte-stable   cache-friendly) overrides that for Anthropic.
+  const ANTHROPIC_NO_THINK_TOOL_NOTE =
+    '\n\n# Native reasoning (Anthropic)\n' +
+    'You reason natively before every response   the `think` tool would duplicate that reasoning as a ' +
+    'separate billed step producing no code. Do NOT call `think`. Plan inside your native reasoning, then go ' +
+    'straight to read_file/write_file/edit_file/etc. Every step should call a real tool that reads or changes something.';
+
   function buildSystemMessagesFor(pName: string): Array<{ role: 'system'; content: string; providerOptions?: Record<string, any> }> {
     if (pName === 'anthropic') {
       return [
         // Static part   cached by Anthropic (identical across all requests)
         {
           role: 'system' as const,
-          content: staticSystemPrompt,
+          content: staticSystemPrompt + ANTHROPIC_NO_THINK_TOOL_NOTE,
           providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
         },
         // Dynamic part   changes per request (file tree, project files, attachments)
@@ -1411,6 +1491,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       },
     };
 
+    // Gemini has no equivalent of Anthropic's adaptive/capped thinking above
+    // left unset, gemini-2.5-pro picks its own dynamic budget (uncapped, has
+    // hit 5000+ thought tokens on a single step in production). 2048 is a
+    // real ceiling, not a guess: still enough for genuine multi-file reasoning,
+    // far below the spikes actually observed.
+    const GEMINI_THINKING_BUDGET = 2048;
+
     const attemptStream = async (provider: any, attempt: number, pName = providerName): Promise<ReturnType<typeof streamText>> => {
       // DeepSeek caps max_tokens at 8192; other providers can handle 16384+.
       // Anthropic gets extra headroom when native thinking is active   thinking
@@ -1425,8 +1512,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         system: buildSystemMessagesFor(pName),
         messages: conversationMessages,
         ...(toolSet ? { tools: toolSet } : {}),
-        ...((geminiRunCacheName || geminiToolCacheName) && pName === 'gemini'
-          ? { providerOptions: { google: { cachedContent: (geminiRunCacheName || geminiToolCacheName) as string } } }
+        ...(pName === 'gemini'
+          ? {
+              providerOptions: {
+                google: {
+                  ...((geminiRunCacheName || geminiToolCacheName)
+                    ? { cachedContent: (geminiRunCacheName || geminiToolCacheName) as string }
+                    : {}),
+                  thinkingConfig: { thinkingBudget: GEMINI_THINKING_BUDGET },
+                },
+              },
+            }
           : {}),
         ...(pName === 'anthropic'
           ? { providerOptions: { anthropic: anthropicProviderOptions } }
@@ -1516,8 +1612,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // (StaticToolResult/DynamicToolResult in ai/dist/index.d.ts). Both checks
           // below read `.output`   reading `.result` here would silently always be
           // undefined and never match, which is exactly what happened before.
+          //
+          // ONE failure matcher for all three consumers below (failed-step log
+          // marker, circuit breaker, stuck-detector success check). Before this,
+          // each had its own prefix subset: the log only matched 'Error' (so
+          // 'BLOCKED'/'PREFER EDIT'/'ERROR:' rejections were invisible in ops
+          // logs), and the success check missed 'ERROR' (so an actual uppercase
+          // write_file failure wrongly counted as progress and reset the stuck
+          // counter). Confirmed live 2026-07-21: two 'PREFER EDIT' write_file
+          // bounces logged as clean-looking 'tools: write_file' lines.
+          const isFailureResult = (s: string) => /^(Error|ERROR|BLOCKED|PREFER EDIT)/.test(s);
           const failedEdits = (toolResults ?? [])
-            .filter((tr: any) => typeof tr?.output === 'string' && tr.output.startsWith('Error'))
+            .filter((tr: any) => typeof tr?.output === 'string' && isFailureResult(tr.output))
             .length;
 
           // ── Tool-failure circuit breaker: detect the SAME error repeating ──
@@ -1526,7 +1632,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const result = tr?.output;
             if (!toolName || typeof result !== 'string') continue;
 
-            const isError = result.startsWith('Error') || result.startsWith('ERROR');
+            const isError = isFailureResult(result);
             if (!isError) {
               toolFailureStreak.delete(toolName); // any success/non-error resets the streak
               continue;
@@ -1568,13 +1674,47 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const STATE_MODIFYING_TOOLS = new Set([
             'write_file', 'edit_file', 'write_edge_function', 'delete_edge_function', 'delete_file', 'rename_file', 'place_asset',
           ]);
+          // DIAGNOSTIC (2026-07-21): three consecutive Anthropic runs showed
+          // write_file steps that looked successful in the log yet never reset
+          // stepsSinceLastWrite   the detector then fired on productive runs.
+          // Log the exact shape+prefix of every state-modifying tool result so
+          // the next occurrence shows WHY it wasn't counted, instead of a 4th
+          // round of hypothesis. Cheap (only fires on write-ish tools); remove
+          // once the counter bug is confirmed fixed.
+          for (const tr of (toolResults ?? []) as any[]) {
+            const tn = tr?.toolName as string | undefined;
+            if (!tn || !STATE_MODIFYING_TOOLS.has(tn)) continue;
+            const out = tr?.output;
+            console.log(
+              `[AgentLoop][write-audit] step=${stepCount} tool=${tn} outputType=${typeof out}` +
+              (typeof out === 'string'
+                ? ` prefix=${JSON.stringify(out.slice(0, 80))}`
+                : ` shape=${out === null ? 'null' : Array.isArray(out) ? 'array' : out && typeof out === 'object' ? `object keys=[${Object.keys(out).slice(0, 6).join(',')}]` : String(out)}`),
+            );
+          }
           const hadSuccessfulWriteThisStep = (toolResults ?? []).some((tr: any) => {
             const toolName = tr?.toolName as string | undefined;
             const result = tr?.output;
             if (!toolName || !STATE_MODIFYING_TOOLS.has(toolName)) return false;
-            if (typeof result !== 'string') return false;
-            return !result.startsWith('Error') && !result.startsWith('BLOCKED') && !result.startsWith('PREFER EDIT');
+            // A structured (non-string) output is still a tool RESULT   only
+            // string results carry our Error/BLOCKED prefixes, so treat any
+            // non-string output from a state-modifying tool as success rather
+            // than silently ignoring it (candidate cause of the reset bug).
+            if (typeof result !== 'string') return true;
+            return !isFailureResult(result);
           });
+          // Track guard/tool rejections of WRITE attempts separately from pure
+          // analysis paralysis: a run that repeatedly TRIED to write but was
+          // bounced (BLOCKED / PREFER EDIT / ERROR) is a different failure than
+          // one that never attempted a write   and the user-facing abort message
+          // must say so instead of asking them for "a more specific instruction".
+          for (const tr of (toolResults ?? []) as any[]) {
+            const toolName = tr?.toolName as string | undefined;
+            const result = tr?.output;
+            if (toolName && STATE_MODIFYING_TOOLS.has(toolName) && typeof result === 'string' && isFailureResult(result)) {
+              rejectedWriteAttempts.push(`${toolName} → ${result.slice(0, 120)}`);
+            }
+          }
           if (hadSuccessfulWriteThisStep) {
             stepsSinceLastWrite = 0;
             anySuccessfulWriteThisRun = true;
@@ -1714,8 +1854,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           runTokens.cacheReadTokens  += stepCacheR;
           runTokens.cacheWriteTokens += stepCacheW;
 
-          const stepCost    = calcCost(stepInp, stepOut, stepCacheR, stepCacheW);
-          const runCost     = calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens);
+          // Price at the model that actually served this step (attemptStream's
+          // `provider` closure)   NOT the run's requested modelId. Fallback
+          // steps used to be silently billed at Claude rates.
+          const servingModelId = String((provider as any)?.modelId ?? modelId);
+          const p = priceFor(servingModelId);
+          const stepCost = (stepInp * p.input + stepOut * p.output + stepCacheR * p.cacheRead + stepCacheW * p.cacheWrite) / 1_000_000;
+          runCostUsd += stepCost;
+          const runCost = runCostUsd;
 
           // Status narration is now handled in real-time by the status service
           // (generateStatus) on each tool-call stream part   see the tool-call
@@ -1737,18 +1883,22 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           });
 
           console.log(
-            `[AgentLoop] Step ${stepCount} | tools: ${toolNames.join(', ') || 'none'}` +
+            `[AgentLoop] project=${projectId} Step ${stepCount} | provider=${pName} model=${servingModelId}` +
+            ` | tools: ${toolNames.join(', ') || 'none'}` +
             `${failedEdits > 0 ? ` (${failedEdits} failed)` : ''}` +
             ` | tokens: in=${stepInp} out=${stepOut} cacheR=${stepCacheR} cacheW=${stepCacheW}` +
             ` | step $${stepCost.toFixed(5)} | run total $${runCost.toFixed(4)}` +
-            (userId ? ` | user=${userId}` : ''),
+            (userId ? ` | user=${userId}` : '') +
+            (isInternalRun ? ' | internal=1' : ''),
           );
 
           // ── Per-run hard caps ────────────────────────────────────────────
           // Two gates: token count + dollar cost. Whichever fires first aborts the run.
           // Token cap is tier-based (RUN_TOKEN_CAP) so build gets more headroom than micro.
           // Cost cap is a hard ceiling regardless of tier.
-          const HARD_COST_CAP = parseFloat(process.env.AGENT_COST_CAP_USD || '1.50');
+          const HARD_COST_CAP = isInternalRun
+            ? parseFloat(process.env.AGENT_COST_CAP_USD_INTERNAL || process.env.AGENT_COST_CAP_USD || '1.50')
+            : parseFloat(process.env.AGENT_COST_CAP_USD || '1.50');
           if (runTokens.total > RUN_TOKEN_CAP || runCost > HARD_COST_CAP) {
             const reason = runCost > HARD_COST_CAP
               ? `cost cap $${HARD_COST_CAP} hit ($${runCost.toFixed(3)} spent)`
@@ -1806,7 +1956,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const totalOut = runTokens.outputTokens     || (u?.completionTokens ?? u?.outputTokens    ?? 0);
             const totalCR  = runTokens.cacheReadTokens  || finishCache.cacheRead;
             const totalCW  = runTokens.cacheWriteTokens || finishCache.cacheWrite;
-            const totalCost = calcCost(totalIn, totalOut, totalCR, totalCW);
+            // Accumulated per-step (serving-model-priced) when available;
+            // calcCost only as fallback for streams onStepFinish never saw.
+            const totalCost = runCostUsd > 0 ? runCostUsd : calcCost(totalIn, totalOut, totalCR, totalCW);
             console.log(
               `[AgentLoop] RUN COMPLETE` +
               ` | input=${totalIn} output=${totalOut} cacheRead=${totalCR} cacheWrite=${totalCW}` +
@@ -2084,6 +2236,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     } else {
       summary = finalText.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, '').trim().split('\n')[0] ?? '';
     }
+    // Backstop: model sometimes ignores the "short summary" prompt instruction,
+    // so clamp the user-facing text regardless of which branch produced it.
+    if (summary.length > 200) {
+      summary = summary.slice(0, 200).trim() + '…';
+    }
 
     // Budget-abort with nothing to show: the model was still mid-tool-calls
     // (reading files, editing) when the token/cost cap hit, so it never got to
@@ -2097,24 +2254,41 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // do next.
     const madeNoChanges = !anySuccessfulWriteThisRun && filesToWrite.length === 0 && filesEdited.length === 0;
     if (stuckAnalysisAbortReason && !summary.trim()) {
-      // Surface what was actually investigated instead of just pushing the
-      // question back to the user   they weren't the one reading files, the
-      // agent was, so the agent should report where it looked before asking
-      // for more specificity.
+      // Two distinct failures share this abort path and MUST read differently:
+      // (a) pure analysis paralysis   never attempted a write; (b) the run DID
+      // attempt writes but every attempt was rejected by a guard or the tool
+      // (confirmed live 2026-07-21: two complete write_file rewrites bounced by
+      // the prefer-edit guard, then the user was told to "give a more specific
+      // instruction"   blaming their prompt for the system's own rejections).
       const examined = Array.from(ctx.readFiles ?? []).slice(0, 10);
       const examinedNote = examined.length > 0
         ? `\n\nFiles I looked at before getting stuck:\n${examined.map((f) => `   • ${f}`).join('\n')}` +
           `\nIf the bug isn't in one of these, that's exactly why I couldn't pin it down   tell me which file it's actually in.`
         : '';
-      summary = `I got stuck re-analyzing this without actually making a change, so I stopped instead of ` +
-        `continuing to spin. ${madeNoChanges ? 'Nothing was changed.' : 'What I did change so far is saved.'} ` +
-        `Could you give me a more specific instruction, or point me at the exact file/behavior to change?${examinedNote}`;
+      if (rejectedWriteAttempts.length > 0) {
+        const attemptsNote = rejectedWriteAttempts.slice(0, 3).map((a) => `   • ${a}`).join('\n');
+        summary = `I DID try to make the change   ${rejectedWriteAttempts.length} write attempt(s) were rejected by ` +
+          `the platform's safety checks before they could be saved, and I failed to work around them, so I stopped ` +
+          `instead of burning more of your budget. ${madeNoChanges ? 'Nothing was changed.' : 'What I did change so far is saved.'} ` +
+          `This is a platform-side issue, not a problem with your instruction   retrying the same request may work, ` +
+          `and this has been logged for the team.\n\nRejected attempts:\n${attemptsNote}`;
+        console.warn(`[AgentLoop] Stuck-abort WITH rejected write attempts (${rejectedWriteAttempts.length})   guard-caused, not analysis paralysis (user=${userId ?? 'unknown'})`);
+      } else {
+        summary = `I got stuck re-analyzing this without actually making a change, so I stopped instead of ` +
+          `continuing to spin. ${madeNoChanges ? 'Nothing was changed.' : 'What I did change so far is saved.'} ` +
+          `Could you give me a more specific instruction, or point me at the exact file/behavior to change?${examinedNote}`;
+      }
     } else if (budgetAbortReason && !summary.trim()) {
+      // Don't claim the task was "bigger than I could finish" when changes DID
+      // land   the cap can fire right at the end of a fully completed change
+      // (observed 2026-07-21: fullscreen-game edit finished, build check clean,
+      // cap tripped on the final step, user told the work was unfinished).
+      // We can't know completeness for sure, so state facts, not conclusions.
       summary = madeNoChanges
         ? `This request turned out to be bigger than I could finish in one go, and nothing was changed yet. ` +
           `Try breaking it into smaller, more specific steps.`
-        : `This request turned out to be bigger than I could finish in one go. What I changed so far is saved   ` +
-          `send me a follow-up for the rest.`;
+        : `I hit this run's cost limit. The changes I made are saved and live in the preview   check it, ` +
+          `and if anything is still missing, send a follow-up and I'll continue from there.`;
     }
 
     // Parse ecomgear tags from the full final text as well (XML parser is more reliable)
@@ -3056,9 +3230,20 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // wroteFiles gate in ai.routes.ts's incrementEcoUsage call site.
     const chargeableRun = doneFilesToWrite.length > 0 || doneFilesToDelete.length > 0;
     const finalCostUsd = chargeableRun
-      ? calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens)
+      ? (runCostUsd > 0 ? runCostUsd : calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens))
       : 0;
     const finalEcoUsed = chargeableRun ? computeEcoCost(finalCostUsd) : 0;
+
+    // Budget cap hit mid-task, but real progress was made (files actually
+    // landed) and the model wasn't just spinning (stuckAnalysisAbortReason
+    // unset)   this is the safe case to auto-continue: another pass would
+    // very likely pick up and finish, same as a user manually replying
+    // "continue" would today. Not offered for a stuck/looping run   retrying
+    // that blindly is more likely to spend money re-failing the same way.
+    const needsAutoContinue = Boolean(budgetAbortReason) && !stuckAnalysisAbortReason && anySuccessfulWriteThisRun;
+    const continuationPrompt = needsAutoContinue
+      ? `Continue exactly where you left off on this request: "${prompt}". Do not redo files you already finished   pick up with whatever is left.`
+      : undefined;
 
     // NOW send 'done'   preview is synced, frontend shows correct state
     sink.emit('done', {
@@ -3075,6 +3260,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // Only expose snapshot to frontend when code actually changed
       snapshotId: doneFilesToWrite.length > 0 ? snapshotId : null,
       previewPushed: previewPushOk,
+      needsAutoContinue,
+      continuationPrompt,
     });
 
     // ── Background: save token usage + npm install (non-blocking) ───────────
@@ -3091,7 +3278,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         } catch {}
       }
 
-      const finalCost = calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens);
+      const finalCost = runCostUsd > 0 ? runCostUsd : calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens);
 
       if (tokensUsed > 0) {
         sink.emit('usage', {
@@ -3123,6 +3310,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           output_tokens:      runTokens.outputTokens,
           cache_read_tokens:  runTokens.cacheReadTokens,
           cache_write_tokens: runTokens.cacheWriteTokens,
+          is_internal:        isInternalRun,
+          narration_cost_usd: getNarrationCost(projectId),
           // Only link snapshot when code actually changed; null means no restore point
           snapshot_id: doneFilesToWrite.length > 0 ? snapshotId : null,
           completed_at: new Date().toISOString(),
@@ -3194,7 +3383,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     if (agentTimeoutId) clearTimeout(agentTimeoutId);
     clearInterval(heartbeatId);
-    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed };
+    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed, needsAutoContinue, continuationPrompt, stuckAborted: Boolean(stuckAnalysisAbortReason) };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     if (agentTimeoutId) clearTimeout(agentTimeoutId);
@@ -3217,6 +3406,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           status: 'failed',
           error_message: abortSignal?.aborted ? 'Cancelled: client disconnected' : 'Cancelled: aborted',
           completed_at: new Date().toISOString(),
+          is_internal: isInternalRun,
+          estimated_cost_usd: runCostUsd,
+          input_tokens: runTokens.inputTokens,
+          output_tokens: runTokens.outputTokens,
+          cache_read_tokens: runTokens.cacheReadTokens,
+          cache_write_tokens: runTokens.cacheWriteTokens,
+          narration_cost_usd: getNarrationCost(projectId),
         }).eq('id', agentRunId).then(() => {}, () => {});
       }
 
@@ -3237,28 +3433,37 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       }
     }
 
-    // Auth/billing errors: give a clear, actionable message
-    if (isAuthOrBillingError(err)) {
-      errorMessage = 'AI provider account issue (organization disabled, invalid API key, or insufficient credits). All fallback providers also failed. Please check your provider billing dashboard and API keys in Admin → Settings.';
-    }
-
-    // Extract inner AI SDK APICallError messages if present
-    if (errorMessage.includes('No output generated')) {
-       errorMessage = err?.cause?.message ||
-         'AI Provider rejected the request. This is usually caused by insufficient credits (e.g. Anthropic "balance too low") or an invalid API key. Please check your provider billing dashboard or try a different model.';
-    }
-
-    // Look for Anthropic specific API errors in the raw data
-    if (err?.data?.error?.message) {
-      errorMessage = err.data.error.message;
-    } else if (err?.responseBody) {
-      try {
-        const body = JSON.parse(err.responseBody);
-        if (body.error?.message) {
-          errorMessage = body.error.message;
+    // Provider outage (credit exhaustion, usage limits, quota)   OUR problem,
+    // not the user's. This branch must win over the raw-body extraction below:
+    // before this reordering, Anthropic's literal billing text ("Your credit
+    // balance is too low... go to Plans & Billing") was forwarded verbatim to
+    // end users (observed in production logs, 18 occurrences Jun 12 - Jul 17).
+    const isOutage = isAuthOrBillingError(err);
+    if (isOutage) {
+      console.error(
+        `[ProviderOutage] severity=critical all providers failed with billing/credit/quota errors` +
+        ` | project=${projectId}` + (userId ? ` user=${userId}` : '') +
+        ` | raw=${String(err?.message ?? err).slice(0, 300)}`,
+      );
+      errorMessage = 'The AI service is temporarily unavailable   this is an issue on our side, not with your project. Your work is safe. Please try again in a little while.';
+    } else {
+      // Extract inner AI SDK APICallError messages if present
+      if (errorMessage.includes('No output generated')) {
+        errorMessage = err?.cause?.message ||
+          'The AI provider rejected the request. Please try again in a moment.';
+      }
+      // Look for provider-specific API errors in the raw data
+      if (err?.data?.error?.message) {
+        errorMessage = err.data.error.message;
+      } else if (err?.responseBody) {
+        try {
+          const body = JSON.parse(err.responseBody);
+          if (body.error?.message) {
+            errorMessage = body.error.message;
+          }
+        } catch {
+          // ignore JSON parse error
         }
-      } catch {
-        // ignore JSON parse error
       }
     }
 
@@ -3272,6 +3477,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         status: 'failed',
         error_message: err?.message ?? 'Unknown error',
         completed_at: new Date().toISOString(),
+        is_internal: isInternalRun,
+        estimated_cost_usd: runCostUsd,
+        input_tokens: runTokens.inputTokens,
+        output_tokens: runTokens.outputTokens,
+        cache_read_tokens: runTokens.cacheReadTokens,
+        cache_write_tokens: runTokens.cacheWriteTokens,
+        narration_cost_usd: getNarrationCost(projectId),
       }).eq('id', agentRunId).then(() => {}, () => {});
     }
     throw err;

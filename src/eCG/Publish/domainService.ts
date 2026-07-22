@@ -304,10 +304,18 @@ class DomainService {
     if (!HOSTING_BASE) return { success: false, error: 'Hosting service URL not configured' };
     if (!PREVIEW_BASE) return { success: false, error: 'Preview service URL not configured' };
     try {
-      // Step 1: Export a production build from VPS2 (preview service)
+      // Step 1: Export a production build from VPS2 (preview service).
+      // /export now requires the caller's JWT (preview-service verifies
+      // project access itself) rather than being open to anyone who knew the
+      // project id.
+      const { lovableCloud } = await import('@/integrations/supabase/client');
+      const { data: { session } } = await lovableCloud.auth.getSession();
       const exportRes = await fetch(`${PREVIEW_BASE}/preview/${projectId}/export`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
       });
       if (!exportRes.ok) {
         const text = await exportRes.text().catch(() => '');

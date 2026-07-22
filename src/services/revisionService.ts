@@ -210,14 +210,37 @@ export const revisionService = {
         console.log('[RevisionService] ✓ All files deduplicated   no upload needed');
       }
 
-      // Store the manifest (small metadata only, no file content)
-      const { error: manifestError } = await supabase
+      // Store the manifest (small metadata only, no file content). Files are
+      // already safely uploaded to Storage above   only this row-level
+      // "swap to lean format" step can still fail, so retry once for
+      // transient blips. This used to warn-and-forget on failure, which is
+      // why 100% of production revisions were still storing full inline
+      // content: every single manifest write had been silently failing with
+      // nothing ever surfacing it (found 2026-07-22, 130/130 revisions never
+      // converted, 16 rows over 1MB, one over 40MB served whole on every load).
+      let manifestError = (await supabase
         .from('revisions')
         .update({ generated_files: manifest as any, file_count: newFiles.length })
-        .eq('id', data.id);
+        .eq('id', data.id)).error;
 
       if (manifestError) {
-        console.warn('[RevisionService] Failed to store manifest:', manifestError);
+        console.warn('[RevisionService] Manifest write failed, retrying once:', manifestError.message);
+        manifestError = (await supabase
+          .from('revisions')
+          .update({ generated_files: manifest as any, file_count: newFiles.length })
+          .eq('id', data.id)).error;
+      }
+
+      if (manifestError) {
+        // Not thrown: the row already holds valid (if bloated) content from the
+        // initial insert, so the revision itself is still usable   this failure
+        // only means it stays in the slow/large legacy format. Loud and specific
+        // so it's actually greppable instead of vanishing into a console.warn.
+        console.error(
+          `[RevisionService] MANIFEST WRITE FAILED after retry for revision ${data.id} (project ${params.project_id}): ` +
+          `${manifestError.message} ${manifestError.details ?? ''} ${manifestError.hint ?? ''}   ` +
+          `this revision will keep serving its full inline content on every load until repaired.`
+        );
       } else {
         console.log('[RevisionService] ✓ Manifest stored');
       }

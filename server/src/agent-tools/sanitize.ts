@@ -16,9 +16,53 @@
  *     (e.g. "</Perfect! I've..." or "<ecomgear-chat-summary>..." in the file body).
  */
 
+import { createRequire } from 'node:module';
+
 interface SanitizeResult {
   content: string;
   fixes: string[];
+}
+
+// ── Lucide icon export list ──────────────────────────────────────────────────
+// The model imports icons from training memory, not from the installed
+// lucide-react   hallucinated names ("Aim") are a module-level SyntaxError
+// that blanks the whole generated app (live incident 2026-07-21). The list is
+// generated from the preview-service's installed lucide-react .d.ts   see
+// data/lucide-icons.json. Regenerate when lucide is upgraded.
+const require_ = createRequire(import.meta.url);
+const LUCIDE_ICONS: Set<string> = new Set(require_('./data/lucide-icons.json') as string[]);
+
+/** Closest real lucide icon by name, for auto-correcting hallucinated ones. */
+function closestLucideIcon(bad: string): string {
+  const badLower = bad.toLowerCase();
+  // Cheap tiers before edit distance: exact case-insensitive, then prefix.
+  for (const name of LUCIDE_ICONS) if (name.toLowerCase() === badLower) return name;
+  for (const name of LUCIDE_ICONS) if (name.toLowerCase().startsWith(badLower) || badLower.startsWith(name.toLowerCase())) return name;
+  // Levenshtein over the full list (3K names, few ms, only runs on a miss).
+  // ponytail: character-distance only, no semantic matching (e.g. "Aim" lands
+  // on "Atom", not "Crosshair"). Goal is "app doesn't crash", not "right icon"
+  // — upgrade path is an embedding/keyword map if wrong-icon reports show up.
+  function editDistance(a: string, b: string): number {
+    const dp = Array.from({ length: a.length + 1 }, (_, i) => i);
+    for (let j = 1; j <= b.length; j++) {
+      let prev = dp[0];
+      dp[0] = j;
+      for (let i = 1; i <= a.length; i++) {
+        const cur = dp[i];
+        dp[i] = Math.min(dp[i] + 1, dp[i - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+        prev = cur;
+      }
+    }
+    return dp[a.length];
+  }
+  let best = 'Circle';
+  let bestDist = Infinity;
+  for (const name of LUCIDE_ICONS) {
+    if (Math.abs(badLower.length - name.length) >= bestDist) continue;
+    const d = editDistance(badLower, name.toLowerCase());
+    if (d < bestDist) { bestDist = d; best = name; }
+  }
+  return best;
 }
 
 export interface SyntaxBalanceResult {
@@ -166,6 +210,22 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
         content = 'import * as React from "react";\n' + content;
       }
       fixes.push('Added `import * as React from "react"` (required for React.forwardRef / React.ElementRef usage)');
+    }
+  }
+
+  // ── Rule 3.5: Hallucinated lucide-react icon names ───────────────────────────
+  // Validate every named import from 'lucide-react' against the installed
+  // package's real export list; swap unknown names for the closest real icon
+  // (both in the import line and at every usage site).
+  const lucideImportRe = /import\s*\{([^}]+)\}\s*from\s*['"]lucide-react['"]/g;
+  for (const m of content.matchAll(lucideImportRe)) {
+    for (const rawName of m[1].split(',')) {
+      const name = rawName.trim().split(/\s+as\s+/)[0].trim();
+      if (!name || LUCIDE_ICONS.has(name)) continue;
+      const replacement = closestLucideIcon(name);
+      // Word-boundary replace across the whole file so usage sites follow.
+      content = content.replace(new RegExp(`\\b${name}\\b`, 'g'), replacement);
+      fixes.push(`Replaced non-existent lucide-react icon "${name}" with "${replacement}"`);
     }
   }
 

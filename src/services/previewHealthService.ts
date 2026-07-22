@@ -48,13 +48,24 @@ function getToken(projectId: string): string | undefined {
 
 /**
  * Call the preview-service to create / retrieve a 2-hour session token.
- * Safe to call even when the server doesn't require tokens   it will just
- * return a token that the server ignores.
+ * The JWT is sent ONLY as an Authorization header (never a URL/query param   a
+ * bearer token in a URL ends up in browser history and server access logs).
+ * The server responds with a Set-Cookie that authorizes this browser for
+ * this project going forward; the JSON body's token is a secondary,
+ * best-effort fallback for environments where third-party cookies are blocked.
  */
 export async function createPreviewSession(projectId: string): Promise<SessionInfo | null> {
     try {
+        const { lovableCloud } = await import('@/integrations/supabase/client');
+        const { data: { session } } = await lovableCloud.auth.getSession();
+        if (!session?.access_token) return null; // not logged in   nothing to bootstrap
+
         const base = DOCKER_PREVIEW_URL.replace(/\/$/, '');
-        const res = await fetch(`${base}/preview/${projectId}/session`, { method: 'POST' });
+        const res = await fetch(`${base}/preview/${projectId}/session`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { Authorization: `Bearer ${session.access_token}` },
+        });
         if (!res.ok) return null;
         const data: SessionInfo = await res.json();
         storeSession(projectId, data);
@@ -72,8 +83,16 @@ export async function createPreviewSession(projectId: string): Promise<SessionIn
  */
 export async function renewPreviewSession(projectId: string): Promise<SessionInfo | null> {
     try {
+        const { lovableCloud } = await import('@/integrations/supabase/client');
+        const { data: { session } } = await lovableCloud.auth.getSession();
+        if (!session?.access_token) return null;
+
         const base = DOCKER_PREVIEW_URL.replace(/\/$/, '');
-        const res = await fetch(`${base}/preview/${projectId}/renew`, { method: 'POST' });
+        const res = await fetch(`${base}/preview/${projectId}/renew`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { Authorization: `Bearer ${session.access_token}` },
+        });
         if (!res.ok) return null;
         const data: SessionInfo = await res.json();
         storeSession(projectId, data);

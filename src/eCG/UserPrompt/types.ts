@@ -31,6 +31,8 @@ export interface PromptHandlerParams {
   hasRealApp: boolean;
   /** Guest fingerprint   when set, the user is not authenticated */
   fingerprint?: string;
+  /** Internal: auto-continuation recursion depth. Never set this from a caller. */
+  _autoContinueDepth?: number;
 }
 
 export interface PromptHandlerCallbacks {
@@ -77,6 +79,10 @@ export interface GenerationResponse {
   costUsd?: number;
   /** Eco credits charged for this run (cost-based, clamped 0.5-2.0) */
   ecoUsed?: number;
+  /** True when the run hit the budget cap mid-task but made real progress   safe to auto-continue */
+  needsAutoContinue?: boolean;
+  /** Ready-to-send prompt for the auto-continuation turn, set only when needsAutoContinue is true */
+  continuationPrompt?: string;
 }
 
 export interface FileNormalizationResult {

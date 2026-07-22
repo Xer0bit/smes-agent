@@ -13,7 +13,7 @@ configDotenv({ path: path.join(ROOT, '.env.production'), override: false });
 import app from './app.js';
 import { logger } from './utils/logger.js';
 import { ensureBaseTemplate } from './services/baseTemplateService.js';
-import { testAndAutoDisableProviders } from './services/llm-health.service.js';
+import { testAndAutoDisableProviders, startLlmHealthLoop } from './services/llm-health.service.js';
 import { getLlmControlState } from './services/llm-control.service.js';
 import { probeEmbeddingProvider } from './knowledgebase/index.js';
 import { releaseAllLocksForThisProcess } from './routes/ai.routes.js';
@@ -50,6 +50,9 @@ const server: Server = app.listen(PORT, () => {
     testAndAutoDisableProviders().catch((err) =>
         logger.warn('[LlmHealth] Startup health check failed:', err?.message)
     );
+    // Then keep re-checking hourly so mid-uptime credit/quota exhaustion is
+    // detected by ops before users hit it.
+    startLlmHealthLoop();
 
     // Warm up the golden template in the background with retry.
     retryAsync(() => ensureBaseTemplate(), 3, 2000).catch((err) =>

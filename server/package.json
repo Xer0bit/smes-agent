@@ -6,7 +6,7 @@
     "type": "module",
     "scripts": {
         "dev": "tsx watch src/index.ts",
-        "build": "tsc",
+        "build": "tsc && mkdir -p dist/agent-tools/data && cp src/agent-tools/data/*.json dist/agent-tools/data/",
         "start": "node dist/index.js",
         "lint": "eslint src"
     },

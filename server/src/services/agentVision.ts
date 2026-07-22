@@ -144,6 +144,11 @@ export async function analyzeImageWithVision(
   fileName: string,
   aiProvider: any,
   abortSignal?: AbortSignal,
+  // Lets the caller fold this call's tokens into the run's own accounting
+  // this call runs on the SAME model as the main loop but used to be entirely
+  // uncosted (2026-07-21 audit: one of three call sites missing from the
+  // run's tracked spend).
+  onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
 ): Promise<string> {
   try {
     const result = await generateText({
@@ -163,6 +168,12 @@ export async function analyzeImageWithVision(
       maxOutputTokens: 200,
       ...(abortSignal ? { abortSignal } : {}),
     });
+    if (onUsage) {
+      onUsage({
+        inputTokens: (result.usage as any)?.inputTokens ?? (result.usage as any)?.promptTokens ?? 0,
+        outputTokens: (result.usage as any)?.outputTokens ?? (result.usage as any)?.completionTokens ?? 0,
+      });
+    }
     return result.text.trim();
   } catch {
     return `image file "${fileName}"`;

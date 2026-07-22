@@ -96,24 +96,46 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
             } catch { /* path traversal   let the tool itself reject it */ }
           }
 
-          // ── Prefer-edit guard ────────────────────────────────────────────────
-          // If the agent tries to write_file on a file it already read and the file
-          // has more than 40 lines, redirect it to edit_file unless this is truly
-          // a full structural rebuild. Prevents the "rewrite the whole file to change
-          // two lines" pattern that silently deletes untouched code.
-          if (def.name === 'write_file' && ctx.readFiles?.has(relPath)) {
+          // ── Truncated-rewrite guard (was: blanket prefer-edit guard) ────────
+          // The old version rejected EVERY write_file on a read file >40 lines
+          // and told the model to redo the work via edit_file. Confirmed live
+          // 2026-07-21: Claude produced a complete corrected file TWICE in one
+          // run ($0.16/attempt), both bounced by this guard, the model never
+          // switched to edit_file, and the run died in the stuck-detector with
+          // the user billed $1.40 for zero changes. Rejecting content that is
+          // already generated and paid for is pure waste   the danger the guard
+          // exists for is specifically TRUNCATED rewrites ("// rest of code
+          // unchanged") silently deleting untouched code. So check for THAT:
+          // accept complete-looking rewrites, reject only suspicious shrinkage
+          // or placeholder markers.
+          if (def.name === 'write_file' && ctx.readFiles?.has(relPath) && typeof args.content === 'string') {
             try {
               const fullPath = safeJoin(ctx.appPath, relPath);
               if (fs.existsSync(fullPath)) {
                 const existing = fs.readFileSync(fullPath, 'utf8');
-                const lineCount = existing.split('\n').length;
-                if (lineCount > 40) {
+                const oldLines = existing.split('\n').length;
+                const newLines = (args.content as string).split('\n').length;
+                const placeholderRe = /\/\/\s*\.\.\.|\/\*\s*\.\.\.|rest of (the )?(code|file|component)|remains? (the )?same|unchanged (code|above|below)|existing (code|implementation) here/i;
+                // Block ONLY on explicit placeholder markers   the unambiguous
+                // truncation signal. A first draft of this guard also blocked
+                // any rewrite under 50% of the old line count, which rejects
+                // legitimate deletion requests ("remove the rest of the page")
+                // just as wastefully as the blanket prefer-edit guard it
+                // replaced   caught 2026-07-21 before it billed anyone. Large
+                // shrinkage without markers is accepted; the per-run snapshot
+                // and revisions system cover recovery if a rewrite genuinely
+                // dropped code, and the shrink warning below tells the model
+                // (and the run log) that it happened.
+                if (oldLines > 40 && placeholderRe.test(args.content as string)) {
                   return (
-                    `PREFER EDIT: "${relPath}" exists with ${lineCount} lines. ` +
-                    `Use edit_file with SEARCH/REPLACE blocks to change only the lines that need updating   ` +
-                    `do NOT rewrite the whole file. This prevents accidentally deleting untouched code. ` +
-                    `Only call write_file on this file again if you are completely rebuilding its structure from scratch.`
+                    `BLOCKED: your write_file for "${relPath}" contains placeholder text like "rest of code" / ` +
+                    `"unchanged"   writing it would silently delete the code those placeholders stand for. ` +
+                    `Provide the COMPLETE file content, or use edit_file with SEARCH/REPLACE blocks for targeted changes.`
                   );
+                }
+                if (oldLines > 40 && newLines < oldLines * 0.5) {
+                  ctx.pendingShrinkWarnings = ctx.pendingShrinkWarnings ?? new Map();
+                  ctx.pendingShrinkWarnings.set(relPath, `note: this rewrite shrank ${relPath} from ${oldLines} to ${newLines} lines. If that was not intentional, restore the missing sections with edit_file.`);
                 }
               }
             } catch { /* ignore   let write_file handle path errors */ }
@@ -212,6 +234,18 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
                 return `${result}\n\n⚠️ SYNTAX CHECK FAILED for ${args.path}: ${diagnostic}\nFix this now with edit_file before moving to the next file   this file will not compile as-is.`;
               }
             } catch { /* file may not exist yet or be unreadable   don't block the tool result */ }
+          }
+          // Surface a pending shrink warning (set by the truncation guard above)
+          // on the SUCCESSFUL write result it belongs to.
+          if (
+            def.name === 'write_file' && typeof args.path === 'string' &&
+            typeof result === 'string' && !result.startsWith('ERROR') && !result.startsWith('BLOCKED')
+          ) {
+            const warn = ctx.pendingShrinkWarnings?.get(args.path);
+            if (warn) {
+              ctx.pendingShrinkWarnings!.delete(args.path);
+              return `${result}\n\n${warn}`;
+            }
           }
           return result;
         } catch (err: any) {
