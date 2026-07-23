@@ -20,7 +20,8 @@ import headerIntegrationsRoutes from './routes/header-integrations.routes.js';
 import githubRoutes from './routes/github.routes.js';
 import stripeRoutes from './routes/stripe.routes.js';
 import functionsRoutes from './routes/functions.routes.js';
-import ecgConnectRoutes from './routes/ecg-connect.routes.js';
+import ecgDevAgentRoutes from './routes/ecg-dev-agent.routes.js';
+import ecgCustomizeRoutes from './routes/ecg-customize.routes.js';
 import ecgProxyRoutes from './routes/ecg-proxy.routes.js';
 import ecgChatRoutes from './routes/ecg-chat.routes.js';
 import ecgAccessRoutes from './routes/ecg-access.routes.js';
@@ -110,6 +111,7 @@ app.use(cors({
         'x-update-secret',             // internal preview service auth
         'x-project-id',                // ECG proxy project header
         'x-service-key',               // ECG service-to-service auth
+        'x-dashboard-access',          // ECG generated-dashboard AccessGate token
     ],
     exposedHeaders: ['Content-Type', 'Cache-Control', 'X-Request-Id', 'Last-Event-ID'],
     maxAge: 86400,
@@ -175,7 +177,8 @@ if (servesApi) {
     // must match REDIRECT_URI in github.routes.ts exactly.
     app.use('/auth/github', githubRoutes);
     app.use('/api/v1/functions', functionsRoutes);
-    app.use('/api/v1/ecg-connect', ecgConnectRoutes);
+    app.use('/api/v1/ecg-connect', ecgCustomizeRoutes);
+    app.use('/api/v1/ecg-dev-agent', ecgDevAgentRoutes);
     app.use('/api/v1/ecg-proxy', ecgProxyRoutes);
     app.use('/api/v1/ecg-chat', ecgChatRoutes);
     app.use('/api/v1/ecg-access', ecgAccessRoutes);

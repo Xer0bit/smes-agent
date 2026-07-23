@@ -1,6 +1,7 @@
 import { Router, Request, Response as ExpressResponse, NextFunction } from 'express';
 import { authMiddleware, dashboardAccessMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
+import { callEcgTool } from '../services/ecgMcpClient.service.js';
 
 const router = Router();
 
@@ -17,9 +18,110 @@ async function getProjectSecrets(projectId: string, userId: string | null) {
   const { data: rows } = await supabase
     .from('project_secrets').select('key_name, key_value')
     .eq('project_id', projectId)
-    .in('key_name', ['ECG_PORTAL_TOKEN', 'ECG_LLM_PROVIDER', 'ECG_LLM_MODEL', 'ECG_LLM_API_KEY']);
+    .in('key_name', ['ECG_PORTAL_TOKEN', 'ECG_MCP_API_KEY', 'ECG_LLM_PROVIDER', 'ECG_LLM_MODEL', 'ECG_LLM_API_KEY']);
 
   return Object.fromEntries((rows ?? []).map(r => [r.key_name, r.key_value]));
+}
+
+// ── MCP bridge ────────────────────────────────────────────────────────────────
+// Projects connected via ecg-dev-agent.routes.ts (paste an MCP API key) have no
+// portal JWT   api.ecomgear.ai/v1/ecg/* requires one and rejects an MCP key
+// outright (confirmed live: "Invalid or expired token"). There's also no way
+// to mint a portal JWT for these projects anymore (the only issuer, the old
+// launch-token handoff, is retired). So for MCP-key projects, REST-shaped
+// calls from the generated dashboard's ecgClient.ts are translated here into
+// real MCP tool calls instead of forwarded to the portal REST API.
+//
+// The MCP catalog (29 tools) doesn't 1:1 cover the full portal REST surface
+// -- no reject-post, no connector test, no knowledge-base edit/delete, no
+// visual-posts/team/billing/org-settings. Those return 'unsupported' below
+// and the route handler answers with a clear message instead of a raw
+// upstream failure.
+type McpMapping = { tool: string; args: Record<string, unknown> } | 'unsupported';
+
+function mapToMcpTool(method: string, path: string, body: any, query: Record<string, string>): McpMapping | null {
+  const seg = path.replace(/^\//, '').split('/').filter(Boolean); // e.g. ['agents', ':id']
+
+  if (seg[0] === 'agent-templates' && method === 'GET' && seg.length === 1) return { tool: 'list_agent_templates', args: {} };
+
+  if (seg[0] === 'agents') {
+    if (seg.length === 1) {
+      if (method === 'GET') return { tool: 'list_agents', args: {} };
+      if (method === 'POST') return { tool: 'create_agent', args: body ?? {} };
+    }
+    if (seg.length === 2) {
+      const id = seg[1];
+      if (method === 'GET') return { tool: 'get_agent_status', args: { id } };
+      if (method === 'PATCH') return { tool: 'update_agent', args: { id, ...(body ?? {}) } };
+      if (method === 'DELETE') return { tool: 'delete_agent', args: { id } };
+    }
+    if (seg.length === 3 && seg[2] === 'run' && method === 'POST') return { tool: 'run_agent_now', args: { id: seg[1] } };
+  }
+
+  if (seg[0] === 'schedulers') {
+    if (seg.length === 1) {
+      if (method === 'GET') return { tool: 'list_schedulers', args: {} };
+      if (method === 'POST') return { tool: 'create_scheduler', args: body ?? {} };
+    }
+    if (seg.length === 2) {
+      const id = seg[1];
+      if (method === 'DELETE') return { tool: 'delete_scheduler', args: { id } };
+      // The only PATCH the dashboard sends is a pause/resume toggle (SchedulersPage.tsx: { status: 'paused' | 'active' }).
+      if (method === 'PATCH') {
+        const status = body?.status;
+        if (status === 'paused') return { tool: 'pause_scheduler', args: { id } };
+        if (status === 'active') return { tool: 'resume_scheduler', args: { id } };
+        return 'unsupported';
+      }
+    }
+    if (seg.length === 3 && seg[2] === 'replan' && method === 'POST') return { tool: 'trigger_scheduler_now', args: { id: seg[1] } };
+  }
+
+  if (seg[0] === 'planned-posts') {
+    if (seg.length === 1 && method === 'GET') return { tool: 'get_planned_posts', args: {} };
+    if (seg.length === 2) {
+      const id = seg[1];
+      if (method === 'DELETE') return { tool: 'cancel_post', args: { id } };
+      if (method === 'PATCH') {
+        if (body?.status === 'approved') return { tool: 'approve_post', args: { id } };
+        return 'unsupported'; // reject has no MCP equivalent (only approve/cancel)
+      }
+    }
+  }
+
+  if (seg[0] === 'connectors' && seg[1] === 'org') {
+    if (seg.length === 2) {
+      if (method === 'GET') return { tool: 'list_connectors', args: {} };
+      if (method === 'POST') return { tool: 'create_connector', args: body ?? {} };
+    }
+    if (seg.length === 3) {
+      const id = seg[2];
+      if (method === 'PATCH') return { tool: 'update_connector', args: { id, ...(body ?? {}) } };
+      if (method === 'DELETE') return { tool: 'delete_connector', args: { id } };
+    }
+    if (seg.length === 4 && seg[3] === 'test') return 'unsupported';
+  }
+
+  if (seg[0] === 'runs' && method === 'GET' && seg.length === 1) return { tool: 'list_runs', args: {} };
+
+  if (seg[0] === 'knowledge' && seg[1] !== 'bases') {
+    if (seg.length === 1) {
+      if (method === 'GET') return { tool: 'list_knowledge', args: query.q ? { query: query.q } : {} };
+      if (method === 'POST') return { tool: 'add_knowledge', args: body ?? {} };
+    }
+    if (seg.length === 2 && method === 'DELETE') return { tool: 'delete_knowledge', args: { id: seg[1] } };
+  }
+
+  if (seg[0] === 'knowledge-bases') {
+    if (seg.length === 1 && method === 'GET') return { tool: 'list_knowledge_bases', args: {} };
+    return 'unsupported'; // create/update/delete knowledge bases have no MCP tool
+  }
+
+  // org settings, team, api-keys, billing, visual-posts, summary: portal-account
+  // features with no agent-management MCP equivalent at all.
+  if (['org', 'team', 'api-keys', 'billing', 'visual-posts', 'summary'].includes(seg[0])) return 'unsupported';
+
+  return 'unsupported';
 }
 
 // Tries the dashboard-access token first (anonymous visitor to a deployed
@@ -84,8 +186,10 @@ router.post('/ai-chat', resolveAuth, async (req: AuthenticatedRequest, res: Expr
 });
 
 // ALL /api/v1/ecg-proxy/**
-// Authenticates via Supabase JWT, resolves the project's ECG_PORTAL_TOKEN
-// from project_secrets, then forwards the request server-to-server to the portal API.
+// MCP-key projects (ecg-dev-agent.routes.ts) are bridged to real MCP tool
+// calls (see mapToMcpTool above). Portal-JWT projects (the retired
+// ecg-connect.routes.ts launch flow, kept for existing dashboards) still
+// forward server-to-server to the portal REST API as before.
 router.all('*', resolveAuth, async (req: AuthenticatedRequest, res: ExpressResponse): Promise<void> => {
   const projectId = (req.query.projectId ?? req.headers['x-project-id']) as string | undefined;
   if (!projectId) {
@@ -95,6 +199,22 @@ router.all('*', resolveAuth, async (req: AuthenticatedRequest, res: ExpressRespo
 
   const secrets = await getProjectSecrets(projectId, req.dashboardAccessProjectId ? null : req.user!.id);
   if (!secrets) { res.status(403).json({ error: 'Project not found or access denied' }); return; }
+
+  if (secrets['ECG_MCP_API_KEY']) {
+    const query = Object.fromEntries(Object.entries(req.query).filter(([k]) => k !== 'projectId')) as Record<string, string>;
+    const mapping = mapToMcpTool(req.method, req.path, req.body, query);
+    if (mapping === 'unsupported') {
+      res.status(501).json({ error: 'This action is not available for an MCP-connected dashboard.' });
+      return;
+    }
+    try {
+      const result = await callEcgTool(secrets['ECG_MCP_API_KEY'], mapping!.tool, mapping!.args);
+      res.json(result);
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : 'eCG Agents MCP call failed' });
+    }
+    return;
+  }
 
   if (!secrets['ECG_PORTAL_TOKEN']) {
     res.status(400).json({ error: 'This project is not linked to an eCG Agents Portal account' });

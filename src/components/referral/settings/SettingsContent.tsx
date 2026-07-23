@@ -6,23 +6,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ICPFilingForm } from "./ICPFilingForm";
 import { PlanUsageContent } from "./PlanUsageContent";
 import { CollaboratorManager } from "./CollaboratorManager";
 import { ReferralContent } from "./ReferralContent";
 import { DomainSettings } from "./DomainSettings";
 import { IntegrationsSettings } from "./IntegrationsSettings";
+import { CustomizerSettings } from "./CustomizerSettings";
 import { GitHubSettings } from "./GitHubSettings";
 import { DatabaseSettings } from "./DatabaseSettings";
 import { EdgeFunctionsSettings } from "./EdgeFunctionsSettings";
 import { KnowledgeSettings } from "./KnowledgeSettings";
 import { SecretsSettings } from "./SecretsSettings";
 import { SeoSettingsPanel } from "@/components/seo/SeoSettingsPanel";
-import { Globe, Smartphone, CreditCard, ExternalLink } from "lucide-react";
+import { Globe, Smartphone, CreditCard, ExternalLink, Trash2 } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useSubscription } from "@/contexts/SubscriptionContext";
+import { getApiServerUrl } from "@/config/external-api";
 
 interface SettingsContentProps {
   activeSection: string;
@@ -39,6 +43,35 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [],
   const [projectDescription, setProjectDescription] = useState('');
   const [projectVisibility, setProjectVisibility] = useState<'org_all' | 'org_restricted'>('org_all');
   const [savingProjectSettings, setSavingProjectSettings] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deletingProject, setDeletingProject] = useState(false);
+  const navigate = useNavigate();
+
+  const handleDeleteProject = async () => {
+    if (!projectId) return;
+    setDeletingProject(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not authenticated');
+      const res = await fetch(getApiServerUrl(`/api/v1/projects/${projectId}`), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Server error ${res.status}`);
+      }
+      toast.success('Project deleted');
+      navigate('/dashboard/projects');
+    } catch (err) {
+      toast.error(`Failed to delete project: ${(err as Error).message}`);
+    } finally {
+      setDeletingProject(false);
+      setDeleteDialogOpen(false);
+      setDeleteConfirmText('');
+    }
+  };
 
   useEffect(() => {
     if (projectId) {
@@ -208,6 +241,9 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [],
 
       case "integrations":
         return <IntegrationsSettings projectId={projectId} />;
+
+      case "ecg-customizer":
+        return <CustomizerSettings projectId={projectId} />;
 
       case "project-git":
         return <GitHubSettings projectId={projectId} />;
@@ -428,9 +464,67 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [],
             <Button onClick={handleSaveProjectSettings} disabled={savingProjectSettings || !projectId}>
               {savingProjectSettings ? 'Saving...' : 'Save Project Settings'}
             </Button>
+
+            <Card className="bg-workspace-surface border-destructive/30">
+              <CardHeader>
+                <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
+                <CardDescription className="text-xs text-white/45">
+                  Permanently delete this project and all its data, including settings and collaborators. This cannot be undone.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)} disabled={!projectId} className="gap-2">
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete project
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Dialog open={deleteDialogOpen} onOpenChange={(o) => { if (!o) { setDeleteDialogOpen(false); setDeleteConfirmText(''); } }}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                    Delete project
+                  </DialogTitle>
+                  <DialogDescription>
+                    This permanently deletes the project and all its data including settings and collaborators. This cannot be undone.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3 py-1">
+                  <p className="text-xs text-white/45">
+                    Type <span className="font-mono text-white/85 bg-white/[0.06] px-1.5 py-0.5 rounded">delete my project</span> to confirm.
+                  </p>
+                  <Input
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    placeholder="delete my project"
+                    className="font-mono text-sm"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && deleteConfirmText.trim().toLowerCase() === 'delete my project') {
+                        handleDeleteProject();
+                      }
+                    }}
+                    autoFocus
+                  />
+                </div>
+                <DialogFooter className="gap-2">
+                  <Button variant="ghost" onClick={() => { setDeleteDialogOpen(false); setDeleteConfirmText(''); }}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    disabled={deleteConfirmText.trim().toLowerCase() !== 'delete my project' || deletingProject}
+                    onClick={handleDeleteProject}
+                  >
+                    {deletingProject ? 'Deleting…' : 'Delete project'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         );
-      
+
       case "project-domains":
         return (
           <div className="space-y-6">

@@ -36,7 +36,7 @@ interface NavGroup {
 // not by topic. Within each group, live items come first and disabled ("Soon")
 // items sink to the bottom under their own divider (see renderItems), so a user
 // scanning the top of a group never lands on a dead end.
-function buildGroups(isChinaOrg: boolean): NavGroup[] {
+function buildGroups(isChinaOrg: boolean, isEcgProject: boolean): NavGroup[] {
   return [
     {
       id: "project",
@@ -47,6 +47,7 @@ function buildGroups(isChinaOrg: boolean): NavGroup[] {
         { id: "project-seo", label: "SEO", badge: 'hot' },
         { id: "project-domains", label: "Domains", featureKey: "hosting" },
         { id: "integrations", label: "Integrations", hub: true },
+        ...(isEcgProject ? [{ id: "ecg-customizer", label: "eCG Customizer", badge: 'new' as const }] : []),
         { id: "project-collaborators", label: "Collaborators", featureKey: "invite_editors" },
         { id: "project-knowledge", label: "Knowledge", featureKey: "knowledge_base" },
         { id: "project-git", label: "Git" },
@@ -88,6 +89,7 @@ export const SettingsSidebar = ({ activeSection, onSectionChange, projectId }: S
   const { hasFeature } = useSubscription();
   const [query, setQuery] = useState("");
   const [isChinaOrg, setIsChinaOrg] = useState(false);
+  const [isEcgProject, setIsEcgProject] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     project: true,
     platform: true,
@@ -114,7 +116,22 @@ export const SettingsSidebar = ({ activeSection, onSectionChange, projectId }: S
     return () => { cancelled = true; };
   }, [projectId]);
 
-  const GROUPS = useMemo(() => buildGroups(isChinaOrg), [isChinaOrg]);
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("project_secrets")
+        .select("key_name")
+        .eq("project_id", projectId)
+        .eq("key_name", "ECG_PORTAL_TOKEN")
+        .maybeSingle();
+      if (!cancelled) setIsEcgProject(!!data);
+    })();
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  const GROUPS = useMemo(() => buildGroups(isChinaOrg, isEcgProject), [isChinaOrg, isEcgProject]);
 
   const toggleSection = (sectionId: string) => {
     setExpandedSections(prev => ({ ...prev, [sectionId]: !prev[sectionId] }));

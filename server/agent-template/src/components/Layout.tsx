@@ -70,13 +70,16 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
             const isActive = path === '/' ? pathname === '/' : pathname.startsWith(path);
             return (
               <NavLink key={path} to={path}
-                className="flex items-center gap-2.5 px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--sidebar-hover)]"
+                className="relative flex items-center gap-2.5 px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--sidebar-hover)]"
                 style={{
                   borderRadius: 'var(--radius-sm)',
                   ...(isActive
                     ? { background: 'var(--accent-bg)', color: 'var(--accent)' }
                     : { color: 'var(--sidebar-muted)' }),
                 }}>
+                {isActive && (
+                  <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-0.5 rounded-r-full" style={{ background: 'var(--accent)' }} />
+                )}
                 <Icon className="w-4 h-4 shrink-0" />
                 {label}
               </NavLink>

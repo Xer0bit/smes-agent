@@ -3,6 +3,21 @@ import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { syncPlatformAuthSecrets } from './database.service.js';
 
+// /var/ecomgear is the real, root-owned path on VPS1 in production. Locally
+// the dev server runs as a normal user and can't mkdir under /var at all
+// (confirmed live: EACCES on every agent write_file call, not just eCG's),
+// so this is overridable   same pattern as BASE_TEMPLATE_DIR in
+// baseTemplateService.ts. Set ECOMGEAR_PROJECTS_DIR in server/.env locally.
+export const PROJECTS_BASE_DIR = process.env.ECOMGEAR_PROJECTS_DIR || '/var/ecomgear/projects';
+
+export function getProjectDirName(userId: string, projectId: string): string {
+    return `user_${userId.substring(0, 8)}_project_${projectId.substring(0, 8)}`;
+}
+
+export function getProjectServerPath(userId: string, projectId: string): string {
+    return `${PROJECTS_BASE_DIR}/${getProjectDirName(userId, projectId)}`;
+}
+
 export interface Project {
     id: string;
     name: string;
@@ -26,9 +41,9 @@ export interface CreateProjectParams {
 export class ProjectService {
     async createProject(userId: string, params: CreateProjectParams): Promise<Project> {
         const projectId = randomUUID();
-        const dirName = `user_${userId.substring(0, 8)}_project_${projectId.substring(0, 8)}`;
+        const dirName = getProjectDirName(userId, projectId);
         const dockerPath = `/projects/${dirName}`;
-        const serverPath = `/var/ecomgear/projects/${dirName}`;
+        const serverPath = getProjectServerPath(userId, projectId);
 
         logger.info(`Creating project: ${params.name} for user: ${userId}`);
 

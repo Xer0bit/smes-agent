@@ -391,12 +391,25 @@ function validateAndFixFile(file: WorkspaceFile): FileWithFixes & { errors: Vali
   }
 
   // Fix 3.7: Wrap return JSX in fragment if multiple root blocks are detected
+  //
+  // Two real bugs here (confirmed live: broke a valid, single-root-element
+  // SocialMedia.tsx): (1) hasMultipleRoots pattern-matches "closing tag then
+  // opening tag on the next line" ANYWHERE in the file, which is also just
+  // what ordinary NESTED sibling JSX looks like   not proof of multiple root
+  // elements. (2) the closing-tag insertion only matched a `)` sitting at the
+  // literal end of the whole file, which is never true for a component whose
+  // return lives inside a function body (always followed by a trailing `}`)
+  // so `<>` got inserted unconditionally while `</>` silently never did,
+  // leaving unbalanced JSX ("Unterminated JSX contents"). Fix: require the
+  // closing pattern to actually match before mutating anything, so the two
+  // edits are atomic   never one without the other.
   if (/return\s*\(/.test(content)) {
     const hasMultipleRoots = /\n\s*<\/\w+[^>]*>\s*\n\s*(?:<|\{\/\*)/.test(content);
-    if (hasMultipleRoots && !/return\s*\(\s*<>/.test(content)) {
+    const closingPattern = /\n\s*\)\s*;?\s*$/;
+    if (hasMultipleRoots && !/return\s*\(\s*<>/.test(content) && closingPattern.test(content)) {
       const before = content;
       content = content.replace(/return\s*\(\s*\n/, 'return (\n    <>\n');
-      content = content.replace(/\n\s*\)\s*;?\s*$/, '\n    </>\n  )');
+      content = content.replace(closingPattern, '\n    </>\n  )');
       if (content !== before) {
         fixes.push('Wrapped return JSX in fragment');
       }
@@ -418,20 +431,43 @@ function validateAndFixFile(file: WorkspaceFile): FileWithFixes & { errors: Vali
   }
 
   // Fix 5: Deterministically strip trailing orphan closer lines.
-  // Truncation artifacts often append standalone lines like ")" or "}" at EOF.
+  // Truncation artifacts often append standalone lines like ")" or "}" at EOF
+  // with no matching opener   but a NORMAL, complete file also ends in lines
+  // like "  );" and "}" (any multi-line component's return/function close).
+  // Without a balance check this stripped the closing lines off every valid
+  // file shaped that way (confirmed live: a correct SocialMedia.tsx ending in
+  // "</div>\n  );\n}" had both "  );" and "}" removed, leaving a dangling
+  // "</div>" and a real parse error). Only remove while doing so does not
+  // increase the paren/brace/bracket imbalance, mirroring preview-service's
+  // own trimTrailingOrphanClosers (lib/validation.js), which has this guard.
   const orphanCloserLine = /^\s*[)}\];,]+\s*$/;
   const blankLine = /^\s*$/;
+  const imbalanceScore = (text: string) => {
+    let paren = 0, brace = 0, bracket = 0;
+    for (const ch of text) {
+      if (ch === '(') paren++; else if (ch === ')') paren--;
+      else if (ch === '{') brace++; else if (ch === '}') brace--;
+      else if (ch === '[') bracket++; else if (ch === ']') bracket--;
+    }
+    return Math.abs(paren) + Math.abs(brace) + Math.abs(bracket);
+  };
   const lines = content.split('\n');
   let end = lines.length - 1;
   let removed = 0;
+  let currentScore = imbalanceScore(content);
 
   while (end >= 0 && blankLine.test(lines[end] ?? '')) {
     end -= 1;
   }
 
   while (end >= 0 && orphanCloserLine.test(lines[end] ?? '')) {
+    const candidateEnd = end - 1;
+    const candidateText = lines.slice(0, candidateEnd + 1).join('\n');
+    const candidateScore = imbalanceScore(candidateText);
+    if (candidateScore > currentScore) break;
+    end = candidateEnd;
+    currentScore = candidateScore;
     removed += 1;
-    end -= 1;
     while (end >= 0 && blankLine.test(lines[end] ?? '')) {
       end -= 1;
     }
@@ -486,8 +522,30 @@ function checkBasicSyntax(filePath: string, content: string, errors: ValidationE
   for (let i = 0; i < content.length; i++) {
     const char = content[i];
     if (char === '\n') lineNumber++;
-    
-    // Skip strings and comments (basic check)
+
+    // Skip // line comments and /* */ block comments   the comment above
+    // this function has always claimed to do this, but never actually did:
+    // only string literals were skipped. A stray apostrophe in a comment
+    // ("the portal's real...") was treated as opening a string, silently
+    // swallowing everything up to the next unrelated single-quote elsewhere
+    // in the file (including its real braces) into the "skipped" region and
+    // producing a false "unmatched bracket" error   confirmed live on
+    // agent-template's own DashboardPage.tsx, a genuinely valid file.
+    if (char === '/' && content[i + 1] === '/') {
+      while (i < content.length && content[i] !== '\n') i++;
+      continue;
+    }
+    if (char === '/' && content[i + 1] === '*') {
+      i += 2;
+      while (i < content.length && !(content[i] === '*' && content[i + 1] === '/')) {
+        if (content[i] === '\n') lineNumber++;
+        i++;
+      }
+      i++; // land on the trailing '/', loop's i++ moves past it
+      continue;
+    }
+
+    // Skip strings (basic check)
     if (char === '"' || char === "'" || char === '`') {
       const quote = char;
       i++;

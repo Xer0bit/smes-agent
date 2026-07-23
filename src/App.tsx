@@ -36,7 +36,6 @@ import Contact from "./pages/landing/Contact";
 import PrivacyPolicy from "./pages/landing/PrivacyPolicy";
 import TermsOfService from "./pages/landing/TermsOfService";
 import AuthCallback from "./pages/AuthCallback";
-import EcgConnectPage from "./pages/EcgConnectPage";
 import { supabase } from "./integrations/supabase/client";
 import './i18n/config';
 
@@ -139,7 +138,6 @@ const App = () => (
                 <Route path="/batch-validate" element={<BatchValidate />} />
                 <Route path="/invite/:token" element={<AcceptInvite />} />
                 <Route path="/project-invite/:token" element={<AcceptProjectInvite />} />
-                <Route path="/ecg-connect" element={<EcgConnectPage />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

@@ -16,7 +16,10 @@ const defaultTab: Tab = configuredDefaultTab && (TABS as readonly string[]).incl
 const PLATFORM_COLORS: Record<string, string> = {
   linkedin: 'bg-blue-100 text-blue-700', twitter: 'bg-sky-100 text-sky-700',
   x: 'bg-sky-100 text-sky-700', instagram: 'bg-pink-100 text-pink-700',
-  facebook: 'bg-indigo-100 text-indigo-700',
+  facebook: 'bg-indigo-100 text-indigo-700', youtube: 'bg-red-100 text-red-700',
+  tiktok: 'bg-cyan-100 text-cyan-700', threads: 'bg-slate-200 text-slate-700',
+  pinterest: 'bg-red-100 text-red-700', telegram: 'bg-sky-100 text-sky-700',
+  whatsapp: 'bg-green-100 text-green-700',
 };
 
 export default function PostsPage() {
@@ -242,6 +245,12 @@ function PostModal({ onClose, onSave, loading }: {
               <option value="x">X</option>
               <option value="instagram">Instagram</option>
               <option value="facebook">Facebook</option>
+              <option value="youtube">YouTube</option>
+              <option value="tiktok">TikTok</option>
+              <option value="threads">Threads</option>
+              <option value="pinterest">Pinterest</option>
+              <option value="telegram">Telegram</option>
+              <option value="whatsapp">WhatsApp</option>
             </select>
           </div>
 

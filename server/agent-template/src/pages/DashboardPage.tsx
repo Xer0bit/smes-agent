@@ -13,6 +13,9 @@ const PLATFORM_META: Record<string, { label: string; bar: string }> = {
   youtube:   { label: 'YouTube',   bar: '#FF0000' },
   tiktok:    { label: 'TikTok',    bar: '#69C9D0' },
   whatsapp:  { label: 'WhatsApp',  bar: '#25D366' },
+  threads:   { label: 'Threads',   bar: '#334155' },
+  pinterest: { label: 'Pinterest', bar: '#E60023' },
+  telegram:  { label: 'Telegram',  bar: '#229ED9' },
 };
 function platformMeta(p: string) {
   return PLATFORM_META[p.toLowerCase()] ?? { label: p, bar: 'var(--muted)' };
@@ -76,7 +79,15 @@ export default function DashboardPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
-      <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Home</h1>
+      <div className="flex items-end justify-between pb-1">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>Workspace</p>
+          <h1 className="text-xl mt-0.5" style={{ color: 'var(--text)', fontWeight: 'var(--font-weight-heading)' }}>{ECG.appName}</h1>
+        </div>
+        <p className="text-xs" style={{ color: 'var(--muted)' }}>
+          {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+        </p>
+      </div>
 
       {setupSteps.length > 0 && !setupDone && (
         <div className="rounded-xl border overflow-hidden" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
@@ -108,9 +119,9 @@ export default function DashboardPage() {
             { label: 'Approved', value: approved.length, Icon: TrendingUp,   tint: 'var(--accent)' },
             { label: 'Rejected', value: rejected.length, Icon: XCircle,      tint: '#dc2626' },
           ].map(card => (
-            <div key={card.label} className="rounded-xl border p-4" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
+            <div key={card.label} className="rounded-xl border p-4" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-sm)' }}>
               <div className="flex items-center justify-between mb-2">
-                <p className="text-xs" style={{ color: 'var(--muted)' }}>{card.label}</p>
+                <p className="text-[11px] font-medium uppercase tracking-wide" style={{ color: 'var(--muted)' }}>{card.label}</p>
                 <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'var(--accent-bg,#ede9fe)' }}>
                   <card.Icon className="w-3.5 h-3.5" style={{ color: card.tint }} />
                 </div>
