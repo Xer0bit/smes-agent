@@ -23,6 +23,7 @@
 import { Router, Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import { scryptSync, randomBytes } from 'node:crypto';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
 import { projectService, getProjectServerPath } from '../services/project.service.js';
@@ -82,11 +83,12 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
   const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': heartbeat\n\n'); }, 15_000);
 
   try {
-    const { apiKey, organizationId, config, modules } = req.body as {
+    const { apiKey, organizationId, config, modules, password } = req.body as {
       apiKey?: string;
       organizationId?: string;
       config?: Record<string, unknown>;
       modules?: string[];
+      password?: string;
     };
     const dashConfig  = config && typeof config === 'object' ? config : {};
     const dashModules = Array.isArray(modules) ? modules.filter((m): m is string => typeof m === 'string') : [];
@@ -141,6 +143,21 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
       { project_id: project.id, key_name: 'ECG_PORTAL_TOKEN', key_value: apiKey },
     ]);
 
+    // ── Access password (scrypt, same scheme ecg-access.routes.ts verifies).
+    // The wizard collects it at the confirm step; AccessGate then requires it
+    // on every visit to the deployed dashboard. ──
+    if (typeof password === 'string' && password.trim().length >= 6) {
+      const salt = randomBytes(16).toString('hex');
+      const hash = scryptSync(password.trim(), salt, 64).toString('hex');
+      await supabase.from('project_secrets').insert([
+        { project_id: project.id, key_name: 'ECG_ACCESS_PASSWORD_HASH', key_value: hash },
+        { project_id: project.id, key_name: 'ECG_ACCESS_PASSWORD_SALT', key_value: salt },
+      ]);
+      sseWrite(res, 'step', { id: 'password_protected', status: 'done' });
+    } else {
+      sseWrite(res, 'step', { id: 'password_protected', status: 'skipped' });
+    }
+
     let dbProvisioned = false;
     try {
       await databaseService.provision(req.user!.id, organizationId ?? null, project.id);
@@ -150,6 +167,37 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
       logger.warn('[ecg-dev-agent] database provisioning failed (continuing without hosted DB)', err);
     }
     sseWrite(res, 'step', { id: 'database_provisioned', status: dbProvisioned ? 'done' : 'skipped' });
+
+    // ── Starter edge function: server-side eCG access pattern. The `ecg`
+    // helper is injected by functionRunner with the portal token, so ECG
+    // credentials never reach the browser. The dev agent extends this file
+    // instead of inventing frontend fetches (see its eCG prompt rules). ──
+    try {
+      await supabase.from('edge_functions').upsert(
+        {
+          user_id: req.user!.id,
+          project_id: project.id,
+          name: 'ecg-overview',
+          description: 'Server-side eCG summary: agents + publishing stats fetched with credentials that stay on the server.',
+          code: [
+            "// Server-side eCG access: `ecg` is pre-injected with this project's",
+            "// portal credentials. Never fetch the portal from frontend code.",
+            "if (!ecg) return { error: 'eCG portal not linked for this project' };",
+            "const [agents, stats] = await Promise.all([",
+            "  ecg.get('/agents'),",
+            "  ecg.get('/stats'),",
+            "]);",
+            "return { agents, stats, generatedAt: new Date().toISOString() };",
+          ].join('\n'),
+          is_active: true,
+        },
+        { onConflict: 'project_id,name' },
+      );
+      sseWrite(res, 'step', { id: 'edge_function_created', status: 'done' });
+    } catch (err) {
+      logger.warn('[ecg-dev-agent] starter edge function seed failed (non-fatal)', err);
+      sseWrite(res, 'step', { id: 'edge_function_created', status: 'skipped' });
+    }
 
     // Push every secret (platform auth + hosted DB, if provisioned) to the live preview.
     try {

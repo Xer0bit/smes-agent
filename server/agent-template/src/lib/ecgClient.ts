@@ -157,4 +157,5 @@ export const ecgApi = {
 
   // Summary
   summary: { get: () => req('GET', '/summary') },
+  stats:   { get: () => req('GET', '/stats') },
 };

@@ -48,8 +48,10 @@ const MODULES = [
 const PROVISION_STEPS: Array<{ id: string; label: string }> = [
   { id: 'discovery',            label: 'Verifying connection' },
   { id: 'project_created',      label: 'Creating project' },
+  { id: 'password_protected',   label: 'Securing dashboard access' },
   { id: 'template_import',      label: 'Setting up base app' },
   { id: 'database_provisioned', label: 'Provisioning hosted database' },
+  { id: 'edge_function_created', label: 'Creating server functions' },
   { id: 'template_seeded',      label: 'Building your dashboard' },
   { id: 'revision_saved',       label: 'Saving dashboard' },
   { id: 'preview_synced',       label: 'Syncing live preview' },
@@ -68,6 +70,7 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
   const [themeKey, setThemeKey] = useState<string>('light');
   const [accent, setAccent] = useState('');
   const [modules, setModules] = useState<string[]>(MODULES.map((m) => m.key));
+  const [password, setPassword] = useState('');
 
   // Provision-step progress
   const [doneSteps, setDoneSteps] = useState<Set<string>>(new Set());
@@ -117,6 +120,7 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
         headers: await authHeader(),
         body: JSON.stringify({
           apiKey: apiKey.trim(),
+          password: password.trim() || undefined,
           config: {
             appName: appName.trim() || undefined,
             logoUrl: logoUrl.trim() || undefined,
@@ -323,6 +327,19 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
                 )}
               </div>
               <div>
+                <label className="text-xs font-medium text-muted-foreground">Dashboard password</label>
+                <Input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Min 6 characters"
+                  className="mt-1 border-border/60 bg-card/60"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Visitors must enter this to open the dashboard. Required.
+                </p>
+              </div>
+              <div>
                 <label className="text-xs font-medium text-muted-foreground">Features</label>
                 <div className="mt-1.5 grid grid-cols-2 gap-1.5">
                   {MODULES.map((m) => {
@@ -345,7 +362,7 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
 
             <div className="mt-5 flex items-center justify-between">
               <Button variant="ghost" size="sm" className="rounded-full" onClick={() => setStep('connect')}>← Back</Button>
-              <Button onClick={handleCreate} disabled={busy || modules.length === 0} className="rounded-full gap-1.5">
+              <Button onClick={handleCreate} disabled={busy || modules.length === 0 || password.trim().length < 6} className="rounded-full gap-1.5">
                 Create dashboard <ArrowRight className="h-3.5 w-3.5" />
               </Button>
             </div>
