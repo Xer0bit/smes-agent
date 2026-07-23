@@ -182,7 +182,7 @@ export default function SettingsPage() {
 }
 
 function Spinner() {
-  return <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div>;
+  return <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: 'var(--accent)' }} /></div>;
 }
 
 function OrgSettings({ org, onSave, saving }: { org: any; onSave: (data: any) => void; saving: boolean }) {

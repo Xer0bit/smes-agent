@@ -1,7 +1,24 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings, LucideIcon } from 'lucide-react';
 import { ECG } from '../ecg-config';
+import { ecgApi } from '../lib/ecgClient';
+
+// Live count of posts awaiting review, shown as a badge on Planned Posts.
+// One fetch per mount  cheap, and the badge is advisory, not real-time.
+function usePendingCount(): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!ECG.modules.includes('posts')) return;
+    ecgApi.posts.list()
+      .then((d: any) => {
+        const posts = Array.isArray(d) ? d : (d.posts ?? d.plannedPosts ?? []);
+        setCount(posts.filter((p: any) => p.status === 'pending').length);
+      })
+      .catch(() => {});
+  }, []);
+  return count;
+}
 
 const ALL_ICONS: Record<string, LucideIcon> = {
   LayoutDashboard, Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings,
@@ -50,7 +67,17 @@ export default function Layout({ children }: { children: ReactNode }) {
   return <Sidebar pathname={pathname}>{children}</Sidebar>;
 }
 
+// Section labels for the sidebar. Items keep NAV's order; a label renders
+// above the first item of each group that actually has items.
+const NAV_GROUPS: Record<string, string> = {
+  dashboard: 'Overview', chat: 'Overview',
+  agents: 'Content', schedulers: 'Content', posts: 'Content',
+  connectors: 'System', runs: 'System', knowledge: 'System', settings: 'System',
+};
+
 function Sidebar({ children, pathname }: { children: ReactNode; pathname: string }) {
+  const pendingCount = usePendingCount();
+  let lastGroup = '';
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: 'var(--body-bg)' }}>
       <aside className="w-60 flex flex-col border-r shrink-0"
@@ -65,24 +92,40 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
           </div>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {NAV.map(({ label, path, icon }) => {
+          {NAV.map(({ id, label, path, icon }) => {
             const Icon = ALL_ICONS[icon] ?? Zap;
             const isActive = path === '/' ? pathname === '/' : pathname.startsWith(path);
+            const group = NAV_GROUPS[id] ?? '';
+            const showLabel = group !== lastGroup;
+            if (showLabel) lastGroup = group;
+            const showBadge = id === 'posts' && pendingCount > 0;
             return (
-              <NavLink key={path} to={path}
-                className="relative flex items-center gap-2.5 px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--sidebar-hover)]"
-                style={{
-                  borderRadius: 'var(--radius-sm)',
-                  ...(isActive
-                    ? { background: 'var(--accent-bg)', color: 'var(--accent)' }
-                    : { color: 'var(--sidebar-muted)' }),
-                }}>
-                {isActive && (
-                  <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-0.5 rounded-r-full" style={{ background: 'var(--accent)' }} />
+              <div key={path}>
+                {showLabel && (
+                  <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--sidebar-muted)', opacity: 0.7 }}>
+                    {group}
+                  </p>
                 )}
-                <Icon className="w-4 h-4 shrink-0" />
-                {label}
-              </NavLink>
+                <NavLink to={path}
+                  className="relative flex items-center gap-2.5 px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--sidebar-hover)]"
+                  style={{
+                    borderRadius: 'var(--radius-sm)',
+                    ...(isActive
+                      ? { background: 'var(--accent-bg)', color: 'var(--accent)' }
+                      : { color: 'var(--sidebar-muted)' }),
+                  }}>
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-0.5 rounded-r-full" style={{ background: 'var(--accent)' }} />
+                  )}
+                  <Icon className="w-4 h-4 shrink-0" />
+                  <span className="flex-1">{label}</span>
+                  {showBadge && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none min-w-[18px] text-center text-white" style={{ background: 'var(--accent)' }}>
+                      {pendingCount > 99 ? '99+' : pendingCount}
+                    </span>
+                  )}
+                </NavLink>
+              </div>
             );
           })}
         </nav>

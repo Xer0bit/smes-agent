@@ -44,18 +44,28 @@ export default function AccessGate({ children }: { children: React.ReactNode }) 
 
   if (status === 'checking') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <span className="w-6 h-6 border-2 border-slate-300 border-t-blue-600 rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--body-bg)' }}>
+        <span className="w-6 h-6 border-2 rounded-full animate-spin"
+          style={{ borderColor: 'var(--border)', borderTopColor: 'var(--accent)' }} />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
-      <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 max-w-sm w-full space-y-4">
-        <div>
-          <h1 className="text-lg font-semibold text-slate-900">{ECG.appName}</h1>
-          <p className="text-sm text-slate-500 mt-1">This dashboard is password protected.</p>
+    <div className="min-h-screen flex items-center justify-center px-4" style={{ background: 'var(--body-bg)' }}>
+      <form onSubmit={handleSubmit} className="rounded-2xl border p-8 max-w-sm w-full space-y-4"
+        style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-md)' }}>
+        <div className="text-center">
+          {ECG.logoUrl ? (
+            <img src={ECG.logoUrl} alt="" className="w-11 h-11 mx-auto mb-3 object-contain" style={{ borderRadius: 'var(--radius-sm)' }} />
+          ) : (
+            <div className="w-11 h-11 mx-auto mb-3 flex items-center justify-center text-white text-lg"
+              style={{ background: 'var(--accent)', borderRadius: 'var(--radius-sm)', fontWeight: 'var(--font-weight-heading)' }}>
+              {ECG.appName.charAt(0)}
+            </div>
+          )}
+          <h1 className="text-lg" style={{ color: 'var(--text)', fontWeight: 'var(--font-weight-heading)' }}>{ECG.appName}</h1>
+          <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>This dashboard is password protected.</p>
         </div>
         <input
           type="password"
@@ -63,13 +73,15 @@ export default function AccessGate({ children }: { children: React.ReactNode }) 
           value={password}
           onChange={e => setPassword(e.target.value)}
           placeholder="Password"
-          className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+          className="w-full text-sm border rounded-lg px-3 py-2.5 focus:outline-none"
+          style={{ background: 'var(--body-bg)', borderColor: error ? '#dc2626' : 'var(--border)', color: 'var(--text)' }}
         />
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-sm" style={{ color: '#dc2626' }}>{error}</p>}
         <button
           type="submit"
           disabled={submitting || !password}
-          className="w-full py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          className="w-full py-2.5 text-white text-sm font-medium rounded-lg hover:opacity-90 transition-opacity"
+          style={{ background: 'var(--accent)' }}
         >
           {submitting ? 'Checking…' : 'Enter'}
         </button>

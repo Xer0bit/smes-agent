@@ -3,8 +3,22 @@ import { Plus, Pencil, Trash2, X, Play, Send, Loader2, AlertTriangle } from 'luc
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
+import { PageHeader, EmptyState, Spinner, relTime } from '../components/ui';
+import { Calendar } from 'lucide-react';
 
 const showNextRun = (ECG.moduleSettings.schedulers?.showNextRun ?? true) !== false;
+
+// "Mon, Wed, Fri at 09:00 - 3 posts" instead of raw cron. Falls back to the
+// raw string for any cron shape the weekly builder didn't produce.
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function cadenceSentence(cron?: string, postCount?: number): string | null {
+  if (!cron) return null;
+  const m = /^0 (\d{1,2}) \* \* ([\d,]+)$/.exec(cron.trim());
+  if (!m) return null;
+  const days = m[2].split(',').map(d => DAY_NAMES[Number(d)] ?? d).join(', ');
+  const posts = postCount ? ` · ${postCount} post${postCount === 1 ? '' : 's'}` : '';
+  return `${days} at ${String(m[1]).padStart(2, '0')}:00${posts}`;
+}
 
 const DAYS_OF_WEEK = [
   { label: 'Mon', value: '1' }, { label: 'Tue', value: '2' }, { label: 'Wed', value: '3' },
@@ -84,22 +98,24 @@ export default function SchedulersPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Schedulers</h1>
+      <PageHeader eyebrow="Content" title="Schedulers" action={
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
           style={{ background: 'var(--accent)' }}
         >
           <Plus className="w-4 h-4" /> New Scheduler
         </button>
-      </div>
+      } />
 
-      {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</div>}
+      {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
       {replanMsg && <div className="text-sm px-4 py-3 rounded-lg" style={{ background: 'var(--accent-bg,#ede9fe)', color: 'var(--text)' }}>{replanMsg}</div>}
 
       {loading && <Spinner />}
-      {!loading && !rows.length && <Empty />}
+      {!loading && !rows.length && (
+        <EmptyState Icon={Calendar} title="No schedulers configured"
+          hint="A scheduler tells an agent when to generate and publish posts. Create one to put your content on autopilot." />
+      )}
       {!loading && rows.length > 0 && (
         <div className="rounded-xl border overflow-hidden" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
           <table className="w-full text-sm">
@@ -114,9 +130,15 @@ export default function SchedulersPage() {
               {rows.map((s: any) => (
                 <tr key={s.id}>
                   <td className="px-4 py-3 font-medium" style={{ color: 'var(--text)' }}>{s.agentName ?? s.agent_name ?? ' '}</td>
-                  <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>{s.schedule ?? s.cron}</td>
+                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>
+                    {cadenceSentence(s.schedule ?? s.cron, s.postCount ?? s.post_count)
+                      ?? <span className="font-mono">{s.schedule ?? s.cron}</span>}
+                  </td>
                   {showNextRun && (
-                    <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>{s.nextRun ? new Date(s.nextRun).toLocaleString() : ' '}</td>
+                    <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}
+                      title={s.nextRun ? new Date(s.nextRun).toLocaleString() : undefined}>
+                      {s.nextRun ? relTime(s.nextRun) : ' '}
+                    </td>
                   )}
                   <td className="px-4 py-3"><StatusBadge status={s.status ?? 'active'} /></td>
                   <td className="px-4 py-3">
@@ -172,9 +194,6 @@ export default function SchedulersPage() {
     </div>
   );
 }
-
-function Spinner() { return <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div>; }
-function Empty() { return <div className="text-center py-16 text-sm" style={{ color: 'var(--muted)' }}>No schedulers configured</div>; }
 
 function CreateSchedulerModal({ agents, connectors, onClose, onCreated }: {
   agents: any[]; connectors: any[]; onClose: () => void; onCreated: (created: any) => void;

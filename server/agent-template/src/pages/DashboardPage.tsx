@@ -112,6 +112,18 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {has('posts') && pending.length > 0 && (
+        <button onClick={() => navigate('/posts')}
+          className="w-full flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-shadow hover:shadow-md"
+          style={{ background: 'var(--accent-bg)', borderColor: 'var(--accent)' }}>
+          <FileText className="w-4 h-4 shrink-0" style={{ color: 'var(--accent)' }} />
+          <span className="flex-1 text-sm" style={{ color: 'var(--text)' }}>
+            <span style={{ fontWeight: 'var(--font-weight-heading)' }}>{pending.length} post{pending.length === 1 ? '' : 's'}</span> waiting for your review
+          </span>
+          <ChevronRight className="w-4 h-4 shrink-0" style={{ color: 'var(--accent)' }} />
+        </button>
+      )}
+
       {ECG.showSummaryCards && has('posts') && (
         <div className="grid grid-cols-3 gap-3">
           {[

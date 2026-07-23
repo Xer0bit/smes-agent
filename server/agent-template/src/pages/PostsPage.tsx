@@ -4,6 +4,7 @@ import { CheckCircle, XCircle, FileText, Plus, Trash2, Pencil, X, Sparkles, Cale
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
+import { PageHeader, EmptyState, Spinner, relTime } from '../components/ui';
 
 const TABS = ['all', 'pending', 'approved', 'rejected'] as const;
 type Tab = typeof TABS[number];
@@ -83,8 +84,7 @@ export default function PostsPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Planned Posts</h1>
+      <PageHeader eyebrow="Content" title="Planned Posts" action={
         <div className="flex items-center gap-2">
           <button
             onClick={() => navigate('/posts/calendar')}
@@ -95,27 +95,35 @@ export default function PostsPage() {
           </button>
           <button
             onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
             style={{ background: 'var(--accent)' }}
           >
             <Plus className="w-4 h-4" /> New Post
           </button>
         </div>
-      </div>
+      } />
 
-      {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</div>}
+      {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
 
       <div className="flex gap-1 p-1 rounded-xl w-fit" style={{ background: 'var(--border)' }}>
-        {TABS.map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors"
-            style={tab === t ? { background: 'var(--card-bg)', color: 'var(--text)' } : { color: 'var(--muted)' }}>
-            {t}{t === 'pending' && pendingCount > 0 ? ` (${pendingCount})` : ''}
-          </button>
-        ))}
+        {TABS.map(t => {
+          const n = t === 'all' ? posts.length : posts.filter(p => p.status === t).length;
+          return (
+            <button key={t} onClick={() => setTab(t)}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors"
+              style={tab === t ? { background: 'var(--card-bg)', color: 'var(--text)' } : { color: 'var(--muted)' }}>
+              {t}{n > 0 ? ` (${n})` : ''}
+            </button>
+          );
+        })}
       </div>
       {loading && <Spinner />}
-      {!loading && !visible.length && <div className="text-center py-16 text-sm" style={{ color: 'var(--muted)' }}>No {tab} posts</div>}
+      {!loading && !visible.length && (
+        <EmptyState Icon={FileText} title={`No ${tab === 'all' ? '' : tab + ' '}posts`}
+          hint={pendingCount === 0 && tab === 'pending'
+            ? 'Nothing waiting for review. New posts land here when an agent generates them.'
+            : 'Posts your agents generate, plus any you write yourself, appear here.'} />
+      )}
       {!loading && (
         <div className="space-y-3">
           {visible.map((p: any) => {
@@ -151,6 +159,27 @@ export default function PostsPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     {p.platform && <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${platCls}`}>{p.platform}</span>}
                     <span className="text-xs" style={{ color: 'var(--muted)' }}>{p.agentName ?? p.agent_name}</span>
+                    {(p.scheduledAt ?? p.scheduled_at) && (
+                      <span className="text-xs" style={{ color: 'var(--muted)' }}
+                        title={new Date(p.scheduledAt ?? p.scheduled_at).toLocaleString()}>
+                        · {relTime(p.scheduledAt ?? p.scheduled_at)}
+                      </span>
+                    )}
+                    {p.postUrl && (
+                      <a href={p.postUrl} target="_blank" rel="noopener noreferrer"
+                        className="text-xs underline hover:opacity-70" style={{ color: 'var(--accent)' }}>
+                        View post
+                      </a>
+                    )}
+                    {p.status === 'pending' && typeof p.confidence === 'number' && (
+                      <span className="inline-flex items-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}
+                        title={`Agent confidence: ${Math.round(p.confidence * 100)}%`}>
+                        <span className="w-12 h-1 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
+                          <span className="block h-full rounded-full" style={{ width: `${Math.round(p.confidence * 100)}%`, background: 'var(--accent)' }} />
+                        </span>
+                        {Math.round(p.confidence * 100)}%
+                      </span>
+                    )}
                   </div>
                   {p.status === 'pending' && (
                     <div className="flex gap-2 shrink-0">
@@ -191,8 +220,6 @@ export default function PostsPage() {
     </div>
   );
 }
-
-function Spinner() { return <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div>; }
 
 function PostModal({ onClose, onSave, loading }: {
   onClose: () => void;

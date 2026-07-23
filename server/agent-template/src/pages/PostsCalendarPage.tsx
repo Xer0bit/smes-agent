@@ -83,7 +83,7 @@ export default function PostsCalendarPage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div>
+        <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: 'var(--accent)' }} /></div>
       ) : (
         <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border)' }}>
           <div className="grid grid-cols-7 text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>

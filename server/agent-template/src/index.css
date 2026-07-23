@@ -16,3 +16,26 @@ body {
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Page mount: one subtle fade-rise, CSS only */
+main > * { animation: ecg-rise 150ms ease-out; }
+@keyframes ecg-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  main > * { animation: none; }
+}
+
+/* Card hover elevation */
+.ecg-card-hover { transition: box-shadow 150ms ease, border-color 150ms ease; }
+.ecg-card-hover:hover { box-shadow: var(--shadow-md); }
+
+/* Interactive state discipline for buttons/inputs across all pages */
+button, [role="button"] { transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+input, select, textarea { transition: border-color 120ms ease; }
