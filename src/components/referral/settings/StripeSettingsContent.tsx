@@ -139,11 +139,6 @@ export const StripeSettingsContent = ({ projectId }: StripeSettingsContentProps)
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-white/85 mb-1">Stripe</h2>
-        <p className="text-sm text-white/45">Accept payments and manage subscriptions via Stripe.</p>
-      </div>
-
       <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base text-white/85">

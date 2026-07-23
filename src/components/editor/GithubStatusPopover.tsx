@@ -22,7 +22,7 @@ export function GithubStatusPopover({ open, onOpenChange, connected, login, link
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="icon"
-              onClick={() => { if (!connected) onOpenSettings('project-integrations'); }}
+              onClick={() => { if (!connected) onOpenSettings('project-git'); }}
               className="h-7 w-7 rounded-md text-white/25 hover:text-white/70 hover:bg-white/[0.06]">
               <Github className="h-3.5 w-3.5" />
             </Button>
@@ -43,7 +43,7 @@ export function GithubStatusPopover({ open, onOpenChange, connected, login, link
         ) : (
           <p className="text-[11px] text-white/45">No repository linked yet.</p>
         )}
-        <Button size="sm" variant="outline" onClick={() => { onOpenChange(false); onOpenSettings('project-integrations'); }}
+        <Button size="sm" variant="outline" onClick={() => { onOpenChange(false); onOpenSettings('project-git'); }}
           className="h-7 w-full text-[11px]">
           Manage
         </Button>

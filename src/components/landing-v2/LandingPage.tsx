@@ -4,6 +4,7 @@ import { Footer } from "@/components/landing/Footer";
 import { useLandingContext } from "@/contexts/LandingContext";
 import { HeroSection } from "./HeroSection";
 import { LandingMarquee } from "./LandingMarquee";
+import { GlobalReach } from "./GlobalReach";
 import { DualPublish } from "./DualPublish";
 import { TemplateGallery } from "./TemplateGallery";
 import { Capabilities } from "./Capabilities";
@@ -21,6 +22,7 @@ export function LandingPage({ onLaunch }: LandingPageProps) {
       <Header onLoginClick={onLoginClick} user={user} />
       <HeroSection onLaunch={onLaunch} />
       <LandingMarquee />
+      <GlobalReach />
       <DualPublish />
       <TemplateGallery />
       <Capabilities />

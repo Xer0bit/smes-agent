@@ -35,6 +35,8 @@ interface AgentChatPanelProps {
   isMinimized?: boolean;
   /** When set, automatically send this prompt to the agent (e.g. from Repair button). */
   triggerPrompt?: string | null;
+  /** Chat-message label shown for the auto-sent triggerPrompt. Defaults to the repair-flow label. */
+  triggerDisplayText?: string;
   /** Called once after triggerPrompt has been consumed so the parent can clear it. */
   onTriggerConsumed?: () => void;
   /** Called when user clicks a preview command button (e.g. 'restart', 'refresh'). */
@@ -43,6 +45,9 @@ interface AgentChatPanelProps {
   onAgentStreamText?: (chunk: string) => void;
   /** Called when the stream resets (new generation started). */
   onAgentStreamClear?: () => void;
+  /** Called when the agent starts installing an npm dependency mid-run, so the
+   * preview can show an "installing" state instead of a false build error. */
+  onDependencyInstallStart?: () => void;
 }
 
 export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
@@ -54,10 +59,12 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   onUsage,
   isMinimized = false,
   triggerPrompt,
+  triggerDisplayText,
   onTriggerConsumed,
   onPreviewCommand,
   onAgentStreamText,
   onAgentStreamClear,
+  onDependencyInstallStart,
 }) => {
   const GREETING: Message = {
     id: 'greeting',
@@ -150,7 +157,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   useEffect(() => {
     if (!triggerPrompt || isGenerating) return;
     onTriggerConsumed?.();
-    handleSubmit(triggerPrompt, '🔧 Repair request', 'build');
+    handleSubmit(triggerPrompt, triggerDisplayText || '🔧 Repair request', 'build');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerPrompt]);
 
@@ -733,6 +740,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             } else if (depMatch) {
               const label = `Installing ${depMatch[1]}...`;
               pushStatus(label);
+              onDependencyInstallStart?.();
               setLiveFiles(prev => [...prev, { path: depMatch[1], type: 'dependency', timestamp: Date.now() }]);
               stepsAccum.push({ type: 'dependency', label, done: true });
             } else {

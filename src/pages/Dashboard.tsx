@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import * as React from 'react';
-import { useNavigate, NavLink, Link, Outlet } from 'react-router-dom';
+import { useNavigate, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectSeparator } from '@/components/ui/select';
 import {
-  User as UserIcon,
   Loader2,
   LogOut,
   FolderKanban,
@@ -15,12 +15,24 @@ import {
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
-  ShieldCheck,
+  Plus,
+  Sparkles,
+  Bot,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import ecomgearLogo from '@/assets/ecomgear-logo.png';
 import { useOrganization } from '@/contexts/OrganizationContext';
 import { NotificationBell } from '@/components/dashboard/NotificationBell';
+import { CreateWorkspaceDialog } from '@/components/dashboard/CreateWorkspaceDialog';
+
+const CREATE_WORKSPACE_VALUE = '__create_workspace__';
+
+function orgInitialClasses(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff;
+  const palettes = ['bg-primary/15 text-primary', 'bg-secondary/15 text-secondary', 'bg-accent/15 text-accent'];
+  return palettes[h % palettes.length];
+}
 
 interface DashboardSidebarProps {
   user: User | null;
@@ -32,6 +44,7 @@ interface DashboardSidebarProps {
   handleLogout: () => Promise<void>;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  onCreateWorkspace: () => void;
 }
 
 const DashboardSidebar = ({
@@ -44,159 +57,199 @@ const DashboardSidebar = ({
   handleLogout,
   collapsed: collapsedPref,
   onToggleCollapse,
+  onCreateWorkspace,
 }: DashboardSidebarProps) => {
   const { t } = useTranslation();
-  // Hovering over a collapsed sidebar temporarily expands it (common pattern  
-  // VS Code's activity bar, etc.) without touching the user's actual pinned
-  // preference: move the mouse away and it collapses back to collapsedPref.
-  // The manual toggle button still pins/unpins collapsedPref itself.
-  const [hovering, setHovering] = useState(false);
-  const collapsed = collapsedPref && !hovering;
+  const collapsed = collapsedPref;
 
   const menuItems = [
     { title: t('dashboard.home'), url: '/dashboard', icon: Home, end: true },
-    { title: t('dashboard.organizations'), url: '/dashboard/organizations', icon: Building2 },
+    { title: 'Workspace Settings', url: '/dashboard/organizations', icon: Building2 },
     { title: t('dashboard.projects'), url: '/dashboard/projects', icon: FolderKanban },
-    { title: t('dashboard.profile'), url: '/dashboard/profile', icon: UserIcon },
-    { title: 'Team Access', url: '/dashboard/team', icon: ShieldCheck },
+    { title: 'Designs', url: '/dashboard/designs', icon: Sparkles },
     { title: t('dashboard.settings'), url: '/dashboard/settings', icon: Settings },
   ];
 
+  const ecgAgentItems = [
+    { title: 'eCG Agents', url: '/dashboard/ecg-agents', icon: Bot },
+  ];
+
+  const renderNavItem = (item: { title: string; url: string; icon: typeof Home; end?: boolean }) => (
+    <NavLink
+      key={item.title}
+      to={item.url}
+      end={item.end}
+      title={collapsed ? item.title : undefined}
+      className={({ isActive }) =>
+        `group relative flex min-w-fit items-center rounded-lg text-sm transition-colors duration-150 md:min-w-0 ${
+          collapsed ? 'justify-center p-2 gap-0' : 'gap-3 px-3 py-2'
+        } ${
+          isActive
+            ? 'text-primary'
+            : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
+        }`
+      }
+    >
+      {({ isActive }) => (
+        <>
+          {isActive && (
+            <motion.span
+              layoutId="sidebar-nav-active"
+              className="absolute inset-0 rounded-lg bg-primary/10"
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            />
+          )}
+          <item.icon className="relative z-[1] h-4 w-4 shrink-0" />
+          <span
+            className={`relative z-[1] overflow-hidden whitespace-nowrap transition-all duration-200 ${
+              collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100 delay-100'
+            }`}
+          >
+            {item.title}
+          </span>
+        </>
+      )}
+    </NavLink>
+  );
+
+  const userInitial = (user?.user_metadata?.full_name || user?.email || '?').charAt(0).toUpperCase();
+
   return (
     <aside
-      onMouseEnter={() => collapsedPref && setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
-      className={`border-b border-white/[0.06] bg-[#0e0e10] md:fixed md:left-0 md:top-0 md:z-20 md:h-screen md:border-b-0 md:border-r md:overflow-hidden transition-[width] duration-300 ease-in-out ${collapsed ? 'md:w-[60px]' : 'md:w-60'}`}
+      className={`border-b border-border/60 bg-card md:fixed md:left-0 md:top-0 md:z-20 md:h-screen md:border-b-0 md:border-r md:overflow-hidden transition-[width] duration-300 ease-in-out ${collapsed ? 'md:w-[60px]' : 'md:w-64'}`}
     >
       <div className="flex h-full flex-col">
-        <div className="border-b border-white/[0.06] px-4 py-4 md:px-3 md:py-5">
-          <Link to="/" className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center">
-              <img
-                src={ecomgearLogo}
-                alt="eCOMGear logo"
-                className="h-6 w-auto object-contain"
-              />
-            </div>
-            <div
-              className={`min-w-0 overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100 delay-100'
+        <div className={`border-b border-border/60 px-3 py-3 ${collapsed ? 'flex justify-center' : ''}`}>
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-background/60"
+            title={collapsedPref ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <img src={ecomgearLogo} alt="eCOMGear logo" className="h-5 w-auto object-contain" />
+          </button>
+
+          {!collapsed && (
+            <Select
+              value={currentOrganizationId || undefined}
+              onValueChange={(value) => {
+                if (value === CREATE_WORKSPACE_VALUE) onCreateWorkspace();
+                else setCurrentOrganizationId(value);
+              }}
+              disabled={loadingOrganizations}
+            >
+              <SelectTrigger className="mt-2.5 h-10 rounded-full border-border/60 bg-background/60 pl-1.5 pr-2.5 text-xs text-foreground focus:ring-0 [&>span]:flex [&>span]:min-w-0 [&>span]:flex-1">
+                <SelectValue placeholder={loadingOrganizations ? 'Loading…' : 'No workspace'} className="truncate" />
+              </SelectTrigger>
+              <SelectContent className="min-w-[15rem] rounded-xl border-border/60 bg-card p-1.5 text-foreground shadow-[0_18px_44px_hsl(220_45%_5%/0.3)]">
+                {organizations.map((organization) => (
+                  <SelectItem
+                    key={organization.id}
+                    value={organization.id}
+                    className="rounded-lg py-2 pl-8 pr-2 focus:bg-primary/10 focus:text-foreground"
+                  >
+                    <span className="flex items-center gap-2">
+                      {organization.avatar_url ? (
+                        <img src={organization.avatar_url} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
+                      ) : (
+                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${orgInitialClasses(organization.name)}`}>
+                          {organization.name.charAt(0).toUpperCase()}
+                        </span>
+                      )}
+                      <span className="truncate">{organization.name}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+                <SelectSeparator className="bg-border/60" />
+                <SelectItem
+                  value={CREATE_WORKSPACE_VALUE}
+                  className="rounded-lg py-2 pl-8 pr-2 text-primary focus:bg-primary/10 focus:text-primary"
+                >
+                  <span className="flex items-center gap-2">
+                    <Plus className="h-3.5 w-3.5" />
+                    Create workspace
+                  </span>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        <div className="flex-1 space-y-4 px-2 py-4 overflow-hidden">
+          <div>
+            <p
+              className={`mb-2 hidden px-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:block overflow-hidden transition-all duration-200 ${
+                collapsed ? 'max-h-0 opacity-0 mb-0' : 'max-h-4 opacity-100 delay-100'
               }`}
             >
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/60">eComGear</p>
-              <p className="truncate text-sm font-medium text-white">
-                {currentOrganization?.name || 'Workspace'}
-              </p>
-            </div>
-          </Link>
+              Navigation
+            </p>
+            <nav className="flex gap-1.5 overflow-x-auto pb-1 md:block md:space-y-0.5 md:overflow-visible md:pb-0">
+              {menuItems.map((item) => renderNavItem(item))}
+            </nav>
+          </div>
 
+          <div>
+            <p
+              className={`mb-2 hidden px-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:block overflow-hidden transition-all duration-200 ${
+                collapsed ? 'max-h-0 opacity-0 mb-0' : 'max-h-4 opacity-100 delay-100'
+              }`}
+            >
+              eCG Agents
+            </p>
+            <nav className="flex gap-1.5 overflow-x-auto pb-1 md:block md:space-y-0.5 md:overflow-visible md:pb-0">
+              {ecgAgentItems.map((item) => renderNavItem(item))}
+            </nav>
+          </div>
+        </div>
+
+        <div className="border-t border-border/60 px-2 py-3">
           <div
             className={`overflow-hidden transition-all duration-200 ${
-              collapsed ? 'max-h-0 opacity-0' : 'mt-4 max-h-20 opacity-100 delay-100'
+              collapsed ? 'max-h-0 opacity-0' : 'mb-3 max-h-10 opacity-100 delay-100'
             }`}
           >
-            <div className="space-y-1.5">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Workspace</p>
-              <Select
-                value={currentOrganizationId || undefined}
-                onValueChange={(value) => setCurrentOrganizationId(value)}
-                disabled={loadingOrganizations || organizations.length === 0}
-              >
-                <SelectTrigger className="h-8 rounded-md border-white/[0.08] bg-white/[0.04] text-xs text-white/80 focus:ring-0">
-                  <SelectValue placeholder={loadingOrganizations ? 'Loading…' : 'No workspace'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {organizations.map((organization) => (
-                    <SelectItem key={organization.id} value={organization.id}>
-                      {organization.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex items-center gap-2.5 px-2">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                {userInitial}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium text-foreground">
+                  {user?.user_metadata?.full_name || user?.email}
+                </p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {currentOrganization?.slug ? `@${currentOrganization.slug}` : 'No workspace'}
+                </p>
+              </div>
+              <NotificationBell />
             </div>
           </div>
-        </div>
-
-        <div className="flex-1 px-2 py-4 overflow-hidden">
-          <p
-            className={`mb-2 hidden px-2 text-[10px] uppercase tracking-[0.2em] text-white/50 md:block overflow-hidden transition-all duration-200 ${
-              collapsed ? 'max-h-0 opacity-0 mb-0' : 'max-h-4 opacity-100 delay-100'
-            }`}
-          >
-            Navigation
-          </p>
-          <nav className="flex gap-1.5 overflow-x-auto pb-1 md:block md:space-y-0.5 md:overflow-visible md:pb-0">
-            {menuItems.map((item) => (
-              <NavLink
-                key={item.title}
-                to={item.url}
-                end={item.end}
-                title={collapsed ? item.title : undefined}
-                className={({ isActive }) =>
-                  `group flex min-w-fit items-center rounded-md text-sm transition-all duration-150 md:min-w-0 ${
-                    collapsed ? 'justify-center p-2 gap-0' : 'gap-3 px-3 py-2'
-                  } ${
-                    isActive
-                      ? 'bg-white/[0.08] text-white'
-                      : 'text-white/40 hover:bg-white/[0.04] hover:text-white'
-                  }`
-                }
-              >
-                <item.icon className="h-4 w-4 shrink-0" />
-                <span
-                  className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                    collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100 delay-100'
-                  }`}
-                >
-                  {item.title}
-                </span>
-              </NavLink>
-            ))}
-          </nav>
-        </div>
-
-        <div className="border-t border-white/[0.06] px-2 py-3">
-          <div
-            className={`px-2 overflow-hidden transition-all duration-200 ${
-              collapsed ? 'max-h-0 opacity-0' : 'mb-2 max-h-10 opacity-100 delay-100'
-            }`}
-          >
-            <p className="truncate text-xs font-medium text-white/80">
-              {user?.user_metadata?.full_name || user?.email}
-            </p>
-            <p className="text-[11px] text-white/50 mt-0.5">
-              {currentOrganization?.slug ? `@${currentOrganization.slug}` : 'No workspace'}
-            </p>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <Button onClick={handleLogout} variant="ghost" size="sm" className={`w-full rounded-md text-white/40 hover:bg-white/[0.04] hover:text-white ${collapsed ? 'justify-center px-0' : 'justify-start'}`} title={collapsed ? t('dashboard.logout') : undefined}>
-              <LogOut className={collapsed ? 'h-4 w-4' : 'mr-2 h-4 w-4'} />
-              <span
-                className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                  collapsed ? 'max-w-0 opacity-0' : 'max-w-[120px] opacity-100 delay-100'
-                }`}
-              >
-                {t('dashboard.logout')}
-              </span>
+          {collapsed && (
+            <div className="mb-3 flex justify-center">
+              <NotificationBell />
+            </div>
+          )}
+          <div className={`flex gap-1.5 ${collapsed ? 'flex-col items-center' : ''}`}>
+            <Button
+              onClick={handleLogout}
+              variant="outline"
+              size="sm"
+              className={`rounded-full border-border/60 bg-background/60 text-muted-foreground hover:bg-card hover:text-foreground ${collapsed ? 'h-9 w-9 justify-center p-0' : 'flex-1 justify-center'}`}
+              title={t('dashboard.logout')}
+            >
+              <LogOut className="h-4 w-4" />
+              {!collapsed && <span className="ml-2">{t('dashboard.logout')}</span>}
             </Button>
-            <Button onClick={onToggleCollapse} variant="ghost" size="sm" className={`hidden md:flex w-full rounded-md text-white/50 hover:bg-white/[0.04] hover:text-white/80 ${collapsed ? 'justify-center px-0' : 'justify-start'}`}>
-              {/* Label reflects the PINNED preference, not the temporary hover-expanded
-                  view   otherwise clicking while hover-expanded would pin it open,
-                  the opposite of what "Collapse" suggests. */}
-              {collapsedPref ? (
-                <PanelLeftOpen className="h-4 w-4" />
-              ) : (
-                <>
-                  <PanelLeftClose className="mr-2 h-4 w-4" />
-                  <span
-                    className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                      collapsed ? 'max-w-0 opacity-0' : 'max-w-[120px] opacity-100 delay-100'
-                    }`}
-                  >
-                    Collapse
-                  </span>
-                </>
-              )}
+            <Button
+              onClick={onToggleCollapse}
+              variant="outline"
+              size="sm"
+              className={`hidden rounded-full border-border/60 bg-background/60 text-muted-foreground hover:bg-card hover:text-foreground md:flex ${collapsed ? 'h-9 w-9 justify-center p-0' : 'justify-center px-3'}`}
+              title={collapsedPref ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {/* Icon reflects the PINNED preference, not the temporary hover-expanded
+                  view   otherwise clicking while hover-expanded would pin it open. */}
+              {collapsedPref ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
             </Button>
           </div>
         </div>
@@ -209,7 +262,9 @@ export function DashboardLayout({ children }: { children?: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useTranslation();
   const {
     currentOrganizationId,
@@ -253,12 +308,12 @@ export function DashboardLayout({ children }: { children?: React.ReactNode }) {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#09090b]">
-        <div className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-[#0e0e10] px-5 py-4">
-          <Loader2 className="h-4 w-4 animate-spin text-white/40" />
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card px-5 py-4">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
           <div>
-            <p className="text-sm font-medium text-white/80">Preparing your workspace</p>
-            <p className="text-xs text-white/30 mt-0.5">Checking access…</p>
+            <p className="text-sm font-medium text-foreground">Preparing your workspace</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Checking access…</p>
           </div>
         </div>
       </div>
@@ -266,7 +321,7 @@ export function DashboardLayout({ children }: { children?: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen w-full bg-[#09090b]">
+    <div className="min-h-screen w-full bg-background">
       <DashboardSidebar
         user={user}
         currentOrganizationId={currentOrganizationId}
@@ -277,28 +332,29 @@ export function DashboardLayout({ children }: { children?: React.ReactNode }) {
         handleLogout={handleLogout}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        onCreateWorkspace={() => setCreateWorkspaceOpen(true)}
       />
 
-      <div className={`flex min-h-screen flex-1 flex-col transition-[margin] duration-300 ease-in-out ${sidebarCollapsed ? 'md:ml-[60px]' : 'md:ml-60'}`}>
-        <header className="sticky top-0 z-10 border-b border-white/[0.04] bg-[#131315]/80 backdrop-blur-xl">
-          <div className="flex h-14 items-center justify-between px-5 sm:px-6">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-white truncate">
-                  {user?.user_metadata?.full_name || user?.email}
-                </p>
-                <p className="text-xs text-white/30">
-                  {currentOrganization ? currentOrganization.name : 'Select workspace'}
-                </p>
-              </div>
-            </div>
-            <NotificationBell />
-          </div>
-        </header>
+      <CreateWorkspaceDialog
+        open={createWorkspaceOpen}
+        onOpenChange={setCreateWorkspaceOpen}
+        onUpgradeRequired={() => navigate('/dashboard/organizations')}
+      />
 
+      <div className={`flex min-h-screen flex-1 flex-col transition-[margin] duration-300 ease-in-out ${sidebarCollapsed ? 'md:ml-[60px]' : 'md:ml-64'}`}>
         <main className="flex-1 pb-12">
           <div className="mx-auto min-h-full max-w-[1400px]">
-            {children ?? <Outlet />}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={children ? 'static' : location.pathname}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              >
+                {children ?? <Outlet />}
+              </motion.div>
+            </AnimatePresence>
           </div>
         </main>
       </div>

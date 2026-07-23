@@ -194,10 +194,14 @@ async function buildViteConfig({
             cors: true,
             allowOnlyFromPrivateIPs: false,
             hmr: hmrConfig,
-            watch: {
-                usePolling: true,
-                interval: isProduction ? 300 : 100,  // Slower polling in production
-            },
+            // Vite's own chokidar watcher is intentionally disabled. All writes to a
+            // project's files go exclusively through materializeProjectFiles, which
+            // sends one explicit sendFullReload after the whole turn's files are
+            // written. With the watcher live too, every individual fs.writeFileSync
+            // during that write loop was independently picked up (polling interval
+            // ~100ms) and triggered its own reload   the deliberate end-of-run
+            // reload was redundant on top of one already firing per file.
+            watch: null,
         },
         appType: 'spa',
         root: projectRoot,

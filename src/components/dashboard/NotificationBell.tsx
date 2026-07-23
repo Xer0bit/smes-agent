@@ -187,29 +187,29 @@ export function NotificationBell() {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
-          className="relative flex h-9 w-9 items-center justify-center border border-white/10 bg-white/[0.04] text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-foreground"
+          className="relative flex h-9 w-9 items-center justify-center rounded-full border border-border/60 bg-card/60 text-muted-foreground transition-colors duration-200 hover:bg-card hover:text-foreground"
           aria-label="Notifications"
         >
           <Bell className="h-4 w-4" />
           {totalCount > 0 && (
-            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
               {totalCount > 9 ? '9+' : totalCount}
             </span>
           )}
         </button>
       </PopoverTrigger>
 
-      <PopoverContent align="end" sideOffset={8} className="w-[380px] rounded-none border-white/10 bg-card/95 p-0 shadow-[0_20px_56px_rgba(3,12,27,0.45)] backdrop-blur-xl">
-        <div className="border-b border-white/10 px-4 py-3">
+      <PopoverContent side="top" align="start" sideOffset={8} className="w-[380px] rounded-xl border-border/60 bg-card/95 p-0 shadow-[0_18px_44px_hsl(220_45%_5%/0.3)] backdrop-blur-xl">
+        <div className="border-b border-border/60 px-4 py-3">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-foreground">Notifications</p>
+              <p className="font-display text-sm font-semibold text-foreground">Notifications</p>
               <p className="text-[11px] text-muted-foreground">
                 {totalCount > 0 ? `${totalCount} pending invitation${totalCount === 1 ? '' : 's'}` : 'You\u2019re all caught up'}
               </p>
             </div>
             {totalCount > 0 && (
-              <Badge variant="outline" className="rounded-none border-primary/25 bg-primary/10 text-[10px] text-primary">
+              <Badge variant="outline" className="rounded-full border-primary/25 bg-primary/10 text-[10px] text-primary">
                 {totalCount}
               </Badge>
             )}
@@ -227,11 +227,11 @@ export function NotificationBell() {
               <p className="text-xs text-muted-foreground">No pending invitations</p>
             </div>
           ) : (
-            <div className="divide-y divide-white/5">
+            <div className="divide-y divide-border/50">
               {orgInvitations.map((inv) => (
-                <div key={`org-${inv.id}`} className="px-4 py-3 transition-colors hover:bg-white/[0.02]">
+                <div key={`org-${inv.id}`} className="px-4 py-3 transition-colors hover:bg-card/60">
                   <div className="flex items-start gap-3">
-                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center border border-white/10 bg-white/[0.04]">
+                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10">
                       <Building2 className="h-3.5 w-3.5 text-primary" />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -246,7 +246,7 @@ export function NotificationBell() {
                       <div className="mt-2 flex gap-1.5">
                         <Button
                           size="sm"
-                          className="h-7 rounded-none px-3 text-xs"
+                          className="h-7 rounded-full px-3 text-xs"
                           disabled={actingKey !== null}
                           onClick={() => handleAcceptOrg(inv)}
                         >
@@ -256,7 +256,7 @@ export function NotificationBell() {
                         <Button
                           size="sm"
                           variant="neutral"
-                          className="h-7 rounded-none px-3 text-xs"
+                          className="h-7 rounded-full px-3 text-xs"
                           disabled={actingKey !== null}
                           onClick={() => handleDeclineOrg(inv)}
                         >
@@ -270,10 +270,10 @@ export function NotificationBell() {
               ))}
 
               {projectInvitations.map((inv) => (
-                <div key={`project-${inv.id}`} className="px-4 py-3 transition-colors hover:bg-white/[0.02]">
+                <div key={`project-${inv.id}`} className="px-4 py-3 transition-colors hover:bg-card/60">
                   <div className="flex items-start gap-3">
-                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center border border-white/10 bg-white/[0.04]">
-                      <FolderKanban className="h-3.5 w-3.5 text-emerald-400" />
+                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary/10">
+                      <FolderKanban className="h-3.5 w-3.5 text-secondary" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-foreground">{inv.project_name}</p>
@@ -287,7 +287,7 @@ export function NotificationBell() {
                       <div className="mt-2 flex gap-1.5">
                         <Button
                           size="sm"
-                          className="h-7 rounded-none px-3 text-xs"
+                          className="h-7 rounded-full px-3 text-xs"
                           disabled={actingKey !== null}
                           onClick={() => handleAcceptProject(inv)}
                         >
@@ -297,7 +297,7 @@ export function NotificationBell() {
                         <Button
                           size="sm"
                           variant="neutral"
-                          className="h-7 rounded-none px-3 text-xs"
+                          className="h-7 rounded-full px-3 text-xs"
                           disabled={actingKey !== null}
                           onClick={() => handleDeclineProject(inv)}
                         >
@@ -314,7 +314,7 @@ export function NotificationBell() {
         </ScrollArea>
 
         {totalCount > 0 && (
-          <div className="border-t border-white/10 px-4 py-2">
+          <div className="border-t border-border/60 px-4 py-2">
             <button
               className="w-full text-center text-[11px] text-muted-foreground transition-colors hover:text-foreground"
               onClick={() => { setOpen(false); navigate('/dashboard'); }}

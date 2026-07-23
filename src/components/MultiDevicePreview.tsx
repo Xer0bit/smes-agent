@@ -65,6 +65,14 @@ interface MultiDevicePreviewProps {
     /** Inspect mode toggle   when true, clicking elements in the preview posts a selector back. */
     inspectMode?: boolean;
     onInspectModeChange?: (active: boolean) => void;
+    /**
+     * True while the agent's requested npm packages are being installed into the
+     * (shared) preview-service node_modules. That install briefly touches modules
+     * other in-flight requests can race against, which can surface as a transient
+     * build/runtime error unrelated to the user's actual code. Suppress the hard
+     * error block during this window and show an "installing" state instead.
+     */
+    installingDependency?: boolean;
 }
 
 function isNonFatalAssetError(errorText: string): boolean {
@@ -106,6 +114,7 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     projectId,
     inspectMode = false,
     onInspectModeChange,
+    installingDependency = false,
 }) => {
     const config = DEVICE_CONFIGS[viewMode];
     const [previewDiagnostics, setPreviewDiagnostics] = useState<PreviewStatus>({ healthy: true, errors: [], diagnosticKind: 'healthy' });
@@ -237,18 +246,24 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     };
 
     const renderContent = () => {
-        if (status === 'building' && !hasRenderableFrame) {
+        if ((status === 'building' || installingDependency) && !hasRenderableFrame) {
             return (
                 <div className="flex items-center justify-center h-full bg-gray-900">
                     <div className="text-center">
                         <div className="animate-spin w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full mx-auto" />
+                        {installingDependency && (
+                            <p className="text-gray-400 text-xs mt-3">Installing dependencies…</p>
+                        )}
                     </div>
                 </div>
             );
         }
 
         // If there is no renderable frame yet, show blocking error states.
-        if (hasBuildErrors && !hasRenderableFrame) {
+        // Suppressed while a dependency install is in flight   the shared
+        // preview node_modules can transiently error for unrelated reasons
+        // during that window, and it isn't the user's code that's broken.
+        if (hasBuildErrors && !hasRenderableFrame && !installingDependency) {
             return (
                 <div className="flex items-center justify-center h-full bg-gray-900">
                     <div className="text-center max-w-sm px-6">
@@ -317,7 +332,7 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
                         className="w-full h-full border-0 bg-white"
                         onLoad={handleIframeLoad}
                     />
-                    {blankScreen && !hasBuildErrors && (
+                    {blankScreen && !hasBuildErrors && !installingDependency && (
                         <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
                             <div className="text-center max-w-sm px-6">
                                 <div className="flex justify-center mb-3">

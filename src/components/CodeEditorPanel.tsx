@@ -6,7 +6,7 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { MonacoCodeEditor } from './MonacoCodeEditor';
 import { FileTree } from './FileTree';
-import { Download, Save, Plus, Trash2 } from 'lucide-react';
+import { Download, Save, Plus, Trash2, Minus } from 'lucide-react';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
 import { cn } from '@/lib/utils';
@@ -53,6 +53,27 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
     const [showNewFileInput, setShowNewFileInput] = useState(false);
     const [newFilePath, setNewFilePath] = useState('');
     const streamRef = useRef<HTMLDivElement>(null);
+    const [fontSize, setFontSize] = useState(14);
+    const [treeWidth, setTreeWidth] = useState(176);
+    const bodyRef = useRef<HTMLDivElement>(null);
+    const resizingRef = useRef(false);
+
+    const handleResizeStart = useCallback((e: React.MouseEvent) => {
+        e.preventDefault();
+        resizingRef.current = true;
+        const containerLeft = bodyRef.current?.getBoundingClientRect().left ?? 0;
+        const onMove = (moveEvent: MouseEvent) => {
+            if (!resizingRef.current) return;
+            setTreeWidth(Math.min(400, Math.max(140, moveEvent.clientX - containerLeft)));
+        };
+        const onUp = () => {
+            resizingRef.current = false;
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    }, []);
 
     const normalizedFiles = useMemo(() => {
         return [...files].sort((a, b) => a.path.localeCompare(b.path));
@@ -274,6 +295,23 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
                             Pro+
                         </span>
                     )}
+                    <div className="flex items-center gap-0.5 ml-1 pl-1.5 border-l border-white/[0.06]">
+                        <button
+                            onClick={() => setFontSize(f => Math.max(10, f - 1))}
+                            title="Decrease font size"
+                            className="p-1 rounded hover:bg-white/5 text-white/40 hover:text-white/80 transition-colors"
+                        >
+                            <Minus className="w-3 h-3" />
+                        </button>
+                        <span className="text-[10px] text-white/35 font-mono w-6 text-center tabular-nums">{fontSize}</span>
+                        <button
+                            onClick={() => setFontSize(f => Math.min(22, f + 1))}
+                            title="Increase font size"
+                            className="p-1 rounded hover:bg-white/5 text-white/40 hover:text-white/80 transition-colors"
+                        >
+                            <Plus className="w-3 h-3" />
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -301,14 +339,19 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
             )}
 
             {/* Main content: file tree + editor */}
-            <div className="flex min-h-0 flex-1 overflow-hidden">
-                <div className="w-44 flex-shrink-0 border-r border-white/[0.05] overflow-hidden">
+            <div ref={bodyRef} className="flex min-h-0 flex-1 overflow-hidden">
+                <div className="flex-shrink-0 border-r border-white/[0.05] overflow-hidden" style={{ width: treeWidth }}>
                     <FileTree
                         files={normalizedFiles}
                         selectedFile={selectedFilePath}
                         onFileSelect={handleFileSelect}
                     />
                 </div>
+
+                <div
+                    onMouseDown={handleResizeStart}
+                    className="w-1 flex-shrink-0 cursor-col-resize hover:bg-indigo-500/40 active:bg-indigo-500/60 transition-colors"
+                />
 
                 <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
                     <div className="flex-1 min-h-0 overflow-hidden">
@@ -317,6 +360,7 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
                             onChange={handleContentChange}
                             readOnly={readOnly}
                             showHeader={false}
+                            fontSize={fontSize}
                         />
                     </div>
 

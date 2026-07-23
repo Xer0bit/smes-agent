@@ -1,18 +1,21 @@
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Settings as SettingsIcon, Lock, Cloud, Globe, Smartphone, CreditCard } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Settings as SettingsIcon, Lock, CreditCard, User, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { z } from 'zod';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { useSubscription } from '@/contexts/SubscriptionContext';
 import { useOrganization } from '@/contexts/OrganizationContext';
+import { useUsage } from '@/contexts/UsageContext';
 import { DashboardPageHeader } from '@/components/dashboard/DashboardPageHeader';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -49,12 +52,64 @@ const passwordSchema = z.object({
 export default function DashboardSettings() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const billingCardRef = useRef<HTMLDivElement>(null);
   const { currentOrganizationId } = useOrganization();
-  const { subscribed, planTier, status, loading } = useSubscription();
+  const { planTier, status, loading } = useSubscription();
+  const { usageRecord, getUsagePercentage, getUsageLimit, refreshUsage } = useUsage();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  // Editor settings panels deep-link here as `?section=workspace-plans` (the same
+  // section id used by the project SettingsSidebar) expecting to land on Billing.
+  // This page only has one section that id can mean; scroll it into view.
+  useEffect(() => {
+    if (searchParams.get('section') !== 'workspace-plans') return;
+    billingCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [searchParams]);
+
+  // Merged from the former dashboard/profile page (removed   this page now
+  // covers account + billing + security in one place).
+  const [authUser, setAuthUser] = useState<SupabaseUser | null>(null);
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  useEffect(() => {
+    refreshUsage();
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      setAuthUser(session.user);
+      setFullName(session.user.user_metadata?.full_name || '');
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('phone')
+        .eq('id', session.user.id)
+        .single();
+      if (profile) setPhone(profile.phone || '');
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSaveProfile = async () => {
+    setSavingProfile(true);
+    try {
+      const { error: authError } = await supabase.auth.updateUser({ data: { full_name: fullName } });
+      if (authError) throw authError;
+      if (authUser) {
+        const { error: profileError } = await supabase.from('profiles').update({ phone }).eq('id', authUser.id);
+        if (profileError) throw profileError;
+      }
+      toast.success('Profile updated');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to update profile');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,34 +176,78 @@ export default function DashboardSettings() {
 
       <div className="space-y-6">
         <div className="grid gap-4 md:grid-cols-3">
-          <Card className="rounded-none">
+          <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
             <CardContent className="p-5">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Workspace</p>
-              <p className="mt-3 text-sm font-medium text-foreground">{currentOrganizationId ? 'Connected' : 'Not selected'}</p>
+              <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Email</p>
+              <p className="mt-3 truncate text-sm font-medium text-foreground">{authUser?.email || 'No email'}</p>
             </CardContent>
           </Card>
-          <Card className="rounded-none">
+          <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+            <CardContent className="p-5">
+              <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Eco</p>
+              <p className="mt-3 font-display text-xl font-semibold text-foreground">
+                {new Intl.NumberFormat('en-US').format(usageRecord?.ai_gens_used || 0)} / {new Intl.NumberFormat('en-US').format(getUsageLimit())}
+              </p>
+              <Progress value={getUsagePercentage()} className="mt-3 h-1.5" />
+            </CardContent>
+          </Card>
+          <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
             <CardContent className="p-5">
               <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Plan</p>
-              <p className="mt-3 text-sm font-medium text-foreground">{PLAN_LABELS[planTier || 'free'] || 'Free'}</p>
-            </CardContent>
-          </Card>
-          <Card className="rounded-none">
-            <CardContent className="p-5">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Status</p>
-              <div className="mt-3">
-                <Badge variant={STATUS_VARIANTS[status || 'active'] || 'secondary'}>
-                  {STATUS_LABELS[status || 'active'] || status || 'Unknown'}
-                </Badge>
-              </div>
+              {loading ? (
+                <p className="mt-3 text-sm text-muted-foreground">Loading...</p>
+              ) : (
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <p className="font-display text-xl font-semibold text-foreground">{PLAN_LABELS[planTier || 'free'] || 'Free'}</p>
+                  <Badge variant={STATUS_VARIANTS[status || 'active'] || 'secondary'} className="rounded-full">
+                    {STATUS_LABELS[status || 'active'] || status || 'Unknown'}
+                  </Badge>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
 
-        <Card className="rounded-none">
+        <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <SettingsIcon className="h-5 w-5" />
+            <CardTitle className="flex items-center gap-2 font-display text-lg font-semibold">
+              <User className="h-5 w-5 text-primary" />
+              Profile
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="fullName">Full Name</Label>
+              <Input
+                id="fullName"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Full name"
+                className="rounded-lg"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="phone">Phone Number</Label>
+              <Input
+                id="phone"
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="Phone number"
+                className="rounded-lg"
+              />
+            </div>
+            <Button onClick={handleSaveProfile} disabled={savingProfile} className="rounded-full">
+              {savingProfile && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save changes
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 font-display text-lg font-semibold">
+              <SettingsIcon className="h-5 w-5 text-primary" />
               Preferences
             </CardTitle>
           </CardHeader>
@@ -171,10 +270,10 @@ export default function DashboardSettings() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-none">
+        <Card ref={billingCardRef} className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)] scroll-mt-6">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5" />
+            <CardTitle className="flex items-center gap-2 font-display text-lg font-semibold">
+              <CreditCard className="h-5 w-5 text-primary" />
               Billing
             </CardTitle>
           </CardHeader>
@@ -182,7 +281,7 @@ export default function DashboardSettings() {
             {!currentOrganizationId ? (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">Select a workspace to view billing.</p>
-                <Button onClick={() => navigate('/dashboard/organizations')} variant="outline" className="rounded-none">
+                <Button onClick={() => navigate('/dashboard/organizations')} variant="outline" className="rounded-full">
                   Go to Organizations
                 </Button>
               </div>
@@ -190,42 +289,32 @@ export default function DashboardSettings() {
               <p className="text-sm text-muted-foreground">Loading payment status...</p>
             ) : (
               <>
-                <div className="flex items-center justify-between gap-4 border p-4">
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">Current plan</p>
-                    <p className="text-lg font-semibold">{PLAN_LABELS[planTier || 'free'] || 'Free'}</p>
+                {/* Plan + status already shown in the top summary row above   only
+                    show something here if it's real, new information (the
+                    suspended-payment warning), not a restated status claim. */}
+                {status === 'suspended' && (
+                  <div className="space-y-1 rounded-lg border border-destructive/30 bg-destructive/[0.04] p-4">
+                    <p className="text-sm font-medium text-destructive">Payment is overdue</p>
+                    <p className="text-sm text-muted-foreground">Update billing to restore full access.</p>
                   </div>
-                  <Badge variant={STATUS_VARIANTS[status || 'active'] || 'secondary'}>
-                    {STATUS_LABELS[status || 'active'] || status || 'Unknown'}
-                  </Badge>
-                </div>
+                )}
 
-                <div className="border p-4 space-y-1">
-                  <p className="text-sm text-muted-foreground">Access</p>
-                  <p className="text-sm font-medium">
-                    {subscribed
-                      ? 'Your organization has an active paid subscription.'
-                      : 'Your organization is currently on the free plan.'}
-                  </p>
-                  {status === 'suspended' && (
-                    <p className="text-sm text-destructive">
-                      Payment is overdue. Update billing to restore full access.
-                    </p>
-                  )}
-                </div>
+                <p className="text-sm text-muted-foreground">
+                  Manage your plan, payment method, and billing history from Organizations.
+                </p>
 
-                <Button onClick={() => navigate('/dashboard/organizations')} className="rounded-none">
-                  Manage Billing
+                <Button onClick={() => navigate('/dashboard/organizations')} className="rounded-full">
+                  Manage billing
                 </Button>
               </>
             )}
           </CardContent>
         </Card>
 
-        <Card className="rounded-none">
+        <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Lock className="h-5 w-5" />
+            <CardTitle className="flex items-center gap-2 font-display text-lg font-semibold">
+              <Lock className="h-5 w-5 text-primary" />
               Security
             </CardTitle>
           </CardHeader>
@@ -240,7 +329,7 @@ export default function DashboardSettings() {
                   onChange={(e) => setCurrentPassword(e.target.value)}
                   placeholder="Current password"
                   disabled={isChangingPassword}
-                  className="rounded-none"
+                  className="rounded-lg"
                 />
               </div>
 
@@ -253,7 +342,7 @@ export default function DashboardSettings() {
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="New password"
                   disabled={isChangingPassword}
-                  className="rounded-none"
+                  className="rounded-lg"
                 />
               </div>
 
@@ -266,16 +355,16 @@ export default function DashboardSettings() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Confirm password"
                   disabled={isChangingPassword}
-                  className="rounded-none"
+                  className="rounded-lg"
                 />
               </div>
 
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 disabled={isChangingPassword}
-                className="w-full rounded-none"
+                className="w-full rounded-full"
               >
-                {isChangingPassword ? "Changing Password..." : "Change Password"}
+                {isChangingPassword ? "Changing password…" : "Change password"}
               </Button>
             </form>
           </CardContent>

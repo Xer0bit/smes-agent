@@ -26,6 +26,7 @@ function parsePackageNames(cmd: string): string[] {
 async function syncPackagesToPreviewService(
   packages: string[],
   previewServiceUrl: string,
+  projectId: string,
 ): Promise<void> {
   if (!packages.length) return;
   const url = `${previewServiceUrl}/packages/install`;
@@ -38,7 +39,7 @@ async function syncPackagesToPreviewService(
           'Content-Type': 'application/json',
           ...(secret ? { 'x-update-secret': secret } : {}),
         },
-        body: JSON.stringify({ packages }),
+        body: JSON.stringify({ packages, projectId }),
       }),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('preview-service install timeout')), 90_000)
@@ -135,7 +136,7 @@ export const runCommandTool: ToolDefinition<z.infer<typeof schema>> = {
     if (isInstall) {
       const pkgs = parsePackageNames(cmd);
       const previewUrl = ctx.previewServiceUrl || 'http://localhost:3001';
-      await syncPackagesToPreviewService(pkgs, previewUrl);
+      await syncPackagesToPreviewService(pkgs, previewUrl, ctx.projectId);
       // Surface the install in the chat as an activity chip/steps entry.
       // The frontend already parses <ecomgear-add-dependency packages="…">
       // (agentChatHelpers.parseToolActivities)   previously dead because no tool

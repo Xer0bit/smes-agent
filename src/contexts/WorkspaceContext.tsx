@@ -102,76 +102,25 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
                 throw new Error('User not authenticated');
             }
 
-            // --- NEW: Save to Storage Bucket (Single Source of Truth) ---
-            console.log(`[WorkspaceContext] Saving ${filesList.length} files to Storage...`);
-            const BATCH_SIZE = 3; // upload 3 files at a time to avoid connection exhaustion
-            const failedUploads: string[] = [];
-            for (let i = 0; i < filesList.length; i += BATCH_SIZE) {
-                const batch = filesList.slice(i, i + BATCH_SIZE);
-                await Promise.all(batch.map(async (f) => {
-                    const { error: uploadError } = await supabase
-                        .storage
-                        .from('user-projects-free')
-                        .upload(`projects/${projectId}/files/${f.path}`, stripNull(f.content), {
-                            upsert: true,
-                            contentType: f.path.endsWith('.html') ? 'text/html' :
-                                f.path.endsWith('.css') ? 'text/css' :
-                                    f.path.endsWith('.js') ? 'application/javascript' :
-                                        f.path.endsWith('.json') ? 'application/json' : 'text/plain'
-                        });
-
-                    if (uploadError) {
-                        console.error(`[WorkspaceContext] Failed to upload ${f.path}:`, uploadError);
-                        failedUploads.push(f.path);
-                    }
-                }));
-            }
-
-            if (failedUploads.length > 0) {
-                throw new Error(`Failed to upload ${failedUploads.length} file(s): ${failedUploads.join(', ')}`);
-            }
-
-            console.log('[WorkspaceContext] Files saved to Storage.');
-            // -------------------------------------------------------------
-
-            // Create or update revision with files
-            const { data: latestRevision } = await supabase
-                .from('revisions')
-                .select('id')
-                .eq('project_id', projectId)
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
-
-            if (latestRevision) {
-                // Update existing latest revision
-                const { error: updateError } = await supabase
-                    .from('revisions')
-                    .update({
-                        generated_files: {
-                            files: filesData,
-                            summary: 'Auto-saved workspace changes',
-                        },
-                    })
-                    .eq('id', latestRevision.id);
-
-                if (updateError) throw updateError;
-            } else {
-                // Create new revision if none exists
-                const { error: insertError } = await supabase
-                    .from('revisions')
-                    .insert({
-                        project_id: projectId,
-                        prompt: 'Initial workspace',
-                        user_id: user.id,
-                        generated_files: {
-                            files: filesData,
-                            summary: 'Auto-saved workspace',
-                        },
-                    });
-
-                if (insertError) throw insertError;
-            }
+            // Persist via revisionService.createRevision   the same manifest-aware
+            // (Storage upload + lean-manifest-row) path the agent loop uses. This
+            // used to hand-roll its own upload to a dead flat path
+            // (projects/{id}/files/{path}, read by nothing) and then raw-UPDATE
+            // the existing latest revision's generated_files with full inline
+            // content, bypassing the manifest system entirely   which is exactly
+            // why the SAME revision row kept re-inflating to tens of MB every
+            // time a workspace save fired, no matter how many times it was
+            // repaired (found 2026-07-22, revision 870367e0 on project CardPro,
+            // three separate occurrences with created_at never changing since
+            // it was always an UPDATE, never a new INSERT).
+            const { revisionService } = await import('@/services/revisionService');
+            await revisionService.createRevision({
+                project_id: projectId,
+                prompt: 'Auto-saved workspace changes',
+                generated_code: '',
+                generated_files: { files: filesData },
+                user_id: user.id,
+            });
 
             // Also update project's latest_generated_code for backwards compatibility
             await supabase

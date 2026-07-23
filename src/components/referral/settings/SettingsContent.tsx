@@ -7,21 +7,16 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ICPFilingForm } from "./ICPFilingForm";
-import { SubscriptionContent } from "./SubscriptionContent";
-import { UsageContent } from "./UsageContent";
 import { PlanUsageContent } from "./PlanUsageContent";
 import { CollaboratorManager } from "./CollaboratorManager";
 import { ReferralContent } from "./ReferralContent";
 import { DomainSettings } from "./DomainSettings";
-import { HeaderIntegrationsSettings } from "./HeaderIntegrationsSettings";
-import { GoogleAnalyticsSettings } from "./GoogleAnalyticsSettings";
+import { IntegrationsSettings } from "./IntegrationsSettings";
 import { GitHubSettings } from "./GitHubSettings";
 import { DatabaseSettings } from "./DatabaseSettings";
 import { EdgeFunctionsSettings } from "./EdgeFunctionsSettings";
 import { KnowledgeSettings } from "./KnowledgeSettings";
 import { SecretsSettings } from "./SecretsSettings";
-import { StripeSettingsContent } from "./StripeSettingsContent";
-import { ZapierSettingsContent } from "./ZapierSettingsContent";
 import { SeoSettingsPanel } from "@/components/seo/SeoSettingsPanel";
 import { Globe, Smartphone, CreditCard, ExternalLink } from "lucide-react";
 import { useState, useEffect } from "react";
@@ -33,9 +28,10 @@ interface SettingsContentProps {
   activeSection: string;
   projectId?: string;
   workspaceFiles?: { path: string; content: string }[];
+  onSectionChange?: (section: string) => void;
 }
 
-export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] }: SettingsContentProps) => {
+export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [], onSectionChange }: SettingsContentProps) => {
   const { hasFeature, tierLabel } = useSubscription();
   const [project, setProject] = useState<any>(null);
   const [projectName, setProjectName] = useState('');
@@ -171,19 +167,6 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
       case "workspace-plans":
         return <PlanUsageContent />;
 
-      case "workspace-analytics":
-        return hasFeature('analytics')
-          ? <GoogleAnalyticsSettings projectId={projectId} />
-          : (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-xl font-semibold text-white/85 mb-1">Analytics</h2>
-                <p className="text-sm text-white/45">Monitor project insights and usage analytics.</p>
-              </div>
-              {renderPlanLocked('Analytics Dashboard', 'Advanced analytics is available on higher tiers.', 'analytics')}
-            </div>
-          );
-
       case "workspace-api-access":
         return (
           <div className="space-y-6">
@@ -217,20 +200,14 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
           </div>
         );
 
-      case "workspace-subscription":
-        return <SubscriptionContent />;
-        
-      case "workspace-usage":
-        return <UsageContent />;
-        
       case "workspace-referrals":
         return <ReferralContent />;
         
       case "project-seo":
         return <SeoSettingsPanel projectId={projectId} />;
 
-      case "project-integrations":
-        return <HeaderIntegrationsSettings projectId={projectId} />;
+      case "integrations":
+        return <IntegrationsSettings projectId={projectId} />;
 
       case "project-git":
         return <GitHubSettings projectId={projectId} />;
@@ -271,11 +248,11 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
                   <p className="text-sm text-white/45">
                     Complete the Internet Content Provider (ICP) filing required by MIIT for all websites hosted in China.
                   </p>
-                  <Button 
-                    onClick={() => window.open('/dashboard/settings?section=integrations-china', '_self')}
+                  <Button
+                    onClick={() => onSectionChange?.('china-icp')}
                     className="w-full"
                   >
-                    View All Services
+                    Start ICP Filing
                   </Button>
                 </CardContent>
               </Card>
@@ -472,79 +449,6 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [] 
           </div>
         );
 
-        return (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-semibold text-white/85 mb-1">Integrations</h2>
-              <p className="text-sm text-white/45">Connect external services to power payments, automation, and workflows in your project.</p>
-            </div>
-            <div className="grid gap-3">
-              {[
-                { label: 'Stripe', desc: 'Accept payments and manage subscriptions.' },
-                { label: 'Alipay', desc: 'Accept payments from the Chinese market.' },
-                { label: 'Airwallex', desc: 'Global payments and treasury.' },
-                { label: 'Zapier', desc: 'Give your project\'s AI chat access to thousands of Zapier-connected tools.' },
-              ].map(item => (
-                <Card key={item.label} className="bg-workspace-surface border-white/[0.07]">
-                  <CardContent className="p-4">
-                    <p className="text-sm font-medium text-white/85">{item.label}</p>
-                    <p className="text-xs text-white/45 mt-0.5">{item.desc}</p>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </div>
-        );
-
-      case "integrations-zapier":
-        if (!hasFeature('integration_app')) {
-          return (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-xl font-semibold text-white/85 mb-1">Zapier</h2>
-                <p className="text-sm text-white/45">Give your project's AI chat access to the tools you've set up in Zapier.</p>
-              </div>
-              {renderPlanLocked('Zapier Integration', 'Connect Zapier to give your AI chat access to thousands of tools.', 'integration_app')}
-            </div>
-          );
-        }
-        return <ZapierSettingsContent projectId={projectId} />;
-
-      case "integrations-stripe":
-        if (!hasFeature('integration_app')) {
-          return (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-xl font-semibold text-white/85 mb-1">Stripe</h2>
-                <p className="text-sm text-white/45">Accept payments and manage subscriptions via Stripe.</p>
-              </div>
-              {renderPlanLocked('Stripe Integration', 'Connect Stripe to enable payment processing in your apps.', 'integration_app')}
-            </div>
-          );
-        }
-        return <StripeSettingsContent projectId={projectId} />;
-
-      case "integrations-alipay":
-        return (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-semibold text-white/85 mb-1">Alipay</h2>
-              <p className="text-sm text-white/45">Accept Alipay payments for Chinese market customers.</p>
-            </div>
-            {renderPlanLocked('Alipay Integration', 'Connect Alipay to accept payments from Chinese customers.', 'integration_app')}
-          </div>
-        );
-
-      case "integrations-airwallex":
-        return (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-semibold text-white/85 mb-1">Airwallex</h2>
-              <p className="text-sm text-white/45">Multi-currency payments and global payouts via Airwallex.</p>
-            </div>
-            {renderPlanLocked('Airwallex Integration', 'Connect Airwallex for multi-currency payment support.', 'integration_app')}
-          </div>
-        );
 
       default:
         return (

@@ -17,11 +17,11 @@ import SeoManager from "./pages/SeoManager";
 import BatchValidate from "./pages/BatchValidate";
 import { DashboardLayout } from "./pages/Dashboard";
 import DashboardHome from "./pages/dashboard/Home";
-import DashboardOrganizations from "./pages/dashboard/Organizations";
+import WorkspaceSettings from "./pages/dashboard/WorkspaceSettings";
 import DashboardProjects from "./pages/dashboard/Projects";
-import DashboardProfile from "./pages/dashboard/Profile";
+import DashboardDesigns from "./pages/dashboard/Designs";
+import EcgAgentsPage from "./pages/dashboard/EcgAgents";
 import DashboardSettings from "./pages/dashboard/Settings";
-import DashboardTeamAccess from "./pages/dashboard/TeamAccess";
 const AdminLogin = lazy(() => import("./pages/admin/Login"));
 const AdminApp = lazy(() => import("./pages/admin/AdminApp"));
 import AcceptInvite from "./pages/AcceptInvite";
@@ -125,10 +125,12 @@ const App = () => (
                 <Route path="/project/:projectId/seo" element={<RequireAuth><SeoManager /></RequireAuth>} />
                 <Route path="/dashboard" element={<RequireAuth><DashboardLayout /></RequireAuth>}>
                   <Route index element={<DashboardHome />} />
-                  <Route path="organizations" element={<DashboardOrganizations />} />
+                  <Route path="organizations" element={<WorkspaceSettings />} />
                   <Route path="projects" element={<DashboardProjects />} />
-                  <Route path="profile" element={<DashboardProfile />} />
-                  <Route path="team" element={<DashboardTeamAccess />} />
+                  <Route path="designs" element={<DashboardDesigns />} />
+                  <Route path="ecg-agents" element={<EcgAgentsPage />} />
+                  <Route path="profile" element={<Navigate to="/dashboard/settings" replace />} />
+                  <Route path="team" element={<Navigate to="/dashboard/organizations" replace />} />
                   <Route path="settings" element={<DashboardSettings />} />
                 </Route>
                 <Route path="/admin/login" element={<Suspense fallback={null}><AdminLogin /></Suspense>} />

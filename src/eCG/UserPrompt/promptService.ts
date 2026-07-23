@@ -145,8 +145,15 @@ export const promptService = {
       };
 
       // Single-pass streaming agent generation
+      // fileContext (extracted text from attached documents) is appended here,
+      // not to promptText itself   the chat message/DB row stays the user's
+      // original words, but the agent still sees the attached content.
+      const promptForAgent = fileContext
+        ? `${promptText}\n\n--- Attached file content ---\n${fileContext}`
+        : promptText;
+
       finalResult = await streamAgentGeneration({
-        prompt: promptText,
+        prompt: promptForAgent,
         projectId,
         orgId: organizationId,
         existingFiles: hasRealApp ? existingFiles : [],

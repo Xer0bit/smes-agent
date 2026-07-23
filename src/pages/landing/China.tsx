@@ -1,12 +1,13 @@
-import { ArrowRight, Sparkles, Globe, Shield, Server, Wifi, CreditCard, FileCheck, ShoppingCart, MessageCircle, Truck, Building2 } from "lucide-react";
+import { ArrowRight, Globe, Shield, Server, Wifi, CreditCard, FileCheck, ShoppingCart, MessageCircle, Truck, Building2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useLandingContext } from "@/contexts/LandingContext";
+import { ChinaBridgeMap } from "@/components/landing-v2/ChinaBridgeMap";
 
 const BRIDGES = [
   {
     icon: Globe,
     title: "Cross-Border CDN",
-    desc: "Deploy websites and storefronts simultaneously to global and China CDN with ICP-licensed hosting   no separate infrastructure needed.",
+    desc: "Deploy websites and storefronts simultaneously to global and China CDN with ICP-licensed hosting, no separate infrastructure needed.",
   },
   {
     icon: Shield,
@@ -35,19 +36,11 @@ const BRIDGES = [
   },
 ];
 
-const MARKETS = [
-  { flag: "🇭🇰", name: "Hong Kong", role: "Gateway Hub" },
-  { flag: "🇨🇳", name: "Mainland China", role: "ICP Licensed" },
-  { flag: "🇸🇬", name: "Singapore", role: "SEA Node" },
-  { flag: "🇺🇸", name: "United States", role: "Americas" },
-  { flag: "🇪🇺", name: "Europe", role: "GDPR Zone" },
-];
-
 const USECASES = [
   {
     icon: ShoppingCart,
     title: "E-Commerce Brands",
-    desc: "Sell to Chinese consumers with a localized .cn storefront, WeChat integration, and local payment   while running your global store on the same platform.",
+    desc: "Sell to Chinese consumers with a localized .cn storefront, WeChat integration, and local payment, while running your global store on the same platform.",
   },
   {
     icon: Building2,
@@ -66,46 +59,36 @@ export default function China() {
 
   return (
     <>
-      {/* ── Hero ── */}
-      <section className="hero">
-        <div className="hero__grid" />
-        <div className="hero__inner">
-          <h1 className="hero__title">
-            <span className="hero__title-line">Bridge your business</span>
-            <span className="hero__title-line hero__title-line--accent">into and out of China.</span>
-          </h1>
-          <p className="hero__sub">
-            One platform that handles ICP compliance, WeChat integration,
-            cross-border payments, and bilingual storefronts   so you can reach
-            1.4 billion consumers without building a separate China stack.
-          </p>
-          <div className="hero__cta">
-            {user ? (
-              <Link to="/dashboard" className="btn btn--primary">
-                Go to Dashboard <ArrowRight size={14} />
-              </Link>
-            ) : (
-              <button className="btn btn--primary" onClick={onLoginClick} type="button">
-                Get started <ArrowRight size={14} />
-              </button>
-            )}
-            <Link to="/contact" className="btn btn--ghost">Talk to our China team</Link>
+      {/* ── Hero: map/diagram ── */}
+      <section className="china-map-hero">
+        <div className="china-map-hero__inner">
+          <div className="china-map-hero__copy">
+            <h1 className="china-map-hero__title">
+              Bridge your business
+              <span className="china-map-hero__title-accent"> into and out of China.</span>
+            </h1>
+            <p className="china-map-hero__sub">
+              One platform that handles ICP compliance, WeChat integration,
+              cross-border payments, and bilingual storefronts, so you can reach
+              1.4 billion consumers without building a separate China stack.
+            </p>
+            <div className="china-map-hero__cta">
+              {user ? (
+                <Link to="/dashboard" className="btn btn--primary">
+                  Go to Dashboard <ArrowRight size={14} />
+                </Link>
+              ) : (
+                <button className="btn btn--primary" onClick={onLoginClick} type="button">
+                  Get started <ArrowRight size={14} />
+                </button>
+              )}
+              <Link to="/contact" className="btn btn--ghost">Talk to our China team</Link>
+            </div>
           </div>
+
+          <ChinaBridgeMap />
         </div>
       </section>
-
-      {/* ── Market Presence ── */}
-      <div className="china-markets">
-        <div className="china-markets__inner">
-          {MARKETS.map((m) => (
-            <div key={m.name} className="china-markets__node">
-              <span className="china-markets__flag">{m.flag}</span>
-              <span className="china-markets__name">{m.name}</span>
-              <span className="china-markets__role">{m.role}</span>
-            </div>
-          ))}
-        </div>
-      </div>
 
       {/* ── Bridge Capabilities ── */}
       <section className="china-bridges">
@@ -181,7 +164,7 @@ export default function China() {
           </h2>
           <p className="china-cta__sub">
             Launch a bilingual storefront, integrate WeChat Pay, and deploy on
-            our ICP-licensed China CDN   all from your existing ecomgear workspace.
+            our ICP-licensed China CDN, all from your existing ecomgear workspace.
           </p>
           <div className="china-cta__actions">
             {user ? (

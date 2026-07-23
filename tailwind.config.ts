@@ -104,6 +104,13 @@ export default {
       transitionDuration: {
         smooth: '300ms',
       },
+      // Fraunces + Manrope are already @import'd in src/index.css (line 1) but
+      // were never wired to a Tailwind utility, so neither font was actually
+      // reachable anywhere in the app. font-display / font-body activate them.
+      fontFamily: {
+        display: ['Fraunces', 'serif'],
+        body: ['Manrope', 'system-ui', 'sans-serif'],
+      },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",

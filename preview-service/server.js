@@ -1127,7 +1127,7 @@ async function startMainServer() {
             }
         }
 
-        const { packages } = req.body || {};
+        const { packages, projectId: requestingProjectId } = req.body || {};
         if (!Array.isArray(packages) || packages.length === 0) {
             return res.status(400).json({ error: 'packages[] array required' });
         }
@@ -1162,9 +1162,19 @@ async function startMainServer() {
                     return res.status(500).json({ error: 'Install failed', detail: finalOut.slice(0, 1000) });
                 }
 
-                console.log(`[Packages] Installed ${pkgList}   invalidating Vite dep caches`);
-                for (const [projectId, instance] of activeServers.entries()) {
-                    sendFullReload(instance, projectId);
+                console.log(`[Packages] Installed ${pkgList}   invalidating Vite dep cache for ${requestingProjectId || 'all projects (no projectId given)'}`);
+                if (requestingProjectId) {
+                    // Scope the reload to the project that actually requested the
+                    // install   broadcasting to every active preview on every
+                    // install elsewhere reloaded unrelated users' unchanged apps.
+                    const instance = activeServers.get(requestingProjectId);
+                    if (instance) sendFullReload(instance, requestingProjectId);
+                } else {
+                    // Back-compat: no projectId supplied, fall back to the old
+                    // broadcast-to-all behavior rather than silently reloading no one.
+                    for (const [projectId, instance] of activeServers.entries()) {
+                        sendFullReload(instance, projectId);
+                    }
                 }
                 res.json({ success: true, installed: packages, output: finalOut.slice(0, 500) });
             };

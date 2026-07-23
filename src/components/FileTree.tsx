@@ -98,9 +98,9 @@ export const FileTree = ({ files, selectedFile, onFileSelect }: FileTreeProps) =
         <div key={node.path}>
           <div
             className={cn(
-              "flex items-center gap-[3px] h-[20px] cursor-pointer select-none text-[11px]",
-              "text-white/45 hover:text-white/75 hover:bg-white/[0.04]",
-              isSelected && "bg-white/[0.07] text-white/80"
+              "flex items-center gap-[3px] h-[22px] cursor-pointer select-none text-[12.5px]",
+              "text-white/70 hover:text-white/90 hover:bg-white/[0.04]",
+              isSelected && "bg-white/[0.07] text-white/90"
             )}
             style={{ paddingLeft: `${indent}px` }}
             onClick={() => toggleFolder(node.path)}
@@ -123,9 +123,9 @@ export const FileTree = ({ files, selectedFile, onFileSelect }: FileTreeProps) =
       <div
         key={node.path}
         className={cn(
-          "flex items-center gap-[5px] h-[20px] cursor-pointer select-none text-[11px]",
-          "text-white/45 hover:text-white/75 hover:bg-white/[0.04]",
-          isSelected && "bg-cyan-500/10 text-white/85 hover:bg-cyan-500/10"
+          "flex items-center gap-[5px] h-[22px] cursor-pointer select-none text-[12.5px]",
+          "text-white/70 hover:text-white/90 hover:bg-white/[0.04]",
+          isSelected && "bg-cyan-500/10 text-white/95 hover:bg-cyan-500/10"
         )}
         style={{ paddingLeft: `${indent + 14}px` }}
         onClick={() => onFileSelect(node.path)}
@@ -141,10 +141,10 @@ export const FileTree = ({ files, selectedFile, onFileSelect }: FileTreeProps) =
     <div className="flex h-full flex-col bg-[#0b0b0d]">
       {/* Compact header row */}
       <div className="flex items-center justify-between px-2.5 h-[26px] border-b border-white/[0.04] flex-shrink-0">
-        <span className="text-[9px] font-semibold uppercase tracking-[0.1em] text-white/25">Files</span>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-white/40">Files</span>
         <button
           onClick={() => { setShowSearch(s => !s); if (showSearch) setSearchQuery(''); }}
-          className="p-0.5 rounded hover:bg-white/10 text-white/25 hover:text-white/60 transition-colors"
+          className="p-0.5 rounded hover:bg-white/10 text-white/40 hover:text-white/70 transition-colors"
         >
           {showSearch ? <X className="w-[10px] h-[10px]" /> : <Search className="w-[10px] h-[10px]" />}
         </button>
@@ -157,7 +157,7 @@ export const FileTree = ({ files, selectedFile, onFileSelect }: FileTreeProps) =
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Filter…"
-            className="w-full h-[20px] px-2 text-[10px] bg-white/5 border border-white/10 rounded text-white/70 placeholder-white/20 outline-none focus:border-white/20 font-mono"
+            className="w-full h-[22px] px-2 text-[11.5px] bg-white/5 border border-white/10 rounded text-white/85 placeholder-white/30 outline-none focus:border-white/20 font-mono"
           />
         </div>
       )}
@@ -165,7 +165,7 @@ export const FileTree = ({ files, selectedFile, onFileSelect }: FileTreeProps) =
       <ScrollArea className="flex-1 min-h-0">
         <div className="py-0.5">
           {filteredFiles.length === 0 ? (
-            <div className="px-4 py-3 text-[10px] text-white/20">No files match.</div>
+            <div className="px-4 py-3 text-[11px] text-white/35">No files match.</div>
           ) : (
             renderNode(tree)
           )}

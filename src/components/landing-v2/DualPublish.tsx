@@ -1,8 +1,4 @@
-import { useState } from 'react';
-
 export const DualPublish = () => {
-  const [side, setSide] = useState<'global' | 'china'>('global');
-
   const globalSite = (
     <div className="mock mock--global">
       <div className="mock__bar">
@@ -79,59 +75,52 @@ export const DualPublish = () => {
           <span className="section-title__accent">Two markets. 两个市场.</span>
         </h2>
         <p className="section-sub">
-          Every SKU, page, and policy is published to the global web and the China mainland at the same time   with the right domain, CDN, payment rails, and language for each.
+          Every SKU, page, and policy is published to the global web and the China mainland at the same time, with the right domain, CDN, payment rails, and language for each.
         </p>
       </div>
       <div className="dual__stage">
-        <div className="dual__toggle">
-          <button
-            className={`dual__toggle-btn ${side === 'global' ? 'is-active' : ''}`}
-            onClick={() => setSide('global')}
-          >Global · EN</button>
-          <button
-            className={`dual__toggle-btn ${side === 'china' ? 'is-active' : ''}`}
-            onClick={() => setSide('china')}
-          >中国 · 中文</button>
-          <div className={`dual__toggle-pill dual__toggle-pill--${side}`} />
-        </div>
         <div className="dual__mocks">
-          <div className={`dual__mock-wrap ${side === 'global' ? 'is-front' : ''}`}>
-            {globalSite}
-          </div>
-          <div className={`dual__mock-wrap ${side === 'china' ? 'is-front' : ''}`}>
-            {chinaSite}
-          </div>
+          <div className="dual__mock-wrap">{globalSite}</div>
+          <div className="dual__mock-wrap">{chinaSite}</div>
         </div>
         <div className="dual__pipeline">
           <div className="pipe-node">
             <div className="pipe-node__label">SOURCE</div>
             <div className="pipe-node__name">brand.workspace</div>
           </div>
-          <div className="pipe-arrow">→</div>
+
+          <div className="pipe-link" aria-hidden="true" />
+
           <div className="pipe-node pipe-node--agent">
             <div className="pipe-node__label">
               <span className="pipe-node__pulse" />AGENT
             </div>
             <div className="pipe-node__name">localize · format · route</div>
           </div>
-          <div className="pipe-arrow pipe-arrow--split">
-            <span>↗</span><span>↘</span>
+
+          <div className="pipe-link pipe-link--fan" aria-hidden="true">
+            <svg viewBox="0 0 32 96" preserveAspectRatio="none">
+              <path d="M0 48 H10 C 20 48, 20 12, 30 12" fill="none" />
+              <path d="M0 48 H10 C 20 48, 20 48, 30 48" fill="none" />
+              <path d="M0 48 H10 C 20 48, 20 84, 30 84" fill="none" />
+            </svg>
           </div>
+
           <div className="pipe-outputs">
             <div className="pipe-output">
-              <span className="pipe-output__flag">🌐</span>
-              <span>yourbrand.com</span>
-              <span className="pipe-output__status">live</span>
+              <span className="pipe-output__icon pipe-output__icon--globe" />
+              <span className="pipe-output__name">yourbrand.com</span>
+              <span className="pipe-output__status">Live</span>
             </div>
             <div className="pipe-output">
-              <span className="pipe-output__flag">🇨🇳</span>
-              <span>yourbrand.cn</span>
-              <span className="pipe-output__status">live</span>
+              <span className="pipe-output__icon pipe-output__icon--cn" />
+              <span className="pipe-output__name">yourbrand.cn</span>
+              <span className="pipe-output__status">Live</span>
             </div>
             <div className="pipe-output">
-              <span className="pipe-output__flag">💬</span>
-              <span>WeChat Mini</span>
-              <span className="pipe-output__status">live</span>
+              <span className="pipe-output__icon pipe-output__icon--wechat" />
+              <span className="pipe-output__name">WeChat Mini</span>
+              <span className="pipe-output__status">Live</span>
             </div>
           </div>
         </div>

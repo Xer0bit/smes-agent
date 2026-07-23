@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BarChart3, MessageCircle, Code2, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
+import { GoogleAnalyticsIcon } from "@/components/icons/GoogleAnalyticsIcon";
 import { getApiServerUrl } from "@/config/external-api";
 import { revisionService } from "@/services/revisionService";
 import { SettingsSkeleton } from "./SettingsSkeleton";
@@ -170,11 +171,6 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
 
   return (
     <div className="space-y-5">
-      <div>
-        <h2 className="text-xl font-semibold text-white/85 mb-1">Header Integrations</h2>
-        <p className="text-sm text-white/45">Analytics, pixels, and custom scripts injected into your published site.</p>
-      </div>
-
       <div className="flex items-center justify-between px-0.5">
         <div className="flex items-center gap-1.5 text-[11px]">
           {syncStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3 w-3" />Auto-saved</span>}
@@ -205,7 +201,10 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="ga-id" className="text-white/60 text-xs">Google Analytics   Measurement ID</Label>
+            <Label htmlFor="ga-id" className="text-white/60 text-xs flex items-center gap-1.5">
+              <GoogleAnalyticsIcon className="h-3.5 w-3.5" />
+              Google Analytics   Measurement ID
+            </Label>
             <Input id="ga-id" value={data.ga_measurement_id} onChange={set("ga_measurement_id")} onBlur={flushSave}
               placeholder="G-XXXXXXXXXX"
               className="bg-workspace-surface-recessed border-white/[0.07] text-white/85 placeholder:text-white/20 h-8 text-[13px]" />

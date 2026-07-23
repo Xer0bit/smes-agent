@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowRight, Sparkles, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { FaqSection } from "@/components/landing-v2/FaqSection";
 import { useLandingContext } from "@/contexts/LandingContext";
@@ -181,29 +181,6 @@ export default function Pricing() {
 
   return (
     <>
-      <section className="hero">
-        <div className="hero__grid" />
-        <div className="hero__inner">
-          <h1 className="hero__title">
-            <span className="hero__title-line">Plans built for</span>
-            <span className="hero__title-line hero__title-line--accent">cross-border growth.</span>
-          </h1>
-          <p className="hero__sub">
-            Start free, scale as you grow. Every plan includes AI agent access,
-            hosting, and publishing upgrade when you need more seats, projects,
-            or ecos.
-          </p>
-          <div className="hero__cta">
-            <button className="btn btn--primary" onClick={() => handlePlanAction("Professional")} type="button">
-              Start now <ArrowRight size={14} />
-            </button>
-            <button className="btn btn--ghost" onClick={() => navigate("/contact")} type="button">
-              Talk to sales
-            </button>
-          </div>
-        </div>
-      </section>
-
       {/* Pricing grid */}
       <section className="pricing" id="pricing">
         <div className="pricing__head">

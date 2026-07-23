@@ -58,13 +58,21 @@
     if (!el || el === document.body || el === document.documentElement) return;
     var selector = buildSelector(el);
     var r = el.getBoundingClientRect();
+    var cs = window.getComputedStyle(el);
     try {
       window.parent.postMessage({
         type: 'ecg-element-selected',
         selector: selector,
         tagName: el.tagName.toLowerCase(),
         text: (el.innerText || '').slice(0, 100),
-        rect: { x: r.x, y: r.y, width: r.width, height: r.height }
+        rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+        // Prefill values for a precise-edit panel   not full computed style,
+        // just the handful of properties users actually tweak by hand.
+        style: {
+          color: cs.color,
+          backgroundColor: cs.backgroundColor,
+          fontSize: cs.fontSize
+        }
       }, '*');
     } catch (err) {}
   }, true);

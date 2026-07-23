@@ -6,6 +6,7 @@ interface WorkspaceOrganization {
   id: string;
   name: string;
   slug: string;
+  avatar_url?: string | null;
 }
 
 interface OrganizationContextType {
@@ -50,7 +51,7 @@ export const OrganizationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     const [{ data: createdOrgs, error: createdError }, { data: memberRows, error: memberError }, { data: accessibleProjects, error: projectsError }] = await Promise.all([
       supabase
         .from('organizations')
-        .select('id, name, slug')
+        .select('id, name, slug, avatar_url')
         .eq('created_by', user.id),
       supabase
         .from('org_members')
@@ -90,7 +91,7 @@ export const OrganizationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
     const { data: orgRows, error: orgsError } = await supabase
       .from('organizations')
-      .select('id, name, slug')
+      .select('id, name, slug, avatar_url')
       .in('id', Array.from(orgIds));
 
     if (orgsError) {

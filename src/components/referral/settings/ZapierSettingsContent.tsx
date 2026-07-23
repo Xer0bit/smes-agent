@@ -108,11 +108,6 @@ export const ZapierSettingsContent = ({ projectId }: ZapierSettingsContentProps)
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-white/85 mb-1">Zapier</h2>
-        <p className="text-sm text-white/45">Give your project's AI chat access to the tools you've set up in Zapier.</p>
-      </div>
-
       <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base text-white/85">

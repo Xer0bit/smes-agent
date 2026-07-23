@@ -18,6 +18,7 @@ interface MonacoCodeEditorProps {
     height?: string;
     theme?: 'vs-dark' | 'light' | 'hc-black';
     showHeader?: boolean;
+    fontSize?: number;
 }
 
 // Map file extensions to Monaco languages
@@ -55,6 +56,7 @@ export const MonacoCodeEditor: React.FC<MonacoCodeEditorProps> = ({
     height = '100%',
     theme = 'vs-dark',
     showHeader = true,
+    fontSize = 14,
 }) => {
     // Determine language from file extension
     const language = useMemo(() => {
@@ -172,7 +174,7 @@ export const MonacoCodeEditor: React.FC<MonacoCodeEditorProps> = ({
                     options={{
                         readOnly,
                         minimap: { enabled: true, size: 'proportional', showSlider: 'mouseover' },
-                        fontSize: 14,
+                        fontSize,
                         lineNumbers: 'on',
                         wordWrap: 'on',
                         automaticLayout: true,

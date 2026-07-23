@@ -82,6 +82,13 @@ import type { DomainConfiguration, DomainStatus } from "@/eCG/Publish/types";
 import { countNonEmptyLines } from "@/utils/ecoCounter";
 import { checkAndIncrementPublishLines, showLimitToast } from "@/services/subscriptionService";
 
+// Native color inputs need a #rrggbb value; computed styles report rgb(...).
+function rgbToHex(rgb?: string): string {
+  const m = rgb?.match(/\d+/g);
+  if (!m || m.length < 3) return '#000000';
+  return '#' + m.slice(0, 3).map(n => Math.min(255, parseInt(n, 10)).toString(16).padStart(2, '0')).join('');
+}
+
 const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   type BuilderTab = 'brief' | 'generate' | 'code' | 'preview' | 'revisions' | 'publish';
   const BUILDER_TABS: BuilderTab[] = ['brief', 'generate', 'code', 'preview', 'revisions', 'publish'];
@@ -483,9 +490,12 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
       } else if (event.data?.type === 'ecg-element-selected') {
         // Click-to-select from inspect mode   scope the chat input to the
         // clicked element so the next prompt has context (Lovable/v0 parity).
-        const { selector, tagName, text } = event.data;
+        const { selector, tagName, text, style } = event.data;
         const label = text ? `"${text.slice(0, 60)}"` : selector;
-        setInspectTarget({ selector, tagName: tagName || '', label: label || '' });
+        setInspectTarget({ selector, tagName: tagName || '', label: label || '', text: text || '', style: style || {} });
+        setQuickEditText(text || '');
+        setQuickEditColor(rgbToHex(style?.color));
+        setQuickEditBg(rgbToHex(style?.backgroundColor));
       }
     };
 
@@ -509,9 +519,45 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   const [fallbackPreviewUrl, setFallbackPreviewUrl] = useState<string | null>(null);
   const [previewStatus, setPreviewStatus] = useState<'pending' | 'building' | 'ready' | 'failed'>('pending');
   const [latestPreviewUrl, setLatestPreviewUrl] = useState<string | null>(null);
+  // True while the agent is mid-install of an npm dependency; suppresses the
+  // preview's build-error overlay for that window (see MultiDevicePreview).
+  const [installingDependency, setInstallingDependency] = useState(false);
   // Click-to-select inspect mode
   const [inspectMode, setInspectMode] = useState(false);
-  const [inspectTarget, setInspectTarget] = useState<{ selector: string; tagName: string; label: string } | null>(null);
+  const [inspectTarget, setInspectTarget] = useState<{
+    selector: string; tagName: string; label: string; text: string;
+    style: { color?: string; backgroundColor?: string; fontSize?: string };
+  } | null>(null);
+  const [quickEditText, setQuickEditText] = useState('');
+  const [quickEditColor, setQuickEditColor] = useState('#000000');
+  const [quickEditBg, setQuickEditBg] = useState('#ffffff');
+  const [triggerLabel, setTriggerLabel] = useState<string | undefined>(undefined);
+
+  // Turns the inspected element + edited fields into one unambiguous, scoped
+  // instruction (exact selector + tag + original text as a fingerprint) instead
+  // of the user having to describe the element in free-text chat — this is the
+  // "more precise and accurate" edit path. Only changed fields are mentioned.
+  const applyQuickEdit = () => {
+    if (!inspectTarget) return;
+    const changes: string[] = [];
+    if (quickEditText !== inspectTarget.text) changes.push(`change its text content to "${quickEditText}"`);
+    if (rgbToHex(inspectTarget.style.color) !== quickEditColor) changes.push(`set its text color to ${quickEditColor}`);
+    if (rgbToHex(inspectTarget.style.backgroundColor) !== quickEditBg) changes.push(`set its background color to ${quickEditBg}`);
+    if (changes.length === 0) { setInspectTarget(null); return; }
+
+    const fingerprint = inspectTarget.text
+      ? `a <${inspectTarget.tagName}> element currently containing the text "${inspectTarget.text}"`
+      : `the <${inspectTarget.tagName}> element`;
+    const instruction =
+      `Precisely edit ${fingerprint}, matching CSS selector \`${inspectTarget.selector}\`: ${changes.join('; ')}. ` +
+      `Locate this exact element in the source and apply only these changes, preserving everything else about it.`;
+
+    setTriggerLabel('Edit Precisely...');
+    setRepairPrompt(instruction);
+    setInspectTarget(null);
+    setInspectMode(false);
+  };
+
   const sharePreviewUrl = useMemo(() => {
     const candidate = latestPreviewUrl || previewUrl;
     if (!candidate) return null;
@@ -2496,11 +2542,14 @@ export default defineConfig({
                       userId={currentUser?.id || `guest:${guestFingerprint || 'anonymous'}`}
                       isMinimized={false}
                       triggerPrompt={repairPrompt}
+                      triggerDisplayText={triggerLabel}
                       onTriggerConsumed={() => {
                         setRepairPrompt(null);
                         isAgentRunningRef.current = true;
                       }}
+                      onDependencyInstallStart={() => setInstallingDependency(true)}
                       onFilesGenerated={(files, filesToDelete, previewPushed) => {
+                        setInstallingDependency(false);
                         const normalizedFiles = files.length > 0
                           ? normalizeProjectFiles(files.map(f => ({ path: f.path, content: f.content })))
                           : [];
@@ -2664,11 +2713,14 @@ export default defineConfig({
               userId={currentUser?.id || `guest:${guestFingerprint || 'anonymous'}`}
               isMinimized={isMinimized}
               triggerPrompt={repairPrompt}
+              triggerDisplayText={triggerLabel}
               onTriggerConsumed={() => {
                 setRepairPrompt(null);
                 isAgentRunningRef.current = true;
               }}
+              onDependencyInstallStart={() => setInstallingDependency(true)}
               onFilesGenerated={(files, filesToDelete, previewPushed) => {
+                setInstallingDependency(false);
                 // Only normalize when there are actual writes   normalizeProjectFiles([])
                 // injects boilerplate that would corrupt the workspace on delete-only runs.
                 const normalizedFiles = files.length > 0
@@ -2957,10 +3009,46 @@ export default defineConfig({
                 <MousePointerClick className="h-3.5 w-3.5" />
               </Button>
               {inspectTarget && (
-                <span className="hidden lg:flex items-center gap-1 h-7 px-2 rounded-md bg-indigo-500/10 text-[11px] text-indigo-300 whitespace-nowrap">
-                  Editing <code className="font-mono text-indigo-200">{inspectTarget.tagName}</code>
-                  <button onClick={() => setInspectTarget(null)} className="text-indigo-300/50 hover:text-white ml-0.5">×</button>
-                </span>
+                <Popover open onOpenChange={(o) => { if (!o) setInspectTarget(null); }}>
+                  <PopoverTrigger asChild>
+                    <span className="hidden lg:flex items-center gap-1 h-7 px-2 rounded-md bg-indigo-500/10 text-[11px] text-indigo-300 whitespace-nowrap cursor-default">
+                      Editing <code className="font-mono text-indigo-200">{inspectTarget.tagName}</code>
+                      <button onClick={(e) => { e.stopPropagation(); setInspectTarget(null); }} className="text-indigo-300/50 hover:text-white ml-0.5">×</button>
+                    </span>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-72 z-[300] p-3 space-y-3">
+                    <div>
+                      <p className="text-[11px] text-white/45">Precise edit</p>
+                      <p className="text-xs text-white/70 font-mono truncate" title={inspectTarget.selector}>{inspectTarget.selector}</p>
+                    </div>
+                    {inspectTarget.text && (
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-white/45">Text content</label>
+                        <input
+                          value={quickEditText}
+                          onChange={(e) => setQuickEditText(e.target.value)}
+                          className="w-full h-7 px-2 rounded-md bg-white/[0.05] border border-white/[0.08] text-xs text-white/85 outline-none focus:border-indigo-500/50"
+                        />
+                      </div>
+                    )}
+                    <div className="flex items-center gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-white/45 block">Text color</label>
+                        <input type="color" value={quickEditColor} onChange={(e) => setQuickEditColor(e.target.value)}
+                          className="h-7 w-10 rounded bg-transparent border border-white/[0.08] cursor-pointer" />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-white/45 block">Background</label>
+                        <input type="color" value={quickEditBg} onChange={(e) => setQuickEditBg(e.target.value)}
+                          className="h-7 w-10 rounded bg-transparent border border-white/[0.08] cursor-pointer" />
+                      </div>
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <Button size="sm" variant="ghost" className="flex-1 h-7 text-[11px]" onClick={() => setInspectTarget(null)}>Cancel</Button>
+                      <Button size="sm" className="flex-1 h-7 text-[11px] bg-indigo-600 hover:bg-indigo-500 text-white" onClick={applyQuickEdit}>Apply</Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
               )}
             </>
           </div>
@@ -3510,6 +3598,7 @@ export default defineConfig({
                   projectId={projectId ?? undefined}
                   inspectMode={inspectMode}
                   onInspectModeChange={setInspectMode}
+                  installingDependency={installingDependency}
                   onRepair={(errorSummary) => {
                     setRepairPrompt(errorSummary);
                     setIsMinimized(false);
