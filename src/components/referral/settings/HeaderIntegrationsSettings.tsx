@@ -44,6 +44,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'saved' | 'synced' | 'live' | 'error'>('idle');
   const [requiresRepublish, setRequiresRepublish] = useState(false);
+  const [verified, setVerified] = useState<{ ga: boolean | null; gtm: boolean | null; pixel: boolean | null; whatsapp: boolean | null } | null>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { data: row, isLoading: loading } = useQuery({
@@ -156,6 +157,7 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
       const isLive = json.productionDeployed === true;
       setSyncStatus(isLive ? 'live' : 'synced');
       setRequiresRepublish(json.requiresRepublish === true);
+      setVerified(json.verified ?? null);
       toast.success(json.message ?? "Integrations synced to site");
       setTimeout(() => setSyncStatus('idle'), 6000);
     } catch (e: any) {
@@ -189,6 +191,31 @@ export const HeaderIntegrationsSettings = ({ projectId }: HeaderIntegrationsSett
           {syncing ? 'Syncing…' : 'Sync to Site'}
         </Button>
       </div>
+
+      {verified && (syncStatus === 'live' || syncStatus === 'synced') && (
+        <div className="flex flex-col gap-1 px-0.5 -mt-2 text-[11px]">
+          {verified.ga !== null && (
+            verified.ga
+              ? <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3 w-3" />Google Analytics tag confirmed in HTML</span>
+              : <span className="flex items-center gap-1 text-red-400"><AlertCircle className="h-3 w-3" />Google Analytics tag NOT found   check the Measurement ID</span>
+          )}
+          {verified.gtm !== null && (
+            verified.gtm
+              ? <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3 w-3" />Google Tag Manager confirmed in HTML</span>
+              : <span className="flex items-center gap-1 text-red-400"><AlertCircle className="h-3 w-3" />GTM container NOT found   check the Container ID</span>
+          )}
+          {verified.pixel !== null && (
+            verified.pixel
+              ? <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3 w-3" />Meta Pixel confirmed in HTML</span>
+              : <span className="flex items-center gap-1 text-red-400"><AlertCircle className="h-3 w-3" />Meta Pixel NOT found   check the Pixel ID</span>
+          )}
+          {verified.whatsapp !== null && (
+            verified.whatsapp
+              ? <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3 w-3" />WhatsApp button confirmed in HTML</span>
+              : <span className="flex items-center gap-1 text-red-400"><AlertCircle className="h-3 w-3" />WhatsApp button NOT found   check the number</span>
+          )}
+        </div>
+      )}
 
       {/* ── Analytics & Pixels ──────────────────────────────── */}
       <Card className="bg-workspace-surface border-white/[0.07]">

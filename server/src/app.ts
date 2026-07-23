@@ -18,7 +18,6 @@ import hostingRoutes from './routes/hosting.routes.js';
 import seoRoutes from './routes/seo.routes.js';
 import headerIntegrationsRoutes from './routes/header-integrations.routes.js';
 import githubRoutes from './routes/github.routes.js';
-import googleAnalyticsRoutes from './routes/google-analytics.routes.js';
 import stripeRoutes from './routes/stripe.routes.js';
 import functionsRoutes from './routes/functions.routes.js';
 import ecgConnectRoutes from './routes/ecg-connect.routes.js';
@@ -170,16 +169,11 @@ if (servesApi) {
     app.use('/api/v1/seo', seoRoutes);
     app.use('/api/v1/header-integrations', headerIntegrationsRoutes);
     app.use('/api/v1/github', githubRoutes);
-    app.use('/api/v1/google-analytics', googleAnalyticsRoutes);
     app.use('/api/v1/stripe', stripeRoutes);
     // Also mounted at the registered GitHub OAuth App callback path   the
     // App's "Authorization callback URL" is /auth/github/callback, which
     // must match REDIRECT_URI in github.routes.ts exactly.
     app.use('/auth/github', githubRoutes);
-    // Same pattern for the Google OAuth client's registered redirect URI
-    // (/auth/google-analytics/callback) -- must match REDIRECT_URI in
-    // google-analytics.routes.ts exactly.
-    app.use('/auth/google-analytics', googleAnalyticsRoutes);
     app.use('/api/v1/functions', functionsRoutes);
     app.use('/api/v1/ecg-connect', ecgConnectRoutes);
     app.use('/api/v1/ecg-proxy', ecgProxyRoutes);

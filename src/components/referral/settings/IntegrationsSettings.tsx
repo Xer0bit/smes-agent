@@ -3,9 +3,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Code2, CreditCard, Zap } from "lucide-react";
-import { GoogleAnalyticsIcon } from "@/components/icons/GoogleAnalyticsIcon";
 import { HeaderIntegrationsSettings } from "./HeaderIntegrationsSettings";
-import { GoogleAnalyticsSettings } from "./GoogleAnalyticsSettings";
 import { StripeSettingsContent } from "./StripeSettingsContent";
 import { ZapierSettingsContent } from "./ZapierSettingsContent";
 
@@ -61,19 +59,6 @@ export function IntegrationsSettings({ projectId }: IntegrationsSettingsProps) {
           </AccordionTrigger>
           <AccordionContent>
             <HeaderIntegrationsSettings projectId={projectId} />
-          </AccordionContent>
-        </AccordionItem>
-
-        <AccordionItem value="ga-reports" className="border-white/[0.07]">
-          <AccordionTrigger className="hover:no-underline">
-            <RowHeader
-              icon={<GoogleAnalyticsIcon className="h-4 w-4" />}
-              title="Google Analytics — Live Reports"
-              description="Sign in with Google to see this project's real traffic without leaving the editor."
-            />
-          </AccordionTrigger>
-          <AccordionContent>
-            <GoogleAnalyticsSettings projectId={projectId} />
           </AccordionContent>
         </AccordionItem>
 

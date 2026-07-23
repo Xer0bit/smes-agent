@@ -104,6 +104,30 @@ export function applyHeaderIntegrationsToHtml(html: string, data: HeaderIntegrat
   return out;
 }
 
+/**
+ * Per-tag confirmation that the synced HTML actually contains each configured
+ * script   the UI previously only ever showed one generic "synced" message
+ * with no way to tell whether e.g. the GA id was mistyped and its snippet
+ * never made it in. Only reports on fields that were actually filled in;
+ * an empty field is reported as null (not applicable), not false (missing).
+ */
+export function verifyHeaderIntegrations(html: string, data: HeaderIntegrationsData): {
+  ga: boolean | null;
+  gtm: boolean | null;
+  pixel: boolean | null;
+  whatsapp: boolean | null;
+} {
+  const has = (id: string | undefined) =>
+    id ? (html.includes(`id=${id.trim()}`) || html.includes(`'${id.trim()}'`)) : null;
+
+  return {
+    ga: has(data.ga_measurement_id),
+    gtm: has(data.gtm_container_id),
+    pixel: has(data.meta_pixel_id),
+    whatsapp: data.whatsapp_number ? html.includes(`wa.me/${data.whatsapp_number.replace(/[^\d]/g, '')}`) : null,
+  };
+}
+
 // ── POST /api/v1/header-integrations/:projectId/sync ─────────────────────────
 router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response) => {
   const { projectId } = req.params;
@@ -144,7 +168,11 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
     const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || '';
 
     if (updated === original) {
-      res.json({ message: 'index.html already up to date   no changes needed.', changed: false });
+      res.json({
+        message: 'index.html already up to date   no changes needed.',
+        changed: false,
+        verified: verifyHeaderIntegrations(updated, data),
+      });
       return;
     }
 
@@ -181,6 +209,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
           ? `Integrations saved to source. Production redeploy failed: ${deployError}. Re-publish your app to go live.`
           : 'Integrations synced to source. Re-publish your app from the editor to push changes live.',
       requiresRepublish: !productionDeployed,
+      verified: verifyHeaderIntegrations(updated, data),
     });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });

@@ -25,8 +25,11 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/package*.json ./
 
-# Copy server file
+# Copy server file + its lib/ modules (viteApi, portPool, instanceOps,
+# previewState, validation, materialize, snapshot, viteConfig, etc.   server.js
+# requires all of these; omitting this line leaves the image unable to boot.
 COPY server.js .
+COPY lib ./lib
 
 # Create projects directory for multi-tenant projects
 RUN mkdir -p projects
