@@ -120,6 +120,10 @@ export const ecgApi = {
     update:  (id: string, data: unknown) => req('PATCH', `/connectors/org/${id}`, data),
     delete:  (id: string) => req('DELETE', `/connectors/org/${id}`),
     test:    (id: string) => req('POST', `/connectors/org/${id}/test`),
+    // Checks which apps are actually enabled on a Zapier MCP token BEFORE
+    // creating a connector  avoids guessing which platform dropdown option
+    // matches what's set up on zapier.com/mcp.
+    discover: (token: string) => req('POST', '/connectors/discover', { token }) as Promise<{ apps: string[] }>,
   },
 
   // Runs

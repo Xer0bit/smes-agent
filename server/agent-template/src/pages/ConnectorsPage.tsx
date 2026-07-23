@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Plug, Zap, MessageCircle, Linkedin, Twitter, Instagram, Facebook, Youtube,
   Music2, AtSign, Pin, Send, Calendar, Scissors,
-  Plus, Pencil, Trash2, X, RefreshCw, CheckCircle, XCircle, AlertCircle,
+  Plus, Pencil, Trash2, X, RefreshCw, CheckCircle, XCircle, AlertCircle, Search,
 } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import { PageHeader, Card, EmptyState, Spinner } from '../components/ui';
@@ -36,6 +36,29 @@ const CONNECTOR_TYPES = [
 ];
 function typeMeta(type: string) {
   return CONNECTOR_TYPES.find(t => t.value === type) ?? { value: type, label: type, Icon: Plug };
+}
+
+// Matches a Zapier-reported app display name ("LinkedIn", "Instagram for
+// Business", "X (Twitter)") back to our internal zapier-mcp-<platform> type
+// slug, so discovery can tell the user which of their enabled apps we
+// actually support and pre-select it  instead of them guessing among 12
+// dropdown options which one matches what they set up on zapier.com/mcp.
+const APP_NAME_KEYWORDS: Array<{ type: string; keywords: string[] }> = [
+  { type: 'zapier-mcp-linkedin', keywords: ['linkedin'] },
+  { type: 'zapier-mcp-x', keywords: ['twitter', 'x (twitter)'] },
+  { type: 'zapier-mcp-instagram', keywords: ['instagram'] },
+  { type: 'zapier-mcp-facebook', keywords: ['facebook'] },
+  { type: 'zapier-mcp-youtube', keywords: ['youtube'] },
+  { type: 'zapier-mcp-tiktok', keywords: ['tiktok'] },
+  { type: 'zapier-mcp-threads', keywords: ['threads'] },
+  { type: 'zapier-mcp-pinterest', keywords: ['pinterest'] },
+  { type: 'zapier-mcp-telegram', keywords: ['telegram'] },
+  { type: 'zapier-mcp-google_calendar', keywords: ['google calendar'] },
+  { type: 'zapier-mcp-fresha', keywords: ['fresha'] },
+];
+function matchAppToType(appName: string): string | null {
+  const lower = appName.toLowerCase();
+  return APP_NAME_KEYWORDS.find(({ keywords }) => keywords.some(k => lower.includes(k)))?.type ?? null;
 }
 
 const STATUS_CFG: Record<string, { label: string; color: string; Icon: typeof CheckCircle }> = {
@@ -215,7 +238,33 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
   const [apiKey, setApiKey] = useState('');
   const [phone, setPhone] = useState(connector?.phone ?? '');
 
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveredApps, setDiscoveredApps] = useState<string[] | null>(null);
+  const [discoverError, setDiscoverError] = useState('');
+
   const isZapier = type === 'zapier' || type.startsWith('zapier-mcp');
+
+  async function handleDiscover() {
+    if (!apiKey.trim()) return;
+    setDiscovering(true);
+    setDiscoverError('');
+    setDiscoveredApps(null);
+    try {
+      const { apps } = await ecgApi.connectors.discover(apiKey.trim());
+      setDiscoveredApps(apps);
+      if (apps.length === 0) setDiscoverError('This token is valid but has no apps enabled yet. Add one at zapier.com/mcp.');
+    } catch (e: any) {
+      setDiscoverError(e?.message ?? 'Could not check this token.');
+    } finally {
+      setDiscovering(false);
+    }
+  }
+
+  function pickDiscoveredApp(appName: string) {
+    const matched = matchAppToType(appName);
+    if (matched) setType(matched);
+    if (!name.trim()) setName(appName);
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -251,6 +300,57 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
             />
           </div>
 
+          {isZapier && (
+            <div>
+              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Zapier MCP Token</label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={e => { setApiKey(e.target.value); setDiscoveredApps(null); setDiscoverError(''); }}
+                  placeholder={connector ? 'Leave blank to keep current token' : 'Paste your token from zapier.com/mcp'}
+                  className="flex-1 min-w-0 px-3 py-2 rounded-lg border font-mono text-xs focus:outline-none"
+                  style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                />
+                <button type="button" onClick={handleDiscover} disabled={!apiKey.trim() || discovering}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border shrink-0 disabled:opacity-50"
+                  style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                  <Search className={`w-3.5 h-3.5 ${discovering ? 'animate-spin' : ''}`} />
+                  {discovering ? 'Checking…' : 'Check apps'}
+                </button>
+              </div>
+              <p className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
+                "Check apps" tells you exactly which platforms this token can publish to  no guessing.
+              </p>
+
+              {discoverError && (
+                <p className="text-xs mt-2 px-2.5 py-1.5 rounded-lg" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{discoverError}</p>
+              )}
+
+              {discoveredApps && discoveredApps.length > 0 && (
+                <div className="mt-2 space-y-1.5">
+                  <p className="text-[11px] font-medium" style={{ color: 'var(--muted)' }}>Found on this token  tap to select:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {discoveredApps.map(app => {
+                      const matched = matchAppToType(app);
+                      const isSelected = matched === type;
+                      return (
+                        <button key={app} type="button" onClick={() => pickDiscoveredApp(app)}
+                          className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-full border"
+                          style={isSelected
+                            ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' }
+                            : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+                          {matched ? <CheckCircle className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                          {app}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Platform</label>
             <select
@@ -262,21 +362,12 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
             >
               {CONNECTOR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
+            {discoveredApps && !discoveredApps.some(a => matchAppToType(a) === type) && (
+              <p className="text-[11px] mt-1" style={{ color: '#dc2626' }}>
+                This platform wasn't found on your token  saving now may not actually work.
+              </p>
+            )}
           </div>
-
-          {isZapier && (
-            <div>
-              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Zapier MCP Token</label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={e => setApiKey(e.target.value)}
-                placeholder={connector ? 'Leave blank to keep current token' : 'Paste your token from zapier.com/mcp'}
-                className="w-full px-3 py-2 rounded-lg border font-mono text-xs focus:outline-none"
-                style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
-              />
-            </div>
-          )}
 
           {type === 'whatsapp' && (
             <div>

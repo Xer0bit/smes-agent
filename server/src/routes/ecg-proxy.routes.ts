@@ -102,6 +102,10 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
     if (seg.length === 4 && seg[3] === 'test') return 'unsupported';
   }
 
+  if (seg[0] === 'connectors' && seg[1] === 'discover' && method === 'POST') {
+    return { tool: 'discover_zapier_apps', args: { token: body?.token } };
+  }
+
   if (seg[0] === 'stats' && method === 'GET' && seg.length === 1) return { tool: 'get_stats', args: {} };
 
   if (seg[0] === 'runs' && method === 'GET' && seg.length === 1) return { tool: 'list_runs', args: {} };
