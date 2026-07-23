@@ -7,6 +7,14 @@ function accessHeaders(): Record<string, string> {
   return token ? { 'x-dashboard-access': token } : {};
 }
 
+// 501 means the proxy explicitly has no MCP-tool equivalent for this call
+// (org/team/api-keys/billing on an MCP-connected dashboard   see
+// ecg-proxy.routes.ts's mapToMcpTool). Distinguish that from a real failure
+// so the UI can show "not available" instead of a blanket error.
+export function isUnsupported(e: unknown): boolean {
+  return (e as { status?: number })?.status === 501;
+}
+
 async function req(method: string, path: string, body?: unknown) {
   const sep = path.includes('?') ? '&' : '?';
   const url = `${SERVER}/api/v1/ecg-proxy${path}${sep}projectId=${PROJECT_ID}`;
@@ -18,7 +26,9 @@ async function req(method: string, path: string, body?: unknown) {
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
-    throw new Error((e as { error?: string }).error || `API error ${res.status}`);
+    const err = new Error((e as { error?: string }).error || `API error ${res.status}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }

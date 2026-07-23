@@ -1,6 +1,20 @@
 import { useEffect, useState } from 'react';
-import { Settings, Users, Key, Receipt, Plus, Trash2, X, Mail, Shield } from 'lucide-react';
-import { ecgApi } from '../lib/ecgClient';
+import { Settings, Users, Key, Receipt, Plus, Trash2, X, Mail, Shield, Lock } from 'lucide-react';
+import { ecgApi, isUnsupported } from '../lib/ecgClient';
+import { EmptyState } from '../components/ui';
+
+// Portal-account features (org profile, team, API keys, billing) have no
+// MCP-tool equivalent for an MCP-key-connected dashboard   see
+// ecg-proxy.routes.ts's mapToMcpTool, which returns 501 for these paths on
+// purpose. Each section tracks its own availability instead of one failed
+// call blanking the whole page (Promise.all previously rejected on the
+// FIRST 501, so nothing ever loaded for the current, default onboarding flow).
+function Unavailable({ label }: { label: string }) {
+  return (
+    <EmptyState Icon={Lock} title={`${label} isn't available for this dashboard`}
+      hint="This dashboard is connected via an eCG Agent API key, which manages agents and content but not portal account settings." />
+  );
+}
 
 const TABS = [
   { id: 'org', label: 'Organization', icon: Settings },
@@ -35,21 +49,43 @@ export default function SettingsPage() {
   // Billing data
   const [invoices, setInvoices] = useState<any[]>([]);
 
+  // Per-section availability. `null` = still loading, `true` = 501 (no MCP
+  // equivalent), `false` = loaded (or failed for a real reason, shown via `error`).
+  const [unavailable, setUnavailable] = useState<Record<Tab, boolean | null>>({
+    org: null, team: null, 'api-keys': null, billing: null,
+  });
+
   useEffect(() => {
-    Promise.all([
+    Promise.allSettled([
       ecgApi.org.get(),
       ecgApi.team.list(),
       ecgApi.apiKeys.list(),
       ecgApi.billing.invoices(),
-    ])
-      .then(([orgData, teamData, keysData, invoicesData]) => {
-        setOrg(orgData);
-        setTeam(Array.isArray(teamData) ? teamData : []);
-        setApiKeys(Array.isArray(keysData) ? keysData : []);
-        setInvoices(Array.isArray(invoicesData) ? invoicesData : (invoicesData.invoices ?? []));
-      })
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
+    ]).then(([orgR, teamR, keysR, invoicesR]) => {
+      const next: Record<Tab, boolean | null> = { org: false, team: false, 'api-keys': false, billing: false };
+
+      if (orgR.status === 'fulfilled') setOrg(orgR.value);
+      else if (isUnsupported(orgR.reason)) next.org = true;
+
+      if (teamR.status === 'fulfilled') setTeam(Array.isArray(teamR.value) ? teamR.value : []);
+      else if (isUnsupported(teamR.reason)) next.team = true;
+
+      if (keysR.status === 'fulfilled') setApiKeys(Array.isArray(keysR.value) ? keysR.value : []);
+      else if (isUnsupported(keysR.reason)) next['api-keys'] = true;
+
+      if (invoicesR.status === 'fulfilled') {
+        const v = invoicesR.value;
+        setInvoices(Array.isArray(v) ? v : (v.invoices ?? []));
+      } else if (isUnsupported(invoicesR.reason)) next.billing = true;
+
+      setUnavailable(next);
+
+      // Only surface a blanket error for a REAL failure (not the expected 501s).
+      const realFailure = [orgR, teamR, keysR, invoicesR].find(
+        r => r.status === 'rejected' && !isUnsupported((r as PromiseRejectedResult).reason),
+      ) as PromiseRejectedResult | undefined;
+      if (realFailure) setError(realFailure.reason?.message ?? 'Failed to load settings');
+    }).finally(() => setLoading(false));
   }, []);
 
   const handleSaveOrg = async (updates: any) => {
@@ -141,42 +177,49 @@ export default function SettingsPage() {
       {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</div>}
 
       {/* Org Tab */}
-      {!loading && tab === 'org' && org && (
-        <OrgSettings org={org} onSave={handleSaveOrg} saving={savingOrg} />
+      {!loading && tab === 'org' && (
+        unavailable.org ? <Unavailable label="Organization profile" />
+        : org ? <OrgSettings org={org} onSave={handleSaveOrg} saving={savingOrg} /> : null
       )}
 
       {/* Team Tab */}
       {!loading && tab === 'team' && (
-        <TeamSettings
-          team={team}
-          onInvite={handleInvite}
-          onDelete={handleDeleteUser}
-          inviting={inviting}
-          deletingUser={deletingUser}
-          setDeletingUser={setDeletingUser}
-          showInvite={showInvite}
-          setShowInvite={setShowInvite}
-        />
+        unavailable.team ? <Unavailable label="Team management" /> : (
+          <TeamSettings
+            team={team}
+            onInvite={handleInvite}
+            onDelete={handleDeleteUser}
+            inviting={inviting}
+            deletingUser={deletingUser}
+            setDeletingUser={setDeletingUser}
+            showInvite={showInvite}
+            setShowInvite={setShowInvite}
+          />
+        )
       )}
 
       {/* API Keys Tab */}
       {!loading && tab === 'api-keys' && (
-        <ApiKeysSettings
-          apiKeys={apiKeys}
-          onCreate={handleCreateKey}
-          onRevoke={handleRevokeKey}
-          creating={creatingKey}
-          revokingKey={revokingKey}
-          setRevokingKey={setRevokingKey}
-          showCreate={showCreateKey}
-          setShowCreate={setShowCreateKey}
-          newKey={newKey}
-          setNewKey={setNewKey}
-        />
+        unavailable['api-keys'] ? <Unavailable label="API key management" /> : (
+          <ApiKeysSettings
+            apiKeys={apiKeys}
+            onCreate={handleCreateKey}
+            onRevoke={handleRevokeKey}
+            creating={creatingKey}
+            revokingKey={revokingKey}
+            setRevokingKey={setRevokingKey}
+            showCreate={showCreateKey}
+            setShowCreate={setShowCreateKey}
+            newKey={newKey}
+            setNewKey={setNewKey}
+          />
+        )
       )}
 
       {/* Billing Tab */}
-      {!loading && tab === 'billing' && <BillingSettings invoices={invoices} />}
+      {!loading && tab === 'billing' && (
+        unavailable.billing ? <Unavailable label="Billing" /> : <BillingSettings invoices={invoices} />
+      )}
     </div>
   );
 }
