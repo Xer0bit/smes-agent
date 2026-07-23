@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings, LucideIcon } from 'lucide-react';
 import { ECG } from '../ecg-config';
 import { ecgApi } from '../lib/ecgClient';
+import TopBar from './TopBar';
 
 // Live count of posts awaiting review, shown as a badge on Planned Posts.
 // One fetch per mount  cheap, and the badge is advisory, not real-time.
@@ -134,6 +135,7 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
         </div>
       </aside>
       <div className="flex-1 flex flex-col overflow-hidden">
+        <TopBar />
         <main className="flex-1 overflow-y-auto">{children}</main>
       </div>
     </div>
@@ -168,6 +170,7 @@ function TopNav({ children }: { children: ReactNode }) {
           </nav>
         </div>
       </header>
+      <TopBar />
       <main className="flex-1 overflow-y-auto">{children}</main>
     </div>
   );

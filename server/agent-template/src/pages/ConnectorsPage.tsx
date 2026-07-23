@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Plug, Zap, MessageCircle, Linkedin, Plus, Pencil, Trash2, X, RefreshCw, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import {
+  Plug, Zap, MessageCircle, Linkedin, Twitter, Instagram, Facebook, Youtube,
+  Music2, AtSign, Pin, Send, Calendar, Scissors,
+  Plus, Pencil, Trash2, X, RefreshCw, CheckCircle, XCircle, AlertCircle,
+} from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
+import { PageHeader, Card, EmptyState, Spinner } from '../components/ui';
 
 interface Connector {
   id: string;
@@ -11,13 +16,23 @@ interface Connector {
   phone?: string;
 }
 
-// Matches the real connector model (org_connectors table)   type-specific
-// fields, not the generic custom-secrets-map this form used to submit
-// (which the backend's POST /connectors/org never accepted at all).
+// Every platform Zapier MCP can publish to (see agent-runner's PLATFORM_CONFIG).
+// `zapier` is kept as the generic/legacy option; `whatsapp` is the native
+// (non-Zapier) connector.
 const CONNECTOR_TYPES = [
-  { value: 'zapier', label: 'Zapier MCP', Icon: Zap },
-  { value: 'whatsapp', label: 'WhatsApp Business', Icon: MessageCircle },
-  { value: 'zapier-mcp-linkedin', label: 'LinkedIn (Zapier MCP)', Icon: Linkedin },
+  { value: 'zapier',              label: 'Zapier MCP (generic)', Icon: Zap },
+  { value: 'zapier-mcp-linkedin', label: 'LinkedIn',   Icon: Linkedin },
+  { value: 'zapier-mcp-x',        label: 'X (Twitter)', Icon: Twitter },
+  { value: 'zapier-mcp-instagram', label: 'Instagram',  Icon: Instagram },
+  { value: 'zapier-mcp-facebook', label: 'Facebook',    Icon: Facebook },
+  { value: 'zapier-mcp-youtube',  label: 'YouTube',     Icon: Youtube },
+  { value: 'zapier-mcp-tiktok',   label: 'TikTok',      Icon: Music2 },
+  { value: 'zapier-mcp-threads',  label: 'Threads',     Icon: AtSign },
+  { value: 'zapier-mcp-pinterest', label: 'Pinterest',  Icon: Pin },
+  { value: 'zapier-mcp-telegram', label: 'Telegram',    Icon: Send },
+  { value: 'zapier-mcp-google_calendar', label: 'Google Calendar', Icon: Calendar },
+  { value: 'zapier-mcp-fresha',   label: 'Fresha',       Icon: Scissors },
+  { value: 'whatsapp',            label: 'WhatsApp Business', Icon: MessageCircle },
 ];
 function typeMeta(type: string) {
   return CONNECTOR_TYPES.find(t => t.value === type) ?? { value: type, label: type, Icon: Plug };
@@ -96,35 +111,44 @@ export default function ConnectorsPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Connectors</h1>
+      <PageHeader eyebrow="System" title="Connectors" action={
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
           style={{ background: 'var(--accent)' }}
         >
           <Plus className="w-4 h-4" /> New Connector
         </button>
-      </div>
+      } />
 
       {loading && <Spinner />}
-      {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</div>}
-      {!loading && !rows.length && <div className="text-center py-16 text-sm" style={{ color: 'var(--muted)' }}>No connectors configured</div>}
+      {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
+      {!loading && !rows.length && (
+        <EmptyState Icon={Plug} title="No connectors configured"
+          hint="Connect a platform via Zapier MCP so your agents can publish content there directly."
+          action={
+            <button onClick={() => setShowCreate(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
+              style={{ background: 'var(--accent)' }}>
+              <Plus className="w-4 h-4" /> Connect a platform
+            </button>
+          } />
+      )}
       {!loading && rows.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {rows.map((c: Connector) => {
             const meta = typeMeta(c.type);
             const statusCfg = STATUS_CFG[c.status ?? 'disconnected'] ?? STATUS_CFG.disconnected;
             return (
-            <div key={c.id} className="rounded-xl border p-5" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
+            <Card key={c.id} hover className="p-5">
               <div className="flex items-start justify-between gap-3 mb-3">
                 <div className="flex items-start gap-3 flex-1 min-w-0">
-                  <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'var(--accent-bg,#ede9fe)' }}>
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'var(--accent-bg)' }}>
                     <meta.Icon className="w-4 h-4" style={{ color: 'var(--accent)' }} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm truncate" style={{ color: 'var(--text)' }}>{c.name}</p>
-                    <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>{meta.label}</p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>{meta.label} · via Zapier MCP</p>
                   </div>
                 </div>
                 <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border shrink-0" style={{ borderColor: 'var(--border)', color: statusCfg.color }}>
@@ -139,11 +163,11 @@ export default function ConnectorsPage() {
                 <button onClick={() => setEditingConnector(c)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
                   <Pencil className="w-3 h-3" /> Edit
                 </button>
-                <button onClick={() => setDeletingConnector(c)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs border ml-auto text-red-600" style={{ borderColor: 'var(--border)' }}>
+                <button onClick={() => setDeletingConnector(c)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs border ml-auto" style={{ borderColor: 'var(--border)', color: '#dc2626' }}>
                   <Trash2 className="w-3 h-3" /> Remove
                 </button>
               </div>
-            </div>
+            </Card>
             );
           })}
         </div>
@@ -180,8 +204,6 @@ export default function ConnectorsPage() {
   );
 }
 
-function Spinner() { return <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: 'var(--accent)' }} /></div>; }
-
 function ConnectorModal({ connector, onClose, onSave, loading }: {
   connector: Connector | null;
   onClose: () => void;
@@ -189,7 +211,7 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
   loading: boolean;
 }) {
   const [name, setName] = useState(connector?.name ?? '');
-  const [type, setType] = useState(connector?.type ?? 'zapier');
+  const [type, setType] = useState(connector?.type ?? 'zapier-mcp-linkedin');
   const [apiKey, setApiKey] = useState('');
   const [phone, setPhone] = useState(connector?.phone ?? '');
 
@@ -211,7 +233,7 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
           <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
             {connector ? 'Edit Connector' : 'New Connector'}
           </h2>
-          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--accent-bg)]">
             <X className="w-5 h-5" style={{ color: 'var(--muted)' }} />
           </button>
         </div>
@@ -223,18 +245,18 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
+              className="w-full px-3 py-2 rounded-lg border focus:outline-none"
               style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
               autoFocus
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Type</label>
+            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Platform</label>
             <select
               value={type}
               onChange={e => setType(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
+              className="w-full px-3 py-2 rounded-lg border focus:outline-none"
               style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
               required
             >
@@ -250,7 +272,7 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
                 value={apiKey}
                 onChange={e => setApiKey(e.target.value)}
                 placeholder={connector ? 'Leave blank to keep current token' : 'Paste your token from zapier.com/mcp'}
-                className="w-full px-3 py-2 rounded-lg border font-mono text-xs focus:outline-none focus:ring-2"
+                className="w-full px-3 py-2 rounded-lg border font-mono text-xs focus:outline-none"
                 style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
               />
             </div>
@@ -264,7 +286,7 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
                 value={phone}
                 onChange={e => setPhone(e.target.value)}
                 placeholder="+15551234567"
-                className="w-full px-3 py-2 rounded-lg border font-mono text-xs focus:outline-none focus:ring-2"
+                className="w-full px-3 py-2 rounded-lg border font-mono text-xs focus:outline-none"
                 style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
               />
             </div>
@@ -282,7 +304,7 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
             <button
               type="submit"
               disabled={loading || !name.trim() || !type}
-              className="flex-1 px-4 py-2 rounded-lg text-white disabled:opacity-50"
+              className="flex-1 px-4 py-2 rounded-lg text-white hover:opacity-90 disabled:opacity-50"
               style={{ background: 'var(--accent)' }}
             >
               {loading ? 'Saving...' : connector ? 'Save' : 'Create'}
@@ -319,7 +341,7 @@ function DeleteConfirmModal({ itemName, onClose, onConfirm, loading }: {
           <button
             onClick={onConfirm}
             disabled={loading}
-            className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 disabled:opacity-50"
+            className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 hover:opacity-90 disabled:opacity-50"
           >
             {loading ? 'Deleting...' : 'Delete'}
           </button>

@@ -86,7 +86,7 @@ export default function AgentsPage() {
           {agents.map((a: Agent) => (
             <Card key={a.id} hover className="p-5">
               <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
+                <button onClick={() => navigate(`/agents/${a.id}`)} className="flex items-center gap-3 min-w-0 text-left hover:opacity-80">
                   <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-white text-sm"
                     style={{ background: 'var(--accent)', fontWeight: 'var(--font-weight-heading)' }}>
                     {a.name.charAt(0).toUpperCase()}
@@ -95,7 +95,7 @@ export default function AgentsPage() {
                     <p className="font-semibold text-sm truncate" style={{ color: 'var(--text)' }}>{a.name}</p>
                     <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--muted)' }}>{a.templateName ?? a.template_name ?? ' '}</p>
                   </div>
-                </div>
+                </button>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <StatusBadge status={a.status} />
                   <button onClick={() => handleRun(a.id)} title="Run now"

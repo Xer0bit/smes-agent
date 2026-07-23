@@ -64,6 +64,25 @@ export function SkeletonRows({ count = 4 }: { count?: number }) {
   );
 }
 
+// Shared platform brand colors + labels. Used anywhere a platform needs a
+// dot/bar/legend color (Dashboard chart, calendar day pills, connectors).
+export const PLATFORM_META: Record<string, { label: string; bar: string }> = {
+  linkedin:  { label: 'LinkedIn',  bar: '#0077B5' },
+  facebook:  { label: 'Facebook',  bar: '#1877F2' },
+  instagram: { label: 'Instagram', bar: '#E1306C' },
+  x:         { label: 'X',         bar: '#64748b' },
+  twitter:   { label: 'X',         bar: '#64748b' },
+  youtube:   { label: 'YouTube',   bar: '#FF0000' },
+  tiktok:    { label: 'TikTok',    bar: '#69C9D0' },
+  whatsapp:  { label: 'WhatsApp',  bar: '#25D366' },
+  threads:   { label: 'Threads',   bar: '#334155' },
+  pinterest: { label: 'Pinterest', bar: '#E60023' },
+  telegram:  { label: 'Telegram',  bar: '#229ED9' },
+};
+export function platformMeta(p: string) {
+  return PLATFORM_META[p.toLowerCase()] ?? { label: p, bar: 'var(--muted)' };
+}
+
 // "3h ago" / "in 2d"  compact relative time for last-run / scheduled-at.
 export function relTime(iso?: string | null): string {
   if (!iso) return '';

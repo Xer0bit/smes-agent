@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import DashboardPage from './pages/DashboardPage';
 import ChatPage from './pages/ChatPage';
 import AgentsPage from './pages/AgentsPage';
+import AgentDetailPage from './pages/AgentDetailPage';
 import CreateAgentPage from './pages/CreateAgentPage';
 import EditAgentPage from './pages/EditAgentPage';
 import SchedulersPage from './pages/SchedulersPage';
@@ -27,6 +28,7 @@ export default function App() {
           {has('agents')     && <Route path="/agents"     element={<AgentsPage />} />}
           {has('agents')     && <Route path="/agents/create" element={<CreateAgentPage />} />}
           {has('agents')     && <Route path="/agents/:agentId/edit" element={<EditAgentPage />} />}
+          {has('agents')     && <Route path="/agents/:agentId" element={<AgentDetailPage />} />}
           {has('schedulers') && <Route path="/schedulers" element={<SchedulersPage />} />}
           {has('posts')      && <Route path="/posts"      element={<PostsPage />} />}
           {has('posts')      && <Route path="/posts/calendar" element={<PostsCalendarPage />} />}

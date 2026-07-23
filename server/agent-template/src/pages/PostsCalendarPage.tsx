@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ChevronLeft, ChevronRight, CheckCircle, XCircle, FileText } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import StatusBadge from '../components/StatusBadge';
+import { Card, Spinner, platformMeta } from '../components/ui';
 
 function dateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -63,8 +64,8 @@ export default function PostsCalendarPage() {
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div>
-          <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Posts Calendar</h1>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>Scheduled and reviewed content by day</p>
+          <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>Content</p>
+          <h1 className="text-lg mt-0.5" style={{ color: 'var(--text)', fontWeight: 'var(--font-weight-heading)' }}>Posts Calendar</h1>
         </div>
       </div>
 
@@ -82,10 +83,8 @@ export default function PostsCalendarPage() {
         </button>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: 'var(--accent)' }} /></div>
-      ) : (
-        <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border)' }}>
+      {loading ? <Spinner /> : (
+        <Card className="overflow-hidden">
           <div className="grid grid-cols-7 text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
               <div key={d} className="px-2 py-2 text-center border-b" style={{ borderColor: 'var(--border)' }}>{d}</div>
@@ -104,46 +103,57 @@ export default function PostsCalendarPage() {
                     className="min-h-20 p-1.5 text-left border-b border-r flex flex-col gap-1"
                     style={{
                       borderColor: 'var(--border)',
-                      background: isSelected ? 'var(--accent-bg,#ede9fe)' : 'transparent',
+                      background: isSelected ? 'var(--accent-bg)' : 'transparent',
                       opacity: inMonth ? 1 : 0.35,
                       cursor: dayPosts.length ? 'pointer' : 'default',
                     }}>
                     <span className="text-xs font-medium" style={isToday ? { color: 'var(--accent)' } : { color: 'var(--text)' }}>{day.getDate()}</span>
-                    {dayPosts.slice(0, 3).map((p, i) => (
-                      <span key={i} className="text-[10px] px-1.5 py-0.5 rounded truncate"
-                        style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
-                        {p.platform ?? 'post'}
-                      </span>
-                    ))}
+                    {dayPosts.slice(0, 3).map((p, i) => {
+                      const pm = platformMeta(p.platform ?? '');
+                      return (
+                        <span key={i} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded truncate"
+                          style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+                          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: pm.bar }} />
+                          {pm.label}
+                        </span>
+                      );
+                    })}
                     {dayPosts.length > 3 && <span className="text-[10px]" style={{ color: 'var(--muted)' }}>+{dayPosts.length - 3} more</span>}
                   </button>
                 );
               })}
             </div>
           ))}
-        </div>
+        </Card>
       )}
 
       {selectedDay && selectedPosts.length > 0 && (
-        <div className="rounded-xl border p-4 space-y-2" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
+        <Card className="p-4 space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>
             {new Date(selectedDay).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
           </p>
-          {selectedPosts.map((p: any) => (
-            <div key={p.id} className="flex items-start gap-2 p-2.5 rounded-lg border" style={{ borderColor: 'var(--border)' }}>
-              {p.status === 'approved' ? <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
-                : p.status === 'rejected' ? <XCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-500" />
-                : <FileText className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--muted)' }} />}
-              <div className="flex-1 min-w-0">
-                <p className="text-sm leading-relaxed line-clamp-2" style={{ color: 'var(--text)' }}>{p.content ?? '(no content)'}</p>
-                <div className="flex items-center gap-2 mt-1">
-                  {p.platform && <span className="text-xs capitalize" style={{ color: 'var(--muted)' }}>{p.platform}</span>}
-                  <StatusBadge status={p.status} />
+          {selectedPosts.map((p: any) => {
+            const pm = platformMeta(p.platform ?? '');
+            return (
+              <div key={p.id} className="flex items-start gap-2 p-2.5 rounded-lg border" style={{ borderColor: 'var(--border)' }}>
+                {p.status === 'approved' ? <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
+                  : p.status === 'rejected' ? <XCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-500" />
+                  : <FileText className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--muted)' }} />}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm leading-relaxed line-clamp-2" style={{ color: 'var(--text)' }}>{p.content ?? '(no content)'}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    {p.platform && (
+                      <span className="inline-flex items-center gap-1 text-xs" style={{ color: 'var(--muted)' }}>
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: pm.bar }} /> {pm.label}
+                      </span>
+                    )}
+                    <StatusBadge status={p.status} />
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            );
+          })}
+        </Card>
       )}
     </div>
   );
