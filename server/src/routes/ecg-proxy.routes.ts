@@ -39,6 +39,26 @@ async function getProjectSecrets(projectId: string, userId: string | null) {
 // upstream failure.
 type McpMapping = { tool: string; args: Record<string, unknown> } | 'unsupported';
 
+// The dashboard's REST-shaped frontend calls (ecgClient.ts) send snake_case
+// field names matching the backend's own DB columns (api_key, webhook_url,
+// prompt_overlay); MCP tools are registered with camelCase Zod schemas
+// (apiKey, webhookUrl, promptOverlay, and crucially agentId/connectorId
+// instead of the bare `id` a REST PATCH/DELETE path segment gives you).
+// Forwarding `body` raw (as every mapping below used to) silently drops
+// every mismatched field -- confirmed live: connector tokens were never
+// saved (api_key never became apiKey), and update_agent flat out rejected
+// every call (no `id`->`agentId` translation at all: "Invalid arguments...
+// path: ['agentId'], message: 'Required'"). This helper does the translation
+// once instead of per-mapping.
+function pick(body: any, ...pairs: Array<[string, string]>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [camel, snake] of pairs) {
+    const v = body?.[camel] ?? body?.[snake];
+    if (v !== undefined) out[camel] = v;
+  }
+  return out;
+}
+
 function mapToMcpTool(method: string, path: string, body: any, query: Record<string, string>): McpMapping | null {
   const seg = path.replace(/^\//, '').split('/').filter(Boolean); // e.g. ['agents', ':id']
 
@@ -47,15 +67,21 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
   if (seg[0] === 'agents') {
     if (seg.length === 1) {
       if (method === 'GET') return { tool: 'list_agents', args: {} };
-      if (method === 'POST') return { tool: 'create_agent', args: body ?? {} };
+      if (method === 'POST') return {
+        tool: 'create_agent',
+        args: pick(body, ['name', 'name'], ['templateId', 'template_id'], ['promptOverlay', 'prompt_overlay'], ['connectorIds', 'connector_ids']),
+      };
     }
     if (seg.length === 2) {
       const id = seg[1];
-      if (method === 'GET') return { tool: 'get_agent_status', args: { id } };
-      if (method === 'PATCH') return { tool: 'update_agent', args: { id, ...(body ?? {}) } };
-      if (method === 'DELETE') return { tool: 'delete_agent', args: { id } };
+      if (method === 'GET') return { tool: 'get_agent_status', args: { agentId: id } };
+      if (method === 'PATCH') return {
+        tool: 'update_agent',
+        args: { agentId: id, ...pick(body, ['name', 'name'], ['promptOverlay', 'prompt_overlay'], ['connectorIds', 'connector_ids'], ['status', 'status']) },
+      };
+      if (method === 'DELETE') return { tool: 'delete_agent', args: { agentId: id } };
     }
-    if (seg.length === 3 && seg[2] === 'run' && method === 'POST') return { tool: 'run_agent_now', args: { id: seg[1] } };
+    if (seg.length === 3 && seg[2] === 'run' && method === 'POST') return { tool: 'run_agent_now', args: { agentId: seg[1] } };
   }
 
   if (seg[0] === 'schedulers') {
@@ -65,25 +91,25 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
     }
     if (seg.length === 2) {
       const id = seg[1];
-      if (method === 'DELETE') return { tool: 'delete_scheduler', args: { id } };
+      if (method === 'DELETE') return { tool: 'delete_scheduler', args: { schedulerId: id } };
       // The only PATCH the dashboard sends is a pause/resume toggle (SchedulersPage.tsx: { status: 'paused' | 'active' }).
       if (method === 'PATCH') {
         const status = body?.status;
-        if (status === 'paused') return { tool: 'pause_scheduler', args: { id } };
-        if (status === 'active') return { tool: 'resume_scheduler', args: { id } };
+        if (status === 'paused') return { tool: 'pause_scheduler', args: { schedulerId: id } };
+        if (status === 'active') return { tool: 'resume_scheduler', args: { schedulerId: id } };
         return 'unsupported';
       }
     }
-    if (seg.length === 3 && seg[2] === 'replan' && method === 'POST') return { tool: 'trigger_scheduler_now', args: { id: seg[1] } };
+    if (seg.length === 3 && seg[2] === 'replan' && method === 'POST') return { tool: 'trigger_scheduler_now', args: { schedulerId: seg[1] } };
   }
 
   if (seg[0] === 'planned-posts') {
     if (seg.length === 1 && method === 'GET') return { tool: 'get_planned_posts', args: {} };
     if (seg.length === 2) {
       const id = seg[1];
-      if (method === 'DELETE') return { tool: 'cancel_post', args: { id } };
+      if (method === 'DELETE') return { tool: 'cancel_post', args: { postId: id } };
       if (method === 'PATCH') {
-        if (body?.status === 'approved') return { tool: 'approve_post', args: { id } };
+        if (body?.status === 'approved') return { tool: 'approve_post', args: { postId: id } };
         return 'unsupported'; // reject has no MCP equivalent (only approve/cancel)
       }
     }
@@ -92,12 +118,18 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
   if (seg[0] === 'connectors' && seg[1] === 'org') {
     if (seg.length === 2) {
       if (method === 'GET') return { tool: 'list_connectors', args: {} };
-      if (method === 'POST') return { tool: 'create_connector', args: body ?? {} };
+      if (method === 'POST') return {
+        tool: 'create_connector',
+        args: pick(body, ['type', 'type'], ['name', 'name'], ['apiKey', 'api_key'], ['webhookUrl', 'webhook_url'], ['phone', 'phone'], ['platforms', 'platforms']),
+      };
     }
     if (seg.length === 3) {
       const id = seg[2];
-      if (method === 'PATCH') return { tool: 'update_connector', args: { id, ...(body ?? {}) } };
-      if (method === 'DELETE') return { tool: 'delete_connector', args: { id } };
+      if (method === 'PATCH') return {
+        tool: 'update_connector',
+        args: { connectorId: id, ...pick(body, ['name', 'name'], ['apiKey', 'api_key'], ['webhookUrl', 'webhook_url'], ['phone', 'phone'], ['platforms', 'platforms']) },
+      };
+      if (method === 'DELETE') return { tool: 'delete_connector', args: { connectorId: id } };
     }
     if (seg.length === 4 && seg[3] === 'test') return 'unsupported';
   }
@@ -115,7 +147,7 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
       if (method === 'GET') return { tool: 'list_knowledge', args: query.q ? { query: query.q } : {} };
       if (method === 'POST') return { tool: 'add_knowledge', args: body ?? {} };
     }
-    if (seg.length === 2 && method === 'DELETE') return { tool: 'delete_knowledge', args: { id: seg[1] } };
+    if (seg.length === 2 && method === 'DELETE') return { tool: 'delete_knowledge', args: { entryId: seg[1] } };
   }
 
   if (seg[0] === 'knowledge-bases') {
