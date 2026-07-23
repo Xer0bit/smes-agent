@@ -39,6 +39,7 @@ export default function CreateAgentPage() {
   const [launching, setLaunching] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState('');
+  const [schedulerWarning, setSchedulerWarning] = useState('');
 
   useEffect(() => {
     Promise.all([
@@ -79,10 +80,22 @@ export default function CreateAgentPage() {
         knowledgeBaseIds: selectedKbIds,
       });
       if (scheduleCapable && cron.trim() && created?.id) {
-        try {
-          await ecgApi.schedulers.create({ agentId: created.id, cron: cron.trim(), connector: selectedConnectorIds[0] });
-        } catch {
-          // Agent was created fine   scheduler is a nice-to-have, don't block success on it.
+        // Backend expects a platform TYPE string ("zapier-mcp-linkedin"), not
+        // the connector's row id  passing the raw id silently created a
+        // scheduler with a garbage `connector` value that the publish
+        // pipeline could never match to a real connector.
+        const connectorType = connectors.find(c => c.id === selectedConnectorIds[0])?.type;
+        if (connectorType) {
+          try {
+            await ecgApi.schedulers.create({ agentId: created.id, cron: cron.trim(), connector: connectorType });
+          } catch (e: any) {
+            // Agent creation still succeeds  surface the scheduler failure
+            // instead of silently swallowing it, so the user isn't left
+            // wondering why nothing gets posted.
+            setSchedulerWarning(e?.message ?? 'Could not set up the posting schedule.');
+          }
+        } else {
+          setSchedulerWarning('Could not determine the platform for the selected connector  set up the schedule in Schedulers.');
         }
       }
       setDone(true);
@@ -107,6 +120,9 @@ export default function CreateAgentPage() {
           {done ? (error ? `${agentName} was created` : `${agentName} is live!`) : `Setting up ${agentName || 'your agent'}…`}
         </h2>
         {error && <p className="text-sm px-4 py-2 rounded-lg bg-amber-50 text-amber-700">{error}</p>}
+        {done && schedulerWarning && (
+          <p className="text-sm px-4 py-2 rounded-lg bg-amber-50 text-amber-700">{schedulerWarning}</p>
+        )}
         {done && (
           <button onClick={() => navigate('/agents')}
             className="w-full py-2.5 rounded-lg text-white text-sm font-medium" style={{ background: 'var(--accent)' }}>

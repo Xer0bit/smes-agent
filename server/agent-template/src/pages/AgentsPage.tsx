@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, Clock, Plus, Pencil, Trash2 } from 'lucide-react';
+import { Zap, Clock, Plus, Pencil, Trash2, Play, Pause } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
@@ -56,6 +56,19 @@ export default function AgentsPage() {
     }
   };
 
+  // Also the escape hatch for an agent stuck in 'provisioning' (created
+  // before this default changed, or via some other path) -- there was
+  // previously no way to activate one from this dashboard at all.
+  const handleToggleStatus = async (agent: Agent) => {
+    const next = agent.status === 'active' ? 'idle' : 'active';
+    try {
+      await ecgApi.agents.update(agent.id, { status: next });
+      setAgents(agents.map(a => a.id === agent.id ? { ...a, status: next } : a));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
       <PageHeader eyebrow="Content" title="Agents" action={
@@ -98,6 +111,15 @@ export default function AgentsPage() {
                 </button>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <StatusBadge status={a.status} />
+                  {(a.status === 'active' || a.status === 'idle' || a.status === 'provisioning') && (
+                    <button onClick={() => handleToggleStatus(a)}
+                      title={a.status === 'active' ? 'Pause' : 'Activate'}
+                      className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
+                      {a.status === 'active'
+                        ? <Pause className="w-4 h-4" style={{ color: 'var(--muted)' }} />
+                        : <Play className="w-4 h-4" style={{ color: 'var(--accent)' }} />}
+                    </button>
+                  )}
                   <button onClick={() => handleRun(a.id)} title="Run now"
                     className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
                     <Zap className="w-4 h-4" style={{ color: 'var(--accent)' }} />

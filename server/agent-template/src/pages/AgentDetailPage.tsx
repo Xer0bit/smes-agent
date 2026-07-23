@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Zap, Pencil, Calendar, History, FileText } from 'lucide-react';
+import { ArrowLeft, Zap, Pencil, Calendar, History, FileText, Play, Pause } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import StatusBadge from '../components/StatusBadge';
 import { Card, Spinner, EmptyState, relTime } from '../components/ui';
@@ -36,6 +36,17 @@ export default function AgentDetailPage() {
       setError(e.message);
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handleToggleStatus = async () => {
+    if (!agentId || !data) return;
+    const next = data.agent.status === 'active' ? 'idle' : 'active';
+    try {
+      await ecgApi.agents.update(agentId, { status: next });
+      setData({ ...data, agent: { ...data.agent, status: next } });
+    } catch (e: any) {
+      setError(e.message);
     }
   };
 
@@ -79,6 +90,14 @@ export default function AgentDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {(agent.status === 'active' || agent.status === 'idle' || agent.status === 'provisioning') && (
+            <button onClick={handleToggleStatus}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border"
+              style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+              {agent.status === 'active' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+              {agent.status === 'active' ? 'Pause' : 'Activate'}
+            </button>
+          )}
           <button onClick={handleRun} disabled={running}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
             style={{ background: 'var(--accent)' }}>
