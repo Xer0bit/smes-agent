@@ -102,6 +102,8 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
     if (seg.length === 4 && seg[3] === 'test') return 'unsupported';
   }
 
+  if (seg[0] === 'stats' && method === 'GET' && seg.length === 1) return { tool: 'get_stats', args: {} };
+
   if (seg[0] === 'runs' && method === 'GET' && seg.length === 1) return { tool: 'list_runs', args: {} };
 
   if (seg[0] === 'knowledge' && seg[1] !== 'bases') {
