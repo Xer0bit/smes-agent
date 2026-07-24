@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Loader2, Plug, Database, Trash2, ArrowLeft } from 'lucide-react';
+import { Loader2, Plug, Database, Trash2, ArrowLeft, BrainCircuit, X, Plus } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 
 const TIMEZONES = [
@@ -8,6 +8,53 @@ const TIMEZONES = [
   'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Asia/Dubai', 'Asia/Kolkata', 'Asia/Bangkok',
   'Asia/Shanghai', 'Asia/Hong_Kong', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney', 'UTC',
 ];
+
+interface Harness {
+  historyWindow: number;
+  avoidRepeats: boolean;
+  topicsToAvoid: string[];
+  focusTopics: string[];
+}
+const DEFAULT_HARNESS: Harness = { historyWindow: 8, avoidRepeats: true, topicsToAvoid: [], focusTopics: [] };
+
+// Editable tag list: type + Enter/comma to add, click x to remove.
+function TagInput({ tags, onChange, placeholder }: { tags: string[]; onChange: (t: string[]) => void; placeholder: string }) {
+  const [draft, setDraft] = useState('');
+  function commit() {
+    const v = draft.trim();
+    if (v && !tags.includes(v)) onChange([...tags, v]);
+    setDraft('');
+  }
+  return (
+    <div className="rounded-lg border px-2 py-2 flex flex-wrap gap-1.5" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)' }}>
+      {tags.map(t => (
+        <span key={t} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full" style={{ background: 'var(--accent-bg)', color: 'var(--text)' }}>
+          {t}
+          <button type="button" onClick={() => onChange(tags.filter(x => x !== t))} className="hover:opacity-70">
+            <X className="w-3 h-3" />
+          </button>
+        </span>
+      ))}
+      <input
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
+          if (e.key === 'Backspace' && !draft && tags.length > 0) onChange(tags.slice(0, -1));
+        }}
+        onBlur={commit}
+        placeholder={tags.length === 0 ? placeholder : ''}
+        className="flex-1 min-w-[8rem] text-sm bg-transparent focus:outline-none"
+        style={{ color: 'var(--text)' }}
+      />
+      {draft.trim() && (
+        <button type="button" onClick={commit} className="p-1 rounded hover:opacity-70" style={{ color: 'var(--accent)' }}>
+          <Plus className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
 
 export default function EditAgentPage() {
   const { agentId } = useParams<{ agentId: string }>();
@@ -24,6 +71,7 @@ export default function EditAgentPage() {
   const [status, setStatus] = useState('active');
   const [selectedConnectorIds, setSelectedConnectorIds] = useState<string[]>([]);
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
+  const [harness, setHarness] = useState<Harness>(DEFAULT_HARNESS);
 
   const [connectors, setConnectors] = useState<any[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<any[]>([]);
@@ -35,13 +83,17 @@ export default function EditAgentPage() {
       ecgApi.connectors.list().then(d => Array.isArray(d) ? d : (d.connectors ?? [])),
       ecgApi.knowledgeBases.list().then(d => Array.isArray(d) ? d : (d.knowledgeBases ?? [])).catch(() => []),
     ])
-      .then(([agent, c, kb]: any[]) => {
+      .then(([agentResp, c, kb]: any[]) => {
+        // get_agent_status nests the actual agent record under `.agent`
+        // (the response also carries recentRuns/schedulers alongside it).
+        const agent = agentResp.agent ?? agentResp;
         setName(agent.name ?? '');
         setTimezone(agent.timezone ?? 'UTC');
         setOverlay(agent.prompt_overlay ?? agent.promptOverlay ?? '');
         setStatus(agent.status ?? 'active');
         setSelectedConnectorIds(agent.connector_ids ?? agent.connectorIds ?? []);
         setSelectedKbIds(agent.knowledge_base_ids ?? agent.knowledgeBaseIds ?? []);
+        setHarness({ ...DEFAULT_HARNESS, ...(agent.harness ?? {}) });
         setConnectors(c);
         setKnowledgeBases(kb);
       })
@@ -69,6 +121,7 @@ export default function EditAgentPage() {
         prompt_overlay: overlay,
         connector_ids: selectedConnectorIds,
         knowledge_base_ids: selectedKbIds,
+        harness,
       });
       navigate('/agents');
     } catch (e: any) {
@@ -125,6 +178,47 @@ export default function EditAgentPage() {
         <div>
           <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Status</label>
           <p className="text-xs" style={{ color: 'var(--muted)' }}>Currently <span className="font-medium" style={{ color: 'var(--text)' }}>{status}</span>   change via the run/pause controls in Agents.</p>
+        </div>
+      </div>
+
+      <div className="rounded-xl border p-5 space-y-4" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <BrainCircuit className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} />
+            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Agent Memory (Harness)</p>
+          </div>
+          <p className="text-xs" style={{ color: 'var(--muted)' }}>
+            Controls what this agent remembers about its own past posts when it writes new ones, so it doesn't repeat itself.
+          </p>
+        </div>
+
+        <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <span className="text-sm" style={{ color: 'var(--text)' }}>Avoid repeating recent topics</span>
+          <input type="checkbox" checked={harness.avoidRepeats}
+            onChange={e => setHarness(h => ({ ...h, avoidRepeats: e.target.checked }))} className="w-4 h-4" />
+        </label>
+
+        {harness.avoidRepeats && (
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium" style={{ color: 'var(--text)' }}>How many recent posts to remember</label>
+              <span className="text-xs font-mono" style={{ color: 'var(--muted)' }}>{harness.historyWindow}</span>
+            </div>
+            <input type="range" min={0} max={30} value={harness.historyWindow}
+              onChange={e => setHarness(h => ({ ...h, historyWindow: Number(e.target.value) }))} className="w-full" />
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Topics to never post about</label>
+          <TagInput tags={harness.topicsToAvoid} placeholder="Type a topic and press Enter…"
+            onChange={t => setHarness(h => ({ ...h, topicsToAvoid: t }))} />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Topics to prioritize / rotate through</label>
+          <TagInput tags={harness.focusTopics} placeholder="Type a topic and press Enter…"
+            onChange={t => setHarness(h => ({ ...h, focusTopics: t }))} />
         </div>
       </div>
 

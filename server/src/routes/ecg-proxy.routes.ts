@@ -77,7 +77,12 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
       if (method === 'GET') return { tool: 'get_agent_status', args: { agentId: id } };
       if (method === 'PATCH') return {
         tool: 'update_agent',
-        args: { agentId: id, ...pick(body, ['name', 'name'], ['promptOverlay', 'prompt_overlay'], ['connectorIds', 'connector_ids'], ['status', 'status']) },
+        args: {
+          agentId: id,
+          ...pick(body, ['name', 'name'], ['promptOverlay', 'prompt_overlay'], ['connectorIds', 'connector_ids'],
+            ['status', 'status'], ['timezone', 'timezone'], ['knowledgeBaseIds', 'knowledge_base_ids']),
+          ...(body?.harness !== undefined ? { harness: body.harness } : {}),
+        },
       };
       if (method === 'DELETE') return { tool: 'delete_agent', args: { agentId: id } };
     }
