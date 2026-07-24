@@ -32,6 +32,7 @@ import { databaseService, buildProjectEnvSecrets } from '../services/database.se
 import { discoverEcgOrg } from '../services/ecgMcpClient.service.js';
 import { seedEcgTemplate } from '../services/ecg-template.js';
 import { saveEcgRevision, syncEcgPreviewService } from './ecg-connect.routes.js';
+import { captureThumbnail } from '../services/thumbnailService.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
@@ -253,6 +254,20 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
 
     await syncEcgPreviewService(project.id, filesArray);
     sseWrite(res, 'step', { id: 'preview_synced', status: 'done' });
+
+    // The normal AI-edit loop (agentLoopService.ts) writes this after every
+    // successful preview push so the Editor/Projects grid can show a
+    // thumbnail; this route never did, so every eCG dashboard was created
+    // with revisions.preview_url permanently null and no thumbnail ever
+    // generated for it.
+    const publicPreviewBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
+    const revisionPreviewUrl = `${publicPreviewBase}/preview/${project.id}/`;
+    try {
+      await supabase.from('revisions').update({ preview_url: revisionPreviewUrl, preview_status: 'ready' }).eq('project_id', project.id);
+      captureThumbnail(project.id, revisionPreviewUrl, supabase);
+    } catch (err) {
+      logger.warn('[ecg-dev-agent] preview_url/thumbnail write failed (non-fatal)', err);
+    }
 
     sseWrite(res, 'done', { projectId: project.id });
     res.end();
