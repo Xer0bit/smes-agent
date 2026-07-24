@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight, CheckCircle, XCircle, FileText } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, CheckCircle, XCircle, FileText, Pencil, Trash2 } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import StatusBadge from '../components/StatusBadge';
 import { Card, Spinner, platformMeta } from '../components/ui';
+import { PostModal, platformFromConnectorType } from './PostsPage';
 
 function dateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -12,15 +13,59 @@ function dateKey(d: Date) {
 export default function PostsCalendarPage() {
   const navigate = useNavigate();
   const [posts, setPosts] = useState<any[]>([]);
+  const [connectedPlatforms, setConnectedPlatforms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d; });
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [acting, setActing] = useState<string | null>(null);
+  const [editingPost, setEditingPost] = useState<any>(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    ecgApi.posts.list()
-      .then(d => setPosts(Array.isArray(d) ? d : (d.posts ?? d.plannedPosts ?? [])))
-      .finally(() => setLoading(false));
+    Promise.all([
+      ecgApi.posts.list(),
+      ecgApi.connectors.list().catch(() => []),
+    ]).then(([postsData, connectorsData]) => {
+      setPosts(Array.isArray(postsData) ? postsData : (postsData.posts ?? postsData.plannedPosts ?? []));
+      const connectors = Array.isArray(connectorsData) ? connectorsData : (connectorsData.connectors ?? []);
+      const platforms = connectors
+        .filter((c: any) => ['connected', 'active'].includes((c.status ?? '').toLowerCase()))
+        .map((c: any) => platformFromConnectorType(c.type))
+        .filter((p: string | null): p is string => p !== null);
+      setConnectedPlatforms([...new Set(platforms)]);
+    }).finally(() => setLoading(false));
   }, []);
+
+  async function act(id: string, action: 'approve' | 'reject') {
+    setActing(id);
+    try {
+      if (action === 'approve') await ecgApi.posts.approve(id);
+      else await ecgApi.posts.reject(id);
+      setPosts(prev => prev.map(p => p.id === id ? { ...p, status: action === 'approve' ? 'approved' : 'rejected' } : p));
+    } catch (e: any) {
+      setError(e.message);
+    } finally { setActing(null); }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await ecgApi.posts.delete(id);
+      setPosts(prev => prev.filter(p => p.id !== id));
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function handleUpdate(data: { content: string; platform: string }) {
+    if (!editingPost?.id) return;
+    try {
+      await ecgApi.posts.update(editingPost.id, data);
+      setPosts(prev => prev.map(p => p.id === editingPost.id ? { ...p, ...data } : p));
+      setEditingPost(null);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
 
   // The proxy's planned-posts response only ever gives pending/approved/
   // rejected (see DashboardPage.tsx's note on toDashboardPostStatus)  
@@ -68,6 +113,8 @@ export default function PostsCalendarPage() {
           <h1 className="text-lg mt-0.5" style={{ color: 'var(--text)', fontWeight: 'var(--font-weight-heading)' }}>Posts Calendar</h1>
         </div>
       </div>
+
+      {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
 
       <div className="flex items-center justify-between">
         <button onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() - 1, 1))}
@@ -141,7 +188,7 @@ export default function PostsCalendarPage() {
                   : <FileText className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--muted)' }} />}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm leading-relaxed line-clamp-2" style={{ color: 'var(--text)' }}>{p.content ?? '(no content)'}</p>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
                     {p.platform && (
                       <span className="inline-flex items-center gap-1 text-xs" style={{ color: 'var(--muted)' }}>
                         <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: pm.bar }} /> {pm.label}
@@ -150,10 +197,42 @@ export default function PostsCalendarPage() {
                     <StatusBadge status={p.status} />
                   </div>
                 </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {p.status === 'pending' && (
+                    <>
+                      <button onClick={() => act(p.id, 'reject')} disabled={!!acting} title="Reject"
+                        className="p-1.5 rounded hover:bg-red-500/10 disabled:opacity-50">
+                        <XCircle className="w-3.5 h-3.5" style={{ color: '#dc2626' }} />
+                      </button>
+                      <button onClick={() => act(p.id, 'approve')} disabled={!!acting} title="Approve"
+                        className="p-1.5 rounded hover:bg-[var(--accent-bg)] disabled:opacity-50">
+                        <CheckCircle className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
+                      </button>
+                      <button onClick={() => setEditingPost(p)} title="Edit"
+                        className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
+                        <Pencil className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} />
+                      </button>
+                    </>
+                  )}
+                  <button onClick={() => handleDelete(p.id)} title="Delete"
+                    className="p-1.5 rounded hover:bg-red-500/10">
+                    <Trash2 className="w-3.5 h-3.5" style={{ color: '#dc2626' }} />
+                  </button>
+                </div>
               </div>
             );
           })}
         </Card>
+      )}
+
+      {editingPost && (
+        <PostModal
+          connectedPlatforms={connectedPlatforms}
+          initial={{ content: editingPost.content ?? '', platform: editingPost.platform ?? '' }}
+          onClose={() => setEditingPost(null)}
+          onSave={handleUpdate}
+          loading={false}
+        />
       )}
     </div>
   );

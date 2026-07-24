@@ -23,20 +23,48 @@ const PLATFORM_COLORS: Record<string, string> = {
   whatsapp: 'bg-green-100 text-green-700',
 };
 
+const PLATFORM_LABELS: Record<string, string> = {
+  linkedin: 'LinkedIn', x: 'X', twitter: 'X', instagram: 'Instagram', facebook: 'Facebook',
+  youtube: 'YouTube', tiktok: 'TikTok', threads: 'Threads', pinterest: 'Pinterest',
+  telegram: 'Telegram', whatsapp: 'WhatsApp',
+};
+
+// A connector's `type` is always `zapier-mcp-<platform>` (or the native
+// `whatsapp`) -- see ConnectorsPage.tsx. The generic `zapier` type covers no
+// single known platform, so it's excluded rather than guessed at.
+export function platformFromConnectorType(type: string): string | null {
+  if (type === 'whatsapp') return 'whatsapp';
+  if (type.startsWith('zapier-mcp-')) return type.replace('zapier-mcp-', '');
+  return null;
+}
+
 export default function PostsPage() {
   const navigate = useNavigate();
   const [posts, setPosts] = useState<any[]>([]);
+  const [connectedPlatforms, setConnectedPlatforms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>(defaultTab);
   const [acting, setActing] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [editingPost, setEditingPost] = useState<any>(null);
   const [deletingPost, setDeletingPost] = useState<any>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    ecgApi.posts.list()
-      .then(d => setPosts(Array.isArray(d) ? d : (d.posts ?? d.plannedPosts ?? [])))
+    Promise.all([
+      ecgApi.posts.list(),
+      ecgApi.connectors.list().catch(() => []),
+    ])
+      .then(([postsData, connectorsData]) => {
+        setPosts(Array.isArray(postsData) ? postsData : (postsData.posts ?? postsData.plannedPosts ?? []));
+        const connectors = Array.isArray(connectorsData) ? connectorsData : (connectorsData.connectors ?? []);
+        const platforms = connectors
+          .filter((c: any) => ['connected', 'active'].includes((c.status ?? '').toLowerCase()))
+          .map((c: any) => platformFromConnectorType(c.type))
+          .filter((p: string | null): p is string => p !== null);
+        setConnectedPlatforms([...new Set(platforms)]);
+      })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
@@ -75,6 +103,20 @@ export default function PostsPage() {
       const created = await ecgApi.posts.create(postData);
       setPosts([...posts, created]);
       setShowCreate(false);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const handleUpdate = async (data: { content: string; platform: string }) => {
+    if (!editingPost?.id) return;
+    setModalLoading(true);
+    try {
+      await ecgApi.posts.update(editingPost.id, data);
+      setPosts(posts.map(p => p.id === editingPost.id ? { ...p, ...data } : p));
+      setEditingPost(null);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -138,6 +180,16 @@ export default function PostsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <StatusBadge status={p.status} />
+                    {p.status === 'pending' && (
+                      <button
+                        onClick={() => setEditingPost(p)}
+                        className="p-1 rounded hover:opacity-70"
+                        title="Edit post"
+                        style={{ color: 'var(--muted)' }}
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                    )}
                     <button
                       onClick={() => navigate(`/posts/${p.id}/visual`)}
                       className="p-1 rounded hover:opacity-70"
@@ -203,8 +255,19 @@ export default function PostsPage() {
 
       {showCreate && (
         <PostModal
+          connectedPlatforms={connectedPlatforms}
           onClose={() => setShowCreate(false)}
           onSave={handleCreate}
+          loading={modalLoading}
+        />
+      )}
+
+      {editingPost && (
+        <PostModal
+          connectedPlatforms={connectedPlatforms}
+          initial={{ content: editingPost.content ?? '', platform: editingPost.platform ?? '' }}
+          onClose={() => setEditingPost(null)}
+          onSave={handleUpdate}
           loading={modalLoading}
         />
       )}
@@ -221,17 +284,19 @@ export default function PostsPage() {
   );
 }
 
-function PostModal({ onClose, onSave, loading }: {
+export function PostModal({ connectedPlatforms, initial, onClose, onSave, loading }: {
+  connectedPlatforms: string[];
+  initial?: { content: string; platform: string };
   onClose: () => void;
   onSave: (data: any) => void;
   loading: boolean;
 }) {
-  const [content, setContent] = useState('');
-  const [platform, setPlatform] = useState('linkedin');
+  const [content, setContent] = useState(initial?.content ?? '');
+  const [platform, setPlatform] = useState(initial?.platform || connectedPlatforms[0] || '');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!content.trim()) return;
+    if (!content.trim() || !platform) return;
     onSave({ content: content.trim(), platform });
   };
 
@@ -239,7 +304,7 @@ function PostModal({ onClose, onSave, loading }: {
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="rounded-xl shadow-xl w-full max-w-lg p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>New Post</h2>
+          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>{initial ? 'Edit Post' : 'New Post'}</h2>
           <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
             <X className="w-5 h-5" style={{ color: 'var(--muted)' }} />
           </button>
@@ -261,24 +326,22 @@ function PostModal({ onClose, onSave, loading }: {
 
           <div>
             <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Platform</label>
-            <select
-              value={platform}
-              onChange={e => setPlatform(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
-              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
-            >
-              <option value="linkedin">LinkedIn</option>
-              <option value="twitter">Twitter</option>
-              <option value="x">X</option>
-              <option value="instagram">Instagram</option>
-              <option value="facebook">Facebook</option>
-              <option value="youtube">YouTube</option>
-              <option value="tiktok">TikTok</option>
-              <option value="threads">Threads</option>
-              <option value="pinterest">Pinterest</option>
-              <option value="telegram">Telegram</option>
-              <option value="whatsapp">WhatsApp</option>
-            </select>
+            {connectedPlatforms.length === 0 ? (
+              <p className="text-xs px-3 py-2 rounded-lg" style={{ background: 'rgba(220,38,38,0.08)', color: '#dc2626' }}>
+                No connected platforms yet. Connect one in Connectors first.
+              </p>
+            ) : (
+              <select
+                value={platform}
+                onChange={e => setPlatform(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
+                style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+              >
+                {connectedPlatforms.map(p => (
+                  <option key={p} value={p}>{PLATFORM_LABELS[p] ?? p}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div className="flex gap-3 pt-2">
@@ -292,11 +355,11 @@ function PostModal({ onClose, onSave, loading }: {
             </button>
             <button
               type="submit"
-              disabled={loading || !content.trim()}
+              disabled={loading || !content.trim() || !platform}
               className="flex-1 px-4 py-2 rounded-lg text-white disabled:opacity-50"
               style={{ background: 'var(--accent)' }}
             >
-              {loading ? 'Creating...' : 'Create Post'}
+              {loading ? 'Saving…' : initial ? 'Save Changes' : 'Create Post'}
             </button>
           </div>
         </form>

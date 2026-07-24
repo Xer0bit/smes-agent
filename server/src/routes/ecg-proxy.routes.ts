@@ -110,7 +110,19 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
       if (method === 'DELETE') return { tool: 'cancel_post', args: { postId: id } };
       if (method === 'PATCH') {
         if (body?.status === 'approved') return { tool: 'approve_post', args: { postId: id } };
-        return 'unsupported'; // reject has no MCP equivalent (only approve/cancel)
+        // dashboard 'rejected' === DB 'cancelled' (ecgData.ts's toDbPostStatus)
+        // -- same effect as DELETE above, just reached via the reject button
+        // instead of the trash icon. This previously fell through to
+        // 'unsupported' entirely: Reject never worked on an MCP dashboard.
+        if (body?.status === 'rejected') return { tool: 'cancel_post', args: { postId: id } };
+        // Editing content/platform/scheduledAt (no status change).
+        if (body?.status === undefined) {
+          return {
+            tool: 'update_post',
+            args: pick(body, ['content', 'content'], ['platform', 'platform'], ['scheduledAt', 'scheduled_at']),
+          };
+        }
+        return 'unsupported';
       }
     }
   }

@@ -95,6 +95,7 @@ export const ecgApi = {
     delete:  (id: string) => req('DELETE', `/planned-posts/${id}`),
     approve: (id: string) => req('PATCH', `/planned-posts/${id}`, { status: 'approved' }),
     reject:  (id: string) => req('PATCH', `/planned-posts/${id}`, { status: 'rejected' }),
+    update:  (id: string, data: { content?: string; platform?: string; scheduledAt?: string }) => req('PATCH', `/planned-posts/${id}`, data),
   },
 
   // Post visuals   Canva-style canvas (background + positioned text/image/

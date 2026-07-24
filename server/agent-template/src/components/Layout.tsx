@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings, LucideIcon } from 'lucide-react';
+import { LayoutDashboard, Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings, LucideIcon, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { ECG } from '../ecg-config';
 import { ecgApi } from '../lib/ecgClient';
 import TopBar from './TopBar';
@@ -76,29 +76,40 @@ const NAV_GROUPS: Record<string, string> = {
   connectors: 'System', runs: 'System', knowledge: 'System', settings: 'System',
 };
 
+const SIDEBAR_COLLAPSE_KEY = 'ecg_sidebar_collapsed';
+
 function Sidebar({ children, pathname }: { children: ReactNode; pathname: string }) {
   const pendingCount = usePendingCount();
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1');
   let lastGroup = '';
+
+  function toggleCollapsed() {
+    setCollapsed(prev => {
+      localStorage.setItem(SIDEBAR_COLLAPSE_KEY, prev ? '0' : '1');
+      return !prev;
+    });
+  }
+
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: 'var(--body-bg)' }}>
-      <aside className="w-60 flex flex-col border-r shrink-0"
-        style={{ background: 'var(--sidebar-bg)', borderColor: 'var(--border)' }}>
-        <div className="px-4 py-5 border-b" style={{ borderColor: 'var(--border)' }}>
-          <div className="flex items-center gap-2.5">
-            <BrandLogo className="w-8 h-8" />
+      <aside className="flex flex-col border-r shrink-0 transition-[width] duration-150"
+        style={{ background: 'var(--sidebar-bg)', borderColor: 'var(--border)', width: collapsed ? '4.25rem' : '15rem' }}>
+        <div className="px-4 py-5 border-b flex items-center gap-2.5" style={{ borderColor: 'var(--border)' }}>
+          <BrandLogo className="w-8 h-8 shrink-0" />
+          {!collapsed && (
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-widest leading-none" style={{ color: 'var(--accent)' }}>eCG</p>
               <p className="text-sm truncate mt-1" style={{ color: 'var(--sidebar-text)', fontWeight: 'var(--font-weight-heading)' }}>{ECG.appName}</p>
             </div>
-          </div>
+          )}
         </div>
-        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto overflow-x-hidden">
           {NAV.map(({ id, label, path, icon }) => {
             const Icon = ALL_ICONS[icon] ?? Zap;
             const isActive = path === '/' ? pathname === '/' : pathname.startsWith(path);
             const group = NAV_GROUPS[id] ?? '';
-            const showLabel = group !== lastGroup;
-            if (showLabel) lastGroup = group;
+            const showLabel = !collapsed && group !== lastGroup;
+            if (group !== lastGroup) lastGroup = group;
             const showBadge = id === 'posts' && pendingCount > 0;
             return (
               <div key={path}>
@@ -107,19 +118,20 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
                     {group}
                   </p>
                 )}
-                <NavLink to={path}
+                <NavLink to={path} title={collapsed ? label : undefined}
                   className="relative flex items-center gap-2.5 px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--sidebar-hover)]"
                   style={{
                     borderRadius: 'var(--radius-sm)',
+                    justifyContent: collapsed ? 'center' : 'flex-start',
                     ...(isActive
                       ? { background: 'var(--accent-bg)', color: 'var(--accent)' }
                       : { color: 'var(--sidebar-muted)' }),
                   }}>
-                  {isActive && (
+                  {isActive && !collapsed && (
                     <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-0.5 rounded-r-full" style={{ background: 'var(--accent)' }} />
                   )}
                   <Icon className="w-4 h-4 shrink-0" />
-                  <span className="flex-1">{label}</span>
+                  {!collapsed && <span className="flex-1">{label}</span>}
                   {showBadge && (
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none min-w-[18px] text-center text-white" style={{ background: 'var(--accent)' }}>
                       {pendingCount > 99 ? '99+' : pendingCount}
@@ -130,8 +142,15 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
             );
           })}
         </nav>
-        <div className="px-4 py-3.5 border-t" style={{ borderColor: 'var(--border)' }}>
-          <p className="text-xs" style={{ color: 'var(--sidebar-muted)' }}>Powered by eComGear</p>
+        <div className="border-t" style={{ borderColor: 'var(--border)' }}>
+          <button onClick={toggleCollapsed} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="w-full flex items-center gap-2 px-4 py-3 text-xs hover:bg-[var(--sidebar-hover)] transition-colors"
+            style={{ color: 'var(--sidebar-muted)', justifyContent: collapsed ? 'center' : 'flex-start' }}>
+            {collapsed ? <ChevronsRight className="w-4 h-4 shrink-0" /> : <><ChevronsLeft className="w-4 h-4 shrink-0" /> Collapse</>}
+          </button>
+          {!collapsed && (
+            <p className="px-4 pb-3.5 text-xs" style={{ color: 'var(--sidebar-muted)' }}>Powered by eComGear</p>
+          )}
         </div>
       </aside>
       <div className="flex-1 flex flex-col overflow-hidden">
