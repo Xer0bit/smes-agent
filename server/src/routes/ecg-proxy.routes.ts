@@ -69,7 +69,8 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
       if (method === 'GET') return { tool: 'list_agents', args: {} };
       if (method === 'POST') return {
         tool: 'create_agent',
-        args: pick(body, ['name', 'name'], ['templateId', 'template_id'], ['promptOverlay', 'prompt_overlay'], ['connectorIds', 'connector_ids']),
+        args: pick(body, ['name', 'name'], ['templateId', 'template_id'], ['promptOverlay', 'prompt_overlay'],
+          ['connectorIds', 'connector_ids'], ['timezone', 'timezone'], ['knowledgeBaseIds', 'knowledge_base_ids']),
       };
     }
     if (seg.length === 2) {
@@ -115,7 +116,12 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
     }
     if (seg.length === 2) {
       const id = seg[1];
-      if (method === 'DELETE') return { tool: 'cancel_post', args: { postId: id } };
+      // Delete (Trash icon in the UI) permanently removes the post; Cancel
+      // (below, via PATCH status:'cancelled') just stops it from publishing
+      // while keeping the record. These were wrongly collapsed into the same
+      // cancel_post call -- "deleted" posts were only ever cancelled, so they
+      // kept reappearing in the Cancelled/All views after a page reload.
+      if (method === 'DELETE') return { tool: 'delete_post', args: { postId: id } };
       if (method === 'PATCH') {
         // The dashboard now speaks the SAME raw status vocabulary the backend
         // actually uses (draft/scheduled/posting/posted/failed/cancelled) --
