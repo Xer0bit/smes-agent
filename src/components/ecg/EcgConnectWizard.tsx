@@ -12,6 +12,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { getApiServerUrl } from '@/config/external-api';
+import { useOrganization } from '@/contexts/OrganizationContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -59,6 +60,7 @@ const PROVISION_STEPS: Array<{ id: string; label: string }> = [
 
 export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }) {
   const navigate = useNavigate();
+  const { currentOrganizationId } = useOrganization();
   const [step, setStep] = useState<'connect' | 'confirm' | 'provision'>('connect');
   const [apiKey, setApiKey] = useState('');
   const [busy, setBusy] = useState(false);
@@ -121,6 +123,12 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
         body: JSON.stringify({
           apiKey: apiKey.trim(),
           password: password.trim() || undefined,
+          // Without this the project is created with no organization at all,
+          // which silently breaks every org-scoped paid-plan check later
+          // (hosted database requires a Pro/Agency org  the check reads the
+          // PROJECT's own organization_id, not whichever org is active in
+          // the sidebar) regardless of whether the user's real org is paid.
+          organizationId: currentOrganizationId ?? undefined,
           config: {
             appName: appName.trim() || undefined,
             logoUrl: logoUrl.trim() || undefined,
