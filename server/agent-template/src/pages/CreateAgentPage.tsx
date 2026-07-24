@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronRight, Rocket, Plug, Database, CalendarClock, AlertTriangle, Loader2, PartyPopper } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
+import { DAYS_OF_WEEK, buildWeeklyCron } from '../components/ui';
 
 interface Template {
   id: string; name: string; description?: string; category?: string;
@@ -34,7 +35,8 @@ export default function CreateAgentPage() {
   const [overlay, setOverlay] = useState('');
   const [selectedConnectorIds, setSelectedConnectorIds] = useState<string[]>([]);
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
-  const [cron, setCron] = useState('');
+  const [scheduleDays, setScheduleDays] = useState<string[]>([]);
+  const [scheduleHour, setScheduleHour] = useState(9);
 
   const [launching, setLaunching] = useState(false);
   const [done, setDone] = useState(false);
@@ -79,7 +81,7 @@ export default function CreateAgentPage() {
         connectorIds: selectedConnectorIds,
         knowledgeBaseIds: selectedKbIds,
       });
-      if (scheduleCapable && cron.trim() && created?.id) {
+      if (scheduleCapable && scheduleDays.length > 0 && created?.id) {
         // Backend expects a platform TYPE string ("zapier-mcp-linkedin"), not
         // the connector's row id  passing the raw id silently created a
         // scheduler with a garbage `connector` value that the publish
@@ -87,7 +89,7 @@ export default function CreateAgentPage() {
         const connectorType = connectors.find(c => c.id === selectedConnectorIds[0])?.type;
         if (connectorType) {
           try {
-            await ecgApi.schedulers.create({ agentId: created.id, cron: cron.trim(), connector: connectorType });
+            await ecgApi.schedulers.create({ agentId: created.id, cron: buildWeeklyCron(scheduleDays, scheduleHour), connector: connectorType });
           } catch (e: any) {
             // Agent creation still succeeds  surface the scheduler failure
             // instead of silently swallowing it, so the user isn't left
@@ -278,13 +280,28 @@ export default function CreateAgentPage() {
           </div>
           {scheduleCapable && (
             <div>
-              <div className="flex items-center gap-1.5 mb-1">
+              <div className="flex items-center gap-1.5 mb-1.5">
                 <CalendarClock className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} />
-                <label className="text-xs font-medium" style={{ color: 'var(--text)' }}>Posting Schedule (optional, cron)</label>
+                <label className="text-xs font-medium" style={{ color: 'var(--text)' }}>Posting Schedule (optional)</label>
               </div>
-              <input value={cron} onChange={e => setCron(e.target.value)} placeholder="0 9 * * *"
-                className="w-full px-3 py-2 rounded-lg border text-sm font-mono" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }} />
-              <p className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>Leave blank to set up a schedule later in Schedulers.</p>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {DAYS_OF_WEEK.map(d => {
+                  const on = scheduleDays.includes(d.value);
+                  return (
+                    <button key={d.value} type="button"
+                      onClick={() => setScheduleDays(prev => on ? prev.filter(v => v !== d.value) : [...prev, d.value])}
+                      className="text-xs px-3 py-1.5 rounded-lg border transition-colors"
+                      style={on ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <select value={scheduleHour} onChange={e => setScheduleHour(Number(e.target.value))}
+                className="w-full px-3 py-2 rounded-lg border text-sm" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}>
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
+              </select>
+              <p className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>Leave no days selected to set up a schedule later in Schedulers.</p>
             </div>
           )}
           <div className="flex justify-between pt-2">

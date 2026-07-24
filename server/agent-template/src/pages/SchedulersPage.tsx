@@ -3,31 +3,10 @@ import { Plus, Pencil, Trash2, X, Play, Send, Loader2, AlertTriangle } from 'luc
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
-import { PageHeader, EmptyState, Spinner, relTime } from '../components/ui';
+import { PageHeader, EmptyState, Spinner, relTime, DAYS_OF_WEEK, buildWeeklyCron, cadenceSentence } from '../components/ui';
 import { Calendar } from 'lucide-react';
 
 const showNextRun = (ECG.moduleSettings.schedulers?.showNextRun ?? true) !== false;
-
-// "Mon, Wed, Fri at 09:00 - 3 posts" instead of raw cron. Falls back to the
-// raw string for any cron shape the weekly builder didn't produce.
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-function cadenceSentence(cron?: string, postCount?: number): string | null {
-  if (!cron) return null;
-  const m = /^0 (\d{1,2}) \* \* ([\d,]+)$/.exec(cron.trim());
-  if (!m) return null;
-  const days = m[2].split(',').map(d => DAY_NAMES[Number(d)] ?? d).join(', ');
-  const posts = postCount ? ` · ${postCount} post${postCount === 1 ? '' : 's'}` : '';
-  return `${days} at ${String(m[1]).padStart(2, '0')}:00${posts}`;
-}
-
-const DAYS_OF_WEEK = [
-  { label: 'Mon', value: '1' }, { label: 'Tue', value: '2' }, { label: 'Wed', value: '3' },
-  { label: 'Thu', value: '4' }, { label: 'Fri', value: '5' }, { label: 'Sat', value: '6' }, { label: 'Sun', value: '0' },
-];
-function buildWeeklyCron(days: string[], hour: number): string {
-  const sorted = [...days].sort((a, b) => Number(a) - Number(b));
-  return `0 ${hour} * * ${sorted.join(',')}`;
-}
 
 export default function SchedulersPage() {
   const [rows, setRows] = useState<any[]>([]);
