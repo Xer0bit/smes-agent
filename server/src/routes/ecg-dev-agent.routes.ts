@@ -229,6 +229,31 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
     });
     sseWrite(res, 'step', { id: 'template_seeded', status: 'done', pages: Object.keys(templateFiles).filter((f) => f.startsWith('src/pages/')).length });
 
+    // ── Base memory for the dev agent ────────────────────────────────────────
+    // ai.routes.ts injects projects.context_notes into EVERY chat request as
+    // "## Project Context Notes" (see agentLoopService.ts's knowledgeBlock) --
+    // this is the durable, conversation-independent memory mechanism the app
+    // already has for exactly this purpose. It was never populated for eCG
+    // dashboards, so a fresh chat had nothing but the generic eCG integration
+    // rules to go on and would often reinvent structure that already existed
+    // (new pages/components duplicating what's already in src/pages,
+    // hardcoded colors instead of the existing CSS tokens, etc.) instead of
+    // extending it. Listing the ACTUAL seeded pages (not a fixed guess) so
+    // this stays accurate if the module list changes.
+    const seededPages = Object.keys(templateFiles)
+      .filter((f) => f.startsWith('src/pages/'))
+      .map((f) => f.replace('src/pages/', '').replace(/\.tsx?$/, ''));
+    const contextNotes = [
+      `This is an eCG Agent dashboard: a social-media agent management UI seeded from server/agent-template/, connected to a live eCG Agents org via MCP.`,
+      `Existing pages (extend these, don't recreate them): ${seededPages.join(', ')}.`,
+      `Shared components already exist: Layout.tsx (sidebar/topnav/minimal shell), TopBar.tsx (search + notifications), components/ui.tsx (PageHeader, Card, EmptyState, Spinner, SkeletonRows, platformMeta, relTime), StatusBadge.tsx. Use these instead of hand-rolling equivalents.`,
+      `src/ecg-config.ts is the ONLY customization surface (appName, logoUrl, theme, layout, modules) -- restyle by changing the CSS custom properties in src/index.css, never hardcode colors in components.`,
+      `src/lib/ecgClient.ts is the ONLY data-access layer for this project -- every page fetches through ecgApi, never a raw fetch. It talks to the eCG proxy bridge server-side; credentials never reach the browser.`,
+      `Never edit src/pages/AccessGate.tsx or the token handling in ecgClient.ts -- they are this dashboard's authentication.`,
+      `The project's own README.md documents the full architecture in more detail.`,
+    ].join('\n\n');
+    await supabase.from('projects').update({ context_notes: contextNotes }).eq('id', project.id);
+
     const files: Record<string, string> = { ...templateFiles };
     for (const rel of SCAFFOLD_CONFIG_FILES) {
       try {
