@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight, CheckCircle, XCircle, FileText, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, CheckCircle, XCircle, FileText, Pencil, Trash2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import StatusBadge from '../components/StatusBadge';
 import { Card, Spinner, platformMeta } from '../components/ui';
@@ -41,7 +41,7 @@ export default function PostsCalendarPage() {
     try {
       if (action === 'approve') await ecgApi.posts.approve(id);
       else await ecgApi.posts.reject(id);
-      setPosts(prev => prev.map(p => p.id === id ? { ...p, status: action === 'approve' ? 'approved' : 'rejected' } : p));
+      setPosts(prev => prev.map(p => p.id === id ? { ...p, status: action === 'approve' ? 'scheduled' : 'cancelled' } : p));
     } catch (e: any) {
       setError(e.message);
     } finally { setActing(null); }
@@ -67,8 +67,7 @@ export default function PostsCalendarPage() {
     }
   }
 
-  // The proxy's planned-posts response only ever gives pending/approved/
-  // rejected (see DashboardPage.tsx's note on toDashboardPostStatus)  
+  // Real status vocabulary: draft/scheduled/posting/posted/failed/cancelled.
   // "scheduled for" here means scheduledAt if set, otherwise the post is
   // grouped under its createdAt day instead of being dropped from the view.
   const postsByDay = useMemo(() => {
@@ -182,43 +181,57 @@ export default function PostsCalendarPage() {
           {selectedPosts.map((p: any) => {
             const pm = platformMeta(p.platform ?? '');
             return (
-              <div key={p.id} className="flex items-start gap-2 p-2.5 rounded-lg border" style={{ borderColor: 'var(--border)' }}>
-                {p.status === 'approved' ? <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
-                  : p.status === 'rejected' ? <XCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-500" />
-                  : <FileText className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--muted)' }} />}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm leading-relaxed line-clamp-2" style={{ color: 'var(--text)' }}>{p.content ?? '(no content)'}</p>
-                  <div className="flex items-center gap-2 mt-1 flex-wrap">
-                    {p.platform && (
-                      <span className="inline-flex items-center gap-1 text-xs" style={{ color: 'var(--muted)' }}>
-                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: pm.bar }} /> {pm.label}
-                      </span>
-                    )}
-                    <StatusBadge status={p.status} />
+              <div key={p.id} className="rounded-lg border p-2.5" style={{ borderColor: 'var(--border)' }}>
+                <div className="flex items-start gap-2">
+                  {['posted', 'scheduled', 'posting'].includes(p.status) ? <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
+                    : p.status === 'failed' ? <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-500" />
+                    : p.status === 'cancelled' ? <XCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-500" />
+                    : <FileText className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--muted)' }} />}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm leading-relaxed line-clamp-2" style={{ color: 'var(--text)' }}>{p.content ?? '(no content)'}</p>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      {p.platform && (
+                        <span className="inline-flex items-center gap-1 text-xs" style={{ color: 'var(--muted)' }}>
+                          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: pm.bar }} /> {pm.label}
+                        </span>
+                      )}
+                      <StatusBadge status={p.status} />
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {p.status === 'pending' && (
-                    <>
-                      <button onClick={() => act(p.id, 'reject')} disabled={!!acting} title="Reject"
-                        className="p-1.5 rounded hover:bg-red-500/10 disabled:opacity-50">
-                        <XCircle className="w-3.5 h-3.5" style={{ color: '#dc2626' }} />
-                      </button>
-                      <button onClick={() => act(p.id, 'approve')} disabled={!!acting} title="Approve"
+                  <div className="flex items-center gap-1 shrink-0">
+                    {p.status === 'draft' && (
+                      <>
+                        <button onClick={() => act(p.id, 'reject')} disabled={!!acting} title="Reject"
+                          className="p-1.5 rounded hover:bg-red-500/10 disabled:opacity-50">
+                          <XCircle className="w-3.5 h-3.5" style={{ color: '#dc2626' }} />
+                        </button>
+                        <button onClick={() => act(p.id, 'approve')} disabled={!!acting} title="Approve"
+                          className="p-1.5 rounded hover:bg-[var(--accent-bg)] disabled:opacity-50">
+                          <CheckCircle className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
+                        </button>
+                      </>
+                    )}
+                    {p.status === 'failed' && (
+                      <button onClick={() => act(p.id, 'approve')} disabled={!!acting} title="Retry"
                         className="p-1.5 rounded hover:bg-[var(--accent-bg)] disabled:opacity-50">
-                        <CheckCircle className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
+                        <RefreshCw className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
                       </button>
+                    )}
+                    {['draft', 'scheduled', 'failed'].includes(p.status) && (
                       <button onClick={() => setEditingPost(p)} title="Edit"
                         className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
                         <Pencil className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} />
                       </button>
-                    </>
-                  )}
-                  <button onClick={() => handleDelete(p.id)} title="Delete"
-                    className="p-1.5 rounded hover:bg-red-500/10">
-                    <Trash2 className="w-3.5 h-3.5" style={{ color: '#dc2626' }} />
-                  </button>
+                    )}
+                    <button onClick={() => handleDelete(p.id)} title="Delete"
+                      className="p-1.5 rounded hover:bg-red-500/10">
+                      <Trash2 className="w-3.5 h-3.5" style={{ color: '#dc2626' }} />
+                    </button>
+                  </div>
                 </div>
+                {p.status === 'failed' && p.errorMessage && (
+                  <p className="mt-2 text-xs rounded-lg px-2.5 py-1.5" style={{ background: 'rgba(220,38,38,0.08)', color: '#dc2626' }}>{p.errorMessage}</p>
+                )}
               </div>
             );
           })}

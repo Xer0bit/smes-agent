@@ -105,16 +105,21 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
 
   if (seg[0] === 'planned-posts') {
     if (seg.length === 1 && method === 'GET') return { tool: 'get_planned_posts', args: {} };
+    if (seg.length === 2 && seg[1] === 'bulk-approve' && method === 'POST') {
+      return { tool: 'bulk_approve_posts', args: { postIds: Array.isArray(body?.postIds) ? body.postIds : [] } };
+    }
     if (seg.length === 2) {
       const id = seg[1];
       if (method === 'DELETE') return { tool: 'cancel_post', args: { postId: id } };
       if (method === 'PATCH') {
-        if (body?.status === 'approved') return { tool: 'approve_post', args: { postId: id } };
-        // dashboard 'rejected' === DB 'cancelled' (ecgData.ts's toDbPostStatus)
-        // -- same effect as DELETE above, just reached via the reject button
-        // instead of the trash icon. This previously fell through to
-        // 'unsupported' entirely: Reject never worked on an MCP dashboard.
-        if (body?.status === 'rejected') return { tool: 'cancel_post', args: { postId: id } };
+        // The dashboard now speaks the SAME raw status vocabulary the backend
+        // actually uses (draft/scheduled/posting/posted/failed/cancelled) --
+        // get_planned_posts returns these unmapped, so the UI's own status
+        // checks and this mapping must agree on the same values. Approving
+        // and retrying a failed post are the same action (both just move the
+        // post back to 'scheduled'); rejecting/cancelling both map to cancel_post.
+        if (body?.status === 'scheduled') return { tool: 'approve_post', args: { postId: id } };
+        if (body?.status === 'cancelled') return { tool: 'cancel_post', args: { postId: id } };
         // Editing content/platform/scheduledAt (no status change).
         if (body?.status === undefined) {
           return {

@@ -83,6 +83,18 @@ export function platformMeta(p: string) {
   return PLATFORM_META[p.toLowerCase()] ?? { label: p, bar: 'var(--muted)' };
 }
 
+// Hard character limits per platform (mirrors queue-service/worker.ts's
+// PLATFORM_LIMITS on the agent-portal side -- static, small enough to
+// duplicate client-side rather than add a new endpoint just to read 11 numbers).
+export const PLATFORM_CHAR_LIMIT: Record<string, number> = {
+  linkedin: 3000, instagram: 2200, facebook: 63000, x: 280, twitter: 280,
+  youtube: 5000, threads: 500, tiktok: 2200, pinterest: 800, telegram: 4096,
+  whatsapp: 4096,
+};
+export function platformCharLimit(p: string): number {
+  return PLATFORM_CHAR_LIMIT[p.toLowerCase()] ?? 5000;
+}
+
 // "3h ago" / "in 2d"  compact relative time for last-run / scheduled-at.
 export function relTime(iso?: string | null): string {
   if (!iso) return '';

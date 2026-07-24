@@ -1,27 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle, XCircle, FileText, Plus, Trash2, Pencil, X, Sparkles, Calendar } from 'lucide-react';
+import { CheckCircle, XCircle, FileText, Plus, Trash2, Pencil, X, Sparkles, Calendar, RefreshCw, AlertTriangle } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
-import { PageHeader, EmptyState, Spinner, relTime } from '../components/ui';
+import { PageHeader, EmptyState, Spinner, relTime, platformMeta, platformCharLimit } from '../components/ui';
 
-const TABS = ['all', 'pending', 'approved', 'rejected'] as const;
+// Real backend status vocabulary (get_planned_posts returns these unmapped):
+// draft (awaiting review) | scheduled | posting | posted | failed | cancelled.
+const TABS = ['all', 'draft', 'scheduled', 'posted', 'failed'] as const;
 type Tab = typeof TABS[number];
 
 const configuredDefaultTab = ECG.moduleSettings.posts?.defaultTab as Tab | undefined;
 const defaultTab: Tab = configuredDefaultTab && (TABS as readonly string[]).includes(configuredDefaultTab)
   ? configuredDefaultTab
-  : 'pending';
-
-const PLATFORM_COLORS: Record<string, string> = {
-  linkedin: 'bg-blue-100 text-blue-700', twitter: 'bg-sky-100 text-sky-700',
-  x: 'bg-sky-100 text-sky-700', instagram: 'bg-pink-100 text-pink-700',
-  facebook: 'bg-indigo-100 text-indigo-700', youtube: 'bg-red-100 text-red-700',
-  tiktok: 'bg-cyan-100 text-cyan-700', threads: 'bg-slate-200 text-slate-700',
-  pinterest: 'bg-red-100 text-red-700', telegram: 'bg-sky-100 text-sky-700',
-  whatsapp: 'bg-green-100 text-green-700',
-};
+  : 'draft';
 
 const PLATFORM_LABELS: Record<string, string> = {
   linkedin: 'LinkedIn', x: 'X', twitter: 'X', instagram: 'Instagram', facebook: 'Facebook',
@@ -45,6 +38,8 @@ export default function PostsPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>(defaultTab);
   const [acting, setActing] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [editingPost, setEditingPost] = useState<any>(null);
   const [deletingPost, setDeletingPost] = useState<any>(null);
@@ -70,17 +65,40 @@ export default function PostsPage() {
   }, []);
 
   const visible = posts.filter(p => tab === 'all' || p.status === tab);
-  const pendingCount = posts.filter(p => p.status === 'pending').length;
+  const draftCount = posts.filter(p => p.status === 'draft').length;
 
   async function act(id: string, action: 'approve' | 'reject') {
     setActing(id);
     try {
       if (action === 'approve') await ecgApi.posts.approve(id);
       else await ecgApi.posts.reject(id);
-      setPosts(prev => prev.map(p => p.id === id ? { ...p, status: action === 'approve' ? 'approved' : 'rejected' } : p));
+      setPosts(prev => prev.map(p => p.id === id ? { ...p, status: action === 'approve' ? 'scheduled' : 'cancelled' } : p));
     } catch (e: any) {
       setError(e.message);
     } finally { setActing(null); }
+  }
+
+  function toggleSelected(id: string) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleBulkApprove() {
+    if (selected.size === 0) return;
+    setBulkLoading(true);
+    try {
+      const ids = [...selected];
+      await ecgApi.posts.bulkApprove(ids);
+      setPosts(prev => prev.map(p => ids.includes(p.id) ? { ...p, status: 'scheduled' } : p));
+      setSelected(new Set());
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBulkLoading(false);
+    }
   }
 
   const handleDelete = async () => {
@@ -124,9 +142,11 @@ export default function PostsPage() {
     }
   };
 
+  const TAB_LABELS: Record<Tab, string> = { all: 'All', draft: 'Needs review', scheduled: 'Scheduled', posted: 'Published', failed: 'Failed' };
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
-      <PageHeader eyebrow="Content" title="Planned Posts" action={
+      <PageHeader eyebrow="Content" title="Posts" action={
         <div className="flex items-center gap-2">
           <button
             onClick={() => navigate('/posts/calendar')}
@@ -147,40 +167,57 @@ export default function PostsPage() {
 
       {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
 
-      <div className="flex gap-1 p-1 rounded-xl w-fit" style={{ background: 'var(--border)' }}>
-        {TABS.map(t => {
-          const n = t === 'all' ? posts.length : posts.filter(p => p.status === t).length;
-          return (
-            <button key={t} onClick={() => setTab(t)}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors"
-              style={tab === t ? { background: 'var(--card-bg)', color: 'var(--text)' } : { color: 'var(--muted)' }}>
-              {t}{n > 0 ? ` (${n})` : ''}
-            </button>
-          );
-        })}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex gap-1 p-1 rounded-xl w-fit" style={{ background: 'var(--border)' }}>
+          {TABS.map(t => {
+            const n = t === 'all' ? posts.length : posts.filter(p => p.status === t).length;
+            return (
+              <button key={t} onClick={() => { setTab(t); setSelected(new Set()); }}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                style={tab === t ? { background: 'var(--card-bg)', color: 'var(--text)' } : { color: 'var(--muted)' }}>
+                {TAB_LABELS[t]}{n > 0 ? ` (${n})` : ''}
+              </button>
+            );
+          })}
+        </div>
+
+        {tab === 'draft' && selected.size > 0 && (
+          <button onClick={handleBulkApprove} disabled={bulkLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white disabled:opacity-50"
+            style={{ background: 'var(--accent)' }}>
+            <CheckCircle className="w-3.5 h-3.5" /> {bulkLoading ? 'Approving…' : `Approve ${selected.size} selected`}
+          </button>
+        )}
       </div>
+
       {loading && <Spinner />}
       {!loading && !visible.length && (
-        <EmptyState Icon={FileText} title={`No ${tab === 'all' ? '' : tab + ' '}posts`}
-          hint={pendingCount === 0 && tab === 'pending'
+        <EmptyState Icon={FileText} title={`No ${tab === 'all' ? '' : TAB_LABELS[tab].toLowerCase() + ' '}posts`}
+          hint={draftCount === 0 && tab === 'draft'
             ? 'Nothing waiting for review. New posts land here when an agent generates them.'
             : 'Posts your agents generate, plus any you write yourself, appear here.'} />
       )}
       {!loading && (
         <div className="space-y-3">
           {visible.map((p: any) => {
-            const platCls = PLATFORM_COLORS[(p.platform ?? '').toLowerCase()] ?? 'bg-slate-100 text-slate-600';
+            const pm = platformMeta(p.platform ?? '');
+            const limit = platformCharLimit(p.platform ?? '');
+            const overLimit = (p.content?.length ?? 0) > limit;
             return (
               <div key={p.id} className="rounded-xl border p-5 space-y-3"
                 style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-2 flex-1 min-w-0">
+                    {p.status === 'draft' && (
+                      <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelected(p.id)}
+                        className="mt-1 w-4 h-4 shrink-0" />
+                    )}
                     <FileText className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--muted)' }} />
-                    <p className="text-sm leading-relaxed" style={{ color: 'var(--text)' }}>{p.content ?? p.body ?? '(no content)'}</p>
+                    <p className="text-sm leading-relaxed" style={{ color: overLimit ? '#dc2626' : 'var(--text)' }}>{p.content ?? p.body ?? '(no content)'}</p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <StatusBadge status={p.status} />
-                    {p.status === 'pending' && (
+                    {['draft', 'scheduled', 'failed'].includes(p.status) && (
                       <button
                         onClick={() => setEditingPost(p)}
                         className="p-1 rounded hover:opacity-70"
@@ -207,9 +244,21 @@ export default function PostsPage() {
                     </button>
                   </div>
                 </div>
-                <div className="flex items-center justify-between pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+
+                {p.status === 'failed' && p.errorMessage && (
+                  <div className="flex items-start gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(220,38,38,0.08)', color: '#dc2626' }}>
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span className="flex-1">{p.errorMessage}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between pt-2 border-t flex-wrap gap-2" style={{ borderColor: 'var(--border)' }}>
                   <div className="flex items-center gap-2 flex-wrap">
-                    {p.platform && <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${platCls}`}>{p.platform}</span>}
+                    {p.platform && (
+                      <span className="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--accent-bg)', color: 'var(--text)' }}>
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: pm.bar }} /> {pm.label}
+                      </span>
+                    )}
                     <span className="text-xs" style={{ color: 'var(--muted)' }}>{p.agentName ?? p.agent_name}</span>
                     {(p.scheduledAt ?? p.scheduled_at) && (
                       <span className="text-xs" style={{ color: 'var(--muted)' }}
@@ -223,7 +272,7 @@ export default function PostsPage() {
                         View post
                       </a>
                     )}
-                    {p.status === 'pending' && typeof p.confidence === 'number' && (
+                    {p.status === 'draft' && typeof p.confidence === 'number' && (
                       <span className="inline-flex items-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}
                         title={`Agent confidence: ${Math.round(p.confidence * 100)}%`}>
                         <span className="w-12 h-1 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
@@ -233,19 +282,34 @@ export default function PostsPage() {
                       </span>
                     )}
                   </div>
-                  {p.status === 'pending' && (
-                    <div className="flex gap-2 shrink-0">
+                  <div className="flex gap-2 shrink-0">
+                    {p.status === 'draft' && (
+                      <>
+                        <button onClick={() => act(p.id, 'reject')} disabled={!!acting}
+                          className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg disabled:opacity-50">
+                          <XCircle className="w-3.5 h-3.5" /> Reject
+                        </button>
+                        <button onClick={() => act(p.id, 'approve')} disabled={!!acting}
+                          className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white rounded-lg disabled:opacity-50"
+                          style={{ background: 'var(--accent)' }}>
+                          <CheckCircle className="w-3.5 h-3.5" /> Approve
+                        </button>
+                      </>
+                    )}
+                    {p.status === 'scheduled' && (
                       <button onClick={() => act(p.id, 'reject')} disabled={!!acting}
                         className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg disabled:opacity-50">
-                        <XCircle className="w-3.5 h-3.5" /> Reject
+                        <XCircle className="w-3.5 h-3.5" /> Cancel
                       </button>
+                    )}
+                    {p.status === 'failed' && (
                       <button onClick={() => act(p.id, 'approve')} disabled={!!acting}
                         className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white rounded-lg disabled:opacity-50"
                         style={{ background: 'var(--accent)' }}>
-                        <CheckCircle className="w-3.5 h-3.5" /> Approve
+                        <RefreshCw className="w-3.5 h-3.5" /> Retry
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -293,10 +357,12 @@ export function PostModal({ connectedPlatforms, initial, onClose, onSave, loadin
 }) {
   const [content, setContent] = useState(initial?.content ?? '');
   const [platform, setPlatform] = useState(initial?.platform || connectedPlatforms[0] || '');
+  const limit = useMemo(() => platformCharLimit(platform), [platform]);
+  const overLimit = content.length > limit;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!content.trim() || !platform) return;
+    if (!content.trim() || !platform || overLimit) return;
     onSave({ content: content.trim(), platform });
   };
 
@@ -312,16 +378,20 @@ export function PostModal({ connectedPlatforms, initial, onClose, onSave, loadin
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Content</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium" style={{ color: 'var(--text)' }}>Content</label>
+              <span className="text-xs" style={{ color: overLimit ? '#dc2626' : 'var(--muted)' }}>{content.length} / {limit}</span>
+            </div>
             <textarea
               value={content}
               onChange={e => setContent(e.target.value)}
               rows={6}
               className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 resize-none"
-              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+              style={{ background: 'var(--input-bg)', borderColor: overLimit ? '#dc2626' : 'var(--border)', color: 'var(--text)' }}
               placeholder="Write your post content here..."
               autoFocus
             />
+            {overLimit && <p className="text-xs mt-1" style={{ color: '#dc2626' }}>Too long for {PLATFORM_LABELS[platform] ?? platform} ({limit} character limit).</p>}
           </div>
 
           <div>
@@ -355,7 +425,7 @@ export function PostModal({ connectedPlatforms, initial, onClose, onSave, loadin
             </button>
             <button
               type="submit"
-              disabled={loading || !content.trim() || !platform}
+              disabled={loading || !content.trim() || !platform || overLimit}
               className="flex-1 px-4 py-2 rounded-lg text-white disabled:opacity-50"
               style={{ background: 'var(--accent)' }}
             >

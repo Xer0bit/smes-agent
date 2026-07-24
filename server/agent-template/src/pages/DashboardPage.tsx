@@ -74,10 +74,10 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const pending = useMemo(() => posts.filter(p => p.status === 'pending'), [posts]);
+  const pending = useMemo(() => posts.filter(p => p.status === 'draft'), [posts]);
   const upcoming = useMemo(() =>
     posts
-      .filter(p => (p.scheduledAt ?? p.scheduled_at) && new Date(p.scheduledAt ?? p.scheduled_at) > new Date() && p.status !== 'rejected')
+      .filter(p => (p.scheduledAt ?? p.scheduled_at) && new Date(p.scheduledAt ?? p.scheduled_at) > new Date() && ['scheduled', 'posting'].includes(p.status))
       .sort((a, b) => new Date(a.scheduledAt ?? a.scheduled_at).getTime() - new Date(b.scheduledAt ?? b.scheduled_at).getTime())
       .slice(0, 4),
     [posts]);

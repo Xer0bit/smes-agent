@@ -24,7 +24,7 @@ function useHeaderData() {
     }
   }, []);
 
-  const pendingCount = useMemo(() => posts.filter(p => p.status === 'pending').length, [posts]);
+  const pendingCount = useMemo(() => posts.filter(p => p.status === 'draft').length, [posts]);
   const failedToday = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     return runs.filter(r => {

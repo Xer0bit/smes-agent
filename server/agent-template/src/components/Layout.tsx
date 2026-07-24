@@ -14,7 +14,7 @@ function usePendingCount(): number {
     ecgApi.posts.list()
       .then((d: any) => {
         const posts = Array.isArray(d) ? d : (d.posts ?? d.plannedPosts ?? []);
-        setCount(posts.filter((p: any) => p.status === 'pending').length);
+        setCount(posts.filter((p: any) => p.status === 'draft').length);
       })
       .catch(() => {});
   }, []);

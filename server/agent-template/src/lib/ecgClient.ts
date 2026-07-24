@@ -88,14 +88,20 @@ export const ecgApi = {
     trigger: (id: string) => req('POST', `/schedulers/${id}/replan`),
   },
 
-  // Planned posts
+  // Planned posts. Status is the REAL backend vocabulary, not a simplified
+  // one: draft (awaiting review) | scheduled | posting | posted | failed |
+  // cancelled. get_planned_posts returns these unmapped, so the UI must
+  // speak the same values as the proxy mapping below expects.
   posts: {
     list:    () => req('GET', '/planned-posts'),
     create:  (data: unknown) => req('POST', '/planned-posts', data),
     delete:  (id: string) => req('DELETE', `/planned-posts/${id}`),
-    approve: (id: string) => req('PATCH', `/planned-posts/${id}`, { status: 'approved' }),
-    reject:  (id: string) => req('PATCH', `/planned-posts/${id}`, { status: 'rejected' }),
+    // Approving a draft and retrying a failed post are the same call --
+    // both just move the post back to 'scheduled'.
+    approve: (id: string) => req('PATCH', `/planned-posts/${id}`, { status: 'scheduled' }),
+    reject:  (id: string) => req('PATCH', `/planned-posts/${id}`, { status: 'cancelled' }),
     update:  (id: string, data: { content?: string; platform?: string; scheduledAt?: string }) => req('PATCH', `/planned-posts/${id}`, data),
+    bulkApprove: (ids: string[]) => req('POST', '/planned-posts/bulk-approve', { postIds: ids }),
   },
 
   // Post visuals   Canva-style canvas (background + positioned text/image/
