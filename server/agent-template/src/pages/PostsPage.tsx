@@ -37,6 +37,7 @@ export default function PostsPage() {
   const [connectedPlatforms, setConnectedPlatforms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>(defaultTab);
+  const [platformFilter, setPlatformFilter] = useState<string>('all');
   const [acting, setActing] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -64,8 +65,10 @@ export default function PostsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const visible = posts.filter(p => tab === 'all' || p.status === tab);
+  const visible = posts.filter(p => (tab === 'all' || p.status === tab) && (platformFilter === 'all' || p.platform === platformFilter));
   const draftCount = posts.filter(p => p.status === 'draft').length;
+  const visibleDraftIds = visible.filter(p => p.status === 'draft').map(p => p.id);
+  const allVisibleDraftsSelected = visibleDraftIds.length > 0 && visibleDraftIds.every(id => selected.has(id));
 
   async function act(id: string, action: 'approve' | 'reject') {
     setActing(id);
@@ -83,6 +86,13 @@ export default function PostsPage() {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    setSelected(prev => {
+      if (allVisibleDraftsSelected) return new Set([...prev].filter(id => !visibleDraftIds.includes(id)));
+      return new Set([...prev, ...visibleDraftIds]);
     });
   }
 
@@ -167,10 +177,32 @@ export default function PostsPage() {
 
       {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
 
+      {connectedPlatforms.length > 1 && (
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          <button onClick={() => { setPlatformFilter('all'); setSelected(new Set()); }}
+            className="text-xs px-3 py-1.5 rounded-full border font-medium shrink-0"
+            style={platformFilter === 'all' ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+            All platforms
+          </button>
+          {connectedPlatforms.map(p => {
+            const pm = platformMeta(p);
+            const on = platformFilter === p;
+            return (
+              <button key={p} onClick={() => { setPlatformFilter(p); setSelected(new Set()); }}
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border font-medium shrink-0"
+                style={on ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: on ? '#fff' : pm.bar }} /> {pm.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex gap-1 p-1 rounded-xl w-fit" style={{ background: 'var(--border)' }}>
           {TABS.map(t => {
-            const n = t === 'all' ? posts.length : posts.filter(p => p.status === t).length;
+            const n = (t === 'all' ? posts : posts.filter(p => p.status === t))
+              .filter(p => platformFilter === 'all' || p.platform === platformFilter).length;
             return (
               <button key={t} onClick={() => { setTab(t); setSelected(new Set()); }}
                 className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
@@ -181,13 +213,21 @@ export default function PostsPage() {
           })}
         </div>
 
-        {tab === 'draft' && selected.size > 0 && (
-          <button onClick={handleBulkApprove} disabled={bulkLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white disabled:opacity-50"
-            style={{ background: 'var(--accent)' }}>
-            <CheckCircle className="w-3.5 h-3.5" /> {bulkLoading ? 'Approving…' : `Approve ${selected.size} selected`}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {tab === 'draft' && visibleDraftIds.length > 1 && (
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: 'var(--muted)' }}>
+              <input type="checkbox" checked={allVisibleDraftsSelected} onChange={toggleSelectAllVisible} className="w-3.5 h-3.5" />
+              Select all
+            </label>
+          )}
+          {tab === 'draft' && selected.size > 0 && (
+            <button onClick={handleBulkApprove} disabled={bulkLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white disabled:opacity-50"
+              style={{ background: 'var(--accent)' }}>
+              <CheckCircle className="w-3.5 h-3.5" /> {bulkLoading ? 'Approving…' : `Approve ${selected.size} selected`}
+            </button>
+          )}
+        </div>
       </div>
 
       {loading && <Spinner />}

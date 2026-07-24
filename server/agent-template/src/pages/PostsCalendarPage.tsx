@@ -16,6 +16,7 @@ export default function PostsCalendarPage() {
   const [connectedPlatforms, setConnectedPlatforms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d; });
+  const [platformFilter, setPlatformFilter] = useState<string>('all');
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
   const [editingPost, setEditingPost] = useState<any>(null);
@@ -73,6 +74,7 @@ export default function PostsCalendarPage() {
   const postsByDay = useMemo(() => {
     const map = new Map<string, any[]>();
     for (const p of posts) {
+      if (platformFilter !== 'all' && p.platform !== platformFilter) continue;
       const raw = p.scheduledAt ?? p.scheduled_at ?? p.createdAt ?? p.created_at;
       if (!raw) continue;
       const key = dateKey(new Date(raw));
@@ -80,7 +82,7 @@ export default function PostsCalendarPage() {
       map.get(key)!.push(p);
     }
     return map;
-  }, [posts]);
+  }, [posts, platformFilter]);
 
   const weeks = useMemo(() => {
     const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
@@ -114,6 +116,27 @@ export default function PostsCalendarPage() {
       </div>
 
       {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
+
+      {connectedPlatforms.length > 1 && (
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          <button onClick={() => { setPlatformFilter('all'); setSelectedDay(null); }}
+            className="text-xs px-3 py-1.5 rounded-full border font-medium shrink-0"
+            style={platformFilter === 'all' ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+            All platforms
+          </button>
+          {connectedPlatforms.map(p => {
+            const pm = platformMeta(p);
+            const on = platformFilter === p;
+            return (
+              <button key={p} onClick={() => { setPlatformFilter(p); setSelectedDay(null); }}
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border font-medium shrink-0"
+                style={on ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: on ? '#fff' : pm.bar }} /> {pm.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <button onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() - 1, 1))}
