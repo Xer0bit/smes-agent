@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Zap, Pencil, Calendar, History, FileText, Play, Pause } from 'lucide-react';
+import { ArrowLeft, Zap, Pencil, Calendar, History, FileText, Play, Pause, MoreHorizontal, Archive } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import StatusBadge from '../components/StatusBadge';
 import { Card, Spinner, EmptyState, relTime } from '../components/ui';
@@ -18,6 +18,7 @@ export default function AgentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [running, setRunning] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!agentId) return;
@@ -39,12 +40,15 @@ export default function AgentDetailPage() {
     }
   };
 
-  const handleToggleStatus = async () => {
+  // Full lifecycle control, matching the main org portal's own Agents page
+  // (Activate/Set Idle/Suspend/Archive). Deleting requires 'archived' first
+  // -- do that from the Agents list, where Delete lives.
+  const handleSetStatus = async (status: string) => {
     if (!agentId || !data) return;
-    const next = data.agent.status === 'active' ? 'idle' : 'active';
+    setMenuOpen(false);
     try {
-      await ecgApi.agents.update(agentId, { status: next });
-      setData({ ...data, agent: { ...data.agent, status: next } });
+      await ecgApi.agents.update(agentId, { status });
+      setData({ ...data, agent: { ...data.agent, status } });
     } catch (e: any) {
       setError(e.message);
     }
@@ -90,14 +94,42 @@ export default function AgentDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {(agent.status === 'active' || agent.status === 'idle' || agent.status === 'provisioning') && (
-            <button onClick={handleToggleStatus}
+          <div className="relative">
+            <button onClick={() => setMenuOpen(v => !v)}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border"
               style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
-              {agent.status === 'active' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-              {agent.status === 'active' ? 'Pause' : 'Activate'}
+              <MoreHorizontal className="w-3.5 h-3.5" /> Status
             </button>
-          )}
+            {menuOpen && (
+              <div className="absolute right-0 top-full mt-1 w-40 rounded-lg border overflow-hidden z-20"
+                style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-md)' }}>
+                {agent.status !== 'active' && (
+                  <button onClick={() => handleSetStatus('active')}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: 'var(--text)' }}>
+                    <Play className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} /> Activate
+                  </button>
+                )}
+                {agent.status === 'active' && (
+                  <button onClick={() => handleSetStatus('idle')}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: 'var(--text)' }}>
+                    <Pause className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} /> Set idle
+                  </button>
+                )}
+                {agent.status !== 'suspended' && (
+                  <button onClick={() => handleSetStatus('suspended')}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: '#dc2626' }}>
+                    <Pause className="w-3.5 h-3.5" /> Suspend
+                  </button>
+                )}
+                {agent.status !== 'archived' && (
+                  <button onClick={() => handleSetStatus('archived')}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: 'var(--muted)' }}>
+                    <Archive className="w-3.5 h-3.5" /> Archive
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
           <button onClick={handleRun} disabled={running}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
             style={{ background: 'var(--accent)' }}>

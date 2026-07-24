@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, Clock, Plus, Pencil, Trash2, Play, Pause } from 'lucide-react';
+import { Zap, Clock, Plus, Pencil, Trash2, MoreHorizontal, Play, Pause, Archive } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
@@ -25,6 +25,8 @@ export default function AgentsPage() {
   const [error, setError] = useState('');
   const [deletingAgent, setDeletingAgent] = useState<Agent | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteBlocked, setDeleteBlocked] = useState(false);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   useEffect(() => {
     ecgApi.agents.list()
@@ -36,12 +38,18 @@ export default function AgentsPage() {
   const handleDelete = async () => {
     if (!deletingAgent?.id) return;
     setDeleting(true);
+    setDeleteBlocked(false);
     try {
       await ecgApi.agents.delete(deletingAgent.id);
       setAgents(agents.filter(a => a.id !== deletingAgent.id));
       setDeletingAgent(null);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      // Same safety gate the main org portal enforces (org-admin has an
+      // Archive action there); this dashboard previously had no way to
+      // archive at all, so this exact error was a dead end here.
+      if (/only archived agents can be deleted/i.test(msg)) setDeleteBlocked(true);
     } finally {
       setDeleting(false);
     }
@@ -56,18 +64,27 @@ export default function AgentsPage() {
     }
   };
 
-  // Also the escape hatch for an agent stuck in 'provisioning' (created
-  // before this default changed, or via some other path) -- there was
-  // previously no way to activate one from this dashboard at all.
-  const handleToggleStatus = async (agent: Agent) => {
-    const next = agent.status === 'active' ? 'idle' : 'active';
+  // Full lifecycle control, matching the main org portal's own Agents page
+  // (Activate/Set Idle/Suspend/Archive dropdown). Previously this dashboard
+  // only had Delete, which requires status='archived' first -- with no way
+  // to archive here, that error was a permanent dead end.
+  const handleSetStatus = async (agent: Agent, status: string) => {
+    setMenuOpenId(null);
     try {
-      await ecgApi.agents.update(agent.id, { status: next });
-      setAgents(agents.map(a => a.id === agent.id ? { ...a, status: next } : a));
+      await ecgApi.agents.update(agent.id, { status });
+      setAgents(agents.map(a => a.id === agent.id ? { ...a, status } : a));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (!(e.target as HTMLElement).closest('[data-agent-menu]')) setMenuOpenId(null);
+    }
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
@@ -111,15 +128,6 @@ export default function AgentsPage() {
                 </button>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <StatusBadge status={a.status} />
-                  {(a.status === 'active' || a.status === 'idle' || a.status === 'provisioning') && (
-                    <button onClick={() => handleToggleStatus(a)}
-                      title={a.status === 'active' ? 'Pause' : 'Activate'}
-                      className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
-                      {a.status === 'active'
-                        ? <Pause className="w-4 h-4" style={{ color: 'var(--muted)' }} />
-                        : <Play className="w-4 h-4" style={{ color: 'var(--accent)' }} />}
-                    </button>
-                  )}
                   <button onClick={() => handleRun(a.id)} title="Run now"
                     className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
                     <Zap className="w-4 h-4" style={{ color: 'var(--accent)' }} />
@@ -128,6 +136,41 @@ export default function AgentsPage() {
                     className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
                     <Pencil className="w-4 h-4" style={{ color: 'var(--muted)' }} />
                   </button>
+                  <div className="relative" data-agent-menu>
+                    <button onClick={() => setMenuOpenId(menuOpenId === a.id ? null : a.id)} title="Status"
+                      className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
+                      <MoreHorizontal className="w-4 h-4" style={{ color: 'var(--muted)' }} />
+                    </button>
+                    {menuOpenId === a.id && (
+                      <div className="absolute right-0 top-full mt-1 w-40 rounded-lg border overflow-hidden z-20"
+                        style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-md)' }}>
+                        {a.status !== 'active' && (
+                          <button onClick={() => handleSetStatus(a, 'active')}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: 'var(--text)' }}>
+                            <Play className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} /> Activate
+                          </button>
+                        )}
+                        {a.status === 'active' && (
+                          <button onClick={() => handleSetStatus(a, 'idle')}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: 'var(--text)' }}>
+                            <Pause className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} /> Set idle
+                          </button>
+                        )}
+                        {a.status !== 'suspended' && (
+                          <button onClick={() => handleSetStatus(a, 'suspended')}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: '#dc2626' }}>
+                            <Pause className="w-3.5 h-3.5" /> Suspend
+                          </button>
+                        )}
+                        {a.status !== 'archived' && (
+                          <button onClick={() => handleSetStatus(a, 'archived')}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: 'var(--muted)' }}>
+                            <Archive className="w-3.5 h-3.5" /> Archive
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <button onClick={() => setDeletingAgent(a)} title="Delete"
                     className="p-1.5 rounded hover:bg-red-500/10">
                     <Trash2 className="w-4 h-4" style={{ color: '#dc2626' }} />
@@ -148,21 +191,50 @@ export default function AgentsPage() {
       {deletingAgent && (
         <DeleteConfirmModal
           itemName={deletingAgent.name}
-          onClose={() => setDeletingAgent(null)}
+          onClose={() => { setDeletingAgent(null); setDeleteBlocked(false); }}
           onConfirm={handleDelete}
           loading={deleting}
+          blocked={deleteBlocked}
+          onArchiveThenDelete={async () => {
+            await handleSetStatus(deletingAgent, 'archived');
+            setDeleteBlocked(false);
+            handleDelete();
+          }}
         />
       )}
     </div>
   );
 }
 
-function DeleteConfirmModal({ itemName, onClose, onConfirm, loading }: {
+function DeleteConfirmModal({ itemName, onClose, onConfirm, loading, blocked, onArchiveThenDelete }: {
   itemName: string;
   onClose: () => void;
   onConfirm: () => void;
   loading: boolean;
+  blocked: boolean;
+  onArchiveThenDelete: () => void;
 }) {
+  if (blocked) {
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
+          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Archive first</h2>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>
+            <strong>{itemName}</strong> needs to be archived before it can be deleted. Archive and delete it now?
+          </p>
+          <div className="flex gap-3 pt-2">
+            <button onClick={onClose} disabled={loading} className="flex-1 px-4 py-2 rounded-lg border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+              Cancel
+            </button>
+            <button onClick={onArchiveThenDelete} disabled={loading} className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 hover:opacity-90 disabled:opacity-50">
+              {loading ? 'Working…' : 'Archive & delete'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
