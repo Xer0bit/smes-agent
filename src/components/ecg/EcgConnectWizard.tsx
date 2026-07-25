@@ -37,14 +37,22 @@ const THEMES = [
   { key: 'slate',  label: 'Slate',  accent: '#7c3aed', sidebar: '#293548', body: '#f4f5f7' },
 ] as const;
 
+// Plain-language descriptions, not just the raw module key -- whoever builds
+// this dashboard may not know what "Schedulers" or "Run History" means to
+// the person who'll actually use it day to day.
 const MODULES = [
-  { key: 'agents',     label: 'Agents' },
-  { key: 'schedulers', label: 'Schedulers' },
-  { key: 'posts',      label: 'Posts' },
-  { key: 'connectors', label: 'Connectors' },
-  { key: 'runs',       label: 'Run History' },
-  { key: 'knowledge',  label: 'Knowledge' },
+  { key: 'agents',     label: 'AI Agents',        hint: 'The AI workers that write posts', core: true },
+  { key: 'posts',      label: 'Posts & Approvals', hint: 'Review, edit, and approve what gets published', core: true },
+  { key: 'connectors', label: 'Connected Accounts', hint: 'Link LinkedIn, Instagram, Facebook, etc.', core: true },
+  { key: 'schedulers', label: 'Posting Schedule',  hint: 'When and how often agents post', core: false },
+  { key: 'knowledge',  label: 'Business Knowledge', hint: 'Teach agents about the business', core: false },
+  { key: 'runs',       label: 'Activity Log',      hint: 'Technical history of every agent run', core: false },
 ] as const;
+
+const SIMPLE_MODULES = MODULES.filter((m) => m.core).map((m) => m.key);
+const ALL_MODULE_KEYS = MODULES.map((m) => m.key);
+
+type SetupType = 'simple' | 'advanced' | 'custom';
 
 const PROVISION_STEPS: Array<{ id: string; label: string }> = [
   { id: 'discovery',            label: 'Verifying connection' },
@@ -71,7 +79,8 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
   const [logoUrl, setLogoUrl] = useState('');
   const [themeKey, setThemeKey] = useState<string>('light');
   const [accent, setAccent] = useState('');
-  const [modules, setModules] = useState<string[]>(MODULES.map((m) => m.key));
+  const [modules, setModules] = useState<string[]>(ALL_MODULE_KEYS);
+  const [setupType, setSetupType] = useState<SetupType>('advanced');
   const [password, setPassword] = useState('');
 
   // Provision-step progress
@@ -348,19 +357,45 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
                 </p>
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground">Features</label>
+                <label className="text-xs font-medium text-muted-foreground">Who is this dashboard for?</label>
+                <div className="mt-1.5 flex gap-2">
+                  <button type="button"
+                    onClick={() => { setSetupType('simple'); setModules(SIMPLE_MODULES); }}
+                    className={cn('flex-1 rounded-lg border px-3 py-2 text-left text-xs transition-colors',
+                      setupType === 'simple' ? 'border-primary bg-primary/5 text-foreground' : 'border-border/60 text-muted-foreground hover:border-border')}>
+                    <span className="block font-medium text-foreground">Simple</span>
+                    Just the essentials  approve posts, connect accounts. Fewest things to learn.
+                  </button>
+                  <button type="button"
+                    onClick={() => { setSetupType('advanced'); setModules(ALL_MODULE_KEYS); }}
+                    className={cn('flex-1 rounded-lg border px-3 py-2 text-left text-xs transition-colors',
+                      setupType === 'advanced' ? 'border-primary bg-primary/5 text-foreground' : 'border-border/60 text-muted-foreground hover:border-border')}>
+                    <span className="block font-medium text-foreground">Advanced</span>
+                    Everything, including scheduling, run logs and knowledge tuning.
+                  </button>
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-muted-foreground">Features</label>
+                  {setupType === 'custom' && <span className="text-[11px] text-muted-foreground">Custom selection</span>}
+                </div>
                 <div className="mt-1.5 grid grid-cols-2 gap-1.5">
                   {MODULES.map((m) => {
                     const checked = modules.includes(m.key);
                     return (
-                      <label key={m.key} className="flex cursor-pointer items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-sm text-foreground">
+                      <label key={m.key} title={m.hint}
+                        className="flex cursor-pointer items-start gap-2 rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-sm text-foreground">
                         <input
                           type="checkbox"
                           checked={checked}
-                          onChange={() => setModules((prev) => checked ? prev.filter((k) => k !== m.key) : [...prev, m.key])}
-                          className="accent-[var(--primary)]"
+                          onChange={() => { setSetupType('custom'); setModules((prev) => checked ? prev.filter((k) => k !== m.key) : [...prev, m.key]); }}
+                          className="mt-0.5 accent-[var(--primary)]"
                         />
-                        {m.label}
+                        <span className="min-w-0">
+                          <span className="block leading-tight">{m.label}</span>
+                          <span className="block text-[11px] leading-tight text-muted-foreground">{m.hint}</span>
+                        </span>
                       </label>
                     );
                   })}
