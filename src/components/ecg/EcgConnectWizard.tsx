@@ -81,6 +81,7 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
   const [accent, setAccent] = useState('');
   const [modules, setModules] = useState<string[]>(ALL_MODULE_KEYS);
   const [setupType, setSetupType] = useState<SetupType>('advanced');
+  const [assistantEnabled, setAssistantEnabled] = useState(true);
   const [password, setPassword] = useState('');
 
   // Provision-step progress
@@ -143,6 +144,10 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
             logoUrl: logoUrl.trim() || undefined,
             theme: themeKey,
             ...(accent ? { accentColor: accent } : {}),
+            // Same moduleSettings.chat.enabled key CustomizerSettings.tsx
+            // writes post-creation -- only sent when turned off, since
+            // Layout.tsx already defaults to shown when this is absent.
+            ...(assistantEnabled ? {} : { moduleSettings: { chat: { enabled: false } } }),
           },
           // All six selected means "everything"  same as the seeder default.
           modules: modules.length === MODULES.length ? [] : modules,
@@ -401,6 +406,16 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
                   })}
                 </div>
               </div>
+              <label className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-card/60 px-3 py-2.5 cursor-pointer">
+                <span className="min-w-0">
+                  <span className="block text-sm text-foreground">AI Assistant</span>
+                  <span className="block text-[11px] leading-tight text-muted-foreground">
+                    A chat panel that can read and act on the user's behalf. Turn off if you'd rather they only use the regular pages.
+                  </span>
+                </span>
+                <input type="checkbox" checked={assistantEnabled} onChange={(e) => setAssistantEnabled(e.target.checked)}
+                  className="accent-[var(--primary)] shrink-0" />
+              </label>
             </div>
 
             <div className="mt-5 flex items-center justify-between">
