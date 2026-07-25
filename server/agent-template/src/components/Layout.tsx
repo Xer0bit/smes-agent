@@ -37,6 +37,15 @@ const ALL_NAV = [
   { id: 'settings',   label: 'Settings',      path: '/settings',   icon: 'Settings', always: true },
 ];
 
+// Assistant defaults to visible (moduleSettings.chat undefined) so every
+// dashboard generated before this toggle existed keeps behaving exactly as
+// before; only an explicit { enabled: false } (set from Settings ->
+// Customizer, or the dashboard-builder's project settings) hides it. Not
+// gated through ECG.modules like the other items -- that array is opt-in at
+// creation time only, and disabling the assistant is meant to be something
+// the dashboard owner can flip later without re-selecting every other module.
+const chatDisabled = ECG.moduleSettings.chat?.enabled === false;
+
 // Order follows ECG.modules (set by drag-and-drop reordering in Dashboard
 // Creator), not ALL_NAV's fixed declaration order   the always-shown tabs
 // (Home, Assistant first; Settings last) stay pinned regardless of module
@@ -44,7 +53,7 @@ const ALL_NAV = [
 // returns the FIRST always-item   Settings silently never made it into the
 // sidebar at all. filter() picks up every always-item instead.
 const NAV = [
-  ...ALL_NAV.filter(n => n.always && n.id !== 'settings'),
+  ...ALL_NAV.filter(n => n.always && n.id !== 'settings' && !(n.id === 'chat' && chatDisabled)),
   ...ECG.modules.map(id => ALL_NAV.find(n => n.id === id)).filter((n): n is typeof ALL_NAV[number] => Boolean(n)),
   ALL_NAV.find(n => n.id === 'settings')!,
 ];

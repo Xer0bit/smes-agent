@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Palette, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
+import { Loader2, Palette, RefreshCw, CheckCircle2, AlertCircle, Bot } from "lucide-react";
 import { getApiServerUrl } from "@/config/external-api";
 import { SettingsSkeleton } from "./SettingsSkeleton";
 
@@ -19,6 +19,7 @@ interface CustomizerConfig {
   accentColor: string;
   fontFamily: string;
   showSummaryCards: boolean;
+  moduleSettings: Record<string, Record<string, boolean | string>>;
 }
 
 const DEFAULT_CONFIG: CustomizerConfig = {
@@ -29,6 +30,7 @@ const DEFAULT_CONFIG: CustomizerConfig = {
   accentColor: "#2563eb",
   fontFamily: "Inter",
   showSummaryCards: true,
+  moduleSettings: {},
 };
 
 const THEMES = ["light", "dark", "ocean", "forest", "sunset", "slate"];
@@ -68,6 +70,15 @@ export const CustomizerSettings = ({ projectId }: CustomizerSettingsProps) => {
 
   const set = <K extends keyof CustomizerConfig>(key: K) => (value: CustomizerConfig[K]) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
+    setSyncStatus("idle");
+  };
+
+  // Defaults to true (undefined == still shown) -- matches Layout.tsx's
+  // agent-template gating, so a dashboard nobody has touched this setting on
+  // keeps showing the assistant exactly as it always has.
+  const assistantEnabled = config.moduleSettings.chat?.enabled !== false;
+  const setAssistantEnabled = (enabled: boolean) => {
+    setConfig((prev) => ({ ...prev, moduleSettings: { ...prev.moduleSettings, chat: { ...prev.moduleSettings.chat, enabled } } }));
     setSyncStatus("idle");
   };
 
@@ -199,6 +210,25 @@ export const CustomizerSettings = ({ projectId }: CustomizerSettingsProps) => {
           <div className="flex items-center justify-between pt-1">
             <Label className="text-white/60 text-xs">Show summary cards</Label>
             <Switch checked={config.showSummaryCards} onCheckedChange={(v) => set("showSummaryCards")(v)} />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-workspace-surface border-white/[0.07]">
+        <CardHeader className="pb-2">
+          <div className="flex items-center gap-2">
+            <Bot className="h-4 w-4 text-indigo-400" />
+            <CardTitle className="text-base text-white/85">AI Assistant</CardTitle>
+          </div>
+          <CardDescription className="text-white/45 text-xs">
+            The chat panel in the dashboard that can read and act on the user's behalf. Turn it off if you'd
+            rather users only interact through the regular pages.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <Label className="text-white/60 text-xs">Show AI Assistant</Label>
+            <Switch checked={assistantEnabled} onCheckedChange={setAssistantEnabled} />
           </div>
         </CardContent>
       </Card>
