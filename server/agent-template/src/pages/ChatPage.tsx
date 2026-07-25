@@ -14,15 +14,33 @@ const SUGGESTIONS = [
   'Give me a summary of my portal activity',
 ];
 
+// Matches the real MCP tool names (see agent-portal's mcp-server/src/index.ts)
+// -- the fallback below (tool.replace(/_/g,' ')) still handles anything not
+// listed here, so this only needs the common/high-traffic ones.
 const TOOL_LABELS: Record<string, string> = {
   list_agents: 'Listed agents',
-  list_posts: 'Listed posts',
+  get_agent_status: 'Checked agent status',
+  create_agent: 'Created agent',
+  update_agent: 'Updated agent',
+  delete_agent: 'Deleted agent',
+  run_agent_now: 'Ran agent',
+  get_planned_posts: 'Listed posts',
   approve_post: 'Approved post',
-  reject_post: 'Rejected post',
-  list_runs: 'Listed runs',
+  cancel_post: 'Cancelled post',
+  delete_post: 'Deleted post',
+  update_post: 'Edited post',
+  regenerate_post: 'Regenerated post',
+  bulk_approve_posts: 'Bulk-approved posts',
   list_schedulers: 'Listed schedulers',
+  create_scheduler: 'Created scheduler',
+  trigger_scheduler_now: 'Triggered scheduler',
   list_connectors: 'Listed connectors',
+  test_connector: 'Tested connector',
   list_knowledge: 'Listed knowledge',
+  list_knowledge_bases: 'Listed knowledge bases',
+  list_runs: 'Listed runs',
+  get_stats: 'Fetched stats',
+  list_notifications: 'Checked notifications',
 };
 
 export default function ChatPage() {

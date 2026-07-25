@@ -206,6 +206,35 @@ export async function discoverEcgOrg(apiKey: string): Promise<EcgDiscovery> {
   }
 }
 
+export interface EcgMcpTool {
+  name: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+}
+
+/**
+ * Lists every tool the org's eCG Agents MCP server actually exposes (name,
+ * description, input schema) -- used by ecg-chat.routes.ts to give the LLM
+ * an accurate, always-current tool set instead of a hand-maintained list
+ * that drifts from what the MCP server really supports.
+ */
+export async function listEcgTools(apiKey: string): Promise<EcgMcpTool[]> {
+  const session = await McpSseSession.open(apiKey);
+  try {
+    await session.call('initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'EcomGear Dev-Agent', version: '1.0.0' },
+    }, apiKey);
+    await session.call('notifications/initialized', {}, apiKey, /* expectResponse */ false);
+    const result = await session.call('tools/list', {}, apiKey);
+    const tools = Array.isArray(result?.tools) ? result.tools : [];
+    return tools.map((t: any) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema ?? { type: 'object', properties: {} } }));
+  } finally {
+    session.close();
+  }
+}
+
 /**
  * One-off MCP tool call   opens a session, initializes, calls exactly one
  * tool, closes. Used by ecg-proxy.routes.ts to bridge the generated
