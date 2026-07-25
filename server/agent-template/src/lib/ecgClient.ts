@@ -136,6 +136,13 @@ export const ecgApi = {
   // Runs
   runs: { list: () => req('GET', '/runs') },
 
+  // Notifications (failed runs, rate limits, repeat-topic warnings, etc.)
+  notifications: {
+    list:         (unreadOnly?: boolean) => req('GET', unreadOnly ? '/notifications?unreadOnly=true' : '/notifications'),
+    markRead:     (id: string) => req('PATCH', `/notifications/${id}/read`),
+    markAllRead:  () => req('POST', '/notifications/mark-all-read'),
+  },
+
   // Knowledge
   knowledge: {
     list:   () => req('GET', '/knowledge'),

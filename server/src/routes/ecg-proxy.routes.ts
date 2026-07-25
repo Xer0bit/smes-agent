@@ -159,7 +159,7 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
       };
       if (method === 'DELETE') return { tool: 'delete_connector', args: { connectorId: id } };
     }
-    if (seg.length === 4 && seg[3] === 'test') return 'unsupported';
+    if (seg.length === 4 && seg[3] === 'test' && method === 'POST') return { tool: 'test_connector', args: { connectorId: seg[2] } };
   }
 
   if (seg[0] === 'connectors' && seg[1] === 'discover' && method === 'POST') {
@@ -179,13 +179,63 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
   }
 
   if (seg[0] === 'knowledge-bases') {
-    if (seg.length === 1 && method === 'GET') return { tool: 'list_knowledge_bases', args: {} };
-    return 'unsupported'; // create/update/delete knowledge bases have no MCP tool
+    if (seg.length === 1) {
+      if (method === 'GET') return { tool: 'list_knowledge_bases', args: {} };
+      if (method === 'POST') return { tool: 'create_knowledge_base', args: pick(body, ['name', 'name'], ['description', 'description']) };
+    }
+    if (seg.length === 2) {
+      const id = seg[1];
+      if (method === 'PATCH') return { tool: 'update_knowledge_base', args: { kbId: id, ...pick(body, ['name', 'name'], ['description', 'description']) } };
+      if (method === 'DELETE') return { tool: 'delete_knowledge_base', args: { kbId: id } };
+    }
+    return 'unsupported';
   }
 
-  // org settings, team, api-keys, billing, visual-posts, summary: portal-account
-  // features with no agent-management MCP equivalent at all.
-  if (['org', 'team', 'api-keys', 'billing', 'visual-posts', 'summary'].includes(seg[0])) return 'unsupported';
+  if (seg[0] === 'visual-posts') {
+    if (seg.length === 1 && method === 'GET') {
+      return { tool: 'list_visual_posts', args: pick(query, ['agentId', 'agentId'], ['plannedPostId', 'plannedPostId']) };
+    }
+    if (seg.length === 2 && seg[1] === 'generate' && method === 'POST') {
+      return {
+        tool: 'generate_visual_post',
+        args: pick(body, ['postContent', 'postContent'], ['agentId', 'agentId'], ['plannedPostId', 'plannedPostId'], ['platform', 'platform'], ['stylePrompt', 'stylePrompt']),
+      };
+    }
+    if (seg.length === 2) {
+      const id = seg[1];
+      if (method === 'GET') return { tool: 'get_visual_post', args: { visualPostId: id } };
+      if (method === 'DELETE') return { tool: 'delete_visual_post', args: { visualPostId: id } };
+      if (method === 'PATCH') return {
+        tool: 'update_visual_post',
+        args: { visualPostId: id, ...pick(body, ['objects', 'objects'], ['background', 'background']) },
+      };
+    }
+    if (seg.length === 3 && seg[2] === 'regenerate' && method === 'POST') {
+      return { tool: 'regenerate_visual_post', args: { visualPostId: seg[1], stylePrompt: body?.stylePrompt } };
+    }
+    if (seg.length === 3 && seg[2] === 'finalize' && method === 'POST') {
+      return { tool: 'finalize_visual_post', args: { visualPostId: seg[1] } };
+    }
+    // upload-image is multipart and has no MCP bridge yet -- AI generation
+    // (generate_visual_post) covers the core need; manual upload deferred.
+    return 'unsupported';
+  }
+
+  if (seg[0] === 'notifications') {
+    if (seg.length === 1 && method === 'GET') {
+      return { tool: 'list_notifications', args: query.unreadOnly === 'true' ? { unreadOnly: true } : {} };
+    }
+    if (seg.length === 3 && seg[2] === 'read' && method === 'PATCH') {
+      return { tool: 'mark_notification_read', args: { notificationId: seg[1] } };
+    }
+    if (seg.length === 2 && seg[1] === 'mark-all-read' && method === 'POST') {
+      return { tool: 'mark_all_notifications_read', args: {} };
+    }
+  }
+
+  // org settings, team, api-keys, billing, summary: portal-account features
+  // with no agent-management MCP equivalent at all.
+  if (['org', 'team', 'api-keys', 'billing', 'summary'].includes(seg[0])) return 'unsupported';
 
   return 'unsupported';
 }
