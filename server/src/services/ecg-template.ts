@@ -31,10 +31,11 @@ interface DesignCfg {
   moduleSettings: Record<string, Record<string, boolean | string>>;
 }
 
-// Sidebar kept subtly distinct from body (not flat white-on-white)   reads
-// as a considered surface hierarchy rather than a bland flat panel.
+// Sidebar is a solid, saturated surface, not a near-white panel that blends
+// into the body   this single choice is the biggest lever on whether a
+// generated dashboard reads as "a real product" vs. a generic admin scaffold.
 const THEME_DEFAULTS: Record<string, Pick<DesignCfg, 'accentColor' | 'sidebarColor' | 'bodyColor'>> = {
-  light:  { accentColor: '#2563eb', sidebarColor: '#fbfbfd', bodyColor: '#f4f5f7' },
+  light:  { accentColor: '#2563eb', sidebarColor: '#161c3d', bodyColor: '#f4f5f7' },
   dark:   { accentColor: '#60a5fa', sidebarColor: '#111827', bodyColor: '#030712' },
   ocean:  { accentColor: '#0ea5c9', sidebarColor: '#0c3d5e', bodyColor: '#eef8fc' },
   forest: { accentColor: '#16a34a', sidebarColor: '#16301f', bodyColor: '#eef8f0' },

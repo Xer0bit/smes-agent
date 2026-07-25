@@ -29,7 +29,7 @@ interface Discovery {
 // Mirrors THEME_DEFAULTS in server/src/services/ecg-template.ts  the seeder
 // resolves colors server-side; these values only drive the wizard preview.
 const THEMES = [
-  { key: 'light',  label: 'Light',  accent: '#2563eb', sidebar: '#fbfbfd', body: '#f4f5f7' },
+  { key: 'light',  label: 'Light',  accent: '#2563eb', sidebar: '#161c3d', body: '#f4f5f7' },
   { key: 'dark',   label: 'Dark',   accent: '#60a5fa', sidebar: '#111827', body: '#030712' },
   { key: 'ocean',  label: 'Ocean',  accent: '#0ea5c9', sidebar: '#0c3d5e', body: '#eef8fc' },
   { key: 'forest', label: 'Forest', accent: '#16a34a', sidebar: '#16301f', body: '#eef8f0' },

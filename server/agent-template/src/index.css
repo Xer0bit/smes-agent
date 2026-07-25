@@ -11,6 +11,14 @@ body {
   margin: 0;
 }
 
+/* Paired display font for headings only -- fixed regardless of the chosen
+   body font, same two-typeface pattern most considered dashboard UIs use
+   (a geometric display face for titles, a plain body face for content). */
+h1, h2, h3 {
+  font-family: 'Space Grotesk', '{{FONT_FAMILY}}', system-ui, sans-serif;
+  letter-spacing: -0.01em;
+}
+
 * { box-sizing: border-box; }
 
 ::-webkit-scrollbar { width: 6px; }

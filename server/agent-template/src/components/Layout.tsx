@@ -123,8 +123,13 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
                   style={{
                     borderRadius: 'var(--radius-sm)',
                     justifyContent: collapsed ? 'center' : 'flex-start',
+                    // --sidebar-hover (not --accent-bg): that variable is a light
+                    // tint meant for content on the light body surface -- against
+                    // a dark sidebar it was nearly invisible. --sidebar-hover is
+                    // already shaded correctly relative to the sidebar's own
+                    // color, dark or light.
                     ...(isActive
-                      ? { background: 'var(--accent-bg)', color: 'var(--accent)' }
+                      ? { background: 'var(--sidebar-hover)', color: 'var(--accent)' }
                       : { color: 'var(--sidebar-muted)' }),
                   }}>
                   {isActive && !collapsed && (
@@ -179,7 +184,7 @@ function TopNav({ children }: { children: ReactNode }) {
                   style={({ isActive }) => ({
                     borderRadius: 'var(--radius-sm)',
                     ...(isActive
-                      ? { background: 'var(--accent-bg)', color: 'var(--accent)' }
+                      ? { background: 'var(--sidebar-hover)', color: 'var(--accent)' }
                       : { color: 'var(--sidebar-muted)' }),
                   })}>
                   <Icon className="w-3.5 h-3.5" />{label}
