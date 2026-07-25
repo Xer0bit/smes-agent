@@ -141,6 +141,9 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
         return 'unsupported';
       }
     }
+    if (seg.length === 3 && seg[2] === 'regenerate' && method === 'POST') {
+      return { tool: 'regenerate_post', args: { postId: seg[1], feedback: body?.feedback } };
+    }
   }
 
   if (seg[0] === 'connectors' && seg[1] === 'org') {
@@ -231,6 +234,16 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
     if (seg.length === 2 && seg[1] === 'mark-all-read' && method === 'POST') {
       return { tool: 'mark_all_notifications_read', args: {} };
     }
+  }
+
+  // Deliberately separate from 'org' below: only the auto-approve trust dial
+  // is agent-management scope, not the full org profile (name/billing/etc).
+  if (seg[0] === 'org-settings' && seg.length === 1) {
+    if (method === 'GET') return { tool: 'get_org_settings', args: {} };
+    if (method === 'PATCH') return {
+      tool: 'update_org_settings',
+      args: pick(body, ['autoApprovePosts', 'auto_approve_posts'], ['autoApproveConfidenceThreshold', 'auto_approve_confidence_threshold']),
+    };
   }
 
   // org settings, team, api-keys, billing, summary: portal-account features

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Settings, Users, Key, Receipt, Plus, Trash2, X, Mail, Shield, Lock } from 'lucide-react';
+import { Settings, Users, Key, Receipt, Plus, Trash2, X, Mail, Shield, Lock, Sparkles } from 'lucide-react';
 import { ecgApi, isUnsupported } from '../lib/ecgClient';
 import { EmptyState } from '../components/ui';
 
@@ -17,6 +17,7 @@ function Unavailable({ label }: { label: string }) {
 }
 
 const TABS = [
+  { id: 'automation', label: 'Automation', icon: Sparkles },
   { id: 'org', label: 'Organization', icon: Settings },
   { id: 'team', label: 'Team', icon: Users },
   { id: 'api-keys', label: 'API Keys', icon: Key },
@@ -25,9 +26,13 @@ const TABS = [
 type Tab = typeof TABS[number]['id'];
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<Tab>('org');
+  const [tab, setTab] = useState<Tab>('automation');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Automation (auto-approve trust dial) data
+  const [autoApprove, setAutoApprove] = useState<{ autoApprovePosts: boolean; autoApproveConfidenceThreshold: number } | null>(null);
+  const [savingAutomation, setSavingAutomation] = useState(false);
 
   // Org data
   const [org, setOrg] = useState<any>(null);
@@ -56,6 +61,7 @@ export default function SettingsPage() {
   });
 
   useEffect(() => {
+    ecgApi.orgSettings.get().then(setAutoApprove).catch(e => setError(e.message));
     Promise.allSettled([
       ecgApi.org.get(),
       ecgApi.team.list(),
@@ -87,6 +93,18 @@ export default function SettingsPage() {
       if (realFailure) setError(realFailure.reason?.message ?? 'Failed to load settings');
     }).finally(() => setLoading(false));
   }, []);
+
+  const handleSaveAutomation = async (updates: { autoApprovePosts?: boolean; autoApproveConfidenceThreshold?: number }) => {
+    setSavingAutomation(true);
+    try {
+      const updated = await ecgApi.orgSettings.update(updates);
+      setAutoApprove(updated);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSavingAutomation(false);
+    }
+  };
 
   const handleSaveOrg = async (updates: any) => {
     setSavingOrg(true);
@@ -176,6 +194,11 @@ export default function SettingsPage() {
       {loading && <Spinner />}
       {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</div>}
 
+      {/* Automation Tab */}
+      {!loading && tab === 'automation' && autoApprove && (
+        <AutomationSettings settings={autoApprove} onSave={handleSaveAutomation} saving={savingAutomation} />
+      )}
+
       {/* Org Tab */}
       {!loading && tab === 'org' && (
         unavailable.org ? <Unavailable label="Organization profile" />
@@ -226,6 +249,56 @@ export default function SettingsPage() {
 
 function Spinner() {
   return <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: 'var(--accent)' }} /></div>;
+}
+
+function AutomationSettings({ settings, onSave, saving }: {
+  settings: { autoApprovePosts: boolean; autoApproveConfidenceThreshold: number };
+  onSave: (data: { autoApprovePosts?: boolean; autoApproveConfidenceThreshold?: number }) => void;
+  saving: boolean;
+}) {
+  const [enabled, setEnabled] = useState(settings.autoApprovePosts);
+  const [threshold, setThreshold] = useState(Math.round(settings.autoApproveConfidenceThreshold * 100));
+
+  return (
+    <div className="rounded-xl border p-6 space-y-5" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
+      <div>
+        <h2 className="text-md font-semibold" style={{ color: 'var(--text)' }}>Auto-Approve Trust Dial</h2>
+        <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>
+          By default, every post an agent writes waits in Posts for your review. Turn this on to let an agent publish
+          on its own once it's confident enough in a post -- applies to every agent in this organisation.
+        </p>
+      </div>
+
+      <label className="flex items-center justify-between gap-3 cursor-pointer">
+        <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>Let high-confidence posts publish automatically</span>
+        <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} className="w-4 h-4" />
+      </label>
+
+      {enabled && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs font-medium" style={{ color: 'var(--text)' }}>How confident the agent must be to skip review</label>
+            <span className="text-xs font-mono" style={{ color: 'var(--muted)' }}>{threshold}%</span>
+          </div>
+          <input type="range" min={50} max={100} value={threshold} onChange={e => setThreshold(Number(e.target.value))} className="w-full" />
+          <p className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
+            Higher = stricter (fewer posts skip review, but the ones that do are safer bets).
+          </p>
+        </div>
+      )}
+
+      <div className="flex justify-end pt-2">
+        <button
+          onClick={() => onSave({ autoApprovePosts: enabled, autoApproveConfidenceThreshold: threshold / 100 })}
+          disabled={saving}
+          className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
+          style={{ background: 'var(--accent)' }}
+        >
+          {saving ? 'Saving…' : 'Save Changes'}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function OrgSettings({ org, onSave, saving }: { org: any; onSave: (data: any) => void; saving: boolean }) {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle, XCircle, FileText, Plus, Trash2, Pencil, X, Sparkles, Calendar, RefreshCw, AlertTriangle } from 'lucide-react';
+import { CheckCircle, XCircle, FileText, Plus, Trash2, Pencil, X, Sparkles, Calendar, RefreshCw, AlertTriangle, Wand2 } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
@@ -44,6 +44,8 @@ export default function PostsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [editingPost, setEditingPost] = useState<any>(null);
   const [deletingPost, setDeletingPost] = useState<any>(null);
+  const [regeneratingPost, setRegeneratingPost] = useState<any>(null);
+  const [regenLoading, setRegenLoading] = useState(false);
   const [modalLoading, setModalLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -135,6 +137,22 @@ export default function PostsPage() {
       setError(e.message);
     } finally {
       setModalLoading(false);
+    }
+  };
+
+  const handleRegenerate = async (feedback?: string) => {
+    if (!regeneratingPost?.id) return;
+    setRegenLoading(true);
+    try {
+      const updated = await ecgApi.posts.regenerate(regeneratingPost.id, feedback);
+      setPosts(posts.map(p => p.id === regeneratingPost.id
+        ? { ...p, content: updated.content ?? p.content, confidence: updated.confidence ?? p.confidence, status: 'draft' }
+        : p));
+      setRegeneratingPost(null);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setRegenLoading(false);
     }
   };
 
@@ -325,6 +343,11 @@ export default function PostsPage() {
                   <div className="flex gap-2 shrink-0">
                     {p.status === 'draft' && (
                       <>
+                        <button onClick={() => setRegeneratingPost(p)} disabled={!!acting}
+                          className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg border disabled:opacity-50"
+                          style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                          <Wand2 className="w-3.5 h-3.5" /> Regenerate
+                        </button>
                         <button onClick={() => act(p.id, 'reject')} disabled={!!acting}
                           className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg disabled:opacity-50">
                           <XCircle className="w-3.5 h-3.5" /> Reject
@@ -384,6 +407,59 @@ export default function PostsPage() {
           loading={modalLoading}
         />
       )}
+
+      {regeneratingPost && (
+        <RegenerateModal
+          onClose={() => setRegeneratingPost(null)}
+          onRegenerate={handleRegenerate}
+          loading={regenLoading}
+        />
+      )}
+    </div>
+  );
+}
+
+function RegenerateModal({ onClose, onRegenerate, loading }: {
+  onClose: () => void;
+  onRegenerate: (feedback?: string) => void;
+  loading: boolean;
+}) {
+  const [feedback, setFeedback] = useState('');
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="rounded-xl shadow-xl w-full max-w-lg p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold flex items-center gap-2" style={{ color: 'var(--text)' }}>
+            <Wand2 className="w-4 h-4" style={{ color: 'var(--accent)' }} /> Regenerate Post
+          </h2>
+          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
+            <X className="w-5 h-5" style={{ color: 'var(--muted)' }} />
+          </button>
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>What should change? (optional)</label>
+          <textarea
+            value={feedback}
+            onChange={e => setFeedback(e.target.value)}
+            rows={3}
+            placeholder="e.g. make it shorter, less salesy, more casual…"
+            className="w-full px-3 py-2 rounded-lg border text-sm resize-none"
+            style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+            autoFocus
+          />
+          <p className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>Leave blank to just get a fresh take on the same topic.</p>
+        </div>
+        <div className="flex gap-3 pt-2">
+          <button type="button" onClick={onClose} disabled={loading}
+            className="flex-1 px-4 py-2 rounded-lg border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+            Cancel
+          </button>
+          <button type="button" onClick={() => onRegenerate(feedback.trim() || undefined)} disabled={loading}
+            className="flex-1 px-4 py-2 rounded-lg text-white disabled:opacity-50" style={{ background: 'var(--accent)' }}>
+            {loading ? 'Regenerating…' : 'Regenerate'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

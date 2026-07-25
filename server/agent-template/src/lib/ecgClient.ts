@@ -102,6 +102,10 @@ export const ecgApi = {
     reject:  (id: string) => req('PATCH', `/planned-posts/${id}`, { status: 'cancelled' }),
     update:  (id: string, data: { content?: string; platform?: string; scheduledAt?: string }) => req('PATCH', `/planned-posts/${id}`, data),
     bulkApprove: (ids: string[]) => req('POST', '/planned-posts/bulk-approve', { postIds: ids }),
+    // Rewrites the post's content (optionally steered by feedback), puts it
+    // back in Draft for review -- distinct from `approve`/`reject`, which
+    // only ever touch status.
+    regenerate: (id: string, feedback?: string) => req('POST', `/planned-posts/${id}/regenerate`, { feedback }),
   },
 
   // Post visuals   Canva-style canvas (background + positioned text/image/
@@ -162,6 +166,13 @@ export const ecgApi = {
   org: {
     get:    () => req('GET', '/org'),
     update: (data: unknown) => req('PATCH', '/org', data),
+  },
+
+  // Auto-approve trust dial only -- separate from `org` above (which stays
+  // portal-account-only: name/billing/entitlements).
+  orgSettings: {
+    get:    () => req('GET', '/org-settings'),
+    update: (data: { autoApprovePosts?: boolean; autoApproveConfidenceThreshold?: number }) => req('PATCH', '/org-settings', data),
   },
 
   // Team
