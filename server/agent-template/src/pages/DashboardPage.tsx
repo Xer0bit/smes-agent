@@ -7,6 +7,7 @@ import {
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
 import { Card, relTime, platformMeta } from '../components/ui';
+import { statusLabel } from '../components/StatusBadge';
 
 // Pipeline statuses are semantic, not series colors (dataviz: status palette
 // is reserved). Values come straight from the DB status column.
@@ -127,7 +128,7 @@ export default function DashboardPage() {
     return { segs, total };
   }, [stats]);
 
-  const hasConnector = connectors.some((c: any) => ['connected', 'active'].includes((c.status ?? '').toLowerCase()));
+  const hasConnector = connectors.some((c: any) => (c.status ?? '').toLowerCase() === 'connected');
   const setupSteps = [
     ...(has('connectors') ? [{ done: hasConnector, title: 'Connect a platform', cta: hasConnector ? 'Manage' : 'Connect', path: '/connectors', Icon: Link2 }] : []),
     ...(has('agents')     ? [{ done: agents.length > 0, title: 'Create an agent', cta: agents.length ? 'View' : 'Create', path: '/agents', Icon: Zap }] : []),
@@ -357,7 +358,7 @@ export default function DashboardPage() {
                   {pipeline.segs.map(s => (
                     <p key={s.status} className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text)' }}>
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ background: s.color }} />
-                      <span className="capitalize">{s.status}</span>
+                      <span>{statusLabel(s.status)}</span>
                       <span style={{ color: 'var(--muted)' }}>{s.count}</span>
                     </p>
                   ))}

@@ -24,6 +24,15 @@ export function cadenceSentence(cron?: string, postCount?: number): string | nul
   return `${days} at ${String(m[1]).padStart(2, '0')}:00${posts}`;
 }
 
+// Always returns a plain-language string, never raw cron syntax -- for any
+// schedule shape the weekly-builder regex above doesn't recognize (created
+// outside this dashboard's own scheduler UI), fall back to a message instead
+// of printing e.g. "0 9 * * 1,3,5" to a non-technical user.
+export function cadenceLabel(cron?: string, postCount?: number): string {
+  if (!cron) return 'No schedule set';
+  return cadenceSentence(cron, postCount) ?? 'Custom schedule — edit in Schedulers';
+}
+
 export function PageHeader({ eyebrow, title, action }: { eyebrow?: string; title: string; action?: ReactNode }) {
   return (
     <div className="flex items-end justify-between gap-4 pb-1">
@@ -113,6 +122,74 @@ export const PLATFORM_CHAR_LIMIT: Record<string, number> = {
 };
 export function platformCharLimit(p: string): number {
   return PLATFORM_CHAR_LIMIT[p.toLowerCase()] ?? 5000;
+}
+
+// Shared by AgentsPage.tsx and EditAgentPage.tsx: deleting an agent requires
+// it be archived first (same rule the main org portal enforces). Both pages
+// hit the identical backend error, so the archive-first recovery flow lives
+// here once instead of two independently-drifting copies -- previously
+// EditAgentPage had no handling for this at all and just surfaced a raw
+// backend error with no way to recover.
+export function AgentDeleteModal({ agentName, onClose, onConfirm, loading, blocked, onArchiveThenDelete }: {
+  agentName: string;
+  onClose: () => void;
+  onConfirm: () => void;
+  loading: boolean;
+  blocked: boolean;
+  onArchiveThenDelete: () => void;
+}) {
+  if (blocked) {
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
+          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Archive first</h2>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>
+            <strong>{agentName}</strong> needs to be archived before it can be deleted. Archive and delete it now?
+          </p>
+          <div className="flex gap-3 pt-2">
+            <button onClick={onClose} disabled={loading} className="flex-1 px-4 py-2 rounded-lg border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+              Cancel
+            </button>
+            <button onClick={onArchiveThenDelete} disabled={loading} className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 hover:opacity-90 disabled:opacity-50">
+              {loading ? 'Working…' : 'Archive & delete'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
+        <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Delete Agent</h2>
+        <p className="text-sm" style={{ color: 'var(--muted)' }}>
+          Are you sure you want to delete <strong>{agentName}</strong>? This action cannot be undone.
+        </p>
+        <div className="flex gap-3 pt-2">
+          <button onClick={onClose} disabled={loading} className="flex-1 px-4 py-2 rounded-lg border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} disabled={loading} className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 disabled:opacity-50">
+            {loading ? 'Deleting...' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Auto-detect the browser's timezone instead of defaulting everyone to UTC --
+// falls back to 'UTC' if Intl throws (very old browsers). Used by Create/Edit
+// Agent's timezone picker; callers should add the result to their options
+// list if it isn't already one of their hardcoded zones, so the <select>
+// always has a matching option instead of silently showing the wrong value.
+export function detectTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
 }
 
 // "3h ago" / "in 2d"  compact relative time for last-run / scheduled-at.

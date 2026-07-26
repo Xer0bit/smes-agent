@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronRight, Rocket, Plug, Database, CalendarClock, AlertTriangle, Loader2, PartyPopper } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
-import { DAYS_OF_WEEK, buildWeeklyCron } from '../components/ui';
+import { DAYS_OF_WEEK, buildWeeklyCron, platformMeta, detectTimezone } from '../components/ui';
+import { platformsForConnector } from './PostsPage';
 
 interface Template {
   id: string; name: string; description?: string; category?: string;
@@ -10,7 +11,7 @@ interface Template {
   scheduleCapable?: boolean; schedule_capable?: boolean;
   instructionsHint?: string; instructions_hint?: string;
 }
-interface Connector { id: string; type: string; name: string; status: string; }
+interface Connector { id: string; type: string; name: string; status: string; platforms?: string[]; }
 interface KnowledgeBase { id: string; name: string; description?: string; assetCount?: number; asset_count?: number; }
 
 const TIMEZONES = [
@@ -31,7 +32,7 @@ export default function CreateAgentPage() {
 
   const [tpl, setTpl] = useState<Template | null>(null);
   const [agentName, setAgentName] = useState('');
-  const [timezone, setTimezone] = useState('UTC');
+  const [timezone, setTimezone] = useState(detectTimezone);
   const [overlay, setOverlay] = useState('');
   const [selectedConnectorIds, setSelectedConnectorIds] = useState<string[]>([]);
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
@@ -57,9 +58,15 @@ export default function CreateAgentPage() {
   const connectorTypes = tpl?.connectorTypes ?? tpl?.connector_types ?? [];
   const scheduleCapable = tpl?.scheduleCapable ?? tpl?.schedule_capable ?? false;
   const instructionsHint = tpl?.instructionsHint ?? tpl?.instructions_hint;
-  const matchingConnectors = connectorTypes.length === 0
+  // Template connectorTypes are `zapier-mcp-<platform>`-shaped; a real connector
+  // may be the generic multi-platform `zapier` type instead, so match on the
+  // platforms it actually covers rather than its raw type string (same fix as
+  // platformsForConnector elsewhere -- a type-string match alone silently
+  // excludes any connector using the generic type).
+  const templatePlatforms = connectorTypes.map(t => t.startsWith('zapier-mcp-') ? t.replace('zapier-mcp-', '') : t);
+  const matchingConnectors = templatePlatforms.length === 0
     ? connectors
-    : connectors.filter(c => connectorTypes.some(t => c.type === t || c.type.startsWith(t)));
+    : connectors.filter(c => platformsForConnector(c).some(p => templatePlatforms.includes(p)));
 
   function toggleConnector(id: string) {
     setSelectedConnectorIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -85,19 +92,37 @@ export default function CreateAgentPage() {
         // Backend expects a platform TYPE string ("zapier-mcp-linkedin"), not
         // the connector's row id  passing the raw id silently created a
         // scheduler with a garbage `connector` value that the publish
-        // pipeline could never match to a real connector.
-        const connectorType = connectors.find(c => c.id === selectedConnectorIds[0])?.type;
-        if (connectorType) {
+        // pipeline could never match to a real connector. `platforms` must
+        // also be passed explicitly: create_scheduler defaults it to
+        // ['linkedin'] when omitted, so a generic multi-platform connector
+        // covering e.g. only Facebook+YouTube would otherwise silently get
+        // scheduled to post to LinkedIn instead. One scheduler is created per
+        // selected connector -- previously only the first was ever used,
+        // silently dropping the rest.
+        const scheduleConnectors = selectedConnectorIds
+          .map(id => connectors.find(c => c.id === id))
+          .filter((c): c is Connector => !!c);
+        const failedNames: string[] = [];
+        for (const c of scheduleConnectors) {
+          const platforms = platformsForConnector(c);
           try {
-            await ecgApi.schedulers.create({ agentId: created.id, cron: buildWeeklyCron(scheduleDays, scheduleHour), connector: connectorType });
-          } catch (e: any) {
-            // Agent creation still succeeds  surface the scheduler failure
-            // instead of silently swallowing it, so the user isn't left
-            // wondering why nothing gets posted.
-            setSchedulerWarning(e?.message ?? 'Could not set up the posting schedule.');
+            await ecgApi.schedulers.create({
+              agentId: created.id,
+              cron: buildWeeklyCron(scheduleDays, scheduleHour),
+              connector: c.type,
+              platforms: platforms.length > 0 ? platforms : undefined,
+            });
+          } catch {
+            failedNames.push(c.name);
           }
-        } else {
-          setSchedulerWarning('Could not determine the platform for the selected connector  set up the schedule in Schedulers.');
+        }
+        if (scheduleConnectors.length === 0) {
+          setSchedulerWarning('Could not determine which connector to schedule  set up the schedule in Schedulers.');
+        } else if (failedNames.length > 0) {
+          // Agent creation still succeeds  surface the scheduler failure
+          // instead of silently swallowing it, so the user isn't left
+          // wondering why nothing gets posted.
+          setSchedulerWarning(`Could not set up the schedule for: ${failedNames.join(', ')}. Set it up in Schedulers.`);
         }
       }
       setDone(true);
@@ -208,13 +233,16 @@ export default function CreateAgentPage() {
               <div className="space-y-2">
                 {(matchingConnectors.length > 0 ? matchingConnectors : connectors).map(c => {
                   const on = selectedConnectorIds.includes(c.id);
+                  const platforms = platformsForConnector(c);
                   return (
                     <label key={c.id} className="flex items-center gap-3 p-3 rounded-xl border cursor-pointer"
                       style={{ borderColor: 'var(--border)', background: on ? 'var(--accent-bg,#ede9fe)' : 'var(--card-bg)' }}>
                       <input type="checkbox" checked={on} onChange={() => toggleConnector(c.id)} className="w-4 h-4" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{c.name}</p>
-                        <p className="text-xs" style={{ color: 'var(--muted)' }}>{c.type}</p>
+                        <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                          {platforms.length > 0 ? platforms.map(p => platformMeta(p).label).join(', ') : 'Unmapped connector'}
+                        </p>
                       </div>
                       <span className="text-xs px-2 py-0.5 rounded-full border" style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>{c.status}</span>
                     </label>
@@ -268,7 +296,7 @@ export default function CreateAgentPage() {
             <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Timezone</label>
             <select value={timezone} onChange={e => setTimezone(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border text-sm" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}>
-              {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+              {(TIMEZONES.includes(timezone) ? TIMEZONES : [timezone, ...TIMEZONES]).map(tz => <option key={tz} value={tz}>{tz}</option>)}
             </select>
           </div>
           <div>
@@ -318,9 +346,23 @@ export default function CreateAgentPage() {
         <div className="space-y-4">
           <div className="rounded-xl border p-4 space-y-2" style={{ borderColor: 'var(--border)', background: 'var(--card-bg)' }}>
             <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--muted)' }}>Summary</p>
-            {[['Name', agentName], ['Template', tpl.name], ['Timezone', timezone], ['Connectors', String(selectedConnectorIds.length)], ['Knowledge Bases', String(selectedKbIds.length)]].map(([l, v]) => (
+            {[
+              ['Name', agentName],
+              ['Template', tpl.name],
+              ['Timezone', timezone],
+              ['Connected accounts', connectors.filter(c => selectedConnectorIds.includes(c.id)).map(c => c.name).join(', ') || 'None'],
+              ['Knowledge Bases', String(selectedKbIds.length)],
+            ].map(([l, v]) => (
               <div key={l} className="flex gap-4 text-sm"><span className="w-32 shrink-0" style={{ color: 'var(--muted)' }}>{l}</span><span style={{ color: 'var(--text)' }}>{v}</span></div>
             ))}
+            {scheduleCapable && scheduleDays.length > 0 && (
+              <div className="flex gap-4 text-sm">
+                <span className="w-32 shrink-0" style={{ color: 'var(--muted)' }}>Will schedule</span>
+                <span style={{ color: 'var(--text)' }}>
+                  {connectors.filter(c => selectedConnectorIds.includes(c.id)).map(c => c.name).join(', ') || 'No account selected'}
+                </span>
+              </div>
+            )}
           </div>
           {error && <p className="text-sm px-4 py-2 rounded-lg bg-red-50 text-red-700">{error}</p>}
           <div className="flex justify-between pt-2">

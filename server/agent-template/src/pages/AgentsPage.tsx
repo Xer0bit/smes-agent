@@ -4,7 +4,7 @@ import { Zap, Clock, Plus, Pencil, Trash2, MoreHorizontal, Play, Pause, Archive 
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
-import { PageHeader, Card, EmptyState, Spinner, relTime } from '../components/ui';
+import { PageHeader, Card, EmptyState, Spinner, relTime, AgentDeleteModal } from '../components/ui';
 
 const showLastRun = (ECG.moduleSettings.agents?.showLastRun ?? true) !== false;
 
@@ -89,13 +89,18 @@ export default function AgentsPage() {
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
       <PageHeader eyebrow="Content" title="Agents" action={
-        <button
-          onClick={() => navigate('/agents/create')}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
-          style={{ background: 'var(--accent)' }}
-        >
-          <Plus className="w-4 h-4" /> New Agent
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => navigate('/schedulers')} className="text-xs hover:opacity-70" style={{ color: 'var(--muted)' }}>
+            Manage all schedules
+          </button>
+          <button
+            onClick={() => navigate('/agents/create')}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
+            style={{ background: 'var(--accent)' }}
+          >
+            <Plus className="w-4 h-4" /> New Agent
+          </button>
+        </div>
       } />
 
       {loading && <Spinner />}
@@ -189,8 +194,8 @@ export default function AgentsPage() {
       )}
 
       {deletingAgent && (
-        <DeleteConfirmModal
-          itemName={deletingAgent.name}
+        <AgentDeleteModal
+          agentName={deletingAgent.name}
           onClose={() => { setDeletingAgent(null); setDeleteBlocked(false); }}
           onConfirm={handleDelete}
           loading={deleting}
@@ -202,64 +207,6 @@ export default function AgentsPage() {
           }}
         />
       )}
-    </div>
-  );
-}
-
-function DeleteConfirmModal({ itemName, onClose, onConfirm, loading, blocked, onArchiveThenDelete }: {
-  itemName: string;
-  onClose: () => void;
-  onConfirm: () => void;
-  loading: boolean;
-  blocked: boolean;
-  onArchiveThenDelete: () => void;
-}) {
-  if (blocked) {
-    return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
-          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Archive first</h2>
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>
-            <strong>{itemName}</strong> needs to be archived before it can be deleted. Archive and delete it now?
-          </p>
-          <div className="flex gap-3 pt-2">
-            <button onClick={onClose} disabled={loading} className="flex-1 px-4 py-2 rounded-lg border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
-              Cancel
-            </button>
-            <button onClick={onArchiveThenDelete} disabled={loading} className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 hover:opacity-90 disabled:opacity-50">
-              {loading ? 'Working…' : 'Archive & delete'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
-        <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Delete Agent</h2>
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>
-          Are you sure you want to delete <strong>{itemName}</strong>? This action cannot be undone.
-        </p>
-        <div className="flex gap-3 pt-2">
-          <button
-            onClick={onClose}
-            disabled={loading}
-            className="flex-1 px-4 py-2 rounded-lg border"
-            style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={loading}
-            className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 disabled:opacity-50"
-          >
-            {loading ? 'Deleting...' : 'Delete'}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

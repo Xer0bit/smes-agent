@@ -20,6 +20,13 @@ const LABELS: Record<string, string> = {
   cancelled: 'Cancelled',
 };
 
+// Shared with any other screen that renders this same raw status vocabulary
+// (e.g. Dashboard's pipeline-breakdown legend) so "draft" never reads as
+// "Needs review" on one page and "Draft" on another.
+export function statusLabel(status: string): string {
+  return LABELS[status?.toLowerCase()] ?? status;
+}
+
 export default function StatusBadge({ status }: { status: string }) {
   const key = status?.toLowerCase();
   const cls = MAP[key] ?? 'bg-slate-100 text-slate-600';

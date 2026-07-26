@@ -26,16 +26,28 @@ const ALL_ICONS: Record<string, LucideIcon> = {
 };
 
 const ALL_NAV = [
-  { id: 'dashboard',  label: 'Home',          path: '/',           icon: 'LayoutDashboard', always: true },
-  { id: 'chat',       label: 'Assistant',     path: '/assistant',  icon: 'MessageSquare',   always: true },
-  { id: 'agents',     label: 'Agents',        path: '/agents',     icon: 'Zap' },
-  { id: 'schedulers', label: 'Schedulers',    path: '/schedulers', icon: 'Calendar' },
-  { id: 'posts',      label: 'Planned Posts', path: '/posts',      icon: 'FileText' },
-  { id: 'connectors', label: 'Connectors',    path: '/connectors', icon: 'Plug' },
-  { id: 'runs',       label: 'Run History',   path: '/runs',       icon: 'History' },
-  { id: 'knowledge',  label: 'Knowledge',     path: '/knowledge',  icon: 'BookOpen' },
-  { id: 'settings',   label: 'Settings',      path: '/settings',   icon: 'Settings', always: true },
+  { id: 'dashboard',  label: 'Home',              path: '/',              icon: 'LayoutDashboard', always: true },
+  { id: 'chat',       label: 'Assistant',         path: '/assistant',     icon: 'MessageSquare',   always: true },
+  { id: 'agents',     label: 'My Agents',         path: '/agents',        icon: 'Zap' },
+  { id: 'schedulers', label: 'Schedulers',        path: '/schedulers',    icon: 'Calendar' },
+  // Content Calendar (not the flat list) is the primary Content destination
+  // -- a non-technical user reviewing what's going out reads better as a
+  // visual calendar than a status table. The flat list stays one click away
+  // (PostsCalendarPage's own back button), for anyone who wants it.
+  { id: 'posts',      label: 'Content Calendar',  path: '/posts/calendar', icon: 'Calendar' },
+  { id: 'connectors', label: 'Connected Accounts', path: '/connectors',    icon: 'Plug' },
+  { id: 'runs',       label: 'Run History',       path: '/runs',          icon: 'History' },
+  { id: 'knowledge',  label: 'Brand Voice & Docs', path: '/knowledge',    icon: 'BookOpen' },
+  { id: 'settings',   label: 'Settings',          path: '/settings',      icon: 'Settings', always: true },
 ];
+
+// Schedulers and Run History are infrastructure/execution-log concepts, not
+// something a non-technical social-media manager thinks of as a top-level
+// destination -- "how often does THIS agent post" and "did THIS agent's last
+// run work" are answered on AgentDetailPage (which already links out to the
+// full pages via "Manage" / "View all"). The routes stay live for anyone who
+// wants the cross-agent view; they're just not pinned in the sidebar.
+const HIDDEN_FROM_SIDEBAR = ['schedulers', 'runs'];
 
 // Assistant defaults to visible (moduleSettings.chat undefined) so every
 // dashboard generated before this toggle existed keeps behaving exactly as
@@ -54,7 +66,10 @@ const chatDisabled = ECG.moduleSettings.chat?.enabled === false;
 // sidebar at all. filter() picks up every always-item instead.
 const NAV = [
   ...ALL_NAV.filter(n => n.always && n.id !== 'settings' && !(n.id === 'chat' && chatDisabled)),
-  ...ECG.modules.map(id => ALL_NAV.find(n => n.id === id)).filter((n): n is typeof ALL_NAV[number] => Boolean(n)),
+  ...ECG.modules
+    .filter(id => !HIDDEN_FROM_SIDEBAR.includes(id))
+    .map(id => ALL_NAV.find(n => n.id === id))
+    .filter((n): n is typeof ALL_NAV[number] => Boolean(n)),
   ALL_NAV.find(n => n.id === 'settings')!,
 ];
 

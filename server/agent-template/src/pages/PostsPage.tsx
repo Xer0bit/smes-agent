@@ -22,13 +22,17 @@ const PLATFORM_LABELS: Record<string, string> = {
   telegram: 'Telegram', whatsapp: 'WhatsApp',
 };
 
-// A connector's `type` is always `zapier-mcp-<platform>` (or the native
-// `whatsapp`) -- see ConnectorsPage.tsx. The generic `zapier` type covers no
-// single known platform, so it's excluded rather than guessed at.
-export function platformFromConnectorType(type: string): string | null {
-  if (type === 'whatsapp') return 'whatsapp';
-  if (type.startsWith('zapier-mcp-')) return type.replace('zapier-mcp-', '');
-  return null;
+// A connector's `platforms` array (set at creation, or backfilled server-side
+// for older rows) is the authoritative source -- one Zapier MCP connector can
+// cover several platforms at once (e.g. type: 'zapier' with
+// platforms: ['linkedin','facebook','youtube']), not just one. Only fall back
+// to guessing from `type` (`zapier-mcp-<platform>`, or the native `whatsapp`)
+// for legacy connectors created before the `platforms` field existed.
+export function platformsForConnector(c: { type: string; platforms?: string[] }): string[] {
+  if (Array.isArray(c.platforms) && c.platforms.length > 0) return c.platforms;
+  if (c.type === 'whatsapp') return ['whatsapp'];
+  if (c.type.startsWith('zapier-mcp-')) return [c.type.replace('zapier-mcp-', '')];
+  return [];
 }
 
 export default function PostsPage() {
@@ -56,11 +60,10 @@ export default function PostsPage() {
     ])
       .then(([postsData, connectorsData]) => {
         setPosts(Array.isArray(postsData) ? postsData : (postsData.posts ?? postsData.plannedPosts ?? []));
-        const connectors = Array.isArray(connectorsData) ? connectorsData : (connectorsData.connectors ?? []);
-        const platforms = connectors
-          .filter((c: any) => ['connected', 'active'].includes((c.status ?? '').toLowerCase()))
-          .map((c: any) => platformFromConnectorType(c.type))
-          .filter((p: string | null): p is string => p !== null);
+        const connectors: any[] = Array.isArray(connectorsData) ? connectorsData : (connectorsData.connectors ?? []);
+        const platforms: string[] = connectors
+          .filter((c: any) => (c.status ?? '').toLowerCase() === 'connected')
+          .flatMap((c: any): string[] => platformsForConnector(c));
         setConnectedPlatforms([...new Set(platforms)]);
       })
       .catch(e => setError(e.message))

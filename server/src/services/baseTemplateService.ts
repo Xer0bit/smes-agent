@@ -959,9 +959,18 @@ export async function initProjectFromTemplate(destDir: string): Promise<void> {
     // `cp -al` creates hard links (Linux / macOS)
     await execAsync(`cp -al "${NODE_MODULES}" "${destModules}"`);
   } catch {
-    // Fallback for Windows or filesystems that don't support hard links
+    // Fallback for Windows, or Linux filesystems that don't support hard links
+    // (destDir on a different mount than BASE_TEMPLATE_DIR   cp -al fails with
+    // EXDEV, which can leave a partially-created destModules behind). `cp -r`
+    // treats an already-existing destModules as a directory to copy INTO, not
+    // merge with, nesting the whole tree one level too deep
+    // (destModules/node_modules/react instead of destModules/react) and
+    // silently breaking every import in the scaffolded project. Clear any
+    // partial state first and copy contents (trailing /.), not the directory.
     console.warn('[BaseTemplate] cp -al failed, falling back to cp -r');
-    await execAsync(`cp -r "${NODE_MODULES}" "${destModules}"`);
+    fs.rmSync(destModules, { recursive: true, force: true });
+    fs.mkdirSync(destModules, { recursive: true });
+    await execAsync(`cp -r "${NODE_MODULES}/." "${destModules}/"`);
   }
 
   // Seed a package.json if the project doesn't have one yet

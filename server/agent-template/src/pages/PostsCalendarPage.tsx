@@ -4,7 +4,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, CheckCircle, XCircle, FileText, P
 import { ecgApi } from '../lib/ecgClient';
 import StatusBadge from '../components/StatusBadge';
 import { Card, Spinner, platformMeta } from '../components/ui';
-import { PostModal, platformFromConnectorType } from './PostsPage';
+import { PostModal, platformsForConnector } from './PostsPage';
 
 function dateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -28,11 +28,10 @@ export default function PostsCalendarPage() {
       ecgApi.connectors.list().catch(() => []),
     ]).then(([postsData, connectorsData]) => {
       setPosts(Array.isArray(postsData) ? postsData : (postsData.posts ?? postsData.plannedPosts ?? []));
-      const connectors = Array.isArray(connectorsData) ? connectorsData : (connectorsData.connectors ?? []);
-      const platforms = connectors
-        .filter((c: any) => ['connected', 'active'].includes((c.status ?? '').toLowerCase()))
-        .map((c: any) => platformFromConnectorType(c.type))
-        .filter((p: string | null): p is string => p !== null);
+      const connectors: any[] = Array.isArray(connectorsData) ? connectorsData : (connectorsData.connectors ?? []);
+      const platforms: string[] = connectors
+        .filter((c: any) => (c.status ?? '').toLowerCase() === 'connected')
+        .flatMap((c: any): string[] => platformsForConnector(c));
       setConnectedPlatforms([...new Set(platforms)]);
     }).finally(() => setLoading(false));
   }, []);

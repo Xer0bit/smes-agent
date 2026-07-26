@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Zap, Pencil, Calendar, History, FileText, Play, Pause, MoreHorizontal, Archive } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import StatusBadge from '../components/StatusBadge';
-import { Card, Spinner, EmptyState, relTime } from '../components/ui';
+import { Card, Spinner, EmptyState, relTime, cadenceLabel } from '../components/ui';
 
 interface AgentDetail {
   agent: { id: string; name: string; status: string; lastRunAt: string | null };
@@ -159,8 +159,7 @@ export default function AgentDetailPage() {
               {schedulers.map(s => (
                 <div key={s.id} className="flex items-center justify-between rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border)' }}>
                   <div>
-                    <p className="text-xs font-mono" style={{ color: 'var(--text)' }}>{s.cron}</p>
-                    <p className="text-[11px] mt-0.5" style={{ color: 'var(--muted)' }}>{s.postCount} post{s.postCount === 1 ? '' : 's'} per run</p>
+                    <p className="text-xs" style={{ color: 'var(--text)' }}>{cadenceLabel(s.cron, s.postCount)}</p>
                   </div>
                   <div className="text-right shrink-0">
                     <StatusBadge status={s.status} />

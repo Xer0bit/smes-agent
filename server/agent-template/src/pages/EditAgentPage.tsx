@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Loader2, Plug, Database, Trash2, ArrowLeft, BrainCircuit, X, Plus } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
+import { platformMeta, AgentDeleteModal, detectTimezone } from '../components/ui';
+import { platformsForConnector } from './PostsPage';
 
 const TIMEZONES = [
   'Pacific/Honolulu', 'America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York',
@@ -64,9 +66,10 @@ export default function EditAgentPage() {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBlocked, setDeleteBlocked] = useState(false);
 
   const [name, setName] = useState('');
-  const [timezone, setTimezone] = useState('UTC');
+  const [timezone, setTimezone] = useState(detectTimezone);
   const [overlay, setOverlay] = useState('');
   const [status, setStatus] = useState('active');
   const [selectedConnectorIds, setSelectedConnectorIds] = useState<string[]>([]);
@@ -88,7 +91,7 @@ export default function EditAgentPage() {
         // (the response also carries recentRuns/schedulers alongside it).
         const agent = agentResp.agent ?? agentResp;
         setName(agent.name ?? '');
-        setTimezone(agent.timezone ?? 'UTC');
+        setTimezone(agent.timezone ?? detectTimezone());
         setOverlay(agent.prompt_overlay ?? agent.promptOverlay ?? '');
         setStatus(agent.status ?? 'active');
         setSelectedConnectorIds(agent.connector_ids ?? agent.connectorIds ?? []);
@@ -134,12 +137,17 @@ export default function EditAgentPage() {
   async function handleDelete() {
     if (!agentId) return;
     setDeleting(true);
+    setDeleteBlocked(false);
     try {
       await ecgApi.agents.delete(agentId);
       navigate('/agents');
     } catch (e: any) {
-      setError(e.message ?? 'Failed to delete agent');
+      const msg = e?.message ?? 'Failed to delete agent';
+      setError(msg);
       setDeleting(false);
+      // Same rule AgentsPage.tsx handles (delete requires status='archived'
+      // first) -- previously this page had no recovery for it, just a raw error.
+      if (/only archived agents can be deleted/i.test(msg)) setDeleteBlocked(true);
     }
   }
 
@@ -167,7 +175,7 @@ export default function EditAgentPage() {
           <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Timezone</label>
           <select value={timezone} onChange={e => setTimezone(e.target.value)}
             className="w-full px-3 py-2 rounded-lg border text-sm" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}>
-            {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+            {(TIMEZONES.includes(timezone) ? TIMEZONES : [timezone, ...TIMEZONES]).map(tz => <option key={tz} value={tz}>{tz}</option>)}
           </select>
         </div>
         <div>
@@ -185,7 +193,7 @@ export default function EditAgentPage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <BrainCircuit className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} />
-            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Agent Memory (Harness)</p>
+            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>What this agent remembers</p>
           </div>
           <p className="text-xs" style={{ color: 'var(--muted)' }}>
             Controls what this agent remembers about its own past posts when it writes new ones, so it doesn't repeat itself.
@@ -233,12 +241,15 @@ export default function EditAgentPage() {
           <div className="space-y-2">
             {connectors.map((c: any) => {
               const on = selectedConnectorIds.includes(c.id);
+              const platforms = platformsForConnector(c);
               return (
                 <label key={c.id} className="flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer"
                   style={{ borderColor: 'var(--border)', background: on ? 'var(--accent-bg,#ede9fe)' : 'transparent' }}>
                   <input type="checkbox" checked={on} onChange={() => toggleConnector(c.id)} className="w-4 h-4" />
                   <span className="text-sm flex-1" style={{ color: 'var(--text)' }}>{c.name}</span>
-                  <span className="text-xs" style={{ color: 'var(--muted)' }}>{c.type}</span>
+                  <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                    {platforms.length > 0 ? platforms.map(p => platformMeta(p).label).join(', ') : 'Unmapped connector'}
+                  </span>
                 </label>
               );
             })}
@@ -277,25 +288,19 @@ export default function EditAgentPage() {
         </button>
       </div>
 
-      {confirmDelete && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
-            <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Delete Agent</h2>
-            <p className="text-sm" style={{ color: 'var(--muted)' }}>
-              Are you sure you want to delete <strong>{name}</strong>? This cannot be undone.
-            </p>
-            <div className="flex gap-3 pt-2">
-              <button onClick={() => setConfirmDelete(false)} disabled={deleting}
-                className="flex-1 px-4 py-2 rounded-lg border text-sm" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
-                Cancel
-              </button>
-              <button onClick={handleDelete} disabled={deleting}
-                className="flex-1 px-4 py-2 rounded-lg text-white text-sm bg-red-600 disabled:opacity-50">
-                {deleting ? 'Deleting…' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {confirmDelete && agentId && (
+        <AgentDeleteModal
+          agentName={name}
+          onClose={() => { setConfirmDelete(false); setDeleteBlocked(false); }}
+          onConfirm={handleDelete}
+          loading={deleting}
+          blocked={deleteBlocked}
+          onArchiveThenDelete={async () => {
+            await ecgApi.agents.update(agentId, { status: 'archived' });
+            setDeleteBlocked(false);
+            handleDelete();
+          }}
+        />
       )}
     </div>
   );

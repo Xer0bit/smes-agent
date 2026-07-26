@@ -56,9 +56,18 @@ export default function SettingsPage() {
 
   // Per-section availability. `null` = still loading, `true` = 501 (no MCP
   // equivalent), `false` = loaded (or failed for a real reason, shown via `error`).
-  const [unavailable, setUnavailable] = useState<Record<Tab, boolean | null>>({
+  // Automation isn't tracked here -- it always has an MCP-tool equivalent
+  // (orgSettings, unlike org/team/api-keys/billing), so it's never unavailable.
+  type UnavailableTab = Exclude<Tab, 'automation'>;
+  const [unavailable, setUnavailable] = useState<Record<UnavailableTab, boolean | null>>({
     org: null, team: null, 'api-keys': null, billing: null,
   });
+
+  // Once each section's availability resolves, don't show a tab a non-technical
+  // user would only hit a dead "not available" stub on -- omit it entirely
+  // instead. `null` (still probing) keeps a tab visible so the strip doesn't
+  // flicker tabs in and out during the initial load.
+  const visibleTabs = TABS.filter(t => t.id === 'automation' || unavailable[t.id as UnavailableTab] !== true);
 
   useEffect(() => {
     ecgApi.orgSettings.get().then(setAutoApprove).catch(e => setError(e.message));
@@ -68,7 +77,7 @@ export default function SettingsPage() {
       ecgApi.apiKeys.list(),
       ecgApi.billing.invoices(),
     ]).then(([orgR, teamR, keysR, invoicesR]) => {
-      const next: Record<Tab, boolean | null> = { org: false, team: false, 'api-keys': false, billing: false };
+      const next: Record<UnavailableTab, boolean | null> = { org: false, team: false, 'api-keys': false, billing: false };
 
       if (orgR.status === 'fulfilled') setOrg(orgR.value);
       else if (isUnsupported(orgR.reason)) next.org = true;
@@ -85,6 +94,7 @@ export default function SettingsPage() {
       } else if (isUnsupported(invoicesR.reason)) next.billing = true;
 
       setUnavailable(next);
+      setTab(currentTab => (currentTab === 'automation' || next[currentTab as UnavailableTab] !== true) ? currentTab : 'automation');
 
       // Only surface a blanket error for a REAL failure (not the expected 501s).
       const realFailure = [orgR, teamR, keysR, invoicesR].find(
@@ -179,7 +189,7 @@ export default function SettingsPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 p-1 rounded-xl w-full overflow-x-auto" style={{ background: 'var(--border)' }}>
-        {TABS.map(t => {
+        {visibleTabs.map(t => {
           const Icon = t.icon;
           return (
             <button key={t.id} onClick={() => setTab(t.id)}

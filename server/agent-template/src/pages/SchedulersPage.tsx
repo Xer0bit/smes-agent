@@ -3,8 +3,9 @@ import { Plus, Pencil, Trash2, X, Play, Send, Loader2, AlertTriangle } from 'luc
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
-import { PageHeader, EmptyState, Spinner, relTime, DAYS_OF_WEEK, buildWeeklyCron, cadenceSentence } from '../components/ui';
+import { PageHeader, EmptyState, Spinner, relTime, DAYS_OF_WEEK, buildWeeklyCron, cadenceLabel, platformMeta } from '../components/ui';
 import { Calendar } from 'lucide-react';
+import { platformsForConnector } from './PostsPage';
 
 const showNextRun = (ECG.moduleSettings.schedulers?.showNextRun ?? true) !== false;
 
@@ -110,8 +111,7 @@ export default function SchedulersPage() {
                 <tr key={s.id}>
                   <td className="px-4 py-3 font-medium" style={{ color: 'var(--text)' }}>{s.agentName ?? s.agent_name ?? ' '}</td>
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>
-                    {cadenceSentence(s.schedule ?? s.cron, s.postCount ?? s.post_count)
-                      ?? <span className="font-mono">{s.schedule ?? s.cron}</span>}
+                    {cadenceLabel(s.schedule ?? s.cron, s.postCount ?? s.post_count)}
                   </td>
                   {showNextRun && (
                     <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}
@@ -185,7 +185,8 @@ function CreateSchedulerModal({ agents, connectors, onClose, onCreated }: {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
-  const connectorType = connectors.find(c => c.id === connectorId)?.type ?? '';
+  const selectedConnector = connectors.find(c => c.id === connectorId);
+  const connectorType = selectedConnector?.type ?? '';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -196,9 +197,15 @@ function CreateSchedulerModal({ agents, connectors, onClose, onCreated }: {
     setCreating(true);
     setError('');
     try {
+      // platforms must be passed explicitly -- create_scheduler defaults it to
+      // ['linkedin'] when omitted, so a generic multi-platform connector
+      // covering e.g. only Facebook+YouTube would otherwise silently get
+      // scheduled to post to LinkedIn instead.
+      const platforms = selectedConnector ? platformsForConnector(selectedConnector) : [];
       const created = await ecgApi.schedulers.create({
         agentId,
         connector: connectorType,
+        platforms: platforms.length > 0 ? platforms : undefined,
         cron: buildWeeklyCron(daysOfWeek, startHour),
         postCount,
       });
@@ -240,7 +247,11 @@ function CreateSchedulerModal({ agents, connectors, onClose, onCreated }: {
               <select value={connectorId} onChange={e => setConnectorId(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border text-sm" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }} required>
                 <option value="">Select connector...</option>
-                {connectors.map(c => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
+                {connectors.map(c => {
+                  const platforms = platformsForConnector(c);
+                  const label = platforms.length > 0 ? platforms.map(p => platformMeta(p).label).join(', ') : 'unmapped';
+                  return <option key={c.id} value={c.id}>{c.name} ({label})</option>;
+                })}
               </select>
             )}
           </div>

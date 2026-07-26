@@ -5,7 +5,8 @@ import {
   Plus, Pencil, Trash2, X, RefreshCw, CheckCircle, XCircle, AlertCircle, Search,
 } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
-import { PageHeader, Card, EmptyState, Spinner } from '../components/ui';
+import { PageHeader, Card, EmptyState, Spinner, platformMeta } from '../components/ui';
+import { platformsForConnector } from './PostsPage';
 
 interface Connector {
   id: string;
@@ -14,6 +15,7 @@ interface Connector {
   status?: string;
   apiKey?: string; api_key?: string;
   phone?: string;
+  platforms?: string[];
 }
 
 // Every platform Zapier MCP can publish to (see agent-runner's PLATFORM_CONFIG).
@@ -162,6 +164,7 @@ export default function ConnectorsPage() {
           {rows.map((c: Connector) => {
             const meta = typeMeta(c.type);
             const statusCfg = STATUS_CFG[c.status ?? 'disconnected'] ?? STATUS_CFG.disconnected;
+            const platforms = platformsForConnector(c);
             return (
             <Card key={c.id} hover className="p-5">
               <div className="flex items-start justify-between gap-3 mb-3">
@@ -178,6 +181,22 @@ export default function ConnectorsPage() {
                   <statusCfg.Icon className="w-3 h-3" /> {statusCfg.label}
                 </span>
               </div>
+              {platforms.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {platforms.map(p => {
+                    const pm = platformMeta(p);
+                    return (
+                      <span key={p} className="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--accent-bg)', color: 'var(--text)' }}>
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: pm.bar }} /> {pm.label}
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs mb-3 px-2.5 py-1.5 rounded-lg" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>
+                  No platform mapped to this connector yet -- posts can't target it. Edit it and pick at least one platform.
+                </p>
+              )}
               <div className="flex gap-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
                 <button onClick={() => handleTest(c)} disabled={testingId === c.id}
                   className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs border disabled:opacity-50" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
@@ -237,12 +256,20 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
   const [type, setType] = useState(connector?.type ?? 'zapier-mcp-linkedin');
   const [apiKey, setApiKey] = useState('');
   const [phone, setPhone] = useState(connector?.phone ?? '');
+  // Which platforms this connector actually covers. One Zapier MCP token can
+  // cover several at once (linkedin + facebook + youtube, say) -- this is
+  // what posts.list()'s platform filter and the New Post platform dropdown
+  // actually read (`platformsForConnector` in PostsPage.tsx), NOT `type`.
+  // A narrow type (zapier-mcp-linkedin) always implies exactly one platform;
+  // the generic `zapier` type needs this set explicitly via discovery below.
+  const [platforms, setPlatforms] = useState<Set<string>>(new Set(connector?.platforms ?? []));
 
   const [discovering, setDiscovering] = useState(false);
   const [discoveredApps, setDiscoveredApps] = useState<string[] | null>(null);
   const [discoverError, setDiscoverError] = useState('');
 
   const isZapier = type === 'zapier' || type.startsWith('zapier-mcp');
+  const isGeneric = type === 'zapier';
 
   async function handleDiscover() {
     if (!apiKey.trim()) return;
@@ -260,16 +287,33 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
     }
   }
 
-  function pickDiscoveredApp(appName: string) {
+  // Toggle a discovered app in/out of the platform set (multi-select -- one
+  // token commonly covers several platforms at once). For a narrow single-
+  // platform type, clicking still just re-confirms that one platform and can
+  // switch `type` to match if it was left on a different narrow value.
+  function toggleDiscoveredApp(appName: string) {
     const matched = matchAppToType(appName);
-    if (matched) setType(matched);
+    if (!matched) return;
+    const platformKey = matched.startsWith('zapier-mcp-') ? matched.replace('zapier-mcp-', '') : matched;
+    setPlatforms(prev => {
+      const next = new Set(prev);
+      if (next.has(platformKey)) next.delete(platformKey); else next.add(platformKey);
+      return next;
+    });
+    if (!isGeneric) setType(matched);
     if (!name.trim()) setName(appName);
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !type) return;
-    const payload: Record<string, unknown> = { name: name.trim(), type };
+    // Narrow types (zapier-mcp-linkedin, whatsapp) always imply exactly one
+    // platform even if discovery was never run for them; only the generic
+    // `zapier` type relies entirely on the multi-select above.
+    const resolvedPlatforms = isGeneric
+      ? [...platforms]
+      : (platforms.size > 0 ? [...platforms] : platformsForConnector({ type, platforms: [] }));
+    const payload: Record<string, unknown> = { name: name.trim(), type, platforms: resolvedPlatforms };
     if (isZapier && apiKey.trim()) payload.api_key = apiKey.trim();
     if (type === 'whatsapp') payload.phone = phone.trim();
     onSave(payload);
@@ -320,7 +364,8 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
                 </button>
               </div>
               <p className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
-                "Check apps" tells you exactly which platforms this token can publish to  no guessing.
+                "Check apps" tells you exactly which platforms this token can publish to  select every one this
+                connector should cover (one token commonly covers several).
               </p>
 
               {discoverError && (
@@ -329,13 +374,14 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
 
               {discoveredApps && discoveredApps.length > 0 && (
                 <div className="mt-2 space-y-1.5">
-                  <p className="text-[11px] font-medium" style={{ color: 'var(--muted)' }}>Found on this token  tap to select:</p>
+                  <p className="text-[11px] font-medium" style={{ color: 'var(--muted)' }}>Found on this token  tap each platform to include it:</p>
                   <div className="flex flex-wrap gap-1.5">
                     {discoveredApps.map(app => {
                       const matched = matchAppToType(app);
-                      const isSelected = matched === type;
+                      const platformKey = matched?.startsWith('zapier-mcp-') ? matched.replace('zapier-mcp-', '') : matched;
+                      const isSelected = !!platformKey && platforms.has(platformKey);
                       return (
-                        <button key={app} type="button" onClick={() => pickDiscoveredApp(app)}
+                        <button key={app} type="button" onClick={() => toggleDiscoveredApp(app)}
                           className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-full border"
                           style={isSelected
                             ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' }
@@ -347,6 +393,16 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
                     })}
                   </div>
                 </div>
+              )}
+              {isGeneric && platforms.size > 0 && (
+                <p className="text-[11px] mt-2" style={{ color: 'var(--muted)' }}>
+                  This connector will cover: {[...platforms].map(p => platformMeta(p).label).join(', ')}
+                </p>
+              )}
+              {isGeneric && platforms.size === 0 && (
+                <p className="text-[11px] mt-2" style={{ color: '#dc2626' }}>
+                  Select at least one platform above  a generic connector with none picked won't show up anywhere posts can target it.
+                </p>
               )}
             </div>
           )}
@@ -362,7 +418,7 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
             >
               {CONNECTOR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
-            {discoveredApps && !discoveredApps.some(a => matchAppToType(a) === type) && (
+            {!isGeneric && discoveredApps && !discoveredApps.some(a => matchAppToType(a) === type) && (
               <p className="text-[11px] mt-1" style={{ color: '#dc2626' }}>
                 This platform wasn't found on your token  saving now may not actually work.
               </p>
