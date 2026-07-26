@@ -300,7 +300,10 @@ const Hyperspeed = ({ effectOptions = DEFAULT_EFFECT_OPTIONS }: HyperspeedProps)
       #define USE_FOG;
       ${THREE.ShaderChunk['fog_pars_fragment']}
       varying vec3 vColor;
-      void main(){ gl_FragColor=vec4(vColor,1.); ${THREE.ShaderChunk['fog_fragment']} }
+      void main(){
+        gl_FragColor=vec4(vColor,1.);
+        ${THREE.ShaderChunk['fog_fragment']}
+      }
     `;
     const roadVertex = `
       #define USE_FOG;
@@ -334,7 +337,12 @@ const Hyperspeed = ({ effectOptions = DEFAULT_EFFECT_OPTIONS }: HyperspeedProps)
       varying vec2 vUv; uniform vec3 uColor; uniform float uTime;
       #include <roadMarkings_vars>
       ${THREE.ShaderChunk['fog_pars_fragment']}
-      void main(){ vec2 uv=vUv; vec3 color=vec3(uColor); #include <roadMarkings_fragment> gl_FragColor=vec4(color,1.); ${THREE.ShaderChunk['fog_fragment']} }
+      void main(){
+        vec2 uv=vUv; vec3 color=vec3(uColor);
+        #include <roadMarkings_fragment>
+        gl_FragColor=vec4(color,1.);
+        ${THREE.ShaderChunk['fog_fragment']}
+      }
     `;
     const islandFragment = roadBaseFragment.replace('#include <roadMarkings_fragment>', '').replace('#include <roadMarkings_vars>', '');
     const roadFragment = roadBaseFragment.replace('#include <roadMarkings_fragment>', roadMarkings_fragment).replace('#include <roadMarkings_vars>', roadMarkings_vars);

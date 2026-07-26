@@ -48,3 +48,7 @@ server/.claude-flow
 # Added by code-review-graph
 .code-review-graph/
 server/.agents/*
+
+# src/base-example is a reference-only project kept for template guidance;
+# its own env file has no bearing on this app and shouldn't be committed.
+src/base-example/.env
