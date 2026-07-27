@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Search, Bell, FileText, Zap, AlertTriangle, Clock, Info } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
+import { platformMeta } from './ui';
+import { platformsForConnector } from '../pages/PostsPage';
 
 // One combined fetch for the two header widgets: quick-search needs agents +
 // posts; the notifications bell needs pending-review count, today's failed
@@ -14,6 +16,7 @@ function useHeaderData() {
   const [posts, setPosts] = useState<any[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [connectors, setConnectors] = useState<any[]>([]);
 
   function loadNotifications() {
     ecgApi.notifications.list(true).then((d: any) => setNotifications(Array.isArray(d) ? d : (d.notifications ?? []))).catch(() => {});
@@ -29,6 +32,9 @@ function useHeaderData() {
     if (ECG.modules.includes('runs')) {
       ecgApi.runs.list().then((d: any) => setRuns(Array.isArray(d) ? d : (d.runs ?? []))).catch(() => {});
     }
+    if (ECG.modules.includes('connectors')) {
+      ecgApi.connectors.list().then((d: any) => setConnectors(Array.isArray(d) ? d : (d.connectors ?? []))).catch(() => {});
+    }
     loadNotifications();
   }, []);
 
@@ -43,12 +49,30 @@ function useHeaderData() {
     }).length;
   }, [runs]);
 
-  return { agents, posts, pendingCount, failedToday, notifications, reloadNotifications: loadNotifications };
+  // One row per connected platform, status from its connector -- so "is
+  // anything broken" is answerable at a glance from any page, not just from
+  // Connected Accounts. Platforms covered by more than one connector show
+  // as connected if any of them is; error if none are connected and at
+  // least one reports an error.
+  const platformStatus = useMemo(() => {
+    const byPlatform = new Map<string, 'connected' | 'error' | 'disconnected'>();
+    for (const c of connectors) {
+      const status = (c.status ?? '').toLowerCase() === 'connected' ? 'connected'
+        : (c.status ?? '').toLowerCase() === 'error' ? 'error' : 'disconnected';
+      for (const p of platformsForConnector(c)) {
+        const existing = byPlatform.get(p);
+        if (existing !== 'connected') byPlatform.set(p, status);
+      }
+    }
+    return Array.from(byPlatform.entries()).map(([platform, status]) => ({ platform, status }));
+  }, [connectors]);
+
+  return { agents, posts, pendingCount, failedToday, notifications, reloadNotifications: loadNotifications, platformStatus };
 }
 
 export default function TopBar() {
   const navigate = useNavigate();
-  const { agents, posts, pendingCount, failedToday, notifications, reloadNotifications } = useHeaderData();
+  const { agents, posts, pendingCount, failedToday, notifications, reloadNotifications, platformStatus } = useHeaderData();
   const [markingAll, setMarkingAll] = useState(false);
 
   async function handleMarkAllRead() {
@@ -122,7 +146,23 @@ export default function TopBar() {
         )}
       </div>
 
-      <div ref={bellRef} className="relative ml-auto">
+      {platformStatus.length > 0 && (
+        <div className="hidden sm:flex items-center gap-1.5 ml-auto" title="Connected platform status">
+          {platformStatus.map(({ platform, status }) => {
+            const pm = platformMeta(platform);
+            const dotColor = status === 'connected' ? '#16a34a' : status === 'error' ? '#dc2626' : 'var(--muted)';
+            return (
+              <span key={platform} title={`${pm.label}: ${status}`}
+                className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full border"
+                style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dotColor }} />
+                {pm.label}
+              </span>
+            );
+          })}
+        </div>
+      )}
+      <div ref={bellRef} className={`relative ${platformStatus.length > 0 ? '' : 'ml-auto'}`}>
         <button onClick={() => setBellOpen(v => !v)} className="relative p-2 rounded-lg hover:bg-[var(--accent-bg)]">
           <Bell className="w-4 h-4" style={{ color: 'var(--muted)' }} />
           {hasNotifications && (

@@ -2,8 +2,20 @@ import { Router, Request, Response as ExpressResponse, NextFunction } from 'expr
 import { authMiddleware, dashboardAccessMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
 import { callEcgTool } from '../services/ecgMcpClient.service.js';
+import { extractDocumentText, EXTRACTABLE_DOC_TYPES } from '../services/agentVision.js';
+import multer from 'multer';
+import fs from 'node:fs';
+import os from 'node:os';
 
 const router = Router();
+
+const knowledgeUpload = multer({
+  limits: { fileSize: 10 * 1024 * 1024 },
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+    filename: (_req, file, cb) => cb(null, `ecg-knowledge-${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')}`),
+  }),
+});
 
 const PORTAL_API_URL = process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai';
 
@@ -265,6 +277,57 @@ function resolveAuth(req: AuthenticatedRequest, res: ExpressResponse, next: Next
     authMiddleware(req, res, next);
   });
 }
+
+// POST /api/v1/ecg-proxy/knowledge/upload
+// Registered ahead of the generic router.all('*', ...) catch-all below so this
+// exact path matches here instead -- the catch-all has no multer middleware,
+// so req.body would be empty for a multipart request even if mapToMcpTool
+// mapped this path (previously it didn't: /knowledge/upload fell through to
+// the unsupported default, a genuine gap, not an MCP limitation -- there's a
+// real MCP tool for indexed text (add_knowledge), just no route wired to it
+// for file uploads). There is no MCP tool for raw binary storage, so the
+// file's text is extracted server-side (reusing the same extraction agentic
+// chat attachments already use) and indexed as a normal knowledge entry.
+router.post('/knowledge/upload', resolveAuth, knowledgeUpload.single('file'), async (req: AuthenticatedRequest, res: ExpressResponse): Promise<void> => {
+  const projectId = (req.query.projectId ?? req.headers['x-project-id']) as string | undefined;
+  const file = (req as unknown as { file?: Express.Multer.File }).file;
+  if (!projectId || !file) {
+    if (file) fs.unlink(file.path, () => {});
+    res.status(400).json({ error: 'projectId and file are required' });
+    return;
+  }
+  try {
+    const secrets = await getProjectSecrets(projectId, req.dashboardAccessProjectId ? null : req.user!.id);
+    if (!secrets) { res.status(403).json({ error: 'Project not found or access denied' }); return; }
+
+    let text: string | null;
+    if (EXTRACTABLE_DOC_TYPES.has(file.mimetype)) {
+      text = await extractDocumentText(file.path, file.mimetype);
+    } else if (file.mimetype.startsWith('text/') || file.mimetype === 'application/json') {
+      text = await fs.promises.readFile(file.path, 'utf8');
+    } else {
+      res.status(415).json({ error: `Can't extract readable text from ${file.mimetype}. Upload a PDF, Word doc, spreadsheet, or plain-text file.` });
+      return;
+    }
+    if (!text || !text.trim()) {
+      res.status(422).json({ error: 'No readable text found in this file.' });
+      return;
+    }
+
+    if (secrets['ECG_MCP_API_KEY']) {
+      // KnowledgePage.tsx's upload form field is named baseId, not kbId.
+      const kbId = typeof req.body?.baseId === 'string' ? req.body.baseId : undefined;
+      const result = await callEcgTool(secrets['ECG_MCP_API_KEY'], 'add_knowledge', { text, title: file.originalname, kbId });
+      res.json(result);
+      return;
+    }
+    res.status(501).json({ error: 'This action is not available for this dashboard.' });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Upload failed' });
+  } finally {
+    fs.unlink(file.path, () => {});
+  }
+});
 
 // POST /api/v1/ecg-proxy/ai-chat
 // Server-side LLM call   reads ECG_LLM_* project secrets, never exposes keys to browser.

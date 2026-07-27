@@ -98,7 +98,8 @@ export default function SchedulersPage() {
       )}
       {!loading && rows.length > 0 && (
         <div className="rounded-xl border overflow-hidden" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm" style={{ minWidth: '640px' }}>
             <thead>
               <tr className="border-b text-xs" style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>
                 {['Agent', 'Schedule', ...(showNextRun ? ['Next Run'] : []), 'Status', 'Actions'].map(h => (
@@ -150,6 +151,7 @@ export default function SchedulersPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

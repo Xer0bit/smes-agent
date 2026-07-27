@@ -1,6 +1,7 @@
 // This file is overwritten by the server at injection time with real values.
 // Do not edit   changes here will be lost when a dashboard is generated.
 export const ECG = {
+  templateVersion: 'dev',
   appName: 'Dashboard',
   logoUrl: '',
   layout: 'sidebar' as 'sidebar' | 'topnav' | 'minimal',

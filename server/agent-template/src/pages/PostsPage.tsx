@@ -265,15 +265,32 @@ export default function PostsPage() {
             const limit = platformCharLimit(p.platform ?? '');
             const overLimit = (p.content?.length ?? 0) > limit;
             return (
-              <div key={p.id} className="rounded-xl border p-5 space-y-3"
+              <div key={p.id} className="rounded-xl border overflow-hidden"
                 style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
+                {/* Platform-tinted preview -- so a reviewer sees roughly how this
+                    will read on the target platform (avatar + handle + content),
+                    not just a bare paragraph. Not a pixel clone of the real
+                    platform UI -- an honest, generic post-card shape tinted with
+                    the platform's own accent color. */}
+                <div className="p-4 pb-0">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0"
+                      style={{ background: pm.bar }}>
+                      {ECG.appName.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold leading-tight" style={{ color: 'var(--text)' }}>{ECG.appName}</p>
+                      <p className="text-xs" style={{ color: 'var(--muted)' }}>{pm.label} · just now</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="p-5 pt-3 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-2 flex-1 min-w-0">
                     {p.status === 'draft' && (
                       <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelected(p.id)}
                         className="mt-1 w-4 h-4 shrink-0" />
                     )}
-                    <FileText className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--muted)' }} />
                     <p className="text-sm leading-relaxed" style={{ color: overLimit ? '#dc2626' : 'var(--text)' }}>{p.content ?? p.body ?? '(no content)'}</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -283,6 +300,7 @@ export default function PostsPage() {
                         onClick={() => setEditingPost(p)}
                         className="p-1 rounded hover:opacity-70"
                         title="Edit post"
+                        aria-label="Edit post"
                         style={{ color: 'var(--muted)' }}
                       >
                         <Pencil className="w-4 h-4" />
@@ -292,6 +310,7 @@ export default function PostsPage() {
                       onClick={() => navigate(`/posts/${p.id}/visual`)}
                       className="p-1 rounded hover:opacity-70"
                       title="Add or edit visual"
+                      aria-label="Add or edit visual"
                       style={{ color: 'var(--accent)' }}
                     >
                       <Sparkles className="w-4 h-4" />
@@ -300,6 +319,7 @@ export default function PostsPage() {
                       onClick={() => setDeletingPost(p)}
                       className="p-1 rounded hover:bg-red-50"
                       title="Delete"
+                      aria-label="Delete post"
                     >
                       <Trash2 className="w-4 h-4 text-red-600" />
                     </button>
@@ -315,12 +335,7 @@ export default function PostsPage() {
 
                 <div className="flex items-center justify-between pt-2 border-t flex-wrap gap-2" style={{ borderColor: 'var(--border)' }}>
                   <div className="flex items-center gap-2 flex-wrap">
-                    {p.platform && (
-                      <span className="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--accent-bg)', color: 'var(--text)' }}>
-                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: pm.bar }} /> {pm.label}
-                      </span>
-                    )}
-                    <span className="text-xs" style={{ color: 'var(--muted)' }}>{p.agentName ?? p.agent_name}</span>
+                    <span className="text-xs" style={{ color: 'var(--muted)' }}>Written by {p.agentName ?? p.agent_name}</span>
                     {(p.scheduledAt ?? p.scheduled_at) && (
                       <span className="text-xs" style={{ color: 'var(--muted)' }}
                         title={new Date(p.scheduledAt ?? p.scheduled_at).toLocaleString()}>
@@ -376,6 +391,7 @@ export default function PostsPage() {
                       </button>
                     )}
                   </div>
+                </div>
                 </div>
               </div>
             );

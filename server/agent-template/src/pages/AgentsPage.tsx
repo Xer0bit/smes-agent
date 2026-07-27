@@ -21,6 +21,7 @@ interface Agent {
 export default function AgentsPage() {
   const navigate = useNavigate();
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [nextUpByAgent, setNextUpByAgent] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deletingAgent, setDeletingAgent] = useState<Agent | null>(null);
@@ -33,6 +34,20 @@ export default function AgentsPage() {
       .then(d => setAgents(Array.isArray(d) ? d : (d.agents ?? [])))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
+    // Best-effort "next up" teaser per agent -- so this list reads as what's
+    // coming, not just bare status metadata. Non-fatal if it fails.
+    ecgApi.posts.list()
+      .then((d: any) => {
+        const posts = Array.isArray(d) ? d : (d.posts ?? d.plannedPosts ?? []);
+        const next: Record<string, string> = {};
+        for (const p of posts) {
+          if (p.status !== 'draft') continue;
+          const agentId = p.agentId ?? p.agent_id;
+          if (agentId && !next[agentId]) next[agentId] = p.content ?? p.body ?? '';
+        }
+        setNextUpByAgent(next);
+      })
+      .catch(() => {});
   }, []);
 
   const handleDelete = async () => {
@@ -133,16 +148,16 @@ export default function AgentsPage() {
                 </button>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <StatusBadge status={a.status} />
-                  <button onClick={() => handleRun(a.id)} title="Run now"
+                  <button onClick={() => handleRun(a.id)} title="Run now" aria-label="Run now"
                     className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
                     <Zap className="w-4 h-4" style={{ color: 'var(--accent)' }} />
                   </button>
-                  <button onClick={() => navigate(`/agents/${a.id}/edit`)} title="Edit"
+                  <button onClick={() => navigate(`/agents/${a.id}/edit`)} title="Edit" aria-label="Edit agent"
                     className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
                     <Pencil className="w-4 h-4" style={{ color: 'var(--muted)' }} />
                   </button>
                   <div className="relative" data-agent-menu>
-                    <button onClick={() => setMenuOpenId(menuOpenId === a.id ? null : a.id)} title="Status"
+                    <button onClick={() => setMenuOpenId(menuOpenId === a.id ? null : a.id)} title="Status" aria-label="Change agent status"
                       className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
                       <MoreHorizontal className="w-4 h-4" style={{ color: 'var(--muted)' }} />
                     </button>
@@ -176,14 +191,19 @@ export default function AgentsPage() {
                       </div>
                     )}
                   </div>
-                  <button onClick={() => setDeletingAgent(a)} title="Delete"
+                  <button onClick={() => setDeletingAgent(a)} title="Delete" aria-label="Delete agent"
                     className="p-1.5 rounded hover:bg-red-500/10">
                     <Trash2 className="w-4 h-4" style={{ color: '#dc2626' }} />
                   </button>
                 </div>
               </div>
+              {nextUpByAgent[a.id] && (
+                <p className="mt-3 text-xs truncate" style={{ color: 'var(--text)' }}>
+                  <span style={{ color: 'var(--muted)' }}>Next up: </span>{nextUpByAgent[a.id]}
+                </p>
+              )}
               {showLastRun && (a.lastRun || a.last_run) && (
-                <div className="mt-3 flex items-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}>
+                <div className="mt-2 flex items-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}>
                   <Clock className="w-3 h-3" />
                   Last run {relTime(a.lastRun ?? a.last_run)}
                 </div>

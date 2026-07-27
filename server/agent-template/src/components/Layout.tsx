@@ -177,9 +177,6 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
             style={{ color: 'var(--sidebar-muted)', justifyContent: collapsed ? 'center' : 'flex-start' }}>
             {collapsed ? <ChevronsRight className="w-4 h-4 shrink-0" /> : <><ChevronsLeft className="w-4 h-4 shrink-0" /> Collapse</>}
           </button>
-          {!collapsed && (
-            <p className="px-4 pb-3.5 text-xs" style={{ color: 'var(--sidebar-muted)' }}>Powered by eComGear</p>
-          )}
         </div>
       </aside>
       <div className="flex-1 flex flex-col overflow-hidden">

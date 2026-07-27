@@ -52,7 +52,15 @@ Vite + React + Tailwind project: every page is editable code.
   knowledge bases, notifications, etc.), so a custom feature request rarely
   needs a new backend endpoint.
 
-## API reference (`ecgApi`, from `src/lib/ecgClient.ts`)
+## API reference
+
+**Full interactive, searchable docs**: run `npm run dev` and open `/api-docs.html`
+(or open `public/api-docs.html` directly) — every endpoint, request/response
+shape, and MCP-vs-portal-only note below, in one searchable page (built on
+`public/openapi.yaml`, a standard OpenAPI 3.1 spec you can also feed into any
+other API tool). The table below is the quick-reference version of the same thing.
+
+### `ecgApi` (from `src/lib/ecgClient.ts`)
 
 Every call goes through `ecgApi.<resource>.<method>()` — never raw `fetch`.
 Each bridges to a real eCG Agent MCP tool call server-side. **MCP** = works for

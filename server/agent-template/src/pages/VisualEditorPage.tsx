@@ -326,7 +326,7 @@ export default function VisualEditorPage() {
                   </p>
                   <button onClick={() => deleteObject(selected.id)} className="p-1 rounded hover:bg-red-50 shrink-0"><Trash2 className="w-3.5 h-3.5 text-red-600" /></button>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {(['width', 'height', 'x', 'y'] as const).map(field => (
                     <div key={field}>
                       <label className="block text-[10px] mb-1 capitalize" style={{ color: 'var(--muted)' }}>{field}</label>
@@ -342,7 +342,7 @@ export default function VisualEditorPage() {
                       <textarea value={selected.text ?? ''} onChange={e => updateObject(selected.id, { text: e.target.value })} rows={2}
                         className="w-full px-2 py-1.5 text-xs rounded border resize-none" style={{ borderColor: 'var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }} />
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
                         <label className="block text-[10px] mb-1" style={{ color: 'var(--muted)' }}>Font Size</label>
                         <input type="number" value={selected.fontSize ?? 16} onChange={e => updateObject(selected.id, { fontSize: +e.target.value })}

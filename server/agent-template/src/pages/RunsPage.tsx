@@ -41,7 +41,8 @@ export default function RunsPage() {
       )}
       {!loading && rows.length > 0 && (
         <Card className="overflow-hidden">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm" style={{ minWidth: '560px' }}>
             <thead>
               <tr className="border-b text-xs" style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>
                 {['Agent', 'Status', ...(showDuration ? ['Duration'] : []), 'Started', ''].map((h, i) => (
@@ -88,6 +89,7 @@ export default function RunsPage() {
               })}
             </tbody>
           </table>
+          </div>
         </Card>
       )}
     </div>

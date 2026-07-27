@@ -21,6 +21,32 @@ export default function PostsCalendarPage() {
   const [acting, setActing] = useState<string | null>(null);
   const [editingPost, setEditingPost] = useState<any>(null);
   const [error, setError] = useState('');
+  const [draggedPostId, setDraggedPostId] = useState<string | null>(null);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  const [rescheduling, setRescheduling] = useState<string | null>(null);
+
+  // Only posts still awaiting publish make sense to drag onto a new day --
+  // posted/cancelled history shouldn't be draggable at all.
+  const RESCHEDULABLE = ['draft', 'scheduled', 'failed'];
+
+  async function handleReschedule(postId: string, targetDay: Date) {
+    const post = posts.find(p => p.id === postId);
+    if (!post) return;
+    // Preserve whatever time-of-day the post already had; only the date moves.
+    const prevRaw = post.scheduledAt ?? post.scheduled_at ?? post.createdAt ?? post.created_at;
+    const prev = prevRaw ? new Date(prevRaw) : new Date();
+    const next = new Date(targetDay);
+    next.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
+    setRescheduling(postId);
+    try {
+      await ecgApi.posts.update(postId, { scheduledAt: next.toISOString() });
+      setPosts(prev2 => prev2.map(p => p.id === postId ? { ...p, scheduledAt: next.toISOString() } : p));
+    } catch (e: any) {
+      setError(e.message ?? 'Could not reschedule this post');
+    } finally {
+      setRescheduling(null);
+    }
+  }
 
   useEffect(() => {
     Promise.all([
@@ -166,21 +192,40 @@ export default function PostsCalendarPage() {
                 const dayPosts = postsByDay.get(key) ?? [];
                 const isToday = key === todayKey;
                 const isSelected = key === selectedDay;
+                const isDragOver = dragOverKey === key;
                 return (
                   <button key={key} onClick={() => setSelectedDay(dayPosts.length ? key : null)}
+                    onDragOver={(e) => { if (draggedPostId) { e.preventDefault(); setDragOverKey(key); } }}
+                    onDragLeave={() => { if (isDragOver) setDragOverKey(null); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOverKey(null);
+                      if (draggedPostId) handleReschedule(draggedPostId, day);
+                      setDraggedPostId(null);
+                    }}
                     className="min-h-20 p-1.5 text-left border-b border-r flex flex-col gap-1"
                     style={{
-                      borderColor: 'var(--border)',
-                      background: isSelected ? 'var(--accent-bg)' : 'transparent',
+                      borderColor: isDragOver ? 'var(--accent)' : 'var(--border)',
+                      background: isDragOver ? 'var(--accent-bg)' : isSelected ? 'var(--accent-bg)' : 'transparent',
                       opacity: inMonth ? 1 : 0.35,
                       cursor: dayPosts.length ? 'pointer' : 'default',
                     }}>
                     <span className="text-xs font-medium" style={isToday ? { color: 'var(--accent)' } : { color: 'var(--text)' }}>{day.getDate()}</span>
                     {dayPosts.slice(0, 3).map((p, i) => {
                       const pm = platformMeta(p.platform ?? '');
+                      const draggableHere = RESCHEDULABLE.includes(p.status);
                       return (
-                        <span key={i} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded truncate"
-                          style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+                        <span key={i}
+                          draggable={draggableHere}
+                          onDragStart={(e) => { e.stopPropagation(); setDraggedPostId(p.id); e.dataTransfer.setData('text/plain', p.id); }}
+                          onDragEnd={() => { setDraggedPostId(null); setDragOverKey(null); }}
+                          title={draggableHere ? 'Drag to a different day to reschedule' : undefined}
+                          className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded truncate"
+                          style={{
+                            background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text)',
+                            cursor: draggableHere ? 'grab' : 'default',
+                            opacity: rescheduling === p.id ? 0.5 : 1,
+                          }}>
                           <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: pm.bar }} />
                           {pm.label}
                         </span>

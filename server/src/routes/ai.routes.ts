@@ -8,6 +8,7 @@ import { runAgentLoop, restoreSnapshot } from '../services/agentLoopService.js';
 import { DEFAULT_FREE_MODEL } from '../config/models.js';
 import { projectService } from '../services/project.service.js';
 import { initProjectFromTemplate, ensureBaseTemplate } from '../services/baseTemplateService.js';
+import { seedEcgTemplate } from '../services/ecg-template.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -994,6 +995,53 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             ]);
         } catch (templateErr) {
             logger.warn(`[agent-stream] Template init skipped: ${(templateErr as Error).message}`);
+        }
+
+        // eCG-linked projects need their dashboard overlay (seedEcgTemplate) applied
+        // on top of the generic scaffold above. initProjectFromTemplate only ever
+        // writes the generic base template, so any gen-server instance whose local
+        // disk doesn't already have this project's files (fresh box, cache-cold,
+        // disk cleared, or simply never ran the agent for this project before)
+        // leaves the dev-agent looking at a bare "Welcome" stub even though the
+        // live preview (synced separately by ecg-dev-agent.routes.ts's
+        // syncEcgPreviewService, and by ecg-customize.routes.ts on re-bake) still
+        // shows the real seeded dashboard. Detect "missing the eCG overlay" via a
+        // file only seedEcgTemplate ever writes, and only pay the extra DB round
+        // trip for projects that actually need it.
+        try {
+            const ecgMarker = path.join(appPath, 'src', 'lib', 'ecgClient.ts');
+            if (!fs.existsSync(ecgMarker)) {
+                const { data: ecgSecrets } = await supabase
+                    .from('project_secrets')
+                    .select('key_name')
+                    .eq('project_id', projectId)
+                    .in('key_name', ['ECG_PORTAL_TOKEN', 'ECG_MCP_API_KEY']);
+                if (ecgSecrets && ecgSecrets.length > 0) {
+                    const { data: ecgSettingsRow } = await supabase
+                        .from('project_settings')
+                        .select('setting_value')
+                        .eq('project_id', projectId)
+                        .eq('setting_key', 'ecg_customizer')
+                        .maybeSingle();
+                    const ecgRow = ecgSettingsRow?.setting_value as
+                        { orgName?: string; modules?: string[]; agentIds?: string[]; config?: Record<string, unknown> } | undefined;
+                    if (ecgRow) {
+                        seedEcgTemplate(appPath, {
+                            orgName: ecgRow.orgName ?? 'eCG Agent',
+                            modules: ecgRow.modules ?? [],
+                            agentIds: ecgRow.agentIds ?? [],
+                            config: ecgRow.config ?? {},
+                            projectId,
+                            proxyUrl: process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.ai',
+                        });
+                        logger.info(`[agent-stream] Re-seeded eCG dashboard overlay locally for project=${projectId}`);
+                    } else {
+                        logger.warn(`[agent-stream] project=${projectId} has an eCG secret but no ecg_customizer settings row -- cannot re-seed`);
+                    }
+                }
+            }
+        } catch (ecgSeedErr) {
+            logger.warn(`[agent-stream] eCG template re-seed skipped: ${(ecgSeedErr as Error).message}`);
         }
 
         // ── Intent classification + cost routing ─────────────────────────────

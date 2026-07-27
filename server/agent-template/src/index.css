@@ -21,6 +21,16 @@ h1, h2, h3 {
 
 * { box-sizing: border-box; }
 
+/* Every button/link/input gets a visible keyboard focus ring for free --
+   audited 2026-07-27: zero :focus-visible declarations existed anywhere in
+   this dashboard (88 buttons across 7 pages), meaning keyboard users had no
+   visible focus state at all. One rule here instead of touching every page. */
+button:focus-visible, a:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
