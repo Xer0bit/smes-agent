@@ -1,7 +1,7 @@
 import { ArrowRight, Globe, Shield, Server, Wifi, CreditCard, FileCheck, ShoppingCart, MessageCircle, Truck, Building2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useLandingContext } from "@/contexts/LandingContext";
-import { ChinaBridgeMap } from "@/components/landing-v2/ChinaBridgeMap";
+import { ChinaBridgeMap } from "@/components/landing/ChinaBridgeMap";
 
 const BRIDGES = [
   {

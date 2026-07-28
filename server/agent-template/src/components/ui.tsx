@@ -40,7 +40,7 @@ export function PageHeader({ eyebrow, title, action }: { eyebrow?: string; title
         {eyebrow && (
           <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>{eyebrow}</p>
         )}
-        <h1 className="text-xl mt-0.5" style={{ color: 'var(--text)', fontWeight: 'var(--font-weight-heading)' }}>{title}</h1>
+        <h1 className="text-2xl tracking-tight mt-0.5" style={{ color: 'var(--text)', fontWeight: 'var(--font-weight-heading)' }}>{title}</h1>
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>
@@ -58,16 +58,96 @@ export function Card({ children, className = '', hover = false }: { children: Re
   );
 }
 
+// Bigger icon badge with a soft glow ring behind it, dashed border on the
+// card itself -- a true first-run "nothing here yet" state should read as
+// designed, not as an accidental leftover card floating in empty gray space.
 export function EmptyState({ Icon, title, hint, action }: { Icon: LucideIcon; title: string; hint?: string; action?: ReactNode }) {
   return (
-    <Card className="py-14 px-6 text-center">
-      <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full" style={{ background: 'var(--accent-bg)' }}>
-        <Icon className="w-5 h-5" style={{ color: 'var(--accent)' }} />
+    <div className="relative rounded-xl border border-dashed py-16 px-6 text-center overflow-hidden"
+      style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
+      <div className="relative mx-auto mb-4 flex h-14 w-14 items-center justify-center">
+        <div className="absolute inset-0 rounded-full blur-lg" style={{ background: 'var(--accent)', opacity: 0.18 }} />
+        <div className="relative flex h-14 w-14 items-center justify-center rounded-full" style={{ background: 'var(--accent-bg)' }}>
+          <Icon className="w-6 h-6" style={{ color: 'var(--accent)' }} />
+        </div>
       </div>
-      <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{title}</p>
-      {hint && <p className="mt-1 text-xs max-w-sm mx-auto" style={{ color: 'var(--muted)' }}>{hint}</p>}
-      {action && <div className="mt-4 flex justify-center">{action}</div>}
-    </Card>
+      <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>{title}</p>
+      {hint && <p className="mt-1.5 text-xs max-w-sm mx-auto" style={{ color: 'var(--muted)' }}>{hint}</p>}
+      {action && <div className="mt-5 flex justify-center">{action}</div>}
+    </div>
+  );
+}
+
+// Small accent-colored rule + title, used above every content panel so
+// sections have a visual anchor instead of a bare <h3>.
+export function SectionHeader({ title, action }: { title: string; action?: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center gap-2">
+        <span className="h-3.5 w-[3px] rounded-full" style={{ background: 'var(--accent)' }} />
+        <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>{title}</h3>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+export type StatTone = 'accent' | 'warning' | 'success' | 'neutral';
+// `color` drives the icon/bar; `chipBg` is a pre-computed tint -- can't string-
+// concat an alpha suffix onto a `var(--x)` call (invalid CSS, silently dropped),
+// so accent reuses the existing `--accent-bg` token and the fixed hex tones get
+// their own literal rgba tint.
+const STAT_TONE: Record<StatTone, { color: string; chipBg: string }> = {
+  accent:  { color: 'var(--accent)', chipBg: 'var(--accent-bg)' },
+  warning: { color: '#d97706', chipBg: 'rgba(217, 119, 6, 0.12)' },
+  success: { color: '#16a34a', chipBg: 'rgba(22, 163, 74, 0.12)' },
+  neutral: { color: 'var(--muted)', chipBg: 'rgba(100, 116, 139, 0.12)' },
+};
+
+// KPI tile with an icon chip, a top accent bar, and a large tabular-nums
+// value -- replaces the bare label+icon+number blocks that made every stat
+// card on the dashboard look identical regardless of what it meant.
+export function StatCard({ label, value, Icon, tone = 'neutral', sub }: {
+  label: string;
+  value: ReactNode;
+  Icon: LucideIcon;
+  tone?: StatTone;
+  sub?: ReactNode;
+}) {
+  const { color, chipBg } = STAT_TONE[tone];
+  return (
+    <div className="relative rounded-xl border overflow-hidden" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-sm)' }}>
+      <div className="absolute top-0 left-0 right-0 h-[3px]" style={{ background: color }} />
+      <div className="p-4 pt-[18px]">
+        <div className="flex items-center justify-between mb-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>{label}</p>
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg shrink-0" style={{ background: chipBg }}>
+            <Icon className="w-3.5 h-3.5" style={{ color }} />
+          </div>
+        </div>
+        <p className="text-3xl font-bold tabular-nums tracking-tight" style={{ color: 'var(--text)' }}>{value}</p>
+        {sub && <div className="mt-2">{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Small circular progress ring for the setup checklist's "N/total" counter --
+// reads as real progress, not a stray fraction of text.
+export function ProgressRing({ done, total, size = 28 }: { done: number; total: number; size?: number }) {
+  const r = (size - 4) / 2;
+  const c = 2 * Math.PI * r;
+  const pct = total > 0 ? done / total : 0;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--border)" strokeWidth="2.5" />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--accent)" strokeWidth="2.5"
+        strokeDasharray={c} strokeDashoffset={c * (1 - pct)} strokeLinecap="round"
+        transform={`rotate(-90 ${size / 2} ${size / 2})`} />
+      <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" fontSize="9" fontWeight="700" fill="var(--text)">
+        {done}/{total}
+      </text>
+    </svg>
   );
 }
 

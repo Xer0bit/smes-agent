@@ -9,6 +9,9 @@ body {
   background: var(--body-bg);
   color: var(--text);
   margin: 0;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /* Paired display font for headings only -- fixed regardless of the chosen

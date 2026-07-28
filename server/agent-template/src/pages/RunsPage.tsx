@@ -32,7 +32,7 @@ export default function RunsPage() {
   }, []);
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-4">
+    <div className="p-8 max-w-5xl mx-auto space-y-6">
       <PageHeader eyebrow="System" title="Run History" />
       {loading && <SkeletonRows count={5} />}
       {!loading && !rows.length && (

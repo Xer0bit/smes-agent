@@ -8,41 +8,69 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TEMPLATE_DIR = path.resolve(__dirname, '../../agent-template');
 
-let cachedTemplateHash: string | null = null;
+// Which physical template directory backs each agent type. Only 'social' is
+// real today -- every other agent-portal category (bookkeeping, sales,
+// support, business-dev, email) is a DB placeholder with no dashboard
+// template built yet (see the Phase 2 plan). This registry exists so adding
+// a second real template later is a one-line addition here, not a rewrite
+// of seedEcgTemplate/ecgConfigTs's hardcoded single path.
+const TEMPLATE_REGISTRY: Record<string, string> = {
+  social: path.resolve(__dirname, '../../agent-template'),
+};
+const DEFAULT_AGENT_TYPE = 'social';
 
-// A short hash of every file under agent-template/, embedded into each
-// seeded project's ecg-config.ts as `templateVersion`. Lets a caller (see
-// ai.routes.ts) tell "this project's eCG overlay is from an OLDER template"
-// apart from "never seeded at all" -- re-seeding a project whose files are
-// simply stale, not missing, was the one case the original re-seed check
-// (existence-only) couldn't catch: a template update alone never reached
-// any project that already had a copy on disk.
-export function getCurrentTemplateHash(): string {
-  if (cachedTemplateHash) return cachedTemplateHash;
+function resolveTemplateDir(agentType?: string): string {
+  return TEMPLATE_REGISTRY[agentType ?? DEFAULT_AGENT_TYPE] ?? TEMPLATE_REGISTRY[DEFAULT_AGENT_TYPE];
+}
+
+const cachedTemplateHashes = new Map<string, string>();
+
+// A short hash of every file under the resolved template dir, embedded into
+// each seeded project's ecg-config.ts as `templateVersion`. Lets a caller
+// (see ai.routes.ts) tell "this project's eCG overlay is from an OLDER
+// template" apart from "never seeded at all" -- re-seeding a project whose
+// files are simply stale, not missing, was the one case the original
+// re-seed check (existence-only) couldn't catch: a template update alone
+// never reached any project that already had a copy on disk. Cached per
+// agent type since each type will eventually have its own template dir/hash.
+export function getCurrentTemplateHash(agentType?: string): string {
+  const key = agentType ?? DEFAULT_AGENT_TYPE;
+  const cached = cachedTemplateHashes.get(key);
+  if (cached) return cached;
+  const templateDir = resolveTemplateDir(key);
   const hash = crypto.createHash('sha256');
   try {
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) { walk(full); continue; }
-        hash.update(path.relative(TEMPLATE_DIR, full));
+        hash.update(path.relative(templateDir, full));
         hash.update(fs.readFileSync(full));
       }
     };
-    walk(TEMPLATE_DIR);
+    walk(templateDir);
   } catch {
     return 'unknown';
   }
-  cachedTemplateHash = hash.digest('hex').slice(0, 16);
-  return cachedTemplateHash;
+  const digest = hash.digest('hex').slice(0, 16);
+  cachedTemplateHashes.set(key, digest);
+  return digest;
 }
 
 export interface TemplateOptions {
   orgName: string;
   modules: string[];
   agentIds: string[];
+  // Which dashboard template to seed. Optional and currently only 'social'
+  // has a real template behind it (see TEMPLATE_REGISTRY) -- every existing
+  // caller that omits this keeps seeding the same agent-template/ it always
+  // has, unchanged.
+  agentType?: string;
+  // Display names for the dashboard's agent switcher, keyed by the same IDs
+  // as agentIds. Optional so existing callers that only pass agentIds still
+  // typecheck; ecgConfigTs() falls back to the bare ID when a name is missing.
+  agentNames?: Record<string, string>;
   config: Record<string, unknown>;
   projectId: string;
   proxyUrl: string;
@@ -108,15 +136,24 @@ function shade(hex: string, amount: number): string {
   return `#${[r, g, b].map(n => n.toString(16).padStart(2, '0')).join('')}`;
 }
 
+function hexToRgb(hex: string): string {
+  const c = hex.replace('#', '');
+  const r = parseInt(c.slice(0, 2), 16);
+  const g = parseInt(c.slice(2, 4), 16);
+  const b = parseInt(c.slice(4, 6), 16);
+  return `${r}, ${g}, ${b}`;
+}
+
 function cssVars(d: DesignCfg): string {
   const sidebarText  = isDark(d.sidebarColor) ? '#f1f5f9' : '#1e293b';
   const sidebarMuted = isDark(d.sidebarColor) ? '#94a3b8' : '#64748b';
   const accentBg     = `${d.accentColor}1a`;
+  const accentRgb    = hexToRgb(d.accentColor);
   const accentHover  = shade(d.accentColor, isDark(d.bodyColor) ? -20 : 20);
   const sidebarHover = shade(d.sidebarColor, isDark(d.sidebarColor) ? -12 : 12);
   const cardBg       = isDark(d.bodyColor) ? '#1e293b' : '#ffffff';
   const inputBg      = isDark(d.bodyColor) ? '#0f172a' : '#ffffff';
-  const border       = isDark(d.bodyColor) ? '#334155' : '#e2e8f0';
+  const border       = isDark(d.bodyColor) ? '#293548' : '#e8ebef';
   const text         = isDark(d.bodyColor) ? '#f1f5f9' : '#1e293b';
   const muted        = isDark(d.bodyColor) ? '#94a3b8' : '#64748b';
   return `:root {
@@ -137,16 +174,28 @@ function cssVars(d: DesignCfg): string {
   --radius-sm: 8px;
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
   --shadow-md: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 24px -12px rgba(15, 23, 42, 0.16);
+  --shadow-accent: 0 8px 20px -8px rgba(${accentRgb}, 0.35);
   --font-weight-heading: 600;
 }`;
 }
 
-function ecgConfigTs(d: DesignCfg, modules: string[], projectId: string, proxyUrl: string): string {
+function ecgConfigTs(
+  d: DesignCfg,
+  modules: string[],
+  projectId: string,
+  proxyUrl: string,
+  agentIds: string[],
+  agentNames: Record<string, string>,
+  agentType?: string,
+): string {
   const ALL_MODULES = ['agents', 'schedulers', 'posts', 'connectors', 'runs', 'knowledge'];
   const mods = modules.length > 0 ? modules : ALL_MODULES;
+  // Falls back to the bare ID as its own label when a name wasn't supplied,
+  // so the switcher never shows a blank entry.
+  const names: Record<string, string> = Object.fromEntries(agentIds.map((id) => [id, agentNames[id] ?? id]));
   return `// Auto-generated by App Builder   do not edit manually.
 export const ECG = {
-  templateVersion: ${JSON.stringify(getCurrentTemplateHash())},
+  templateVersion: ${JSON.stringify(getCurrentTemplateHash(agentType))},
   appName: ${JSON.stringify(d.appName)},
   logoUrl: ${JSON.stringify(d.logoUrl)},
   layout: ${JSON.stringify(d.layout)} as 'sidebar' | 'topnav' | 'minimal',
@@ -157,6 +206,13 @@ export const ECG = {
   proxyUrl: ${JSON.stringify(proxyUrl)},
   projectId: ${JSON.stringify(projectId)},
   moduleSettings: ${JSON.stringify(d.moduleSettings)} as Record<string, Record<string, boolean | string>>,
+  // Which eCG agent(s) this dashboard manages -- agentIds[0] is the default
+  // active agent; the in-dashboard switcher (Layout.tsx) lets the user pick
+  // a different one when there's more than one. See ecgClient.ts's
+  // getActiveAgentId()/setActiveAgentId().
+  agentIds: ${JSON.stringify(agentIds)} as string[],
+  agentNames: ${JSON.stringify(names)} as Record<string, string>,
+  activeAgentId: ${JSON.stringify(agentIds[0] ?? null)} as string | null,
 };
 `;
 }
@@ -168,6 +224,8 @@ export function seedEcgTemplate(
 ): Record<string, string> {
   const design = resolveDesign(opts.config, opts.orgName);
   const vars   = cssVars(design);
+  const agentNames = opts.agentNames ?? {};
+  const templateDir = resolveTemplateDir(opts.agentType);
   const files: Record<string, string> = {};
 
   // Walk template directory
@@ -175,7 +233,7 @@ export function seedEcgTemplate(
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) { walk(full); continue; }
-      const rel  = path.relative(TEMPLATE_DIR, full);
+      const rel  = path.relative(templateDir, full);
       let content = fs.readFileSync(full, 'utf8');
       // Substitute placeholders
       content = content.replace('{{CSS_VARS}}', vars);
@@ -188,15 +246,15 @@ export function seedEcgTemplate(
   }
 
   try {
-    walk(TEMPLATE_DIR);
+    walk(templateDir);
   } catch (e) {
     // Template dir missing in dev   emit minimal stub
-    files['src/ecg-config.ts'] = ecgConfigTs(design, opts.modules, opts.projectId, opts.proxyUrl);
+    files['src/ecg-config.ts'] = ecgConfigTs(design, opts.modules, opts.projectId, opts.proxyUrl, opts.agentIds, agentNames, opts.agentType);
     return files;
   }
 
   // Inject the generated config (overrides any placeholder in template)
-  files['src/ecg-config.ts'] = ecgConfigTs(design, opts.modules, opts.projectId, opts.proxyUrl);
+  files['src/ecg-config.ts'] = ecgConfigTs(design, opts.modules, opts.projectId, opts.proxyUrl, opts.agentIds, agentNames, opts.agentType);
 
   // Write to disk (VPS3 local path)   non-fatal
   for (const [rel, content] of Object.entries(files)) {

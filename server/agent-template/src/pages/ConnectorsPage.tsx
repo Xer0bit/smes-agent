@@ -135,7 +135,7 @@ export default function ConnectorsPage() {
   };
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-4">
+    <div className="p-8 max-w-5xl mx-auto space-y-6">
       <PageHeader eyebrow="System" title="Connectors" action={
         <button
           onClick={() => setShowCreate(true)}

@@ -1,9 +1,9 @@
 import { ArrowRight, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
-import { Capabilities } from "@/components/landing-v2/Capabilities";
-import { DualPublish } from "@/components/landing-v2/DualPublish";
-import { LandingMarquee } from "@/components/landing-v2/LandingMarquee";
-import { TemplateGallery } from "@/components/landing-v2/TemplateGallery";
+import { Capabilities } from "@/components/landing/Capabilities";
+import { DualPublish } from "@/components/landing/DualPublish";
+import { LandingMarquee } from "@/components/landing/LandingMarquee";
+import { TemplateGallery } from "@/components/landing/TemplateGallery";
 
 export default function Features() {
   return (

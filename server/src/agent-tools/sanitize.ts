@@ -73,27 +73,104 @@ export interface SyntaxBalanceResult {
   score: number;     // abs(braces) + abs(parens) + abs(brackets)   0 is perfect
 }
 
-/** Lightweight bracket/paren balance check for source files.
- *  Exported so edit_file can validate edits before writing to disk. */
-export function checkSyntaxBalance(content: string): SyntaxBalanceResult {
+/**
+ * Shared token-aware delimiter scanner for JS/TS/JSX source.
+ *
+ * Root cause fixed here (live incident 2026-07-27): the previous version of
+ * this scanner treated every `'` exactly like `"`/`` ` `` as a plain string
+ * toggle, with no awareness of `//` / `/* *\/` comments. A single contraction
+ * in a comment or JSX text node ("agent's", "don't", "they're"   all over
+ * this codebase's own comment style) flips it into "inside a string" for the
+ * rest of the file, silently swallowing every real brace/paren/bracket after
+ * it. That made write_file/edit_file hard-reject perfectly valid files
+ * (confirmed against the live, working Layout.tsx: scored "unbalanced" while
+ * actually balanced), burning real agent-loop retries/tokens for every user
+ * touching a file with a contraction in a comment.
+ *
+ * Fix: skip line/block comments entirely, and don't open a `'` string when
+ * it's sandwiched between two word characters (the universal shape of a
+ * contraction/possessive   a real string literal is never preceded directly
+ * by a letter/digit). Template literals track `${...}` nesting so expression
+ * braces count as real code, not template text.
+ */
+function scanDelimiters(content: string): { braces: number; parens: number; brackets: number } {
   let braces = 0;
   let parens = 0;
   let brackets = 0;
-  let inString: string | null = null;
+  // Stack of pending `${` expression depths inside template literals   each
+  // entry is the brace-depth at which that expression's `}` closes back into
+  // template text (so a nested `{` inside the expression doesn't close it early).
+  const templateExprStack: number[] = [];
+  let mode: 'code' | 'line-comment' | 'block-comment' | 'dquote' | 'squote' | 'template' = 'code';
   let escaped = false;
+
   for (let i = 0; i < content.length; i++) {
     const ch = content[i];
-    if (escaped) { escaped = false; continue; }
-    if (ch === '\\') { escaped = true; continue; }
-    if (inString) { if (ch === inString) inString = null; continue; }
-    if (ch === '"' || ch === "'" || ch === '`') { inString = ch; continue; }
+    const prev = i > 0 ? content[i - 1] : '';
+    const next = i + 1 < content.length ? content[i + 1] : '';
+
+    if (mode === 'line-comment') {
+      if (ch === '\n') mode = 'code';
+      continue;
+    }
+    if (mode === 'block-comment') {
+      if (ch === '*' && next === '/') { i++; mode = 'code'; }
+      continue;
+    }
+    if (mode === 'dquote' || mode === 'squote') {
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if ((mode === 'dquote' && ch === '"') || (mode === 'squote' && ch === "'")) mode = 'code';
+      continue;
+    }
+    if (mode === 'template') {
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === '`') { mode = 'code'; continue; }
+      if (ch === '$' && next === '{') {
+        i++;
+        braces++;
+        templateExprStack.push(braces - 1); // resume template text once braces drops back here
+        mode = 'code';
+        continue;
+      }
+      continue;
+    }
+
+    // mode === 'code'
+    if (ch === '/' && next === '/') { i++; mode = 'line-comment'; continue; }
+    if (ch === '/' && next === '*') { i++; mode = 'block-comment'; continue; }
+    if (ch === '"') { mode = 'dquote'; continue; }
+    if (ch === "'") {
+      // Contraction/possessive guard: a real string literal is never preceded
+      // directly by a letter/digit ("foo'bar'" isn't valid JS). "don't",
+      // "it's", "agent's" all have a word char on both sides   skip them.
+      const isWordChar = (c: string) => /[A-Za-z0-9_]/.test(c);
+      if (isWordChar(prev) && isWordChar(next)) continue;
+      mode = 'squote';
+      continue;
+    }
+    if (ch === '`') { mode = 'template'; continue; }
     if (ch === '{') braces++;
-    else if (ch === '}') braces--;
+    else if (ch === '}') {
+      braces--;
+      if (templateExprStack.length && braces === templateExprStack[templateExprStack.length - 1]) {
+        templateExprStack.pop();
+        mode = 'template';
+      }
+    }
     else if (ch === '(') parens++;
     else if (ch === ')') parens--;
     else if (ch === '[') brackets++;
     else if (ch === ']') brackets--;
   }
+  return { braces, parens, brackets };
+}
+
+/** Lightweight bracket/paren balance check for source files.
+ *  Exported so edit_file can validate edits before writing to disk. */
+export function checkSyntaxBalance(content: string): SyntaxBalanceResult {
+  const { braces, parens, brackets } = scanDelimiters(content);
   const score = Math.abs(braces) + Math.abs(parens) + Math.abs(brackets);
   return { balanced: score === 0, braces, parens, brackets, score };
 }
@@ -318,28 +395,8 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
   // line is an orphan   strip it unconditionally. Then handle any remaining
   // imbalance (truncated or surplus) with the standard append/strip approach.
   if (isSourceFile(filePath)) {
-    /** Count net open braces/parens/brackets, ignoring string literals. */
-    function countDelimiters(src: string): { braces: number; parens: number; brackets: number } {
-      let braces = 0;
-      let parens = 0;
-      let brackets = 0;
-      let inString: string | null = null;
-      let escaped = false;
-      for (let i = 0; i < src.length; i++) {
-        const ch = src[i];
-        if (escaped) { escaped = false; continue; }
-        if (ch === '\\') { escaped = true; continue; }
-        if (inString) { if (ch === inString) inString = null; continue; }
-        if (ch === '"' || ch === "'" || ch === '`') { inString = ch; continue; }
-        if (ch === '{') braces++;
-        else if (ch === '}') braces--;
-        else if (ch === '(') parens++;
-        else if (ch === ')') parens--;
-        else if (ch === '[') brackets++;
-        else if (ch === ']') brackets--;
-      }
-      return { braces, parens, brackets };
-    }
+    /** Count net open braces/parens/brackets, ignoring string/comment content. */
+    const countDelimiters = scanDelimiters;
 
     // ── Phase A: Structural orphan detection via depth tracking ────────────
     // Walk through the file tracking bracket depth.  When depth returns to 0
@@ -350,25 +407,71 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
     let wasPositive = false;
     let componentEndLine = -1;
     {
-      let inStr: string | null = null;
-      let esc = false;
-      for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-        const line = lines[lineIdx];
-        for (let ci = 0; ci < line.length; ci++) {
-          const ch = line[ci];
-          if (esc) { esc = false; continue; }
-          if (ch === '\\') { esc = true; continue; }
-          if (inStr) { if (ch === inStr) inStr = null; continue; }
-          if (ch === '"' || ch === "'" || ch === '`') { inStr = ch; continue; }
-          if (ch === '{' || ch === '(') depth++;
-          else if (ch === '}' || ch === ')') depth--;
+      // Same comment/contraction-aware mode machine as scanDelimiters, but
+      // walked once over the whole file so a `\n` inside a string/comment
+      // never falsely resets state, while still checkpointing per line.
+      const templateExprStack: number[] = [];
+      let mode: 'code' | 'line-comment' | 'block-comment' | 'dquote' | 'squote' | 'template' = 'code';
+      let escaped = false;
+      let lineIdx = 0;
+
+      for (let i = 0; i < content.length; i++) {
+        const ch = content[i];
+        const prev = i > 0 ? content[i - 1] : '';
+        const next = i + 1 < content.length ? content[i + 1] : '';
+
+        if (ch === '\n' && mode !== 'template') {
+          if (mode === 'line-comment') mode = 'code';
+          if (depth > 0) wasPositive = true;
+          if (wasPositive && depth === 0 && lines[lineIdx].trim()) {
+            componentEndLine = lineIdx;
+            wasPositive = false;
+          }
+          lineIdx++;
+          continue;
         }
-        if (depth > 0) wasPositive = true;
-        // Depth returned to 0 after being positive → top-level block just closed
-        if (wasPositive && depth === 0 && lines[lineIdx].trim()) {
-          componentEndLine = lineIdx;
-          wasPositive = false; // reset for next top-level block
+        if (ch === '\n') { lineIdx++; continue; } // inside a template literal   just track the line number
+
+        if (mode === 'line-comment') continue;
+        if (mode === 'block-comment') { if (ch === '*' && next === '/') { i++; mode = 'code'; } continue; }
+        if (mode === 'dquote' || mode === 'squote') {
+          if (escaped) { escaped = false; continue; }
+          if (ch === '\\') { escaped = true; continue; }
+          if ((mode === 'dquote' && ch === '"') || (mode === 'squote' && ch === "'")) mode = 'code';
+          continue;
         }
+        if (mode === 'template') {
+          if (escaped) { escaped = false; continue; }
+          if (ch === '\\') { escaped = true; continue; }
+          if (ch === '`') { mode = 'code'; continue; }
+          if (ch === '$' && next === '{') { i++; depth++; templateExprStack.push(depth - 1); mode = 'code'; continue; }
+          continue;
+        }
+
+        // mode === 'code'
+        if (ch === '/' && next === '/') { i++; mode = 'line-comment'; continue; }
+        if (ch === '/' && next === '*') { i++; mode = 'block-comment'; continue; }
+        if (ch === '"') { mode = 'dquote'; continue; }
+        if (ch === "'") {
+          const isWordChar = (c: string) => /[A-Za-z0-9_]/.test(c);
+          if (isWordChar(prev) && isWordChar(next)) continue;
+          mode = 'squote';
+          continue;
+        }
+        if (ch === '`') { mode = 'template'; continue; }
+        if (ch === '{' || ch === '(') depth++;
+        else if (ch === '}' || ch === ')') {
+          depth--;
+          if (templateExprStack.length && depth === templateExprStack[templateExprStack.length - 1]) {
+            templateExprStack.pop();
+            mode = 'template';
+          }
+        }
+      }
+      // Final line (no trailing \n consumed above)
+      if (depth > 0) wasPositive = true;
+      if (wasPositive && depth === 0 && lines[lineIdx] && lines[lineIdx].trim()) {
+        componentEndLine = lineIdx;
       }
     }
 

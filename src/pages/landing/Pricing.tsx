@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Check } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { FaqSection } from "@/components/landing-v2/FaqSection";
+import { FaqSection } from "@/components/landing/FaqSection";
 import { useLandingContext } from "@/contexts/LandingContext";
 
 const PLANS = {

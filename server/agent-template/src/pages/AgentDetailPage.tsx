@@ -58,7 +58,7 @@ export default function AgentDetailPage() {
 
   if (error || !data) {
     return (
-      <div className="p-6 max-w-4xl mx-auto">
+      <div className="p-8 max-w-4xl mx-auto">
         <button onClick={() => navigate('/agents')} className="flex items-center gap-1.5 text-xs mb-4 hover:opacity-70" style={{ color: 'var(--muted)' }}>
           <ArrowLeft className="w-3.5 h-3.5" /> Back to Agents
         </button>
@@ -72,7 +72,7 @@ export default function AgentDetailPage() {
   const { agent, recentRuns, schedulers } = data;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-4">
+    <div className="p-8 max-w-4xl mx-auto space-y-6">
       <button onClick={() => navigate('/agents')} className="flex items-center gap-1.5 text-xs hover:opacity-70" style={{ color: 'var(--muted)' }}>
         <ArrowLeft className="w-3.5 h-3.5" /> Back to Agents
       </button>

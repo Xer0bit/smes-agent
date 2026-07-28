@@ -31,12 +31,25 @@ export default function AgentsPage() {
 
   useEffect(() => {
     ecgApi.agents.list()
-      .then(d => setAgents(Array.isArray(d) ? d : (d.agents ?? [])))
+      .then(d => {
+        const all: Agent[] = Array.isArray(d) ? d : (d.agents ?? []);
+        // Client-side display filter only, NOT a security boundary -- the
+        // MCP key behind this dashboard is org-scoped, so any of the org's
+        // agents is technically reachable via a direct API call regardless
+        // of this filter (real per-agent enforcement needs an agent-scoped
+        // MCP key on the agent-portal side -- tracked separately). This just
+        // narrows what's SHOWN to the agent(s) this dashboard was set up to
+        // manage. Empty ECG.agentIds means "show everything" -- covers older
+        // dashboards seeded before this existed, and orgs with no agents yet.
+        setAgents(ECG.agentIds.length > 0 ? all.filter(a => ECG.agentIds.includes(a.id)) : all);
+      })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
     // Best-effort "next up" teaser per agent -- so this list reads as what's
-    // coming, not just bare status metadata. Non-fatal if it fails.
-    ecgApi.posts.list()
+    // coming, not just bare status metadata. Non-fatal if it fails. Explicit
+    // { agentId: null } to see every managed agent's posts, not just whichever
+    // one is currently active in the switcher.
+    ecgApi.posts.list({ agentId: null })
       .then((d: any) => {
         const posts = Array.isArray(d) ? d : (d.posts ?? d.plannedPosts ?? []);
         const next: Record<string, string> = {};
@@ -102,7 +115,7 @@ export default function AgentsPage() {
   }, []);
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-4">
+    <div className="p-8 max-w-5xl mx-auto space-y-6">
       <PageHeader eyebrow="Content" title="Agents" action={
         <div className="flex items-center gap-2">
           <button onClick={() => navigate('/schedulers')} className="text-xs hover:opacity-70" style={{ color: 'var(--muted)' }}>

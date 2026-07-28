@@ -26,6 +26,7 @@ import {
     Server,
     Database,
     Zap,
+    Bot,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 
@@ -39,6 +40,7 @@ import AdminSubscriptions from './Subscriptions';
 import AdminRolesPermissions from './RolesPermissions';
 import AdminUsage from './Usage';
 import AdminHosting from './Hosting';
+import AdminEcgAgents from './EcgAgents';
 import AdminServers from './Servers';
 import AdminDatabaseHosting from './DatabaseHosting';
 import AdminSystemStatus from './SystemStatus';
@@ -130,6 +132,12 @@ export default function AdminApp() {
             items: [
                 { title: 'Usage Analytics', path: '/admin/usage', icon: Activity },
                 { title: 'AI Cost Metrics', path: '/admin/ai-metrics', icon: Zap },
+            ],
+        },
+        {
+            label: 'eCG Agents',
+            items: [
+                { title: 'Agent Dashboards', path: '/admin/ecg-agents', icon: Bot },
             ],
         },
         {
@@ -373,6 +381,7 @@ export default function AdminApp() {
                                     <Route path="usage" element={<AdminUsage />} />
                                     <Route path="ai-metrics" element={<AdminAIMetrics />} />
                                     <Route path="hosting" element={<AdminHosting />} />
+                                    <Route path="ecg-agents" element={<AdminEcgAgents />} />
                                     <Route path="database-hosting" element={<AdminDatabaseHosting />} />
                                     <Route path="servers" element={<AdminServers />} />
                                     <Route path="tenant/:projectId" element={<AdminTenantDetail />} />

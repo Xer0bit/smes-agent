@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Zap, Loader2, CheckCircle2, Link2, ChevronRight, FileText, TrendingUp, TrendingDown,
-  CalendarClock, Activity, CircleDollarSign, PieChart,
+  Activity, CircleDollarSign,
 } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
-import { Card, relTime, platformMeta } from '../components/ui';
+import { Card, relTime, platformMeta, StatCard, SectionHeader, ProgressRing } from '../components/ui';
 import { statusLabel } from '../components/StatusBadge';
 
 // Pipeline statuses are semantic, not series colors (dataviz: status palette
@@ -144,7 +144,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-4">
+    <div className="p-8 max-w-6xl mx-auto space-y-6">
       {/* ── Greeting header ── */}
       <div className="flex items-end justify-between pb-1">
         <div>
@@ -179,7 +179,7 @@ export default function DashboardPage() {
         <Card className="overflow-hidden">
           <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
             <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>Get started</p>
-            <span className="text-xs" style={{ color: 'var(--muted)' }}>{setupSteps.filter(s => s.done).length}/{setupSteps.length}</span>
+            <ProgressRing done={setupSteps.filter(s => s.done).length} total={setupSteps.length} />
           </div>
           <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
             {setupSteps.map((step, i) => (
@@ -214,42 +214,17 @@ export default function DashboardPage() {
       {/* ── KPI cards ── */}
       {ECG.showSummaryCards && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Card className="p-4">
-            <div className="flex items-center justify-between mb-1">
-              <p className="text-[11px] font-medium uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Published · 30d</p>
-              <Trend now={published30d} prev={previous30d} />
-            </div>
-            <div className="flex items-end justify-between gap-2">
-              <p className="text-2xl font-bold" style={{ color: 'var(--text)' }}>{published30d}</p>
-              <Sparkline values={publishedDaily} color="var(--accent)" />
-            </div>
-          </Card>
-          <Card className="p-4">
-            <p className="text-[11px] font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--muted)' }}>Awaiting review</p>
-            <div className="flex items-end justify-between">
-              <p className="text-2xl font-bold" style={{ color: pending.length > 0 ? 'var(--accent)' : 'var(--text)' }}>{pending.length}</p>
-              <FileText className="w-4 h-4 mb-1" style={{ color: 'var(--muted)' }} />
-            </div>
-          </Card>
-          <Card className="p-4">
-            <p className="text-[11px] font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--muted)' }}>Run success · 30d</p>
-            <div className="flex items-end justify-between">
-              <p className="text-2xl font-bold" style={{ color: 'var(--text)' }}>{successRate === null ? '—' : `${successRate}%`}</p>
-              <Activity className="w-4 h-4 mb-1" style={{ color: 'var(--muted)' }} />
-            </div>
-            {runTotal > 0 && (
-              <div className="mt-2 h-1 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
+          <StatCard label="Published · 30d" value={published30d} Icon={TrendingUp} tone="accent"
+            sub={<div className="flex items-center justify-between"><Trend now={published30d} prev={previous30d} /><Sparkline values={publishedDaily} color="var(--accent)" /></div>} />
+          <StatCard label="Awaiting review" value={pending.length} Icon={FileText} tone={pending.length > 0 ? 'warning' : 'neutral'} />
+          <StatCard label="Run success · 30d" value={successRate === null ? '—' : `${successRate}%`} Icon={Activity}
+            tone={successRate === null ? 'neutral' : successRate >= 90 ? 'success' : successRate >= 60 ? 'warning' : 'neutral'}
+            sub={runTotal > 0 && (
+              <div className="h-1 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
                 <div className="h-full rounded-full" style={{ width: `${successRate}%`, background: successRate! >= 90 ? '#16a34a' : successRate! >= 60 ? '#f59e0b' : '#dc2626' }} />
               </div>
-            )}
-          </Card>
-          <Card className="p-4">
-            <p className="text-[11px] font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--muted)' }}>AI spend · 30d</p>
-            <div className="flex items-end justify-between">
-              <p className="text-2xl font-bold" style={{ color: 'var(--text)' }}>${runs.cost.toFixed(2)}</p>
-              <CircleDollarSign className="w-4 h-4 mb-1" style={{ color: 'var(--muted)' }} />
-            </div>
-          </Card>
+            )} />
+          <StatCard label="AI spend · 30d" value={`$${runs.cost.toFixed(2)}`} Icon={CircleDollarSign} tone="neutral" />
         </div>
       )}
 
@@ -257,10 +232,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Publishing activity, weekly, top 2 platforms */}
         <Card className="p-5 lg:col-span-2">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium" style={{ color: 'var(--text)' }}>Publishing activity</h3>
-            <span className="text-xs" style={{ color: 'var(--muted)' }}>last 90 days · weekly</span>
-          </div>
+          <SectionHeader title="Publishing activity" action={<span className="text-xs" style={{ color: 'var(--muted)' }}>last 90 days · weekly</span>} />
           {!chart ? (
             <p className="text-xs text-center py-10" style={{ color: 'var(--muted)' }}>
               No published posts yet. Activity appears here once posts go live.
@@ -308,15 +280,11 @@ export default function DashboardPage() {
         {/* Right rail: schedule + pipeline */}
         <div className="space-y-4">
           <Card className="p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <CalendarClock className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
-              <h3 className="text-sm font-medium" style={{ color: 'var(--text)' }}>Scheduled posts</h3>
-              {has('posts') && (
-                <button onClick={() => navigate('/posts/calendar')} className="ml-auto hover:opacity-70" style={{ color: 'var(--accent)' }}>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
+            <SectionHeader title="Scheduled posts" action={has('posts') && (
+              <button onClick={() => navigate('/posts/calendar')} className="hover:opacity-70" style={{ color: 'var(--accent)' }}>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )} />
             {upcoming.length === 0 ? (
               <p className="text-xs py-2" style={{ color: 'var(--muted)' }}>Nothing scheduled. Approved posts with a future time show up here.</p>
             ) : (
@@ -339,10 +307,7 @@ export default function DashboardPage() {
           </Card>
 
           <Card className="p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <PieChart className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
-              <h3 className="text-sm font-medium" style={{ color: 'var(--text)' }}>Post pipeline</h3>
-            </div>
+            <SectionHeader title="Post pipeline" />
             {!pipeline ? (
               <p className="text-xs py-2" style={{ color: 'var(--muted)' }}>No posts yet.</p>
             ) : (

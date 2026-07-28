@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings, LucideIcon, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { ECG } from '../ecg-config';
-import { ecgApi } from '../lib/ecgClient';
+import { ecgApi, getActiveAgentId, setActiveAgentId } from '../lib/ecgClient';
 import TopBar from './TopBar';
 
 // Live count of posts awaiting review, shown as a badge on Planned Posts.
@@ -73,6 +73,28 @@ const NAV = [
   ALL_NAV.find(n => n.id === 'settings')!,
 ];
 
+// Only rendered when this dashboard manages more than one agent. Switching
+// reloads the page -- simplest way to guarantee every already-fetched page
+// (posts/schedulers/runs, all scoped by ecgClient's withActiveAgent()) picks
+// up the new agent's data, with no global state store to thread through.
+function AgentSwitcher({ compact }: { compact?: boolean }) {
+  const [active, setActive] = useState(() => getActiveAgentId());
+  if (ECG.agentIds.length <= 1) return null;
+  return (
+    <select
+      value={active ?? ''}
+      onChange={(e) => { setActiveAgentId(e.target.value); setActive(e.target.value); window.location.reload(); }}
+      title="Switch active agent"
+      className={`w-full text-xs rounded-md border px-2 py-1.5 truncate ${compact ? 'mt-1' : 'mt-2'}`}
+      style={{ background: 'var(--sidebar-hover)', borderColor: 'var(--border)', color: 'var(--sidebar-text)' }}
+    >
+      {ECG.agentIds.map((id) => (
+        <option key={id} value={id}>{ECG.agentNames[id] ?? id}</option>
+      ))}
+    </select>
+  );
+}
+
 function BrandLogo({ className }: { className: string }) {
   if (ECG.logoUrl) {
     return <img src={ECG.logoUrl} alt="" className={`${className} object-contain`} style={{ borderRadius: 'var(--radius-sm)' }} />;
@@ -127,6 +149,11 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
             </div>
           )}
         </div>
+        {!collapsed && ECG.agentIds.length > 1 && (
+          <div className="px-4 pt-3">
+            <AgentSwitcher />
+          </div>
+        )}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto overflow-x-hidden">
           {NAV.map(({ id, label, path, icon }) => {
             const Icon = ALL_ICONS[icon] ?? Zap;
@@ -196,6 +223,7 @@ function TopNav({ children }: { children: ReactNode }) {
             <BrandLogo className="w-7 h-7" />
             <span className="text-sm truncate" style={{ color: 'var(--sidebar-text)', fontWeight: 'var(--font-weight-heading)' }}>{ECG.appName}</span>
           </div>
+          {ECG.agentIds.length > 1 && <div className="w-40 shrink-0"><AgentSwitcher compact /></div>}
           <nav className="flex items-center gap-1">
             {NAV.map(({ label, path, icon }) => {
               const Icon = ALL_ICONS[icon] ?? Zap;
@@ -225,9 +253,10 @@ function Minimal({ children }: { children: ReactNode }) {
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: 'var(--body-bg)' }}>
       <div className="max-w-4xl mx-auto w-full px-6 pt-6 pb-4 flex items-center justify-between shrink-0 border-b" style={{ borderColor: 'var(--border)' }}>
-        <div className="flex items-center gap-2">
-          <BrandLogo className="w-6 h-6" />
+        <div className="flex items-center gap-3 min-w-0">
+          <BrandLogo className="w-6 h-6 shrink-0" />
           <span className="text-sm truncate" style={{ color: 'var(--text)', fontWeight: 'var(--font-weight-heading)' }}>{ECG.appName}</span>
+          {ECG.agentIds.length > 1 && <div className="w-36 shrink-0"><AgentSwitcher compact /></div>}
         </div>
         <nav className="flex gap-4">
           {NAV.map(({ label, path }) => (

@@ -129,7 +129,7 @@ export default function PostsCalendarPage() {
   const selectedPosts = selectedDay ? (postsByDay.get(selectedDay) ?? []) : [];
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-4">
+    <div className="p-8 max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
         <button onClick={() => navigate('/posts')} className="p-1.5 rounded-lg hover:opacity-70 transition-opacity" style={{ color: 'var(--muted)' }}>
           <ArrowLeft className="w-4 h-4" />

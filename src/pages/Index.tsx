@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { LandingContext } from "@/contexts/LandingContext";
 import { LoginDialog } from "@/components/LoginDialog";
-import { LandingPage } from "@/components/landing-v2/LandingPage";
+import { LandingPage } from "@/components/landing/LandingPage";
 import { canCreateProject, showLimitToast, trackUsage } from "@/services/subscriptionService";
 import { useGuestSession } from "@/hooks/useGuestSession";
 import { TemplateQuestionnaire } from "@/components/TemplateQuestionnaire";

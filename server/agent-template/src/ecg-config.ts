@@ -11,4 +11,7 @@ export const ECG = {
   proxyUrl: '',
   projectId: '',
   moduleSettings: {} as Record<string, Record<string, boolean | string>>,
+  agentIds: ['dev-agent-1'] as string[],
+  agentNames: { 'dev-agent-1': 'Dev Agent' } as Record<string, string>,
+  activeAgentId: 'dev-agent-1' as string | null,
 };

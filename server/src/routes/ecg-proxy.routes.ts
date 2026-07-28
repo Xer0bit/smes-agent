@@ -104,7 +104,10 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
 
   if (seg[0] === 'schedulers') {
     if (seg.length === 1) {
-      if (method === 'GET') return { tool: 'list_schedulers', args: {} };
+      // agentId passthrough: harmless no-op on agent-portal's current
+      // list_schedulers (no inputSchema declared there yet, so extra args
+      // are ignored, not rejected) until it gains real per-agent filtering.
+      if (method === 'GET') return { tool: 'list_schedulers', args: pick(query, ['agentId', 'agentId']) };
       if (method === 'POST') return { tool: 'create_scheduler', args: body ?? {} };
     }
     if (seg.length === 2) {
@@ -122,7 +125,7 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
   }
 
   if (seg[0] === 'planned-posts') {
-    if (seg.length === 1 && method === 'GET') return { tool: 'get_planned_posts', args: {} };
+    if (seg.length === 1 && method === 'GET') return { tool: 'get_planned_posts', args: pick(query, ['agentId', 'agentId']) };
     if (seg.length === 2 && seg[1] === 'bulk-approve' && method === 'POST') {
       return { tool: 'bulk_approve_posts', args: { postIds: Array.isArray(body?.postIds) ? body.postIds : [] } };
     }
@@ -183,7 +186,7 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
 
   if (seg[0] === 'stats' && method === 'GET' && seg.length === 1) return { tool: 'get_stats', args: {} };
 
-  if (seg[0] === 'runs' && method === 'GET' && seg.length === 1) return { tool: 'list_runs', args: {} };
+  if (seg[0] === 'runs' && method === 'GET' && seg.length === 1) return { tool: 'list_runs', args: pick(query, ['agentId', 'agentId']) };
 
   if (seg[0] === 'knowledge' && seg[1] !== 'bases') {
     if (seg.length === 1) {
@@ -317,8 +320,21 @@ router.post('/knowledge/upload', resolveAuth, knowledgeUpload.single('file'), as
     if (secrets['ECG_MCP_API_KEY']) {
       // KnowledgePage.tsx's upload form field is named baseId, not kbId.
       const kbId = typeof req.body?.baseId === 'string' ? req.body.baseId : undefined;
-      const result = await callEcgTool(secrets['ECG_MCP_API_KEY'], 'add_knowledge', { text, title: file.originalname, kbId });
-      res.json(result);
+      const result: any = await callEcgTool(secrets['ECG_MCP_API_KEY'], 'add_knowledge', { text, title: file.originalname, kbId });
+      // add_knowledge's real MCP-tool ack shape is { added, entryId, status } --
+      // KnowledgePage.tsx appends whatever this returns straight into its list
+      // expecting a KnowledgeEntry ({id, name, type, status, createdAt}).
+      // Passing the raw ack through (as this did before) silently added a
+      // shapeless object with no id/name -- the upload succeeded server-side
+      // (confirmed: the list's own GET grew afterward) but rendered broken or
+      // invisible in the UI. Normalize to the shape the list actually uses.
+      res.json({
+        id: result?.entryId ?? null,
+        name: file.originalname,
+        type: 'document',
+        status: result?.status ?? 'processing',
+        createdAt: new Date().toISOString(),
+      });
       return;
     }
     res.status(501).json({ error: 'This action is not available for this dashboard.' });
@@ -400,7 +416,28 @@ router.all('*', resolveAuth, async (req: AuthenticatedRequest, res: ExpressRespo
       return;
     }
     try {
-      const result = await callEcgTool(secrets['ECG_MCP_API_KEY'], mapping!.tool, mapping!.args);
+      const result: any = await callEcgTool(secrets['ECG_MCP_API_KEY'], mapping!.tool, mapping!.args);
+      // list_knowledge's real MCP-tool shape is { total, entries: [...] }, not
+      // a bare array. KnowledgePage.tsx's loader does
+      // `Array.isArray(d) ? d : (d.knowledge ?? d.items ?? [])` -- neither
+      // guessed key matches the real `entries` field, so it silently fell
+      // back to [] every time regardless of how many entries actually
+      // existed (confirmed live: the list byte-grew server-side after an
+      // upload while the UI kept showing nothing). Unwrap it here so every
+      // caller of GET /knowledge gets the plain array it was always meant to.
+      if (mapping!.tool === 'list_knowledge' && result && Array.isArray(result.entries)) {
+        res.json(result.entries);
+        return;
+      }
+      // Same shape mismatch as add_knowledge above: create_knowledge_base's
+      // real ack is { created, kbId, name } -- no `id` field at all.
+      // KnowledgePage.tsx appends this straight into its bases list keyed by
+      // `.id`; the new base would render with a broken/undefined id and fail
+      // any later select/edit/delete against it.
+      if (mapping!.tool === 'create_knowledge_base' && result?.kbId) {
+        res.json({ id: result.kbId, name: result.name ?? mapping!.args?.name ?? '', description: mapping!.args?.description ?? null, assetCount: 0, createdAt: new Date().toISOString() });
+        return;
+      }
       res.json(result);
     } catch (err) {
       res.status(502).json({ error: err instanceof Error ? err.message : 'eCG Agents MCP call failed' });

@@ -84,12 +84,20 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
   const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': heartbeat\n\n'); }, 15_000);
 
   try {
-    const { apiKey, organizationId, config, modules, password } = req.body as {
+    const { apiKey, organizationId, config, modules, password, selectedAgentIds, agentNames } = req.body as {
       apiKey?: string;
       organizationId?: string;
       config?: Record<string, unknown>;
       modules?: string[];
       password?: string;
+      // Which of the org's discovered agents this dashboard manages, and their
+      // display names for the in-dashboard agent switcher (see
+      // EcgConnectWizard.tsx). Omitted entirely means "every discovered agent"
+      // -- the wizard only sends these when the user narrowed the selection,
+      // so an older client (or a user who left every agent checked) still
+      // gets today's behavior.
+      selectedAgentIds?: string[];
+      agentNames?: Record<string, string>;
     };
     const dashConfig  = config && typeof config === 'object' ? config : {};
     const dashModules = Array.isArray(modules) ? modules.filter((m): m is string => typeof m === 'string') : [];
@@ -218,11 +226,21 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
     // same seeder ecg-connect.routes.ts's portal flow uses. modules: [] lets
     // ecgConfigTs() default to every module; discovery doesn't yet map
     // 1:1 to agent-template's module keys, so showing all is the safe default. ──
-    const agentIds = discovery.agents.map((a) => a?.id).filter((id): id is string => typeof id === 'string');
+    const allAgentIds = discovery.agents.map((a) => a?.id).filter((id): id is string => typeof id === 'string');
+    const agentIds = Array.isArray(selectedAgentIds) && selectedAgentIds.length > 0
+      ? selectedAgentIds.filter((id): id is string => typeof id === 'string' && allAgentIds.includes(id))
+      : allAgentIds;
+    // Name map for the dashboard's agent switcher -- prefer what the wizard
+    // sent (it already had the full discovery payload client-side), fall back
+    // to building it from this server's own discovery result.
+    const resolvedAgentNames: Record<string, string> = agentNames && typeof agentNames === 'object'
+      ? agentNames
+      : Object.fromEntries(discovery.agents.filter((a) => a?.id && agentIds.includes(a.id)).map((a) => [a.id as string, (a?.name as string) ?? 'Agent']));
     const templateFiles = seedEcgTemplate(serverPath, {
       orgName: orgNameGuess,
       modules: dashModules,
       agentIds,
+      agentNames: resolvedAgentNames,
       config: dashConfig,
       projectId: project.id,
       proxyUrl: ECOMGEAR_SERVER_URL,
@@ -268,7 +286,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
       {
         project_id: project.id,
         setting_key: 'ecg_customizer',
-        setting_value: { orgName: orgNameGuess, modules: dashModules, agentIds, config: dashConfig },
+        setting_value: { orgName: orgNameGuess, modules: dashModules, agentIds, agentNames: resolvedAgentNames, config: dashConfig },
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'project_id,setting_key' },

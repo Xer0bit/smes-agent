@@ -156,7 +156,7 @@ export default function EditAgentPage() {
   }
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-5">
+    <div className="p-8 max-w-2xl mx-auto space-y-6">
       <button onClick={() => navigate('/agents')} className="flex items-center gap-1.5 text-xs hover:opacity-70 transition-opacity" style={{ color: 'var(--muted)' }}>
         <ArrowLeft className="w-3.5 h-3.5" /> Back to Agents
       </button>

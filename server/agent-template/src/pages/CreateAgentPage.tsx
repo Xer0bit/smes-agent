@@ -161,7 +161,7 @@ export default function CreateAgentPage() {
   }
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
+    <div className="p-8 max-w-2xl mx-auto space-y-6">
       <div>
         <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Create Agent</h1>
         <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>Configure and launch in {STEP_LABELS.length} steps</p>

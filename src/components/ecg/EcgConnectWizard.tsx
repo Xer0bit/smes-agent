@@ -75,6 +75,10 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
 
   // Confirm-step form
+  // Which of the org's agents this dashboard manages -- defaults to all of
+  // them (matches the previous implicit "every agent" behavior) so existing
+  // single-agent orgs see no change; multi-agent orgs can narrow it down.
+  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set());
   const [appName, setAppName] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
   const [themeKey, setThemeKey] = useState<string>('light');
@@ -111,6 +115,7 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? `Request failed (${res.status})`);
       setDiscovery(data);
+      setSelectedAgentIds(new Set((data.agents ?? []).map((a: any) => a?.id).filter(Boolean)));
       const guess = data.agents?.[0]?.orgName || data.agents?.[0]?.name || 'eCG Agent';
       setAppName(`${guess} Dashboard`);
       setStep('confirm');
@@ -151,6 +156,20 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
           },
           // All six selected means "everything"  same as the seeder default.
           modules: modules.length === MODULES.length ? [] : modules,
+          // Which of the org's agents this dashboard is scoped to (+ names for
+          // the in-dashboard agent switcher) -- omitted entirely when every
+          // discovered agent is selected, so the server's own "all agents"
+          // fallback behavior stays the single source of truth for that case.
+          ...(discovery && selectedAgentIds.size > 0 && selectedAgentIds.size < discovery.agents.length
+            ? {
+                selectedAgentIds: Array.from(selectedAgentIds),
+                agentNames: Object.fromEntries(
+                  discovery.agents
+                    .filter((a: any) => selectedAgentIds.has(a?.id))
+                    .map((a: any) => [a.id, a?.name ?? 'Agent']),
+                ),
+              }
+            : {}),
         }),
       });
       if (!res.ok || !res.body) throw new Error(`Request failed (${res.status})`);
@@ -238,16 +257,32 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
             <h3 className="text-sm font-semibold text-foreground">Connected to your org</h3>
             <p className="mt-1 text-xs text-muted-foreground">This is what your eCG Agent key gives access to.</p>
 
-            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Agents ({discovery.agents.length})</p>
+            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Which agents should this dashboard manage? ({selectedAgentIds.size}/{discovery.agents.length})
+            </p>
             <div className="mt-2 space-y-2">
               {discovery.agents.length === 0 && <p className="text-xs text-muted-foreground">No agents yet. The dashboard will still work.</p>}
-              {discovery.agents.slice(0, 6).map((a: any, i: number) => (
-                <div key={a?.id ?? i} className="flex items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-3 py-2">
-                  <Zap className="h-3.5 w-3.5 shrink-0 text-primary" />
-                  <span className="min-w-0 flex-1 truncate text-sm text-foreground">{a?.name ?? 'Agent'}</span>
-                  {a?.status && <span className="text-xs text-muted-foreground">{a.status}</span>}
-                </div>
-              ))}
+              {discovery.agents.map((a: any, i: number) => {
+                const id = a?.id ?? String(i);
+                const checked = selectedAgentIds.has(id);
+                return (
+                  <label key={id} className="flex cursor-pointer items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => setSelectedAgentIds((prev) => {
+                        const next = new Set(prev);
+                        if (checked) next.delete(id); else next.add(id);
+                        return next;
+                      })}
+                      className="accent-[var(--primary)]"
+                    />
+                    <Zap className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    <span className="min-w-0 flex-1 truncate text-sm text-foreground">{a?.name ?? 'Agent'}</span>
+                    {a?.status && <span className="text-xs text-muted-foreground">{a.status}</span>}
+                  </label>
+                );
+              })}
             </div>
 
             <p className="mt-5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Connectors ({discovery.connectors.length})</p>
@@ -420,7 +455,7 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
 
             <div className="mt-5 flex items-center justify-between">
               <Button variant="ghost" size="sm" className="rounded-full" onClick={() => setStep('connect')}>← Back</Button>
-              <Button onClick={handleCreate} disabled={busy || modules.length === 0 || password.trim().length < 6} className="rounded-full gap-1.5">
+              <Button onClick={handleCreate} disabled={busy || modules.length === 0 || password.trim().length < 6 || (discovery.agents.length > 0 && selectedAgentIds.size === 0)} className="rounded-full gap-1.5">
                 Create dashboard <ArrowRight className="h-3.5 w-3.5" />
               </Button>
             </div>

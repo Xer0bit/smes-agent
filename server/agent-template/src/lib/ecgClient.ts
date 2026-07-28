@@ -1,10 +1,35 @@
 import { ECG } from '../ecg-config';
 const SERVER = ECG.proxyUrl.replace(/\/$/, '');
 const PROJECT_ID = ECG.projectId;
+const ACTIVE_AGENT_KEY = `ecg_active_agent_${PROJECT_ID}`;
 
 function accessHeaders(): Record<string, string> {
   const token = localStorage.getItem(`ecg_access_${PROJECT_ID}`);
   return token ? { 'x-dashboard-access': token } : {};
+}
+
+// Which of this dashboard's managed agents (ECG.agentIds) is currently active
+// -- read by the Layout.tsx agent switcher and by every ecgApi call below
+// that accepts an agentId filter, so switching agents re-scopes the whole
+// dashboard without a re-seed. Defaults to the first managed agent; falls
+// back to null (no filter -- shows everything) if the dashboard has none.
+export function getActiveAgentId(): string | null {
+  const stored = localStorage.getItem(ACTIVE_AGENT_KEY);
+  if (stored && ECG.agentIds.includes(stored)) return stored;
+  return ECG.agentIds[0] ?? null;
+}
+
+export function setActiveAgentId(agentId: string): void {
+  localStorage.setItem(ACTIVE_AGENT_KEY, agentId);
+}
+
+// Appends the active agent as a query param when one is set -- shared by
+// every proxy call below that the MCP tool layer can filter by agentId.
+function withActiveAgent(path: string): string {
+  const agentId = getActiveAgentId();
+  if (!agentId) return path;
+  const sep = path.includes('?') ? '&' : '?';
+  return `${path}${sep}agentId=${encodeURIComponent(agentId)}`;
 }
 
 // 501 means the proxy explicitly has no MCP-tool equivalent for this call
@@ -80,7 +105,7 @@ export const ecgApi = {
 
   // Schedulers
   schedulers: {
-    list:    () => req('GET', '/schedulers'),
+    list:    () => req('GET', withActiveAgent('/schedulers')),
     create:  (data: unknown) => req('POST', '/schedulers', data),
     update:  (id: string, data: unknown) => req('PATCH', `/schedulers/${id}`, data),
     delete:  (id: string) => req('DELETE', `/schedulers/${id}`),
@@ -93,7 +118,16 @@ export const ecgApi = {
   // cancelled. get_planned_posts returns these unmapped, so the UI must
   // speak the same values as the proxy mapping below expects.
   posts: {
-    list:    () => req('GET', '/planned-posts'),
+    // No args (the common case, e.g. PostsPage/PostsCalendarPage): scoped to
+    // the active agent. { agentId: null } explicitly opts OUT of that scoping
+    // for the rare cross-agent view (AgentsPage's per-agent "next up" summary
+    // needs every managed agent's posts, not just the active one).
+    list: (opts?: { agentId?: string | null }) => {
+      if (opts && 'agentId' in opts) {
+        return req('GET', opts.agentId ? `/planned-posts?agentId=${encodeURIComponent(opts.agentId)}` : '/planned-posts');
+      }
+      return req('GET', withActiveAgent('/planned-posts'));
+    },
     create:  (data: unknown) => req('POST', '/planned-posts', data),
     delete:  (id: string) => req('DELETE', `/planned-posts/${id}`),
     // Approving a draft and retrying a failed post are the same call --
@@ -138,7 +172,7 @@ export const ecgApi = {
   },
 
   // Runs
-  runs: { list: () => req('GET', '/runs') },
+  runs: { list: () => req('GET', withActiveAgent('/runs')) },
 
   // Notifications (failed runs, rate limits, repeat-topic warnings, etc.)
   notifications: {

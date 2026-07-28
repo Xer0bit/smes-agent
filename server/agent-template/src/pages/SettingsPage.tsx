@@ -184,7 +184,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-4">
+    <div className="p-8 max-w-5xl mx-auto space-y-6">
       <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Settings</h1>
 
       {/* Tabs */}
