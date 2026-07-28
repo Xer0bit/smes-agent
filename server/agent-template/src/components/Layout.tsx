@@ -41,13 +41,13 @@ const ALL_NAV = [
   { id: 'settings',   label: 'Settings',          path: '/settings',      icon: 'Settings', always: true },
 ];
 
-// Schedulers and Run History are infrastructure/execution-log concepts, not
-// something a non-technical social-media manager thinks of as a top-level
-// destination -- "how often does THIS agent post" and "did THIS agent's last
-// run work" are answered on AgentDetailPage (which already links out to the
-// full pages via "Manage" / "View all"). The routes stay live for anyone who
-// wants the cross-agent view; they're just not pinned in the sidebar.
-const HIDDEN_FROM_SIDEBAR = ['schedulers', 'runs'];
+// Run History is an execution-log concept most users only care about when
+// something's wrong -- reachable via AgentDetailPage's "View all" link
+// rather than a permanent sidebar slot. Schedulers used to be hidden the
+// same way, but that made it undiscoverable to anyone who didn't already
+// know it existed; it's common enough (setting a posting cadence) to earn
+// a real nav entry.
+const HIDDEN_FROM_SIDEBAR = ['runs'];
 
 // Assistant defaults to visible (moduleSettings.chat undefined) so every
 // dashboard generated before this toggle existed keeps behaving exactly as
@@ -85,8 +85,8 @@ function AgentSwitcher({ compact }: { compact?: boolean }) {
       value={active ?? ''}
       onChange={(e) => { setActiveAgentId(e.target.value); setActive(e.target.value); window.location.reload(); }}
       title="Switch active agent"
-      className={`w-full text-xs rounded-md border px-2 py-1.5 truncate ${compact ? 'mt-1' : 'mt-2'}`}
-      style={{ background: 'var(--sidebar-hover)', borderColor: 'var(--border)', color: 'var(--sidebar-text)' }}
+      className={`w-full border px-2 py-1.5 truncate ${compact ? 'mt-1' : 'mt-2'}`}
+      style={{ background: 'var(--sidebar-hover)', borderColor: 'var(--border)', color: 'var(--sidebar-text)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius-sm)' }}
     >
       {ECG.agentIds.map((id) => (
         <option key={id} value={id}>{ECG.agentNames[id] ?? id}</option>
@@ -126,7 +126,14 @@ const SIDEBAR_COLLAPSE_KEY = 'ecg_sidebar_collapsed';
 
 function Sidebar({ children, pathname }: { children: ReactNode; pathname: string }) {
   const pendingCount = usePendingCount();
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1');
+  // No saved preference yet -> default to the icon-only rail below the
+  // mobile floor (768px) instead of squeezing the full 15rem sidebar into a
+  // narrow viewport. A saved preference always wins once the user has toggled it.
+  const [collapsed, setCollapsed] = useState(() => {
+    const saved = localStorage.getItem(SIDEBAR_COLLAPSE_KEY);
+    if (saved !== null) return saved === '1';
+    return typeof window !== 'undefined' && window.innerWidth < 768;
+  });
   let lastGroup = '';
 
   function toggleCollapsed() {
@@ -144,8 +151,8 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
           <BrandLogo className="w-8 h-8 shrink-0" />
           {!collapsed && (
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-widest leading-none" style={{ color: 'var(--accent)' }}>eCG</p>
-              <p className="text-sm truncate mt-1" style={{ color: 'var(--sidebar-text)', fontWeight: 'var(--font-weight-heading)' }}>{ECG.appName}</p>
+              <p style={{ fontSize: 'var(--text-tiny)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 'var(--tracking-wide)', lineHeight: 1, color: 'var(--accent)' }}>eCG</p>
+              <p className="truncate mt-1" style={{ fontSize: 'var(--text-small)', color: 'var(--sidebar-text)', fontWeight: 'var(--font-weight-heading)' }}>{ECG.appName}</p>
             </div>
           )}
         </div>
@@ -165,15 +172,17 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
             return (
               <div key={path}>
                 {showLabel && (
-                  <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--sidebar-muted)', opacity: 0.7 }}>
+                  <p className="px-3 pt-3 pb-1" style={{ fontSize: 'var(--text-tiny)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 'var(--tracking-wide)', color: 'var(--sidebar-muted)', opacity: 0.7 }}>
                     {group}
                   </p>
                 )}
                 <NavLink to={path} title={collapsed ? label : undefined}
-                  className="relative flex items-center gap-2.5 px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--sidebar-hover)]"
+                  className="relative flex items-center gap-2.5 px-3 py-2 font-medium hover:bg-[var(--sidebar-hover)]"
                   style={{
+                    fontSize: 'var(--text-small)',
                     borderRadius: 'var(--radius-sm)',
                     justifyContent: collapsed ? 'center' : 'flex-start',
+                    transition: `background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)`,
                     // --sidebar-hover (not --accent-bg): that variable is a light
                     // tint meant for content on the light body surface -- against
                     // a dark sidebar it was nearly invisible. --sidebar-hover is
@@ -189,7 +198,7 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
                   <Icon className="w-4 h-4 shrink-0" />
                   {!collapsed && <span className="flex-1">{label}</span>}
                   {showBadge && (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none min-w-[18px] text-center text-white" style={{ background: 'var(--accent)' }}>
+                    <span className="font-bold px-1.5 py-0.5 rounded-full leading-none min-w-[18px] text-center text-white" style={{ fontSize: 'var(--text-tiny)', background: 'var(--accent)' }}>
                       {pendingCount > 99 ? '99+' : pendingCount}
                     </span>
                   )}
@@ -200,8 +209,8 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
         </nav>
         <div className="border-t" style={{ borderColor: 'var(--border)' }}>
           <button onClick={toggleCollapsed} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="w-full flex items-center gap-2 px-4 py-3 text-xs hover:bg-[var(--sidebar-hover)] transition-colors"
-            style={{ color: 'var(--sidebar-muted)', justifyContent: collapsed ? 'center' : 'flex-start' }}>
+            className="w-full flex items-center gap-2 px-4 py-3 hover:bg-[var(--sidebar-hover)]"
+            style={{ fontSize: 'var(--text-small)', color: 'var(--sidebar-muted)', justifyContent: collapsed ? 'center' : 'flex-start', transition: `background-color var(--duration-fast) var(--ease-out)` }}>
             {collapsed ? <ChevronsRight className="w-4 h-4 shrink-0" /> : <><ChevronsLeft className="w-4 h-4 shrink-0" /> Collapse</>}
           </button>
         </div>
@@ -221,7 +230,7 @@ function TopNav({ children }: { children: ReactNode }) {
         <div className="max-w-6xl mx-auto px-6 py-3.5 flex items-center gap-6">
           <div className="flex items-center gap-2 shrink-0">
             <BrandLogo className="w-7 h-7" />
-            <span className="text-sm truncate" style={{ color: 'var(--sidebar-text)', fontWeight: 'var(--font-weight-heading)' }}>{ECG.appName}</span>
+            <span className="truncate" style={{ fontSize: 'var(--text-small)', color: 'var(--sidebar-text)', fontWeight: 'var(--font-weight-heading)' }}>{ECG.appName}</span>
           </div>
           {ECG.agentIds.length > 1 && <div className="w-40 shrink-0"><AgentSwitcher compact /></div>}
           <nav className="flex items-center gap-1">
@@ -229,9 +238,11 @@ function TopNav({ children }: { children: ReactNode }) {
               const Icon = ALL_ICONS[icon] ?? Zap;
               return (
                 <NavLink key={path} to={path}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[var(--sidebar-hover)]"
+                  className="flex items-center gap-1.5 px-3 py-1.5 font-medium hover:bg-[var(--sidebar-hover)]"
                   style={({ isActive }) => ({
+                    fontSize: 'var(--text-tiny)',
                     borderRadius: 'var(--radius-sm)',
+                    transition: `background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)`,
                     ...(isActive
                       ? { background: 'var(--sidebar-hover)', color: 'var(--accent)' }
                       : { color: 'var(--sidebar-muted)' }),
@@ -255,16 +266,18 @@ function Minimal({ children }: { children: ReactNode }) {
       <div className="max-w-4xl mx-auto w-full px-6 pt-6 pb-4 flex items-center justify-between shrink-0 border-b" style={{ borderColor: 'var(--border)' }}>
         <div className="flex items-center gap-3 min-w-0">
           <BrandLogo className="w-6 h-6 shrink-0" />
-          <span className="text-sm truncate" style={{ color: 'var(--text)', fontWeight: 'var(--font-weight-heading)' }}>{ECG.appName}</span>
+          <span className="truncate" style={{ fontSize: 'var(--text-small)', color: 'var(--text)', fontWeight: 'var(--font-weight-heading)' }}>{ECG.appName}</span>
           {ECG.agentIds.length > 1 && <div className="w-36 shrink-0"><AgentSwitcher compact /></div>}
         </div>
         <nav className="flex gap-4">
           {NAV.map(({ label, path }) => (
-            <NavLink key={path} to={path} className="text-xs font-medium transition-colors hover:opacity-80"
+            <NavLink key={path} to={path} className="font-medium hover:opacity-80"
               style={({ isActive }) => ({
+                fontSize: 'var(--text-tiny)',
                 color: isActive ? 'var(--accent)' : 'var(--muted)',
                 borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
                 paddingBottom: 2,
+                transition: `color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out)`,
               })}>
               {label}
             </NavLink>

@@ -9,25 +9,35 @@ body {
   background: var(--body-bg);
   color: var(--text);
   margin: 0;
-  line-height: 1.55;
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
 /* Paired display font for headings only -- fixed regardless of the chosen
    body font, same two-typeface pattern most considered dashboard UIs use
-   (a geometric display face for titles, a plain body face for content). */
+   (a geometric display face for titles, a plain body face for content).
+   Sized off the formal type scale (design.md) rather than each component
+   picking its own Tailwind text-* class ad hoc. */
 h1, h2, h3 {
   font-family: 'Space Grotesk', '{{FONT_FAMILY}}', system-ui, sans-serif;
-  letter-spacing: -0.01em;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  margin: 0;
+  font-weight: var(--font-weight-heading);
 }
+h1 { font-size: var(--text-h1); }
+h2 { font-size: var(--text-h2); }
+h3 { font-size: var(--text-h3); }
 
 * { box-sizing: border-box; }
 
 /* Every button/link/input gets a visible keyboard focus ring for free --
    audited 2026-07-27: zero :focus-visible declarations existed anywhere in
    this dashboard (88 buttons across 7 pages), meaning keyboard users had no
-   visible focus state at all. One rule here instead of touching every page. */
+   visible focus state at all. One rule here instead of touching every page.
+   Never transitioned -- a focus ring must appear instantly, not ease in. */
 button:focus-visible, a:focus-visible, input:focus-visible,
 select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline: 2px solid var(--accent);
@@ -38,25 +48,35 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-/* Page mount: one subtle fade-rise, CSS only */
-main > * { animation: ecg-rise 150ms ease-out; }
+/* Page mount: one subtle fade-rise, CSS only -- the only per-page motion this
+   app uses (design.md's microinteraction stance: restraint, this is a working
+   tool not a marketing site). */
+main > * { animation: ecg-rise var(--duration-slow) var(--ease-out); }
 @keyframes ecg-rise {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  main > * { animation: none; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Card hover elevation */
-.ecg-card-hover { transition: box-shadow 150ms ease, border-color 150ms ease; }
+.ecg-card-hover { transition: box-shadow var(--duration-base) var(--ease-out), border-color var(--duration-base) var(--ease-out); }
 .ecg-card-hover:hover { box-shadow: var(--shadow-md); }
 
+/* Data-table row hover -- a bare token-correct <tr> with zero interactive
+   feedback still reads as an unstyled HTML table. */
+.ecg-row-hover { transition: background-color var(--duration-fast) var(--ease-out); }
+.ecg-row-hover:hover { background-color: var(--table-row-hover); }
+
 /* Interactive state discipline for buttons/inputs across all pages */
-button, [role="button"] { transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+button, [role="button"] {
+  transition: opacity var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
-input, select, textarea { transition: border-color 120ms ease; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button:active:not(:disabled) { transform: scale(0.98); }
+input, select, textarea { transition: border-color var(--duration-fast) var(--ease-out); }

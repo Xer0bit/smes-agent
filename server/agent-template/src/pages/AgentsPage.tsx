@@ -118,13 +118,13 @@ export default function AgentsPage() {
     <div className="p-8 max-w-5xl mx-auto space-y-6">
       <PageHeader eyebrow="Content" title="Agents" action={
         <div className="flex items-center gap-2">
-          <button onClick={() => navigate('/schedulers')} className="text-xs hover:opacity-70" style={{ color: 'var(--muted)' }}>
+          <button onClick={() => navigate('/schedulers')} className="hover:opacity-70" style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>
             Manage all schedules
           </button>
           <button
             onClick={() => navigate('/agents/create')}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
-            style={{ background: 'var(--accent)' }}
+            className="flex items-center gap-2 px-4 py-2 font-medium text-white hover:opacity-90"
+            style={{ background: 'var(--accent)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius)' }}
           >
             <Plus className="w-4 h-4" /> New Agent
           </button>
@@ -132,14 +132,14 @@ export default function AgentsPage() {
       } />
 
       {loading && <Spinner />}
-      {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
+      {error && <div className="px-4 py-3" style={{ fontSize: 'var(--text-small)', color: 'var(--danger)', background: 'var(--danger-bg)', borderRadius: 'var(--radius)' }}>{error}</div>}
       {!loading && !error && !agents.length && (
         <EmptyState Icon={Zap} title="No agents yet"
           hint="An agent writes and schedules content for you. Create your first one to get started."
           action={
             <button onClick={() => navigate('/agents/create')}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
-              style={{ background: 'var(--accent)' }}>
+              className="flex items-center gap-2 px-4 py-2 font-medium text-white hover:opacity-90"
+              style={{ background: 'var(--accent)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius)' }}>
               <Plus className="w-4 h-4" /> Create agent
             </button>
           } />
@@ -150,73 +150,75 @@ export default function AgentsPage() {
             <Card key={a.id} hover className="p-5">
               <div className="flex items-start justify-between gap-3">
                 <button onClick={() => navigate(`/agents/${a.id}`)} className="flex items-center gap-3 min-w-0 text-left hover:opacity-80">
-                  <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-white text-sm"
-                    style={{ background: 'var(--accent)', fontWeight: 'var(--font-weight-heading)' }}>
+                  <div className="w-9 h-9 flex items-center justify-center shrink-0 text-white"
+                    style={{ background: 'var(--accent-gradient)', fontWeight: 'var(--font-weight-heading)', fontSize: 'var(--text-body)', borderRadius: 'var(--radius-sm)' }}>
                     {a.name.charAt(0).toUpperCase()}
                   </div>
                   <div className="min-w-0">
-                    <p className="font-semibold text-sm truncate" style={{ color: 'var(--text)' }}>{a.name}</p>
-                    <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--muted)' }}>{a.templateName ?? a.template_name ?? ' '}</p>
+                    <p className="font-semibold truncate" style={{ fontSize: 'var(--text-body)', color: 'var(--text)' }}>{a.name}</p>
+                    <p className="mt-0.5 truncate" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{a.templateName ?? a.template_name ?? ' '}</p>
                   </div>
                 </button>
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1 shrink-0">
                   <StatusBadge status={a.status} />
+                  <span className="w-px h-5 mx-0.5" style={{ background: 'var(--border)' }} />
                   <button onClick={() => handleRun(a.id)} title="Run now" aria-label="Run now"
-                    className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
+                    className="flex items-center justify-center w-8 h-8 hover:bg-[var(--accent-bg)] transition-colors" style={{ borderRadius: 'var(--radius-sm)' }}>
                     <Zap className="w-4 h-4" style={{ color: 'var(--accent)' }} />
                   </button>
                   <button onClick={() => navigate(`/agents/${a.id}/edit`)} title="Edit" aria-label="Edit agent"
-                    className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
+                    className="flex items-center justify-center w-8 h-8 hover:bg-[var(--accent-bg)] transition-colors" style={{ borderRadius: 'var(--radius-sm)' }}>
                     <Pencil className="w-4 h-4" style={{ color: 'var(--muted)' }} />
                   </button>
                   <div className="relative" data-agent-menu>
                     <button onClick={() => setMenuOpenId(menuOpenId === a.id ? null : a.id)} title="Status" aria-label="Change agent status"
-                      className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
+                      className="flex items-center justify-center w-8 h-8 hover:bg-[var(--accent-bg)] transition-colors" style={{ borderRadius: 'var(--radius-sm)' }}>
                       <MoreHorizontal className="w-4 h-4" style={{ color: 'var(--muted)' }} />
                     </button>
                     {menuOpenId === a.id && (
-                      <div className="absolute right-0 top-full mt-1 w-40 rounded-lg border overflow-hidden z-20"
-                        style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-md)' }}>
+                      <div className="absolute right-0 top-full mt-1 w-40 border overflow-hidden z-20"
+                        style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-md)', borderRadius: 'var(--radius-sm)' }}>
                         {a.status !== 'active' && (
                           <button onClick={() => handleSetStatus(a, 'active')}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: 'var(--text)' }}>
+                            className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--accent-bg)]" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>
                             <Play className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} /> Activate
                           </button>
                         )}
                         {a.status === 'active' && (
                           <button onClick={() => handleSetStatus(a, 'idle')}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: 'var(--text)' }}>
+                            className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--accent-bg)]" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>
                             <Pause className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} /> Set idle
                           </button>
                         )}
                         {a.status !== 'suspended' && (
                           <button onClick={() => handleSetStatus(a, 'suspended')}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: '#dc2626' }}>
+                            className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--accent-bg)]" style={{ fontSize: 'var(--text-small)', color: 'var(--danger)' }}>
                             <Pause className="w-3.5 h-3.5" /> Suspend
                           </button>
                         )}
                         {a.status !== 'archived' && (
                           <button onClick={() => handleSetStatus(a, 'archived')}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-[var(--accent-bg)]" style={{ color: 'var(--muted)' }}>
+                            className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--accent-bg)]" style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>
                             <Archive className="w-3.5 h-3.5" /> Archive
                           </button>
                         )}
                       </div>
                     )}
                   </div>
-                  <button onClick={() => setDeletingAgent(a)} title="Delete" aria-label="Delete agent"
-                    className="p-1.5 rounded hover:bg-red-500/10">
-                    <Trash2 className="w-4 h-4" style={{ color: '#dc2626' }} />
+                  <span className="w-px h-5 mx-0.5" style={{ background: 'var(--border)' }} />
+                  <button onClick={() => setDeletingAgent(a)} title="Delete agent" aria-label="Delete agent"
+                    className="flex items-center justify-center w-8 h-8 hover:bg-red-500/10 transition-colors" style={{ borderRadius: 'var(--radius-sm)' }}>
+                    <Trash2 className="w-4 h-4" style={{ color: 'var(--danger)' }} />
                   </button>
                 </div>
               </div>
               {nextUpByAgent[a.id] && (
-                <p className="mt-3 text-xs truncate" style={{ color: 'var(--text)' }}>
+                <p className="mt-3 truncate" style={{ fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>
                   <span style={{ color: 'var(--muted)' }}>Next up: </span>{nextUpByAgent[a.id]}
                 </p>
               )}
               {showLastRun && (a.lastRun || a.last_run) && (
-                <div className="mt-2 flex items-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}>
+                <div className="mt-2 flex items-center gap-1.5" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>
                   <Clock className="w-3 h-3" />
                   Last run {relTime(a.lastRun ?? a.last_run)}
                 </div>

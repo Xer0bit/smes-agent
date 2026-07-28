@@ -116,28 +116,28 @@ export default function TopBar() {
           onChange={e => { setQuery(e.target.value); setSearchOpen(true); }}
           onFocus={() => setSearchOpen(true)}
           placeholder="Search agents, posts…"
-          className="w-full pl-9 pr-3 py-1.5 rounded-lg border text-sm focus:outline-none"
-          style={{ background: 'var(--body-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+          className="w-full pl-9 pr-3 py-1.5 border focus:outline-none"
+          style={{ background: 'var(--body-bg)', borderColor: 'var(--border)', color: 'var(--text)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius-sm)' }}
         />
         {searchOpen && query.trim() && (
-          <div className="absolute left-0 top-full mt-1.5 w-80 rounded-xl border overflow-hidden z-30"
-            style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-md)' }}>
+          <div className="absolute left-0 top-full mt-1.5 w-80 border overflow-hidden z-30"
+            style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-md)', borderRadius: 'var(--radius)' }}>
             {!hasResults ? (
-              <p className="text-xs px-3 py-4 text-center" style={{ color: 'var(--muted)' }}>No matches</p>
+              <p className="px-3 py-4 text-center" style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>No matches</p>
             ) : (
               <div className="max-h-80 overflow-y-auto py-1">
                 {results.agents.map(a => (
                   <button key={a.id} onClick={() => { navigate(`/agents/${a.id}`); setSearchOpen(false); setQuery(''); }}
                     className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--accent-bg)]">
                     <Zap className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--accent)' }} />
-                    <span className="text-sm truncate" style={{ color: 'var(--text)' }}>{a.name}</span>
+                    <span className="truncate" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>{a.name}</span>
                   </button>
                 ))}
                 {results.posts.map(p => (
                   <button key={p.id} onClick={() => { navigate('/posts'); setSearchOpen(false); setQuery(''); }}
                     className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--accent-bg)]">
                     <FileText className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--muted)' }} />
-                    <span className="text-sm truncate" style={{ color: 'var(--text)' }}>{p.content}</span>
+                    <span className="truncate" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>{p.content}</span>
                   </button>
                 ))}
               </div>
@@ -150,11 +150,11 @@ export default function TopBar() {
         <div className="hidden sm:flex items-center gap-1.5 ml-auto" title="Connected platform status">
           {platformStatus.map(({ platform, status }) => {
             const pm = platformMeta(platform);
-            const dotColor = status === 'connected' ? '#16a34a' : status === 'error' ? '#dc2626' : 'var(--muted)';
+            const dotColor = status === 'connected' ? 'var(--success)' : status === 'error' ? 'var(--danger)' : 'var(--muted)';
             return (
               <span key={platform} title={`${pm.label}: ${status}`}
-                className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full border"
-                style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border"
+                style={{ borderColor: 'var(--border)', color: 'var(--muted)', fontSize: 'var(--text-tiny)' }}>
                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dotColor }} />
                 {pm.label}
               </span>
@@ -163,48 +163,48 @@ export default function TopBar() {
         </div>
       )}
       <div ref={bellRef} className={`relative ${platformStatus.length > 0 ? '' : 'ml-auto'}`}>
-        <button onClick={() => setBellOpen(v => !v)} className="relative p-2 rounded-lg hover:bg-[var(--accent-bg)]">
+        <button onClick={() => setBellOpen(v => !v)} className="relative p-2 hover:bg-[var(--accent-bg)]" style={{ borderRadius: 'var(--radius-sm)' }}>
           <Bell className="w-4 h-4" style={{ color: 'var(--muted)' }} />
           {hasNotifications && (
-            <span className="absolute top-1 right-1 w-2 h-2 rounded-full" style={{ background: '#dc2626' }} />
+            <span className="absolute top-1 right-1 w-2 h-2 rounded-full" style={{ background: 'var(--danger)' }} />
           )}
         </button>
         {bellOpen && (
-          <div className="absolute right-0 top-full mt-1.5 w-72 rounded-xl border overflow-hidden z-30"
-            style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-md)' }}>
+          <div className="absolute right-0 top-full mt-1.5 w-72 border overflow-hidden z-30"
+            style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-md)', borderRadius: 'var(--radius)' }}>
             <div className="flex items-center justify-between px-3 pt-3 pb-1">
-              <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Notifications</p>
+              <p style={{ fontSize: 'var(--text-tiny)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 'var(--tracking-wide)', color: 'var(--muted)' }}>Notifications</p>
               {notifications.length > 0 && (
-                <button onClick={handleMarkAllRead} disabled={markingAll} className="text-[11px] hover:opacity-70 disabled:opacity-50" style={{ color: 'var(--accent)' }}>
+                <button onClick={handleMarkAllRead} disabled={markingAll} className="hover:opacity-70 disabled:opacity-50" style={{ fontSize: 'var(--text-tiny)', color: 'var(--accent)' }}>
                   Mark all read
                 </button>
               )}
             </div>
             {!hasNotifications ? (
-              <p className="text-xs px-3 pb-3" style={{ color: 'var(--muted)' }}>You're all caught up.</p>
+              <p className="px-3 pb-3" style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>You're all caught up.</p>
             ) : (
               <div className="pb-1 max-h-80 overflow-y-auto">
                 {pendingCount > 0 && (
                   <button onClick={() => { navigate('/posts'); setBellOpen(false); }}
                     className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[var(--accent-bg)]">
                     <Clock className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--accent)' }} />
-                    <span className="text-sm" style={{ color: 'var(--text)' }}>{pendingCount} post{pendingCount === 1 ? '' : 's'} waiting for review</span>
+                    <span style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>{pendingCount} post{pendingCount === 1 ? '' : 's'} waiting for review</span>
                   </button>
                 )}
                 {failedToday > 0 && (
                   <button onClick={() => { navigate('/runs'); setBellOpen(false); }}
                     className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[var(--accent-bg)]">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" style={{ color: '#dc2626' }} />
-                    <span className="text-sm" style={{ color: 'var(--text)' }}>{failedToday} run{failedToday === 1 ? '' : 's'} failed today</span>
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--danger)' }} />
+                    <span style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>{failedToday} run{failedToday === 1 ? '' : 's'} failed today</span>
                   </button>
                 )}
                 {notifications.map(n => (
                   <button key={n.id} onClick={async () => { await ecgApi.notifications.markRead(n.id); reloadNotifications(); }}
                     className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-[var(--accent-bg)]">
-                    <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: n.severity === 'warning' ? '#f59e0b' : 'var(--muted)' }} />
+                    <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: n.severity === 'warning' ? 'var(--warning)' : 'var(--muted)' }} />
                     <span className="min-w-0">
-                      <span className="block text-sm" style={{ color: 'var(--text)' }}>{n.title}</span>
-                      {n.message && <span className="block text-xs mt-0.5" style={{ color: 'var(--muted)' }}>{n.message}</span>}
+                      <span className="block" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>{n.title}</span>
+                      {n.message && <span className="block mt-0.5" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{n.message}</span>}
                     </span>
                   </button>
                 ))}

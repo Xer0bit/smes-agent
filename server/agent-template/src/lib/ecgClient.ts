@@ -231,4 +231,29 @@ export const ecgApi = {
   // Summary
   summary: { get: () => req('GET', '/summary') },
   stats:   { get: () => req('GET', '/stats') },
+
+  // One-off LLM call for "preview what this agent would write" in the Create
+  // Agent wizard, before the agent (and its real generation pipeline) exists.
+  // Backed by the generic server-side LLM proxy (ai-chat) -- reads the
+  // project's own ECG_LLM_* secret, never touches the browser with the key.
+  // Returns plain text regardless of which provider (OpenAI/Anthropic/Google)
+  // the project has configured, since callers shouldn't need to know that shape.
+  assistant: {
+    preview: async (systemPrompt: string, userPrompt: string): Promise<string> => {
+      const data: any = await req('POST', '/ai-chat', { systemPrompt, messages: [{ role: 'user', content: userPrompt }] });
+      return data.choices?.[0]?.message?.content // OpenAI-compatible
+        ?? data.content?.[0]?.text // Anthropic
+        ?? data.candidates?.[0]?.content?.parts?.[0]?.text // Google
+        ?? '';
+    },
+  },
 };
+
+// True when a preview call failed because this project has no LLM key
+// configured (App Builder -> AI Model) -- not a real error, just "not set up
+// yet." Callers should show a graceful "preview unavailable" state, not an
+// error banner.
+export function isPreviewUnavailable(e: unknown): boolean {
+  const err = e as { status?: number; message?: string };
+  return err?.status === 400 && /no llm api key configured/i.test(err.message ?? '');
+}

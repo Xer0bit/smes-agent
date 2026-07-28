@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Plus, Pencil, Trash2, X, Play, Send, Loader2, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, X, Play, Pause, Send, Loader2, AlertTriangle } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
 import { ECG } from '../ecg-config';
 import StatusBadge from '../components/StatusBadge';
-import { PageHeader, EmptyState, Spinner, relTime, DAYS_OF_WEEK, buildWeeklyCron, cadenceLabel, platformMeta } from '../components/ui';
+import { PageHeader, Card, EmptyState, Spinner, relTime, DAYS_OF_WEEK, buildWeeklyCron, cadenceLabel, platformMeta } from '../components/ui';
 import { Calendar } from 'lucide-react';
 import { platformsForConnector } from './PostsPage';
 
@@ -81,15 +81,15 @@ export default function SchedulersPage() {
       <PageHeader eyebrow="Content" title="Schedulers" action={
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
-          style={{ background: 'var(--accent)' }}
+          className="flex items-center gap-2 px-4 py-2 font-medium text-white hover:opacity-90"
+          style={{ background: 'var(--accent)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius)' }}
         >
           <Plus className="w-4 h-4" /> New Scheduler
         </button>
       } />
 
-      {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
-      {replanMsg && <div className="text-sm px-4 py-3 rounded-lg" style={{ background: 'var(--accent-bg,#ede9fe)', color: 'var(--text)' }}>{replanMsg}</div>}
+      {error && <div className="px-4 py-3" style={{ fontSize: 'var(--text-small)', color: 'var(--danger)', background: 'var(--danger-bg)', borderRadius: 'var(--radius)' }}>{error}</div>}
+      {replanMsg && <div className="px-4 py-3" style={{ fontSize: 'var(--text-small)', background: 'var(--accent-bg)', color: 'var(--text)', borderRadius: 'var(--radius)' }}>{replanMsg}</div>}
 
       {loading && <Spinner />}
       {!loading && !rows.length && (
@@ -97,53 +97,62 @@ export default function SchedulersPage() {
           hint="A scheduler tells an agent when to generate and publish posts. Create one to put your content on autopilot." />
       )}
       {!loading && rows.length > 0 && (
-        <div className="rounded-xl border overflow-hidden" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
+        <Card className="overflow-hidden">
           <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ minWidth: '640px' }}>
+          <table className="w-full" style={{ minWidth: '640px', fontSize: 'var(--text-small)' }}>
             <thead>
-              <tr className="border-b text-xs" style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>
+              <tr className="border-b" style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>
                 {['Agent', 'Schedule', ...(showNextRun ? ['Next Run'] : []), 'Status', 'Actions'].map(h => (
-                  <th key={h} className="text-left px-4 py-3 font-semibold uppercase tracking-wider">{h}</th>
+                  <th key={h} className="text-left px-4 py-3 font-semibold uppercase" style={{ fontSize: 'var(--text-tiny)', letterSpacing: 'var(--tracking-wide)' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
               {rows.map((s: any) => (
-                <tr key={s.id}>
+                <tr key={s.id} className="ecg-row-hover">
                   <td className="px-4 py-3 font-medium" style={{ color: 'var(--text)' }}>{s.agentName ?? s.agent_name ?? ' '}</td>
-                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>
+                  <td className="px-4 py-3" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>
                     {cadenceLabel(s.schedule ?? s.cron, s.postCount ?? s.post_count)}
                   </td>
                   {showNextRun && (
-                    <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}
+                    <td className="px-4 py-3" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}
                       title={s.nextRun ? new Date(s.nextRun).toLocaleString() : undefined}>
                       {s.nextRun ? relTime(s.nextRun) : ' '}
                     </td>
                   )}
                   <td className="px-4 py-3"><StatusBadge status={s.status ?? 'active'} /></td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-end gap-1">
                       <button
                         onClick={() => handleTrigger(s.id)}
                         disabled={triggeringId === s.id}
-                        className="p-1 rounded hover:bg-gray-100 disabled:opacity-50"
-                        title="Generate posts now"
+                        title="Generate posts now" aria-label="Generate posts now"
+                        className="flex items-center justify-center w-8 h-8 hover:bg-[var(--accent-bg)] disabled:opacity-50 transition-colors"
+                        style={{ borderRadius: 'var(--radius-sm)' }}
                       >
-                        {triggeringId === s.id ? <Loader2 className="w-4 h-4 animate-spin text-green-600" /> : <Send className="w-4 h-4 text-green-600" />}
+                        {triggeringId === s.id
+                          ? <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--muted)' }} />
+                          : <Send className="w-4 h-4" style={{ color: 'var(--accent)' }} />}
                       </button>
                       <button
                         onClick={() => handleToggle(s.id, s.status)}
-                        className="p-1 rounded hover:bg-gray-100"
-                        title={s.status === 'active' ? 'Pause' : 'Resume'}
+                        title={s.status === 'active' ? 'Pause schedule' : 'Resume schedule'}
+                        aria-label={s.status === 'active' ? 'Pause schedule' : 'Resume schedule'}
+                        className="flex items-center justify-center w-8 h-8 hover:bg-[var(--accent-bg)] transition-colors"
+                        style={{ borderRadius: 'var(--radius-sm)' }}
                       >
-                        {s.status === 'active' ? <Pencil className="w-4 h-4 text-gray-600" /> : <Play className="w-4 h-4 text-gray-600" />}
+                        {s.status === 'active'
+                          ? <Pause className="w-4 h-4" style={{ color: 'var(--muted)' }} />
+                          : <Play className="w-4 h-4" style={{ color: 'var(--muted)' }} />}
                       </button>
+                      <span className="w-px h-5 mx-0.5" style={{ background: 'var(--border)' }} />
                       <button
                         onClick={() => setDeletingScheduler(s)}
-                        className="p-1 rounded hover:bg-red-50"
-                        title="Delete"
+                        title="Delete schedule" aria-label="Delete schedule"
+                        className="flex items-center justify-center w-8 h-8 hover:bg-red-500/10 transition-colors"
+                        style={{ borderRadius: 'var(--radius-sm)' }}
                       >
-                        <Trash2 className="w-4 h-4 text-red-600" />
+                        <Trash2 className="w-4 h-4" style={{ color: 'var(--danger)' }} />
                       </button>
                     </div>
                   </td>
@@ -152,7 +161,7 @@ export default function SchedulersPage() {
             </tbody>
           </table>
           </div>
-        </div>
+        </Card>
       )}
 
       {showCreate && (
@@ -221,33 +230,33 @@ function CreateSchedulerModal({ agents, connectors, onClose, onCreated }: {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto" style={{ background: 'var(--card-bg)' }}>
+      <div className="w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>New Scheduler</h2>
-          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
+          <h2 style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>New Scheduler</h2>
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--accent-bg)]">
             <X className="w-5 h-5" style={{ color: 'var(--muted)' }} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Agent</label>
+            <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Agent</label>
             <select value={agentId} onChange={e => setAgentId(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border text-sm" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }} required>
+              className="w-full px-3 py-2 border focus:outline-none" style={{ fontSize: 'var(--text-small)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }} required>
               <option value="">Select agent...</option>
               {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Connector</label>
+            <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Connector</label>
             {connectors.length === 0 ? (
-              <p className="text-xs flex items-center gap-1.5" style={{ color: 'var(--muted)' }}>
+              <p className="flex items-center gap-1.5" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> No connected accounts   connect one in Connectors first.
               </p>
             ) : (
               <select value={connectorId} onChange={e => setConnectorId(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border text-sm" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }} required>
+                className="w-full px-3 py-2 border focus:outline-none" style={{ fontSize: 'var(--text-small)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }} required>
                 <option value="">Select connector...</option>
                 {connectors.map(c => {
                   const platforms = platformsForConnector(c);
@@ -259,15 +268,15 @@ function CreateSchedulerModal({ agents, connectors, onClose, onCreated }: {
           </div>
 
           <div>
-            <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--text)' }}>Days of week</p>
+            <p className="font-medium mb-1.5" style={{ fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>Days of week</p>
             <div className="flex flex-wrap gap-1.5">
               {DAYS_OF_WEEK.map(d => {
                 const on = daysOfWeek.includes(d.value);
                 return (
                   <button key={d.value} type="button"
                     onClick={() => setDaysOfWeek(prev => on ? prev.filter(v => v !== d.value) : [...prev, d.value])}
-                    className="text-xs px-3 py-1.5 rounded-lg border transition-colors"
-                    style={on ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+                    className="px-3 py-1.5 rounded-lg border transition-colors"
+                    style={on ? { fontSize: 'var(--text-tiny)', background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)' }}>
                     {d.label}
                   </button>
                 );
@@ -276,27 +285,27 @@ function CreateSchedulerModal({ agents, connectors, onClose, onCreated }: {
           </div>
 
           <div>
-            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Earliest post time</label>
+            <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>Earliest post time</label>
             <select value={startHour} onChange={e => setStartHour(Number(e.target.value))}
-              className="w-full px-3 py-2 rounded-lg border text-sm" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}>
+              className="w-full px-3 py-2 border focus:outline-none" style={{ fontSize: 'var(--text-small)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>
               {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
             </select>
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-medium" style={{ color: 'var(--text)' }}>Posts per run</label>
-              <span className="text-xs font-mono" style={{ color: 'var(--muted)' }}>{postCount}</span>
+              <label className="font-medium" style={{ fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>Posts per run</label>
+              <span className="font-mono" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{postCount}</span>
             </div>
             <input type="range" min={1} max={10} value={postCount} onChange={e => setPostCount(Number(e.target.value))} className="w-full" />
           </div>
 
-          {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+          {error && <p className="px-3 py-2" style={{ fontSize: 'var(--text-small)', color: 'var(--danger)', background: 'var(--danger-bg)', borderRadius: 'var(--radius-sm)' }}>{error}</p>}
 
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 rounded-lg border text-sm" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border" style={{ fontSize: 'var(--text-small)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>Cancel</button>
             <button type="submit" disabled={creating}
-              className="flex-1 px-4 py-2 rounded-lg text-white text-sm disabled:opacity-50" style={{ background: 'var(--accent)' }}>
+              className="flex-1 px-4 py-2 text-white hover:opacity-90 disabled:opacity-50" style={{ fontSize: 'var(--text-small)', background: 'var(--accent)', borderRadius: 'var(--radius-sm)' }}>
               {creating ? 'Creating...' : 'Create Scheduler'}
             </button>
           </div>
@@ -314,14 +323,14 @@ function DeleteConfirmModal({ itemName, onClose, onConfirm, loading }: {
 }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
-        <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Delete Scheduler</h2>
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>
+      <div className="w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
+        <h2 style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>Delete Scheduler</h2>
+        <p style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>
           Are you sure you want to delete <strong>{itemName}</strong>? This action cannot be undone.
         </p>
         <div className="flex gap-3 pt-2">
-          <button onClick={onClose} disabled={loading} className="flex-1 px-4 py-2 rounded-lg border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>Cancel</button>
-          <button onClick={onConfirm} disabled={loading} className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 disabled:opacity-50">
+          <button onClick={onClose} disabled={loading} className="flex-1 px-4 py-2 border" style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>Cancel</button>
+          <button onClick={onConfirm} disabled={loading} className="flex-1 px-4 py-2 text-white hover:opacity-90 disabled:opacity-50" style={{ background: 'var(--danger)', borderRadius: 'var(--radius-sm)' }}>
             {loading ? 'Deleting...' : 'Delete'}
           </button>
         </div>

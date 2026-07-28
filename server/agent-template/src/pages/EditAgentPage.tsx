@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Loader2, Plug, Database, Trash2, ArrowLeft, BrainCircuit, X, Plus } from 'lucide-react';
+import { Loader2, Trash2, ArrowLeft } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
-import { platformMeta, AgentDeleteModal, detectTimezone } from '../components/ui';
+import { PageHeader, Card, SectionHeader, platformMeta, AgentDeleteModal, detectTimezone, Harness, DEFAULT_HARNESS, TagInput } from '../components/ui';
 import { platformsForConnector } from './PostsPage';
 
 const TIMEZONES = [
@@ -10,53 +10,6 @@ const TIMEZONES = [
   'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Asia/Dubai', 'Asia/Kolkata', 'Asia/Bangkok',
   'Asia/Shanghai', 'Asia/Hong_Kong', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney', 'UTC',
 ];
-
-interface Harness {
-  historyWindow: number;
-  avoidRepeats: boolean;
-  topicsToAvoid: string[];
-  focusTopics: string[];
-}
-const DEFAULT_HARNESS: Harness = { historyWindow: 8, avoidRepeats: true, topicsToAvoid: [], focusTopics: [] };
-
-// Editable tag list: type + Enter/comma to add, click x to remove.
-function TagInput({ tags, onChange, placeholder }: { tags: string[]; onChange: (t: string[]) => void; placeholder: string }) {
-  const [draft, setDraft] = useState('');
-  function commit() {
-    const v = draft.trim();
-    if (v && !tags.includes(v)) onChange([...tags, v]);
-    setDraft('');
-  }
-  return (
-    <div className="rounded-lg border px-2 py-2 flex flex-wrap gap-1.5" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)' }}>
-      {tags.map(t => (
-        <span key={t} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full" style={{ background: 'var(--accent-bg)', color: 'var(--text)' }}>
-          {t}
-          <button type="button" onClick={() => onChange(tags.filter(x => x !== t))} className="hover:opacity-70">
-            <X className="w-3 h-3" />
-          </button>
-        </span>
-      ))}
-      <input
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
-          if (e.key === 'Backspace' && !draft && tags.length > 0) onChange(tags.slice(0, -1));
-        }}
-        onBlur={commit}
-        placeholder={tags.length === 0 ? placeholder : ''}
-        className="flex-1 min-w-[8rem] text-sm bg-transparent focus:outline-none"
-        style={{ color: 'var(--text)' }}
-      />
-      {draft.trim() && (
-        <button type="button" onClick={commit} className="p-1 rounded hover:opacity-70" style={{ color: 'var(--accent)' }}>
-          <Plus className="w-3.5 h-3.5" />
-        </button>
-      )}
-    </div>
-  );
-}
 
 export default function EditAgentPage() {
   const { agentId } = useParams<{ agentId: string }>();
@@ -157,51 +110,46 @@ export default function EditAgentPage() {
 
   return (
     <div className="p-8 max-w-2xl mx-auto space-y-6">
-      <button onClick={() => navigate('/agents')} className="flex items-center gap-1.5 text-xs hover:opacity-70 transition-opacity" style={{ color: 'var(--muted)' }}>
+      <button onClick={() => navigate('/agents')} className="flex items-center gap-1.5 hover:opacity-70 transition-opacity" style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>
         <ArrowLeft className="w-3.5 h-3.5" /> Back to Agents
       </button>
 
-      <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Edit Agent</h1>
+      <PageHeader title="Edit Agent" />
 
-      {error && <div className="text-sm px-4 py-2 rounded-lg bg-red-50 text-red-700">{error}</div>}
+      {error && <div className="px-4 py-3" style={{ fontSize: 'var(--text-small)', color: 'var(--danger)', background: 'var(--danger-bg)', borderRadius: 'var(--radius)' }}>{error}</div>}
 
-      <div className="rounded-xl border p-5 space-y-4" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
+      <Card className="p-5 space-y-4">
         <div>
-          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Name</label>
+          <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>Name</label>
           <input value={name} onChange={e => setName(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border text-sm" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }} />
+            className="w-full px-3 py-2 border" style={{ fontSize: 'var(--text-small)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }} />
         </div>
         <div>
-          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Timezone</label>
+          <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>Timezone</label>
           <select value={timezone} onChange={e => setTimezone(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border text-sm" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}>
+            className="w-full px-3 py-2 border" style={{ fontSize: 'var(--text-small)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>
             {(TIMEZONES.includes(timezone) ? TIMEZONES : [timezone, ...TIMEZONES]).map(tz => <option key={tz} value={tz}>{tz}</option>)}
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Instructions</label>
+          <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>Instructions</label>
           <textarea value={overlay} onChange={e => setOverlay(e.target.value)} rows={5}
-            className="w-full px-3 py-2 rounded-lg border text-sm resize-none" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }} />
+            className="w-full px-3 py-2 border resize-none" style={{ fontSize: 'var(--text-small)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }} />
         </div>
         <div>
-          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Status</label>
-          <p className="text-xs" style={{ color: 'var(--muted)' }}>Currently <span className="font-medium" style={{ color: 'var(--text)' }}>{status}</span>   change via the run/pause controls in Agents.</p>
+          <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>Status</label>
+          <p style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>Currently <span className="font-medium" style={{ color: 'var(--text)' }}>{status}</span>   change via the run/pause controls in Agents.</p>
         </div>
-      </div>
+      </Card>
 
-      <div className="rounded-xl border p-5 space-y-4" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <BrainCircuit className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} />
-            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>What this agent remembers</p>
-          </div>
-          <p className="text-xs" style={{ color: 'var(--muted)' }}>
-            Controls what this agent remembers about its own past posts when it writes new ones, so it doesn't repeat itself.
-          </p>
-        </div>
+      <Card className="p-5 space-y-4">
+        <SectionHeader title="What this agent remembers" />
+        <p className="-mt-2" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>
+          Controls what this agent remembers about its own past posts when it writes new ones, so it doesn't repeat itself.
+        </p>
 
         <label className="flex items-center justify-between gap-3 cursor-pointer">
-          <span className="text-sm" style={{ color: 'var(--text)' }}>Avoid repeating recent topics</span>
+          <span style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Avoid repeating recent topics</span>
           <input type="checkbox" checked={harness.avoidRepeats}
             onChange={e => setHarness(h => ({ ...h, avoidRepeats: e.target.checked }))} className="w-4 h-4" />
         </label>
@@ -209,8 +157,8 @@ export default function EditAgentPage() {
         {harness.avoidRepeats && (
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-medium" style={{ color: 'var(--text)' }}>How many recent posts to remember</label>
-              <span className="text-xs font-mono" style={{ color: 'var(--muted)' }}>{harness.historyWindow}</span>
+              <label className="font-medium" style={{ fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>How many recent posts to remember</label>
+              <span className="font-mono" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{harness.historyWindow}</span>
             </div>
             <input type="range" min={0} max={30} value={harness.historyWindow}
               onChange={e => setHarness(h => ({ ...h, historyWindow: Number(e.target.value) }))} className="w-full" />
@@ -218,36 +166,33 @@ export default function EditAgentPage() {
         )}
 
         <div>
-          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Topics to never post about</label>
+          <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>Topics to never post about</label>
           <TagInput tags={harness.topicsToAvoid} placeholder="Type a topic and press Enter…"
             onChange={t => setHarness(h => ({ ...h, topicsToAvoid: t }))} />
         </div>
 
         <div>
-          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text)' }}>Topics to prioritize / rotate through</label>
+          <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>Topics to prioritize / rotate through</label>
           <TagInput tags={harness.focusTopics} placeholder="Type a topic and press Enter…"
             onChange={t => setHarness(h => ({ ...h, focusTopics: t }))} />
         </div>
-      </div>
+      </Card>
 
-      <div className="rounded-xl border p-5 space-y-3" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
-        <div className="flex items-center gap-2">
-          <Plug className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} />
-          <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Connected Accounts</p>
-        </div>
+      <Card className="p-5 space-y-3">
+        <SectionHeader title="Connected Accounts" />
         {connectors.length === 0 ? (
-          <p className="text-xs" style={{ color: 'var(--muted)' }}>No accounts connected yet.</p>
+          <p style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>No accounts connected yet.</p>
         ) : (
           <div className="space-y-2">
             {connectors.map((c: any) => {
               const on = selectedConnectorIds.includes(c.id);
               const platforms = platformsForConnector(c);
               return (
-                <label key={c.id} className="flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer"
-                  style={{ borderColor: 'var(--border)', background: on ? 'var(--accent-bg,#ede9fe)' : 'transparent' }}>
+                <label key={c.id} className="flex items-center gap-3 p-2.5 border cursor-pointer"
+                  style={{ borderColor: on ? 'var(--accent)' : 'var(--border)', background: on ? 'var(--accent-bg)' : 'transparent', borderRadius: 'var(--radius-sm)' }}>
                   <input type="checkbox" checked={on} onChange={() => toggleConnector(c.id)} className="w-4 h-4" />
-                  <span className="text-sm flex-1" style={{ color: 'var(--text)' }}>{c.name}</span>
-                  <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                  <span className="flex-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>{c.name}</span>
+                  <span style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>
                     {platforms.length > 0 ? platforms.map(p => platformMeta(p).label).join(', ') : 'Unmapped connector'}
                   </span>
                 </label>
@@ -255,35 +200,32 @@ export default function EditAgentPage() {
             })}
           </div>
         )}
-      </div>
+      </Card>
 
       {knowledgeBases.length > 0 && (
-        <div className="rounded-xl border p-5 space-y-3" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
-          <div className="flex items-center gap-2">
-            <Database className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} />
-            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Knowledge Bases</p>
-          </div>
+        <Card className="p-5 space-y-3">
+          <SectionHeader title="Knowledge Bases" />
           <div className="space-y-2">
             {knowledgeBases.map((kb: any) => {
               const on = selectedKbIds.includes(kb.id);
               return (
-                <label key={kb.id} className="flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer"
-                  style={{ borderColor: 'var(--border)', background: on ? 'var(--accent-bg,#ede9fe)' : 'transparent' }}>
+                <label key={kb.id} className="flex items-center gap-3 p-2.5 border cursor-pointer"
+                  style={{ borderColor: on ? 'var(--accent)' : 'var(--border)', background: on ? 'var(--accent-bg)' : 'transparent', borderRadius: 'var(--radius-sm)' }}>
                   <input type="checkbox" checked={on} onChange={() => toggleKb(kb.id)} className="w-4 h-4" />
-                  <span className="text-sm" style={{ color: 'var(--text)' }}>{kb.name}</span>
+                  <span style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>{kb.name}</span>
                 </label>
               );
             })}
           </div>
-        </div>
+        </Card>
       )}
 
       <div className="flex items-center justify-between pt-2">
-        <button onClick={() => setConfirmDelete(true)} className="flex items-center gap-1.5 text-xs text-red-600 hover:opacity-70 transition-opacity">
+        <button onClick={() => setConfirmDelete(true)} className="flex items-center gap-1.5 hover:opacity-70 transition-opacity" style={{ fontSize: 'var(--text-small)', color: 'var(--danger)' }}>
           <Trash2 className="w-3.5 h-3.5" /> Delete agent
         </button>
         <button onClick={handleSave} disabled={saving || !name.trim()}
-          className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ background: 'var(--accent)' }}>
+          className="px-4 py-2 text-white font-medium hover:opacity-90 disabled:opacity-50" style={{ background: 'var(--accent)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius)' }}>
           {saving ? 'Saving…' : 'Save Changes'}
         </button>
       </div>

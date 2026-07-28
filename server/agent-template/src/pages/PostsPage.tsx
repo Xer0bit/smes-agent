@@ -181,28 +181,28 @@ export default function PostsPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => navigate('/posts/calendar')}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border"
-            style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+            className="flex items-center gap-2 px-4 py-2 font-medium border"
+            style={{ borderColor: 'var(--border)', color: 'var(--text)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius)' }}
           >
             <Calendar className="w-4 h-4" /> Calendar
           </button>
           <button
             onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
-            style={{ background: 'var(--accent)' }}
+            className="flex items-center gap-2 px-4 py-2 font-medium text-white hover:opacity-90"
+            style={{ background: 'var(--accent)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius)' }}
           >
             <Plus className="w-4 h-4" /> New Post
           </button>
         </div>
       } />
 
-      {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
+      {error && <div className="px-4 py-3" style={{ fontSize: 'var(--text-small)', color: 'var(--danger)', background: 'var(--danger-bg)', borderRadius: 'var(--radius)' }}>{error}</div>}
 
       {connectedPlatforms.length > 1 && (
         <div className="flex gap-1.5 overflow-x-auto pb-1">
           <button onClick={() => { setPlatformFilter('all'); setSelected(new Set()); }}
-            className="text-xs px-3 py-1.5 rounded-full border font-medium shrink-0"
-            style={platformFilter === 'all' ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+            className="px-3 py-1.5 rounded-full border font-medium shrink-0"
+            style={platformFilter === 'all' ? { fontSize: 'var(--text-tiny)', background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)' }}>
             All platforms
           </button>
           {connectedPlatforms.map(p => {
@@ -210,8 +210,8 @@ export default function PostsPage() {
             const on = platformFilter === p;
             return (
               <button key={p} onClick={() => { setPlatformFilter(p); setSelected(new Set()); }}
-                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border font-medium shrink-0"
-                style={on ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border font-medium shrink-0"
+                style={on ? { fontSize: 'var(--text-tiny)', background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)' }}>
                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: on ? '#fff' : pm.bar }} /> {pm.label}
               </button>
             );
@@ -226,8 +226,8 @@ export default function PostsPage() {
               .filter(p => platformFilter === 'all' || p.platform === platformFilter).length;
             return (
               <button key={t} onClick={() => { setTab(t); setSelected(new Set()); }}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                style={tab === t ? { background: 'var(--card-bg)', color: 'var(--text)' } : { color: 'var(--muted)' }}>
+                className="px-3 py-1.5 rounded-lg font-medium transition-colors"
+                style={tab === t ? { fontSize: 'var(--text-tiny)', background: 'var(--card-bg)', color: 'var(--text)' } : { fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>
                 {TAB_LABELS[t]}{n > 0 ? ` (${n})` : ''}
               </button>
             );
@@ -236,15 +236,15 @@ export default function PostsPage() {
 
         <div className="flex items-center gap-2">
           {tab === 'draft' && visibleDraftIds.length > 1 && (
-            <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: 'var(--muted)' }}>
+            <label className="flex items-center gap-1.5 cursor-pointer" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>
               <input type="checkbox" checked={allVisibleDraftsSelected} onChange={toggleSelectAllVisible} className="w-3.5 h-3.5" />
               Select all
             </label>
           )}
           {tab === 'draft' && selected.size > 0 && (
             <button onClick={handleBulkApprove} disabled={bulkLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white disabled:opacity-50"
-              style={{ background: 'var(--accent)' }}>
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium text-white hover:opacity-90 disabled:opacity-50"
+              style={{ fontSize: 'var(--text-tiny)', background: 'var(--accent)' }}>
               <CheckCircle className="w-3.5 h-3.5" /> {bulkLoading ? 'Approving…' : `Approve ${selected.size} selected`}
             </button>
           )}
@@ -265,8 +265,8 @@ export default function PostsPage() {
             const limit = platformCharLimit(p.platform ?? '');
             const overLimit = (p.content?.length ?? 0) > limit;
             return (
-              <div key={p.id} className="rounded-xl border overflow-hidden"
-                style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
+              <div key={p.id} className="border overflow-hidden"
+                style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)' }}>
                 {/* Platform-tinted preview -- so a reviewer sees roughly how this
                     will read on the target platform (avatar + handle + content),
                     not just a bare paragraph. Not a pixel clone of the real
@@ -274,13 +274,13 @@ export default function PostsPage() {
                     the platform's own accent color. */}
                 <div className="p-4 pb-0">
                   <div className="flex items-start gap-2.5">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0"
-                      style={{ background: pm.bar }}>
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center font-semibold text-white shrink-0"
+                      style={{ fontSize: 'var(--text-tiny)', background: pm.bar }}>
                       {ECG.appName.charAt(0).toUpperCase()}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold leading-tight" style={{ color: 'var(--text)' }}>{ECG.appName}</p>
-                      <p className="text-xs" style={{ color: 'var(--muted)' }}>{pm.label} · just now</p>
+                      <p className="font-semibold leading-tight" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>{ECG.appName}</p>
+                      <p style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{pm.label} · just now</p>
                     </div>
                   </div>
                 </div>
@@ -291,7 +291,7 @@ export default function PostsPage() {
                       <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelected(p.id)}
                         className="mt-1 w-4 h-4 shrink-0" />
                     )}
-                    <p className="text-sm leading-relaxed" style={{ color: overLimit ? '#dc2626' : 'var(--text)' }}>{p.content ?? p.body ?? '(no content)'}</p>
+                    <p className="leading-relaxed" style={{ fontSize: 'var(--text-small)', color: overLimit ? 'var(--danger)' : 'var(--text)' }}>{p.content ?? p.body ?? '(no content)'}</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <StatusBadge status={p.status} />
@@ -317,17 +317,17 @@ export default function PostsPage() {
                     </button>
                     <button
                       onClick={() => setDeletingPost(p)}
-                      className="p-1 rounded hover:bg-red-50"
+                      className="p-1 rounded hover:bg-red-500/10"
                       title="Delete"
                       aria-label="Delete post"
                     >
-                      <Trash2 className="w-4 h-4 text-red-600" />
+                      <Trash2 className="w-4 h-4" style={{ color: 'var(--danger)' }} />
                     </button>
                   </div>
                 </div>
 
                 {p.status === 'failed' && p.errorMessage && (
-                  <div className="flex items-start gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(220,38,38,0.08)', color: '#dc2626' }}>
+                  <div className="flex items-start gap-2 px-3 py-2" style={{ fontSize: 'var(--text-tiny)', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 'var(--radius-sm)' }}>
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                     <span className="flex-1">{p.errorMessage}</span>
                   </div>
@@ -335,21 +335,21 @@ export default function PostsPage() {
 
                 <div className="flex items-center justify-between pt-2 border-t flex-wrap gap-2" style={{ borderColor: 'var(--border)' }}>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs" style={{ color: 'var(--muted)' }}>Written by {p.agentName ?? p.agent_name}</span>
+                    <span style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>Written by {p.agentName ?? p.agent_name}</span>
                     {(p.scheduledAt ?? p.scheduled_at) && (
-                      <span className="text-xs" style={{ color: 'var(--muted)' }}
+                      <span style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}
                         title={new Date(p.scheduledAt ?? p.scheduled_at).toLocaleString()}>
                         · {relTime(p.scheduledAt ?? p.scheduled_at)}
                       </span>
                     )}
                     {p.postUrl && (
                       <a href={p.postUrl} target="_blank" rel="noopener noreferrer"
-                        className="text-xs underline hover:opacity-70" style={{ color: 'var(--accent)' }}>
+                        className="underline hover:opacity-70" style={{ fontSize: 'var(--text-tiny)', color: 'var(--accent)' }}>
                         View post
                       </a>
                     )}
                     {p.status === 'draft' && typeof p.confidence === 'number' && (
-                      <span className="inline-flex items-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}
+                      <span className="inline-flex items-center gap-1.5" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}
                         title={`Agent confidence: ${Math.round(p.confidence * 100)}%`}>
                         <span className="w-12 h-1 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
                           <span className="block h-full rounded-full" style={{ width: `${Math.round(p.confidence * 100)}%`, background: 'var(--accent)' }} />
@@ -362,31 +362,31 @@ export default function PostsPage() {
                     {p.status === 'draft' && (
                       <>
                         <button onClick={() => setRegeneratingPost(p)} disabled={!!acting}
-                          className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg border disabled:opacity-50"
-                          style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                          className="flex items-center gap-1 px-3 py-1.5 font-medium rounded-lg border disabled:opacity-50"
+                          style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)' }}>
                           <Wand2 className="w-3.5 h-3.5" /> Regenerate
                         </button>
                         <button onClick={() => act(p.id, 'reject')} disabled={!!acting}
-                          className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg disabled:opacity-50">
+                          className="flex items-center gap-1 px-3 py-1.5 font-medium border rounded-lg disabled:opacity-50" style={{ fontSize: 'var(--text-tiny)', color: 'var(--danger)', background: 'var(--danger-bg)', borderColor: 'var(--danger)' }}>
                           <XCircle className="w-3.5 h-3.5" /> Reject
                         </button>
                         <button onClick={() => act(p.id, 'approve')} disabled={!!acting}
-                          className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white rounded-lg disabled:opacity-50"
-                          style={{ background: 'var(--accent)' }}>
+                          className="flex items-center gap-1 px-3 py-1.5 font-medium text-white rounded-lg hover:opacity-90 disabled:opacity-50"
+                          style={{ fontSize: 'var(--text-tiny)', background: 'var(--accent)' }}>
                           <CheckCircle className="w-3.5 h-3.5" /> Approve
                         </button>
                       </>
                     )}
                     {p.status === 'scheduled' && (
                       <button onClick={() => act(p.id, 'reject')} disabled={!!acting}
-                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg disabled:opacity-50">
+                        className="flex items-center gap-1 px-3 py-1.5 font-medium border rounded-lg disabled:opacity-50" style={{ fontSize: 'var(--text-tiny)', color: 'var(--danger)', background: 'var(--danger-bg)', borderColor: 'var(--danger)' }}>
                         <XCircle className="w-3.5 h-3.5" /> Cancel
                       </button>
                     )}
                     {p.status === 'failed' && (
                       <button onClick={() => act(p.id, 'approve')} disabled={!!acting}
-                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white rounded-lg disabled:opacity-50"
-                        style={{ background: 'var(--accent)' }}>
+                        className="flex items-center gap-1 px-3 py-1.5 font-medium text-white rounded-lg hover:opacity-90 disabled:opacity-50"
+                        style={{ fontSize: 'var(--text-tiny)', background: 'var(--accent)' }}>
                         <RefreshCw className="w-3.5 h-3.5" /> Retry
                       </button>
                     )}
@@ -446,35 +446,35 @@ function RegenerateModal({ onClose, onRegenerate, loading }: {
   const [feedback, setFeedback] = useState('');
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-lg p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
+      <div className="w-full max-w-lg p-6 space-y-4" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold flex items-center gap-2" style={{ color: 'var(--text)' }}>
+          <h2 className="flex items-center gap-2" style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>
             <Wand2 className="w-4 h-4" style={{ color: 'var(--accent)' }} /> Regenerate Post
           </h2>
-          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--accent-bg)]">
             <X className="w-5 h-5" style={{ color: 'var(--muted)' }} />
           </button>
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>What should change? (optional)</label>
+          <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>What should change? (optional)</label>
           <textarea
             value={feedback}
             onChange={e => setFeedback(e.target.value)}
             rows={3}
             placeholder="e.g. make it shorter, less salesy, more casual…"
-            className="w-full px-3 py-2 rounded-lg border text-sm resize-none"
-            style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+            className="w-full px-3 py-2 border resize-none"
+            style={{ fontSize: 'var(--text-small)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
             autoFocus
           />
-          <p className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>Leave blank to just get a fresh take on the same topic.</p>
+          <p className="mt-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>Leave blank to just get a fresh take on the same topic.</p>
         </div>
         <div className="flex gap-3 pt-2">
           <button type="button" onClick={onClose} disabled={loading}
-            className="flex-1 px-4 py-2 rounded-lg border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+            className="flex-1 px-4 py-2 border" style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>
             Cancel
           </button>
           <button type="button" onClick={() => onRegenerate(feedback.trim() || undefined)} disabled={loading}
-            className="flex-1 px-4 py-2 rounded-lg text-white disabled:opacity-50" style={{ background: 'var(--accent)' }}>
+            className="flex-1 px-4 py-2 text-white hover:opacity-90 disabled:opacity-50" style={{ background: 'var(--accent)', borderRadius: 'var(--radius-sm)' }}>
             {loading ? 'Regenerating…' : 'Regenerate'}
           </button>
         </div>
@@ -503,10 +503,10 @@ export function PostModal({ connectedPlatforms, initial, onClose, onSave, loadin
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-lg p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
+      <div className="w-full max-w-lg p-6 space-y-4" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>{initial ? 'Edit Post' : 'New Post'}</h2>
-          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
+          <h2 style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>{initial ? 'Edit Post' : 'New Post'}</h2>
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--accent-bg)]">
             <X className="w-5 h-5" style={{ color: 'var(--muted)' }} />
           </button>
         </div>
@@ -514,33 +514,33 @@ export function PostModal({ connectedPlatforms, initial, onClose, onSave, loadin
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="block text-sm font-medium" style={{ color: 'var(--text)' }}>Content</label>
-              <span className="text-xs" style={{ color: overLimit ? '#dc2626' : 'var(--muted)' }}>{content.length} / {limit}</span>
+              <label className="font-medium" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Content</label>
+              <span style={{ fontSize: 'var(--text-tiny)', color: overLimit ? 'var(--danger)' : 'var(--muted)' }}>{content.length} / {limit}</span>
             </div>
             <textarea
               value={content}
               onChange={e => setContent(e.target.value)}
               rows={6}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 resize-none"
-              style={{ background: 'var(--input-bg)', borderColor: overLimit ? '#dc2626' : 'var(--border)', color: 'var(--text)' }}
+              className="w-full px-3 py-2 border focus:outline-none resize-none"
+              style={{ fontSize: 'var(--text-small)', background: 'var(--input-bg)', borderColor: overLimit ? 'var(--danger)' : 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
               placeholder="Write your post content here..."
               autoFocus
             />
-            {overLimit && <p className="text-xs mt-1" style={{ color: '#dc2626' }}>Too long for {PLATFORM_LABELS[platform] ?? platform} ({limit} character limit).</p>}
+            {overLimit && <p className="mt-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--danger)' }}>Too long for {PLATFORM_LABELS[platform] ?? platform} ({limit} character limit).</p>}
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Platform</label>
+            <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Platform</label>
             {connectedPlatforms.length === 0 ? (
-              <p className="text-xs px-3 py-2 rounded-lg" style={{ background: 'rgba(220,38,38,0.08)', color: '#dc2626' }}>
+              <p className="px-3 py-2" style={{ fontSize: 'var(--text-tiny)', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 'var(--radius-sm)' }}>
                 No connected platforms yet. Connect one in Connectors first.
               </p>
             ) : (
               <select
                 value={platform}
                 onChange={e => setPlatform(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
-                style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                className="w-full px-3 py-2 border focus:outline-none"
+                style={{ fontSize: 'var(--text-small)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
               >
                 {connectedPlatforms.map(p => (
                   <option key={p} value={p}>{PLATFORM_LABELS[p] ?? p}</option>
@@ -553,16 +553,16 @@ export function PostModal({ connectedPlatforms, initial, onClose, onSave, loadin
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg border"
-              style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+              className="flex-1 px-4 py-2 border"
+              style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading || !content.trim() || !platform || overLimit}
-              className="flex-1 px-4 py-2 rounded-lg text-white disabled:opacity-50"
-              style={{ background: 'var(--accent)' }}
+              className="flex-1 px-4 py-2 text-white hover:opacity-90 disabled:opacity-50"
+              style={{ background: 'var(--accent)', borderRadius: 'var(--radius-sm)' }}
             >
               {loading ? 'Saving…' : initial ? 'Save Changes' : 'Create Post'}
             </button>
@@ -581,24 +581,25 @@ function DeleteConfirmModal({ itemName, onClose, onConfirm, loading }: {
 }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
-        <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Delete Post</h2>
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>
+      <div className="w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
+        <h2 style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>Delete Post</h2>
+        <p style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>
           Are you sure you want to delete {itemName}? This action cannot be undone.
         </p>
         <div className="flex gap-3 pt-2">
           <button
             onClick={onClose}
             disabled={loading}
-            className="flex-1 px-4 py-2 rounded-lg border"
-            style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+            className="flex-1 px-4 py-2 border"
+            style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
             disabled={loading}
-            className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 disabled:opacity-50"
+            className="flex-1 px-4 py-2 text-white hover:opacity-90 disabled:opacity-50"
+            style={{ background: 'var(--danger)', borderRadius: 'var(--radius-sm)' }}
           >
             {loading ? 'Deleting...' : 'Delete'}
           </button>

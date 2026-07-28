@@ -64,9 +64,9 @@ function matchAppToType(appName: string): string | null {
 }
 
 const STATUS_CFG: Record<string, { label: string; color: string; Icon: typeof CheckCircle }> = {
-  connected:    { label: 'Connected',    color: '#16a34a', Icon: CheckCircle },
+  connected:    { label: 'Connected',    color: 'var(--success)', Icon: CheckCircle },
   disconnected: { label: 'Disconnected', color: 'var(--muted)', Icon: XCircle },
-  error:        { label: 'Error',        color: '#dc2626', Icon: AlertCircle },
+  error:        { label: 'Error',        color: 'var(--danger)', Icon: AlertCircle },
 };
 
 export default function ConnectorsPage() {
@@ -139,22 +139,22 @@ export default function ConnectorsPage() {
       <PageHeader eyebrow="System" title="Connectors" action={
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
-          style={{ background: 'var(--accent)' }}
+          className="flex items-center gap-2 px-4 py-2 font-medium text-white hover:opacity-90"
+          style={{ background: 'var(--accent)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius)' }}
         >
           <Plus className="w-4 h-4" /> New Connector
         </button>
       } />
 
       {loading && <Spinner />}
-      {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
+      {error && <div className="px-4 py-3" style={{ fontSize: 'var(--text-small)', color: 'var(--danger)', background: 'var(--danger-bg)', borderRadius: 'var(--radius)' }}>{error}</div>}
       {!loading && !rows.length && (
         <EmptyState Icon={Plug} title="No connectors configured"
           hint="Connect a platform via Zapier MCP so your agents can publish content there directly."
           action={
             <button onClick={() => setShowCreate(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90"
-              style={{ background: 'var(--accent)' }}>
+              className="flex items-center gap-2 px-4 py-2 font-medium text-white hover:opacity-90"
+              style={{ background: 'var(--accent)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius)' }}>
               <Plus className="w-4 h-4" /> Connect a platform
             </button>
           } />
@@ -169,15 +169,15 @@ export default function ConnectorsPage() {
             <Card key={c.id} hover className="p-5">
               <div className="flex items-start justify-between gap-3 mb-3">
                 <div className="flex items-start gap-3 flex-1 min-w-0">
-                  <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'var(--accent-bg)' }}>
+                  <div className="w-9 h-9 flex items-center justify-center shrink-0" style={{ background: 'var(--accent-bg)', borderRadius: 'var(--radius-sm)' }}>
                     <meta.Icon className="w-4 h-4" style={{ color: 'var(--accent)' }} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm truncate" style={{ color: 'var(--text)' }}>{c.name}</p>
-                    <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>{meta.label} · via Zapier MCP</p>
+                    <p className="font-semibold truncate" style={{ fontSize: 'var(--text-body)', color: 'var(--text)' }}>{c.name}</p>
+                    <p className="mt-0.5" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{meta.label} · via Zapier MCP</p>
                   </div>
                 </div>
-                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border shrink-0" style={{ borderColor: 'var(--border)', color: statusCfg.color }}>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border shrink-0" style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: statusCfg.color }}>
                   <statusCfg.Icon className="w-3 h-3" /> {statusCfg.label}
                 </span>
               </div>
@@ -186,26 +186,26 @@ export default function ConnectorsPage() {
                   {platforms.map(p => {
                     const pm = platformMeta(p);
                     return (
-                      <span key={p} className="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--accent-bg)', color: 'var(--text)' }}>
+                      <span key={p} className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-medium" style={{ fontSize: 'var(--text-tiny)', background: 'var(--accent-bg)', color: 'var(--text)' }}>
                         <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: pm.bar }} /> {pm.label}
                       </span>
                     );
                   })}
                 </div>
               ) : (
-                <p className="text-xs mb-3 px-2.5 py-1.5 rounded-lg" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>
+                <p style={{ fontSize: 'var(--text-tiny)', color: 'var(--danger)', background: 'var(--danger-bg)', borderRadius: 'var(--radius-sm)' }} className="mb-3 px-2.5 py-1.5">
                   No platform mapped to this connector yet -- posts can't target it. Edit it and pick at least one platform.
                 </p>
               )}
               <div className="flex gap-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
                 <button onClick={() => handleTest(c)} disabled={testingId === c.id}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs border disabled:opacity-50" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded border disabled:opacity-50" style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)' }}>
                   <RefreshCw className={`w-3 h-3 ${testingId === c.id ? 'animate-spin' : ''}`} /> {testingId === c.id ? 'Testing…' : 'Test'}
                 </button>
-                <button onClick={() => setEditingConnector(c)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <button onClick={() => setEditingConnector(c)} className="flex items-center gap-1.5 px-2.5 py-1 rounded border" style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)' }}>
                   <Pencil className="w-3 h-3" /> Edit
                 </button>
-                <button onClick={() => setDeletingConnector(c)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs border ml-auto" style={{ borderColor: 'var(--border)', color: '#dc2626' }}>
+                <button onClick={() => setDeletingConnector(c)} className="flex items-center gap-1.5 px-2.5 py-1 rounded border ml-auto" style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--danger)' }}>
                   <Trash2 className="w-3 h-3" /> Remove
                 </button>
               </div>
@@ -237,8 +237,8 @@ export default function ConnectorsPage() {
       )}
 
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 border text-sm px-5 py-3 rounded-xl shadow-2xl z-50 max-w-sm text-center"
-          style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}>
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 border px-5 py-3 shadow-2xl z-50 max-w-sm text-center"
+          style={{ fontSize: 'var(--text-small)', background: 'var(--card-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-lg)' }}>
           {toast}
         </div>
       )}
@@ -321,9 +321,9 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto" style={{ background: 'var(--card-bg)' }}>
+      <div className="w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
+          <h2 style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>
             {connector ? 'Edit Connector' : 'New Connector'}
           </h2>
           <button onClick={onClose} className="p-1 rounded hover:bg-[var(--accent-bg)]">
@@ -333,48 +333,48 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Name</label>
+            <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Name</label>
             <input
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none"
-              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+              className="w-full px-3 py-2 border focus:outline-none"
+              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
               autoFocus
             />
           </div>
 
           {isZapier && (
             <div>
-              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Zapier MCP Token</label>
+              <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Zapier MCP Token</label>
               <div className="flex gap-2">
                 <input
                   type="password"
                   value={apiKey}
                   onChange={e => { setApiKey(e.target.value); setDiscoveredApps(null); setDiscoverError(''); }}
                   placeholder={connector ? 'Leave blank to keep current token' : 'Paste your token from zapier.com/mcp'}
-                  className="flex-1 min-w-0 px-3 py-2 rounded-lg border font-mono text-xs focus:outline-none"
-                  style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                  className="flex-1 min-w-0 px-3 py-2 border font-mono focus:outline-none"
+                  style={{ fontSize: 'var(--text-tiny)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
                 />
                 <button type="button" onClick={handleDiscover} disabled={!apiKey.trim() || discovering}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border shrink-0 disabled:opacity-50"
-                  style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                  className="flex items-center gap-1.5 px-3 py-2 font-medium border shrink-0 disabled:opacity-50"
+                  style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>
                   <Search className={`w-3.5 h-3.5 ${discovering ? 'animate-spin' : ''}`} />
                   {discovering ? 'Checking…' : 'Check apps'}
                 </button>
               </div>
-              <p className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
+              <p style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }} className="mt-1">
                 "Check apps" tells you exactly which platforms this token can publish to  select every one this
                 connector should cover (one token commonly covers several).
               </p>
 
               {discoverError && (
-                <p className="text-xs mt-2 px-2.5 py-1.5 rounded-lg" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{discoverError}</p>
+                <p style={{ fontSize: 'var(--text-tiny)', color: 'var(--danger)', background: 'var(--danger-bg)', borderRadius: 'var(--radius-sm)' }} className="mt-2 px-2.5 py-1.5">{discoverError}</p>
               )}
 
               {discoveredApps && discoveredApps.length > 0 && (
                 <div className="mt-2 space-y-1.5">
-                  <p className="text-[11px] font-medium" style={{ color: 'var(--muted)' }}>Found on this token  tap each platform to include it:</p>
+                  <p style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }} className="font-medium">Found on this token  tap each platform to include it:</p>
                   <div className="flex flex-wrap gap-1.5">
                     {discoveredApps.map(app => {
                       const matched = matchAppToType(app);
@@ -382,10 +382,10 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
                       const isSelected = !!platformKey && platforms.has(platformKey);
                       return (
                         <button key={app} type="button" onClick={() => toggleDiscoveredApp(app)}
-                          className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-full border"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border"
                           style={isSelected
-                            ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' }
-                            : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+                            ? { fontSize: 'var(--text-tiny)', background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' }
+                            : { fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)' }}>
                           {matched ? <CheckCircle className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
                           {app}
                         </button>
@@ -395,12 +395,12 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
                 </div>
               )}
               {isGeneric && platforms.size > 0 && (
-                <p className="text-[11px] mt-2" style={{ color: 'var(--muted)' }}>
+                <p className="mt-2" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>
                   This connector will cover: {[...platforms].map(p => platformMeta(p).label).join(', ')}
                 </p>
               )}
               {isGeneric && platforms.size === 0 && (
-                <p className="text-[11px] mt-2" style={{ color: '#dc2626' }}>
+                <p className="mt-2" style={{ fontSize: 'var(--text-tiny)', color: 'var(--danger)' }}>
                   Select at least one platform above  a generic connector with none picked won't show up anywhere posts can target it.
                 </p>
               )}
@@ -408,18 +408,18 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
           )}
 
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Platform</label>
+            <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Platform</label>
             <select
               value={type}
               onChange={e => setType(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none"
-              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+              className="w-full px-3 py-2 border focus:outline-none"
+              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
               required
             >
               {CONNECTOR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
             {!isGeneric && discoveredApps && !discoveredApps.some(a => matchAppToType(a) === type) && (
-              <p className="text-[11px] mt-1" style={{ color: '#dc2626' }}>
+              <p className="mt-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--danger)' }}>
                 This platform wasn't found on your token  saving now may not actually work.
               </p>
             )}
@@ -427,14 +427,14 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
 
           {type === 'whatsapp' && (
             <div>
-              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Phone Number</label>
+              <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Phone Number</label>
               <input
                 type="text"
                 value={phone}
                 onChange={e => setPhone(e.target.value)}
                 placeholder="+15551234567"
-                className="w-full px-3 py-2 rounded-lg border font-mono text-xs focus:outline-none"
-                style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                className="w-full px-3 py-2 border font-mono focus:outline-none"
+                style={{ fontSize: 'var(--text-tiny)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
               />
             </div>
           )}
@@ -443,16 +443,16 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg border"
-              style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+              className="flex-1 px-4 py-2 border"
+              style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading || !name.trim() || !type}
-              className="flex-1 px-4 py-2 rounded-lg text-white hover:opacity-90 disabled:opacity-50"
-              style={{ background: 'var(--accent)' }}
+              className="flex-1 px-4 py-2 text-white hover:opacity-90 disabled:opacity-50"
+              style={{ background: 'var(--accent)', borderRadius: 'var(--radius-sm)' }}
             >
               {loading ? 'Saving...' : connector ? 'Save' : 'Create'}
             </button>
@@ -471,24 +471,25 @@ function DeleteConfirmModal({ itemName, onClose, onConfirm, loading }: {
 }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
-        <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Delete Connector</h2>
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>
+      <div className="w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
+        <h2 style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>Delete Connector</h2>
+        <p style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>
           Are you sure you want to delete <strong>{itemName}</strong>? This action cannot be undone.
         </p>
         <div className="flex gap-3 pt-2">
           <button
             onClick={onClose}
             disabled={loading}
-            className="flex-1 px-4 py-2 rounded-lg border"
-            style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+            className="flex-1 px-4 py-2 border"
+            style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
             disabled={loading}
-            className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 hover:opacity-90 disabled:opacity-50"
+            className="flex-1 px-4 py-2 text-white hover:opacity-90 disabled:opacity-50"
+            style={{ background: 'var(--danger)', borderRadius: 'var(--radius-sm)' }}
           >
             {loading ? 'Deleting...' : 'Delete'}
           </button>

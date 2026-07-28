@@ -15,8 +15,8 @@ function dur(start: string, end?: string) {
 }
 
 const STATUS_DOT: Record<string, string> = {
-  completed: '#16a34a', success: '#16a34a',
-  failed: '#dc2626', error: '#dc2626', timeout: '#dc2626',
+  completed: 'var(--success)', success: 'var(--success)',
+  failed: 'var(--danger)', error: 'var(--danger)', timeout: 'var(--danger)',
   running: 'var(--accent)',
 };
 
@@ -42,11 +42,11 @@ export default function RunsPage() {
       {!loading && rows.length > 0 && (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ minWidth: '560px' }}>
+          <table className="w-full" style={{ minWidth: '560px', fontSize: 'var(--text-small)' }}>
             <thead>
-              <tr className="border-b text-xs" style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>
+              <tr className="border-b" style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>
                 {['Agent', 'Status', ...(showDuration ? ['Duration'] : []), 'Started', ''].map((h, i) => (
-                  <th key={i} className="text-left px-4 py-3 font-semibold uppercase tracking-wider">{h}</th>
+                  <th key={i} className="text-left px-4 py-3 font-semibold uppercase" style={{ fontSize: 'var(--text-tiny)', letterSpacing: 'var(--tracking-wide)' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -56,7 +56,7 @@ export default function RunsPage() {
                 const isOpen = expanded === r.id;
                 const dot = STATUS_DOT[(r.status ?? '').toLowerCase()] ?? 'var(--muted)';
                 return [
-                  <tr key={r.id} className={`border-b last:border-0 ${error ? 'cursor-pointer' : ''}`}
+                  <tr key={r.id} className={`border-b last:border-0 ecg-row-hover ${error ? 'cursor-pointer' : ''}`}
                     style={{ borderColor: 'var(--border)' }}
                     onClick={() => error && setExpanded(isOpen ? null : r.id)}>
                     <td className="px-4 py-3 font-medium" style={{ color: 'var(--text)' }}>
@@ -69,7 +69,7 @@ export default function RunsPage() {
                     {showDuration && (
                       <td className="px-4 py-3 tabular-nums" style={{ color: 'var(--muted)' }}>{dur(r.startedAt ?? r.started_at, r.completedAt ?? r.completed_at)}</td>
                     )}
-                    <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>{new Date(r.startedAt ?? r.started_at).toLocaleString()}</td>
+                    <td className="px-4 py-3" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{new Date(r.startedAt ?? r.started_at).toLocaleString()}</td>
                     <td className="px-4 py-3 text-right">
                       {error && (isOpen
                         ? <ChevronUp className="w-3.5 h-3.5 inline" style={{ color: 'var(--muted)' }} />
@@ -79,7 +79,7 @@ export default function RunsPage() {
                   isOpen && error ? (
                     <tr key={`${r.id}-detail`} className="border-b last:border-0" style={{ borderColor: 'var(--border)' }}>
                       <td colSpan={showDuration ? 5 : 4} className="px-4 pb-3 pt-0">
-                        <div className="rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(220,38,38,0.08)', color: '#dc2626' }}>
+                        <div className="px-3 py-2" style={{ fontSize: 'var(--text-tiny)', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 'var(--radius-sm)' }}>
                           {error}
                         </div>
                       </td>

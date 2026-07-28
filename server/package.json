@@ -8,7 +8,8 @@
         "dev": "tsx watch src/index.ts",
         "build": "tsc && mkdir -p dist/agent-tools/data && cp src/agent-tools/data/*.json dist/agent-tools/data/",
         "start": "node dist/index.js",
-        "lint": "eslint src"
+        "lint": "eslint src",
+        "template:dev": "tsx scripts/dev-template.mts"
     },
     "dependencies": {
         "@ai-sdk/anthropic": "^3.0.64",

@@ -118,22 +118,81 @@ function resolveDesign(raw: Record<string, unknown>, orgName: string): DesignCfg
   };
 }
 
-function isDark(hex: string): boolean {
-  const c = hex.replace('#', '');
-  const r = parseInt(c.slice(0, 2), 16);
-  const g = parseInt(c.slice(2, 4), 16);
-  const b = parseInt(c.slice(4, 6), 16);
-  return (r * 299 + g * 587 + b * 114) / 1000 < 128;
+// ── OKLCH color math ─────────────────────────────────────────────────────────
+// Replaces the old naive sRGB channel-shift approach (subtract N from each of
+// r/g/b) -- that distorts hue and desaturates on any saturated input color
+// (e.g. shading a vivid orange by "-20 on each channel" pulls it visibly
+// toward gray-brown, not a darker orange). OKLCH is a perceptually uniform
+// color space: shifting lightness (L) at fixed chroma (C) and hue (H) gives a
+// darker/lighter version of the SAME color, which is what "hover state" and
+// "muted variant" actually mean. Self-contained (no deps) -- these are the
+// standard sRGB<->OKLab<->OKLCH transforms (Björn Ottosson's OKLab).
+interface Oklch { l: number; c: number; h: number } // l: 0-1, c: ~0-0.4, h: degrees
+
+function srgbToLinear(v: number): number {
+  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+function linearToSrgb(v: number): number {
+  const c = Math.max(0, Math.min(1, v));
+  return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
 }
 
-// Shifts a hex color darker (positive amount) or lighter (negative), clamped to 0-255.
-function shade(hex: string, amount: number): string {
-  const c = hex.replace('#', '');
-  const clamp = (n: number) => Math.max(0, Math.min(255, n));
-  const r = clamp(parseInt(c.slice(0, 2), 16) - amount);
-  const g = clamp(parseInt(c.slice(2, 4), 16) - amount);
-  const b = clamp(parseInt(c.slice(4, 6), 16) - amount);
-  return `#${[r, g, b].map(n => n.toString(16).padStart(2, '0')).join('')}`;
+function hexToOklch(hex: string): Oklch {
+  const h = hex.replace('#', '');
+  const r = srgbToLinear(parseInt(h.slice(0, 2), 16) / 255);
+  const g = srgbToLinear(parseInt(h.slice(2, 4), 16) / 255);
+  const b = srgbToLinear(parseInt(h.slice(4, 6), 16) / 255);
+
+  const l_ = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m_ = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s_ = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+
+  const L = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_;
+  const a = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_;
+  const bb = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_;
+
+  const C = Math.sqrt(a * a + bb * bb);
+  let H = Math.atan2(bb, a) * (180 / Math.PI);
+  if (H < 0) H += 360;
+  return { l: L, c: C, h: C < 1e-6 ? 0 : H };
+}
+
+function oklchToHex({ l, c, h }: Oklch): string {
+  const hRad = (h * Math.PI) / 180;
+  const a = c * Math.cos(hRad);
+  const bb = c * Math.sin(hRad);
+
+  const l_ = l + 0.3963377774 * a + 0.2158037573 * bb;
+  const m_ = l - 0.1055613458 * a - 0.0638541728 * bb;
+  const s_ = l - 0.0894841775 * a - 1.2914855480 * bb;
+
+  const lc = l_ * l_ * l_;
+  const mc = m_ * m_ * m_;
+  const sc = s_ * s_ * s_;
+
+  const r = linearToSrgb(4.0767416621 * lc - 3.3077115913 * mc + 0.2309699292 * sc);
+  const g = linearToSrgb(-1.2684380046 * lc + 2.6097574011 * mc - 0.3413193965 * sc);
+  const b = linearToSrgb(-0.0041960863 * lc - 0.7034186147 * mc + 1.7076147010 * sc);
+
+  const toByte = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
+  return `#${toByte(r)}${toByte(g)}${toByte(b)}`;
+}
+
+/** True perceptual darkness check (OKLCH L), replacing the old sRGB-luma heuristic. */
+function isDark(hex: string): boolean {
+  return hexToOklch(hex).l < 0.55;
+}
+
+/** Shift lightness by `deltaL` (positive = lighter, negative = darker) at fixed chroma/hue -- a true darker/lighter variant of the SAME color, never a desaturated smear. */
+function oklchShift(hex: string, deltaL: number): string {
+  const { l, c, h } = hexToOklch(hex);
+  return oklchToHex({ l: Math.max(0, Math.min(1, l + deltaL)), c, h });
+}
+
+/** A neutral gray at lightness `l`, carrying a whisper of the brand hue (chroma ~0.006 -- Linear/Vercel-style "living neutral" instead of a flat, hue-less gray) so the ink scale feels tied to the accent rather than generic. */
+function tintedNeutral(hueSource: string, l: number): string {
+  const { h } = hexToOklch(hueSource);
+  return oklchToHex({ l, c: 0.006, h });
 }
 
 function hexToRgb(hex: string): string {
@@ -144,38 +203,130 @@ function hexToRgb(hex: string): string {
   return `${r}, ${g}, ${b}`;
 }
 
+// Reserved status colors -- fixed brand-independent hues (never derived from
+// the org's theme/accent), so "success" always reads as green and "danger"
+// always reads as red regardless of what accent color the org picked. Two
+// pairs (light body / dark body) since a flat #16a34a green is too dark to
+// read comfortably on a near-black dark-mode card.
+const STATUS_LIGHT = { success: '#16a34a', warning: '#d97706', danger: '#dc2626' };
+const STATUS_DARK  = { success: '#4ade80', warning: '#fbbf24', danger: '#f87171' };
+
 function cssVars(d: DesignCfg): string {
-  const sidebarText  = isDark(d.sidebarColor) ? '#f1f5f9' : '#1e293b';
-  const sidebarMuted = isDark(d.sidebarColor) ? '#94a3b8' : '#64748b';
+  const bodyIsDark    = isDark(d.bodyColor);
+  const sidebarIsDark = isDark(d.sidebarColor);
+  const status = bodyIsDark ? STATUS_DARK : STATUS_LIGHT;
+
+  const sidebarText  = tintedNeutral(d.sidebarColor, sidebarIsDark ? 0.95 : 0.20);
+  const sidebarMuted = tintedNeutral(d.sidebarColor, sidebarIsDark ? 0.68 : 0.46);
+  const sidebarHover = oklchShift(d.sidebarColor, sidebarIsDark ? 0.05 : -0.05);
+
   const accentBg     = `${d.accentColor}1a`;
+  const accentBgHover = `${d.accentColor}29`;
   const accentRgb    = hexToRgb(d.accentColor);
-  const accentHover  = shade(d.accentColor, isDark(d.bodyColor) ? -20 : 20);
-  const sidebarHover = shade(d.sidebarColor, isDark(d.sidebarColor) ? -12 : 12);
-  const cardBg       = isDark(d.bodyColor) ? '#1e293b' : '#ffffff';
-  const inputBg      = isDark(d.bodyColor) ? '#0f172a' : '#ffffff';
-  const border       = isDark(d.bodyColor) ? '#293548' : '#e8ebef';
-  const text         = isDark(d.bodyColor) ? '#f1f5f9' : '#1e293b';
-  const muted        = isDark(d.bodyColor) ? '#94a3b8' : '#64748b';
+  const accentHover  = oklchShift(d.accentColor, bodyIsDark ? 0.1 : -0.1);
+
+  const cardBg  = tintedNeutral(d.accentColor, bodyIsDark ? 0.22 : 1.0);
+  const inputBg = tintedNeutral(d.accentColor, bodyIsDark ? 0.16 : 1.0);
+  const border  = tintedNeutral(d.accentColor, bodyIsDark ? 0.32 : 0.91);
+
+  // Ink scale: four steps of hierarchy, hue-tied to the accent (a "living
+  // neutral" -- Linear/Vercel-style subtly warm/cool grays instead of flat
+  // #64748b-everywhere) so text never looks like it belongs to a different
+  // product than the accent color does. --text/--muted stay as aliases for
+  // every existing component already written against those two names.
+  const ink1 = tintedNeutral(d.accentColor, bodyIsDark ? 0.96 : 0.17); // primary text
+  const ink2 = tintedNeutral(d.accentColor, bodyIsDark ? 0.82 : 0.32); // secondary text
+  const ink3 = tintedNeutral(d.accentColor, bodyIsDark ? 0.64 : 0.47); // muted/tertiary
+  const ink4 = tintedNeutral(d.accentColor, bodyIsDark ? 0.46 : 0.65); // disabled/placeholder
+
   return `:root {
+  /* Brand */
   --accent: ${d.accentColor};
+  --accent-rgb: ${accentRgb};
   --accent-bg: ${accentBg};
+  --accent-bg-hover: ${accentBgHover};
   --accent-hover: ${accentHover};
+  --accent-gradient: linear-gradient(135deg, ${d.accentColor}, ${accentHover});
+
+  /* Sidebar */
   --sidebar-bg: ${d.sidebarColor};
   --sidebar-text: ${sidebarText};
   --sidebar-muted: ${sidebarMuted};
   --sidebar-hover: ${sidebarHover};
+
+  /* Surfaces */
   --body-bg: ${d.bodyColor};
   --card-bg: ${cardBg};
   --input-bg: ${inputBg};
   --border: ${border};
-  --text: ${text};
-  --muted: ${muted};
-  --radius: 12px;
+
+  /* Ink scale (text hierarchy) */
+  --ink-1: ${ink1};
+  --ink-2: ${ink2};
+  --ink-3: ${ink3};
+  --ink-4: ${ink4};
+  --text: var(--ink-1);
+  --muted: var(--ink-3);
+
+  /* Status (reserved, brand-independent) */
+  --success: ${status.success};
+  --success-bg: ${status.success}1a;
+  --warning: ${status.warning};
+  --warning-bg: ${status.warning}1a;
+  --danger: ${status.danger};
+  --danger-bg: ${status.danger}1a;
+
+  /* Radius */
   --radius-sm: 8px;
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-md: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 24px -12px rgba(15, 23, 42, 0.16);
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* Shadow -- resting state carries real depth (a card should read as a
+     raised surface at a glance, not a bordered rectangle); hover/lg steps up
+     from there. */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.03), 0 6px 16px -10px rgba(15, 23, 42, 0.14);
+  --shadow-md: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 24px -12px rgba(15, 23, 42, 0.18);
+  --shadow-lg: 0 4px 6px rgba(15, 23, 42, 0.05), 0 20px 40px -16px rgba(15, 23, 42, 0.24);
   --shadow-accent: 0 8px 20px -8px rgba(${accentRgb}, 0.35);
+  --table-row-hover: rgba(${accentRgb}, 0.06);
+
+  /* Spacing (4pt scale) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Type scale */
+  --text-tiny: 0.6875rem;
+  --text-small: 0.8125rem;
+  --text-body: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-h3: 1.25rem;
+  --text-h2: 1.625rem;
+  --text-h1: 2rem;
+  --text-display: 2.5rem;
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.6;
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0em;
+  --tracking-wide: 0.02em;
   --font-weight-heading: 600;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
 }`;
 }
 

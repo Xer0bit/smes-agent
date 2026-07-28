@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Upload, Trash2, Plus, FolderPlus, Pencil, X, Folder, Loader2, AlertCircle } from 'lucide-react';
+import { Upload, Trash2, FolderPlus, Pencil, X, Folder, Loader2, AlertCircle, FileText } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
+import { PageHeader, Card, EmptyState, Spinner, SectionHeader } from '../components/ui';
 
 const TYPE_ICONS: Record<string, string> = { document: '📄', url: '🔗', text: '📝' };
 
@@ -10,9 +11,9 @@ const TYPE_ICONS: Record<string, string> = { document: '📄', url: '🔗', text
 // way the real portal's Knowledge page does. Status badge + upload date are
 // the real fields actually available.
 const STATUS_CFG: Record<string, { label: string; color: string }> = {
-  processing: { label: 'Indexing…', color: '#a16207' },
+  processing: { label: 'Indexing…', color: 'var(--warning)' },
   ready:      { label: 'Ready',     color: 'var(--muted)' },
-  error:      { label: 'Error',     color: '#dc2626' },
+  error:      { label: 'Error',     color: 'var(--danger)' },
 };
 
 export default function KnowledgePage() {
@@ -107,102 +108,97 @@ export default function KnowledgePage() {
 
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Knowledge</h1>
+      <PageHeader eyebrow="System" title="Knowledge" action={
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowBaseModal(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border"
-            style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+            className="flex items-center gap-2 px-4 py-2 font-medium border"
+            style={{ borderColor: 'var(--border)', color: 'var(--text)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius)' }}
           >
             <FolderPlus className="w-4 h-4" /> New Base
           </button>
           <button
             onClick={() => setShowUpload(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white"
-            style={{ background: 'var(--accent)' }}
+            className="flex items-center gap-2 px-4 py-2 font-medium text-white hover:opacity-90"
+            style={{ background: 'var(--accent)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius)' }}
           >
             <Upload className="w-4 h-4" /> Upload File
           </button>
         </div>
-      </div>
+      } />
 
       {loading && <Spinner />}
-      {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</div>}
+      {error && <div className="px-4 py-3" style={{ fontSize: 'var(--text-small)', color: 'var(--danger)', background: 'var(--danger-bg)', borderRadius: 'var(--radius)' }}>{error}</div>}
 
       {/* Knowledge Bases */}
       {!loading && (
-        <div className="space-y-2">
-          <h2 className="text-sm font-medium" style={{ color: 'var(--text)' }}>Knowledge Bases</h2>
-          {!bases.length && <div className="text-center py-8 text-sm" style={{ color: 'var(--muted)' }}>No knowledge bases configured</div>}
-          {bases.map((b: any) => (
-            <div key={b.id} className="rounded-xl border px-5 py-3 flex items-center justify-between gap-3"
-              style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <Folder className="w-4 h-4 shrink-0" style={{ color: 'var(--muted)' }} />
-                <div>
-                  <p className="font-medium text-sm" style={{ color: 'var(--text)' }}>{b.name}</p>
-                  {b.description && <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>{b.description}</p>}
+        <Card className="p-5">
+          <SectionHeader title="Knowledge Bases" />
+          {!bases.length ? (
+            <p className="py-2" style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>No knowledge bases configured</p>
+          ) : (
+            <div className="space-y-2">
+              {bases.map((b: any) => (
+                <div key={b.id} className="flex items-center justify-between gap-3 border px-4 py-3" style={{ borderColor: 'var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <Folder className="w-4 h-4 shrink-0" style={{ color: 'var(--muted)' }} />
+                    <div>
+                      <p className="font-medium" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>{b.name}</p>
+                      {b.description && <p className="mt-0.5" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{b.description}</p>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => setEditingBase(b)} className="p-1.5 rounded hover:bg-[var(--accent-bg)]" title="Edit">
+                      <Pencil className="w-4 h-4" style={{ color: 'var(--muted)' }} />
+                    </button>
+                    <button onClick={() => setDeletingBase(b)} className="p-1.5 rounded hover:bg-red-500/10" title="Delete">
+                      <Trash2 className="w-4 h-4" style={{ color: 'var(--danger)' }} />
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setEditingBase(b)}
-                  className="p-1 rounded hover:bg-gray-100"
-                  title="Edit"
-                >
-                  <Pencil className="w-4 h-4 text-gray-600" />
-                </button>
-                <button
-                  onClick={() => setDeletingBase(b)}
-                  className="p-1 rounded hover:bg-red-50"
-                  title="Delete"
-                >
-                  <Trash2 className="w-4 h-4 text-red-600" />
-                </button>
-              </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </Card>
       )}
 
       {/* Knowledge Items */}
       {!loading && (
-        <div className="space-y-2">
-          <h2 className="text-sm font-medium" style={{ color: 'var(--text)' }}>Files & Documents</h2>
-          {!items.length && <div className="text-center py-8 text-sm" style={{ color: 'var(--muted)' }}>No knowledge assets found</div>}
-          {items.map((k: any) => {
-            const statusCfg = STATUS_CFG[k.status as string] ?? STATUS_CFG.ready;
-            return (
-            <div key={k.id} className="rounded-xl border px-5 py-4 flex items-center justify-between gap-4"
-              style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
-              <div className="flex items-center gap-4 flex-1 min-w-0">
-                <span className="text-xl">
-                  {k.status === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--muted)' }} />
-                    : k.status === 'error' ? <AlertCircle className="w-4 h-4" style={{ color: '#dc2626' }} />
-                    : (TYPE_ICONS[k.type] ?? '📄')}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm truncate" style={{ color: 'var(--text)' }}>{k.title ?? k.name ?? 'Untitled'}</p>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-xs capitalize" style={{ color: 'var(--muted)' }}>{k.type ?? 'document'}</span>
-                    {k.createdAt && <span className="text-xs" style={{ color: 'var(--muted)' }}>· Uploaded {new Date(k.createdAt).toLocaleDateString()}</span>}
-                    <span className="text-xs font-medium" style={{ color: statusCfg.color }}>· {statusCfg.label}</span>
+        !items.length ? (
+          <EmptyState Icon={FileText} title="No knowledge assets found"
+            hint="Upload a document, URL, or note so your agents can reference it when writing." />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {items.map((k: any) => {
+              const statusCfg = STATUS_CFG[k.status as string] ?? STATUS_CFG.ready;
+              return (
+              <Card key={k.id} hover className="p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    <span style={{ fontSize: 'var(--text-lg)' }}>
+                      {k.status === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--muted)' }} />
+                        : k.status === 'error' ? <AlertCircle className="w-4 h-4" style={{ color: 'var(--danger)' }} />
+                        : (TYPE_ICONS[k.type] ?? '📄')}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold truncate" style={{ fontSize: 'var(--text-body)', color: 'var(--text)' }}>{k.title ?? k.name ?? 'Untitled'}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className="capitalize" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{k.type ?? 'document'}</span>
+                        {k.createdAt && <span style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>· Uploaded {new Date(k.createdAt).toLocaleDateString()}</span>}
+                        <span className="font-medium" style={{ fontSize: 'var(--text-tiny)', color: statusCfg.color }}>· {statusCfg.label}</span>
+                      </div>
+                      {k.agentName && <p className="mt-0.5" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{k.agentName}</p>}
+                    </div>
                   </div>
+                  <button onClick={() => setDeletingItem(k)} className="p-1.5 rounded hover:bg-red-500/10 shrink-0" title="Delete">
+                    <Trash2 className="w-4 h-4" style={{ color: 'var(--danger)' }} />
+                  </button>
                 </div>
-                {k.agentName && <span className="text-xs shrink-0" style={{ color: 'var(--muted)' }}>{k.agentName}</span>}
-              </div>
-              <button
-                onClick={() => setDeletingItem(k)}
-                className="p-1 rounded hover:bg-red-50 shrink-0"
-                title="Delete"
-              >
-                <Trash2 className="w-4 h-4 text-red-600" />
-              </button>
-            </div>
-            );
-          })}
-        </div>
+              </Card>
+              );
+            })}
+          </div>
+        )
       )}
 
       {showUpload && (
@@ -247,8 +243,6 @@ export default function KnowledgePage() {
   );
 }
 
-function Spinner() { return <div className="flex justify-center py-16"><span className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: 'var(--accent)' }} /></div>; }
-
 function UploadModal({ bases, onClose, onUpload, loading }: {
   bases: any[];
   onClose: () => void;
@@ -266,33 +260,33 @@ function UploadModal({ bases, onClose, onUpload, loading }: {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-md p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
+      <div className="w-full max-w-md p-6 space-y-4" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Upload Knowledge File</h2>
-          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
+          <h2 style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>Upload Knowledge File</h2>
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--accent-bg)]">
             <X className="w-5 h-5" style={{ color: 'var(--muted)' }} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>File</label>
+            <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>File</label>
             <input
               type="file"
               onChange={e => setFile(e.target.files?.[0] ?? null)}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
-              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+              className="w-full px-3 py-2 border focus:outline-none"
+              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Knowledge Base (optional)</label>
+            <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Knowledge Base (optional)</label>
             <select
               value={baseId}
               onChange={e => setBaseId(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
-              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+              className="w-full px-3 py-2 border focus:outline-none"
+              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
             >
               <option value="">No base</option>
               {bases.map(b => (
@@ -305,16 +299,16 @@ function UploadModal({ bases, onClose, onUpload, loading }: {
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg border"
-              style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+              className="flex-1 px-4 py-2 border"
+              style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading || !file}
-              className="flex-1 px-4 py-2 rounded-lg text-white disabled:opacity-50"
-              style={{ background: 'var(--accent)' }}
+              className="flex-1 px-4 py-2 text-white hover:opacity-90 disabled:opacity-50"
+              style={{ background: 'var(--accent)', borderRadius: 'var(--radius-sm)' }}
             >
               {loading ? 'Uploading...' : 'Upload'}
             </button>
@@ -342,37 +336,37 @@ function KnowledgeBaseModal({ base, onClose, onSave, loading }: {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-md p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
+      <div className="w-full max-w-md p-6 space-y-4" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
+          <h2 style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>
             {base ? 'Edit Knowledge Base' : 'New Knowledge Base'}
           </h2>
-          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--accent-bg)]">
             <X className="w-5 h-5" style={{ color: 'var(--muted)' }} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Name</label>
+            <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Name</label>
             <input
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2"
-              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+              className="w-full px-3 py-2 border focus:outline-none"
+              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
               autoFocus
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text)' }}>Description (optional)</label>
+            <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Description (optional)</label>
             <textarea
               value={description}
               onChange={e => setDescription(e.target.value)}
               rows={3}
-              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 resize-none"
-              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+              className="w-full px-3 py-2 border focus:outline-none resize-none"
+              style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
             />
           </div>
 
@@ -380,16 +374,16 @@ function KnowledgeBaseModal({ base, onClose, onSave, loading }: {
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg border"
-              style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+              className="flex-1 px-4 py-2 border"
+              style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading || !name.trim()}
-              className="flex-1 px-4 py-2 rounded-lg text-white disabled:opacity-50"
-              style={{ background: 'var(--accent)' }}
+              className="flex-1 px-4 py-2 text-white hover:opacity-90 disabled:opacity-50"
+              style={{ background: 'var(--accent)', borderRadius: 'var(--radius-sm)' }}
             >
               {loading ? 'Saving...' : base ? 'Save' : 'Create'}
             </button>
@@ -408,24 +402,25 @@ function DeleteConfirmModal({ itemName, onClose, onConfirm, loading }: {
 }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
-        <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Delete Item</h2>
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>
+      <div className="w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
+        <h2 style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>Delete Item</h2>
+        <p style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>
           Are you sure you want to delete <strong>{itemName}</strong>? This action cannot be undone.
         </p>
         <div className="flex gap-3 pt-2">
           <button
             onClick={onClose}
             disabled={loading}
-            className="flex-1 px-4 py-2 rounded-lg border"
-            style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
+            className="flex-1 px-4 py-2 border"
+            style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
             disabled={loading}
-            className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 disabled:opacity-50"
+            className="flex-1 px-4 py-2 text-white hover:opacity-90 disabled:opacity-50"
+            style={{ background: 'var(--danger)', borderRadius: 'var(--radius-sm)' }}
           >
             {loading ? 'Deleting...' : 'Delete'}
           </button>

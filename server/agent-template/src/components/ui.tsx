@@ -1,8 +1,57 @@
 // Shared UI primitives  every page uses these instead of hand-rolled
 // headers/spinners/empty states. All colors ride the theme CSS variables,
 // never hardcoded values, so every theme + custom accent styles them.
-import { ReactNode } from 'react';
-import { LucideIcon } from 'lucide-react';
+import { ReactNode, useState } from 'react';
+import { LucideIcon, X, Plus } from 'lucide-react';
+
+// Shared by CreateAgentPage (set at agent creation) and EditAgentPage (edited
+// after) -- one shape, one default, so the two harness UIs can't drift apart.
+export interface Harness {
+  historyWindow: number;
+  avoidRepeats: boolean;
+  topicsToAvoid: string[];
+  focusTopics: string[];
+}
+export const DEFAULT_HARNESS: Harness = { historyWindow: 8, avoidRepeats: true, topicsToAvoid: [], focusTopics: [] };
+
+// Editable tag list: type + Enter/comma to add, click x to remove.
+export function TagInput({ tags, onChange, placeholder }: { tags: string[]; onChange: (t: string[]) => void; placeholder: string }) {
+  const [draft, setDraft] = useState('');
+  function commit() {
+    const v = draft.trim();
+    if (v && !tags.includes(v)) onChange([...tags, v]);
+    setDraft('');
+  }
+  return (
+    <div className="border px-2 py-2 flex flex-wrap gap-1.5" style={{ background: 'var(--input-bg)', borderColor: 'var(--border)', borderRadius: 'var(--radius-sm)' }}>
+      {tags.map(t => (
+        <span key={t} className="inline-flex items-center gap-1 px-2 py-1 rounded-full" style={{ fontSize: 'var(--text-tiny)', background: 'var(--accent-bg)', color: 'var(--text)' }}>
+          {t}
+          <button type="button" onClick={() => onChange(tags.filter(x => x !== t))} className="hover:opacity-70">
+            <X className="w-3 h-3" />
+          </button>
+        </span>
+      ))}
+      <input
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
+          if (e.key === 'Backspace' && !draft && tags.length > 0) onChange(tags.slice(0, -1));
+        }}
+        onBlur={commit}
+        placeholder={tags.length === 0 ? placeholder : ''}
+        className="flex-1 min-w-[8rem] bg-transparent focus:outline-none"
+        style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}
+      />
+      {draft.trim() && (
+        <button type="button" onClick={commit} className="p-1 rounded hover:opacity-70" style={{ color: 'var(--accent)' }}>
+          <Plus className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
 
 export const DAYS_OF_WEEK = [
   { label: 'Mon', value: '1' }, { label: 'Tue', value: '2' }, { label: 'Wed', value: '3' },
@@ -38,9 +87,10 @@ export function PageHeader({ eyebrow, title, action }: { eyebrow?: string; title
     <div className="flex items-end justify-between gap-4 pb-1">
       <div>
         {eyebrow && (
-          <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>{eyebrow}</p>
+          <p style={{ fontSize: 'var(--text-tiny)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 'var(--tracking-wide)', color: 'var(--accent)' }}>{eyebrow}</p>
         )}
-        <h1 className="text-2xl tracking-tight mt-0.5" style={{ color: 'var(--text)', fontWeight: 'var(--font-weight-heading)' }}>{title}</h1>
+        {/* font-size/weight/tracking come from index.css's global h1 rule (design.md's type scale) -- only color is set here. */}
+        <h1 style={{ color: 'var(--text)', marginTop: '0.125rem' }}>{title}</h1>
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>
@@ -50,8 +100,8 @@ export function PageHeader({ eyebrow, title, action }: { eyebrow?: string; title
 export function Card({ children, className = '', hover = false }: { children: ReactNode; className?: string; hover?: boolean }) {
   return (
     <div
-      className={`rounded-xl border ${hover ? 'ecg-card-hover' : ''} ${className}`}
-      style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-sm)' }}
+      className={`border ${hover ? 'ecg-card-hover' : ''} ${className}`}
+      style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-sm)', borderRadius: 'var(--radius)' }}
     >
       {children}
     </div>
@@ -63,29 +113,32 @@ export function Card({ children, className = '', hover = false }: { children: Re
 // designed, not as an accidental leftover card floating in empty gray space.
 export function EmptyState({ Icon, title, hint, action }: { Icon: LucideIcon; title: string; hint?: string; action?: ReactNode }) {
   return (
-    <div className="relative rounded-xl border border-dashed py-16 px-6 text-center overflow-hidden"
-      style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
+    <div className="relative border border-dashed py-16 px-6 text-center overflow-hidden"
+      style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', borderRadius: 'var(--radius)' }}>
       <div className="relative mx-auto mb-4 flex h-14 w-14 items-center justify-center">
         <div className="absolute inset-0 rounded-full blur-lg" style={{ background: 'var(--accent)', opacity: 0.18 }} />
         <div className="relative flex h-14 w-14 items-center justify-center rounded-full" style={{ background: 'var(--accent-bg)' }}>
           <Icon className="w-6 h-6" style={{ color: 'var(--accent)' }} />
         </div>
       </div>
-      <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>{title}</p>
-      {hint && <p className="mt-1.5 text-xs max-w-sm mx-auto" style={{ color: 'var(--muted)' }}>{hint}</p>}
+      <p style={{ fontSize: 'var(--text-body)', fontWeight: 600, color: 'var(--text)' }}>{title}</p>
+      {hint && <p className="mt-1.5 max-w-sm mx-auto" style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>{hint}</p>}
       {action && <div className="mt-5 flex justify-center">{action}</div>}
     </div>
   );
 }
 
 // Small accent-colored rule + title, used above every content panel so
-// sections have a visual anchor instead of a bare <h3>.
+// sections have a visual anchor instead of a bare <h3>. Deliberately NOT a
+// real <h3> element -- index.css's global h3 rule sizes real headings at
+// --text-h3 (20px), which would be much too loud for a small section label;
+// this is styled explicitly at --text-body instead.
 export function SectionHeader({ title, action }: { title: string; action?: ReactNode }) {
   return (
     <div className="flex items-center justify-between mb-4">
       <div className="flex items-center gap-2">
         <span className="h-3.5 w-[3px] rounded-full" style={{ background: 'var(--accent)' }} />
-        <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>{title}</h3>
+        <p style={{ fontSize: 'var(--text-body)', fontWeight: 600, color: 'var(--text)' }}>{title}</p>
       </div>
       {action}
     </div>
@@ -93,14 +146,14 @@ export function SectionHeader({ title, action }: { title: string; action?: React
 }
 
 export type StatTone = 'accent' | 'warning' | 'success' | 'neutral';
-// `color` drives the icon/bar; `chipBg` is a pre-computed tint -- can't string-
-// concat an alpha suffix onto a `var(--x)` call (invalid CSS, silently dropped),
-// so accent reuses the existing `--accent-bg` token and the fixed hex tones get
-// their own literal rgba tint.
+// `color`/`chipBg` now read the reserved status tokens from design.md (emitted
+// by cssVars() in ecg-template.ts) instead of hardcoding hex literals here --
+// a warning/success/danger color used to be duplicated ad hoc in several
+// components; this is the one place per tone now.
 const STAT_TONE: Record<StatTone, { color: string; chipBg: string }> = {
   accent:  { color: 'var(--accent)', chipBg: 'var(--accent-bg)' },
-  warning: { color: '#d97706', chipBg: 'rgba(217, 119, 6, 0.12)' },
-  success: { color: '#16a34a', chipBg: 'rgba(22, 163, 74, 0.12)' },
+  warning: { color: 'var(--warning)', chipBg: 'var(--warning-bg)' },
+  success: { color: 'var(--success)', chipBg: 'var(--success-bg)' },
   neutral: { color: 'var(--muted)', chipBg: 'rgba(100, 116, 139, 0.12)' },
 };
 
@@ -116,16 +169,16 @@ export function StatCard({ label, value, Icon, tone = 'neutral', sub }: {
 }) {
   const { color, chipBg } = STAT_TONE[tone];
   return (
-    <div className="relative rounded-xl border overflow-hidden" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-sm)' }}>
+    <div className="relative border overflow-hidden" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-sm)', borderRadius: 'var(--radius)' }}>
       <div className="absolute top-0 left-0 right-0 h-[3px]" style={{ background: color }} />
       <div className="p-4 pt-[18px]">
         <div className="flex items-center justify-between mb-2.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>{label}</p>
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg shrink-0" style={{ background: chipBg }}>
+          <p style={{ fontSize: 'var(--text-tiny)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 'var(--tracking-wide)', color: 'var(--muted)' }}>{label}</p>
+          <div className="flex h-7 w-7 items-center justify-center shrink-0" style={{ background: chipBg, borderRadius: 'var(--radius-sm)' }}>
             <Icon className="w-3.5 h-3.5" style={{ color }} />
           </div>
         </div>
-        <p className="text-3xl font-bold tabular-nums tracking-tight" style={{ color: 'var(--text)' }}>{value}</p>
+        <p className="tabular-nums" style={{ fontSize: 'var(--text-h1)', fontWeight: 700, letterSpacing: 'var(--tracking-tight)', color: 'var(--text)' }}>{value}</p>
         {sub && <div className="mt-2">{sub}</div>}
       </div>
     </div>
@@ -221,16 +274,16 @@ export function AgentDeleteModal({ agentName, onClose, onConfirm, loading, block
   if (blocked) {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
-          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Archive first</h2>
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>
+        <div className="w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
+          <h2 style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>Archive first</h2>
+          <p style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>
             <strong>{agentName}</strong> needs to be archived before it can be deleted. Archive and delete it now?
           </p>
           <div className="flex gap-3 pt-2">
-            <button onClick={onClose} disabled={loading} className="flex-1 px-4 py-2 rounded-lg border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+            <button onClick={onClose} disabled={loading} className="flex-1 px-4 py-2 border" style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>
               Cancel
             </button>
-            <button onClick={onArchiveThenDelete} disabled={loading} className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 hover:opacity-90 disabled:opacity-50">
+            <button onClick={onArchiveThenDelete} disabled={loading} className="flex-1 px-4 py-2 text-white hover:opacity-90 disabled:opacity-50" style={{ background: 'var(--danger)', borderRadius: 'var(--radius-sm)' }}>
               {loading ? 'Working…' : 'Archive & delete'}
             </button>
           </div>
@@ -241,16 +294,16 @@ export function AgentDeleteModal({ agentName, onClose, onConfirm, loading, block
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)' }}>
-        <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Delete Agent</h2>
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>
+      <div className="w-full max-w-sm p-6 space-y-4" style={{ background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)' }}>
+        <h2 style={{ fontSize: 'var(--text-lg)', color: 'var(--text)' }}>Delete Agent</h2>
+        <p style={{ fontSize: 'var(--text-small)', color: 'var(--muted)' }}>
           Are you sure you want to delete <strong>{agentName}</strong>? This action cannot be undone.
         </p>
         <div className="flex gap-3 pt-2">
-          <button onClick={onClose} disabled={loading} className="flex-1 px-4 py-2 rounded-lg border" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+          <button onClick={onClose} disabled={loading} className="flex-1 px-4 py-2 border" style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>
             Cancel
           </button>
-          <button onClick={onConfirm} disabled={loading} className="flex-1 px-4 py-2 rounded-lg text-white bg-red-600 disabled:opacity-50">
+          <button onClick={onConfirm} disabled={loading} className="flex-1 px-4 py-2 text-white disabled:opacity-50" style={{ background: 'var(--danger)', borderRadius: 'var(--radius-sm)' }}>
             {loading ? 'Deleting...' : 'Delete'}
           </button>
         </div>

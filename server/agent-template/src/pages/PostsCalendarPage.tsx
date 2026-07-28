@@ -129,24 +129,24 @@ export default function PostsCalendarPage() {
   const selectedPosts = selectedDay ? (postsByDay.get(selectedDay) ?? []) : [];
 
   return (
-    <div className="p-8 max-w-4xl mx-auto space-y-6">
+    <div className="p-8 w-full space-y-6">
       <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/posts')} className="p-1.5 rounded-lg hover:opacity-70 transition-opacity" style={{ color: 'var(--muted)' }}>
+        <button onClick={() => navigate('/posts')} className="p-1.5 hover:opacity-70 transition-opacity" style={{ color: 'var(--muted)', borderRadius: 'var(--radius-sm)' }}>
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--accent)' }}>Content</p>
-          <h1 className="text-lg mt-0.5" style={{ color: 'var(--text)', fontWeight: 'var(--font-weight-heading)' }}>Posts Calendar</h1>
+          <p className="font-bold uppercase" style={{ fontSize: 'var(--text-tiny)', letterSpacing: 'var(--tracking-wide)', color: 'var(--accent)' }}>Content</p>
+          <h1 style={{ color: 'var(--text)', marginTop: '0.125rem' }}>Posts Calendar</h1>
         </div>
       </div>
 
-      {error && <div className="text-sm rounded-lg px-4 py-3" style={{ color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>{error}</div>}
+      {error && <div className="px-4 py-3" style={{ fontSize: 'var(--text-small)', color: 'var(--danger)', background: 'var(--danger-bg)', borderRadius: 'var(--radius)' }}>{error}</div>}
 
       {connectedPlatforms.length > 1 && (
         <div className="flex gap-1.5 overflow-x-auto pb-1">
           <button onClick={() => { setPlatformFilter('all'); setSelectedDay(null); }}
-            className="text-xs px-3 py-1.5 rounded-full border font-medium shrink-0"
-            style={platformFilter === 'all' ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+            className="px-3 py-1.5 rounded-full border font-medium shrink-0"
+            style={platformFilter === 'all' ? { fontSize: 'var(--text-tiny)', background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)' }}>
             All platforms
           </button>
           {connectedPlatforms.map(p => {
@@ -154,8 +154,8 @@ export default function PostsCalendarPage() {
             const on = platformFilter === p;
             return (
               <button key={p} onClick={() => { setPlatformFilter(p); setSelectedDay(null); }}
-                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border font-medium shrink-0"
-                style={on ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { borderColor: 'var(--border)', color: 'var(--text)' }}>
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border font-medium shrink-0"
+                style={on ? { fontSize: 'var(--text-tiny)', background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' } : { fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)' }}>
                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: on ? '#fff' : pm.bar }} /> {pm.label}
               </button>
             );
@@ -165,21 +165,28 @@ export default function PostsCalendarPage() {
 
       <div className="flex items-center justify-between">
         <button onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() - 1, 1))}
-          className="p-1.5 rounded-lg border hover:opacity-70 transition-opacity" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+          className="p-1.5 border hover:opacity-70 transition-opacity" style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>
           <ChevronLeft className="w-4 h-4" />
         </button>
-        <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+        <p className="font-semibold" style={{ fontSize: 'var(--text-body)', color: 'var(--text)' }}>
           {cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
         </p>
         <button onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() + 1, 1))}
-          className="p-1.5 rounded-lg border hover:opacity-70 transition-opacity" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+          className="p-1.5 border hover:opacity-70 transition-opacity" style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
 
       {loading ? <Spinner /> : (
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-7 text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>
+          {/* Below the mobile floor a 7-column month grid can't compress
+              legibly (day headers start overlapping) -- scroll the grid
+              horizontally at a fixed min-width instead of squeezing it. Full
+              width otherwise, so the calendar is the primary surface on this
+              page rather than a card floating in a narrow column. */}
+          <div className="overflow-x-auto">
+          <div className="min-w-[560px] w-full">
+          <div className="grid grid-cols-7 font-semibold uppercase" style={{ fontSize: 'var(--text-tiny)', letterSpacing: 'var(--tracking-wide)', color: 'var(--muted)' }}>
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
               <div key={d} className="px-2 py-2 text-center border-b" style={{ borderColor: 'var(--border)' }}>{d}</div>
             ))}
@@ -203,15 +210,19 @@ export default function PostsCalendarPage() {
                       if (draggedPostId) handleReschedule(draggedPostId, day);
                       setDraggedPostId(null);
                     }}
-                    className="min-h-20 p-1.5 text-left border-b border-r flex flex-col gap-1"
+                    className="min-h-28 p-2 text-left border-b border-r flex flex-col gap-1"
                     style={{
                       borderColor: isDragOver ? 'var(--accent)' : 'var(--border)',
-                      background: isDragOver ? 'var(--accent-bg)' : isSelected ? 'var(--accent-bg)' : 'transparent',
+                      background: isDragOver ? 'var(--accent-bg)' : isSelected ? 'var(--accent-bg)' : isToday ? 'var(--accent-bg)' : 'transparent',
+                      boxShadow: isSelected ? 'inset 0 0 0 2px var(--accent)' : 'none',
                       opacity: inMonth ? 1 : 0.35,
                       cursor: dayPosts.length ? 'pointer' : 'default',
                     }}>
-                    <span className="text-xs font-medium" style={isToday ? { color: 'var(--accent)' } : { color: 'var(--text)' }}>{day.getDate()}</span>
-                    {dayPosts.slice(0, 3).map((p, i) => {
+                    <span className="inline-flex items-center justify-center font-semibold shrink-0"
+                      style={isToday
+                        ? { fontSize: 'var(--text-tiny)', width: 20, height: 20, borderRadius: '50%', background: 'var(--accent)', color: '#fff' }
+                        : { fontSize: 'var(--text-tiny)', color: 'var(--text)' }}>{day.getDate()}</span>
+                    {dayPosts.slice(0, 4).map((p, i) => {
                       const pm = platformMeta(p.platform ?? '');
                       const draggableHere = RESCHEDULABLE.includes(p.status);
                       return (
@@ -220,8 +231,9 @@ export default function PostsCalendarPage() {
                           onDragStart={(e) => { e.stopPropagation(); setDraggedPostId(p.id); e.dataTransfer.setData('text/plain', p.id); }}
                           onDragEnd={() => { setDraggedPostId(null); setDragOverKey(null); }}
                           title={draggableHere ? 'Drag to a different day to reschedule' : undefined}
-                          className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded truncate"
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded truncate"
                           style={{
+                            fontSize: 'var(--text-tiny)',
                             background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text)',
                             cursor: draggableHere ? 'grab' : 'default',
                             opacity: rescheduling === p.id ? 0.5 : 1,
@@ -231,34 +243,36 @@ export default function PostsCalendarPage() {
                         </span>
                       );
                     })}
-                    {dayPosts.length > 3 && <span className="text-[10px]" style={{ color: 'var(--muted)' }}>+{dayPosts.length - 3} more</span>}
+                    {dayPosts.length > 4 && <span style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>+{dayPosts.length - 4} more</span>}
                   </button>
                 );
               })}
             </div>
           ))}
+          </div>
+          </div>
         </Card>
       )}
 
       {selectedDay && selectedPosts.length > 0 && (
         <Card className="p-4 space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>
+          <p className="font-semibold uppercase" style={{ fontSize: 'var(--text-tiny)', letterSpacing: 'var(--tracking-wide)', color: 'var(--muted)' }}>
             {new Date(selectedDay).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
           </p>
           {selectedPosts.map((p: any) => {
             const pm = platformMeta(p.platform ?? '');
             return (
-              <div key={p.id} className="rounded-lg border p-2.5" style={{ borderColor: 'var(--border)' }}>
+              <div key={p.id} className="border p-2.5" style={{ borderColor: 'var(--border)', borderRadius: 'var(--radius-sm)' }}>
                 <div className="flex items-start gap-2">
                   {['posted', 'scheduled', 'posting'].includes(p.status) ? <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
-                    : p.status === 'failed' ? <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-500" />
-                    : p.status === 'cancelled' ? <XCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-500" />
+                    : p.status === 'failed' ? <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--danger)' }} />
+                    : p.status === 'cancelled' ? <XCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--danger)' }} />
                     : <FileText className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--muted)' }} />}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm leading-relaxed line-clamp-2" style={{ color: 'var(--text)' }}>{p.content ?? '(no content)'}</p>
+                    <p className="leading-relaxed line-clamp-2" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>{p.content ?? '(no content)'}</p>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                       {p.platform && (
-                        <span className="inline-flex items-center gap-1 text-xs" style={{ color: 'var(--muted)' }}>
+                        <span className="inline-flex items-center gap-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>
                           <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: pm.bar }} /> {pm.label}
                         </span>
                       )}
@@ -270,34 +284,34 @@ export default function PostsCalendarPage() {
                       <>
                         <button onClick={() => act(p.id, 'reject')} disabled={!!acting} title="Reject"
                           className="p-1.5 rounded hover:bg-red-500/10 disabled:opacity-50">
-                          <XCircle className="w-3.5 h-3.5" style={{ color: '#dc2626' }} />
+                          <XCircle className="w-4 h-4" style={{ color: 'var(--danger)' }} />
                         </button>
                         <button onClick={() => act(p.id, 'approve')} disabled={!!acting} title="Approve"
                           className="p-1.5 rounded hover:bg-[var(--accent-bg)] disabled:opacity-50">
-                          <CheckCircle className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
+                          <CheckCircle className="w-4 h-4" style={{ color: 'var(--accent)' }} />
                         </button>
                       </>
                     )}
                     {p.status === 'failed' && (
                       <button onClick={() => act(p.id, 'approve')} disabled={!!acting} title="Retry"
                         className="p-1.5 rounded hover:bg-[var(--accent-bg)] disabled:opacity-50">
-                        <RefreshCw className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
+                        <RefreshCw className="w-4 h-4" style={{ color: 'var(--accent)' }} />
                       </button>
                     )}
                     {['draft', 'scheduled', 'failed'].includes(p.status) && (
                       <button onClick={() => setEditingPost(p)} title="Edit"
                         className="p-1.5 rounded hover:bg-[var(--accent-bg)]">
-                        <Pencil className="w-3.5 h-3.5" style={{ color: 'var(--muted)' }} />
+                        <Pencil className="w-4 h-4" style={{ color: 'var(--muted)' }} />
                       </button>
                     )}
                     <button onClick={() => handleDelete(p.id)} title="Delete"
                       className="p-1.5 rounded hover:bg-red-500/10">
-                      <Trash2 className="w-3.5 h-3.5" style={{ color: '#dc2626' }} />
+                      <Trash2 className="w-4 h-4" style={{ color: 'var(--danger)' }} />
                     </button>
                   </div>
                 </div>
                 {p.status === 'failed' && p.errorMessage && (
-                  <p className="mt-2 text-xs rounded-lg px-2.5 py-1.5" style={{ background: 'rgba(220,38,38,0.08)', color: '#dc2626' }}>{p.errorMessage}</p>
+                  <p className="mt-2 px-2.5 py-1.5" style={{ fontSize: 'var(--text-tiny)', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 'var(--radius-sm)' }}>{p.errorMessage}</p>
                 )}
               </div>
             );

@@ -210,7 +210,7 @@ export default function VisualEditorPage() {
     return <div className="flex items-center justify-center h-full"><span className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: 'var(--accent)' }} /></div>;
   }
   if (error && !visual) {
-    return <div className="flex items-center justify-center h-full"><p className="text-sm text-red-600">{error}</p></div>;
+    return <div className="flex items-center justify-center h-full"><p style={{ fontSize: 'var(--text-small)', color: 'var(--danger)' }}>{error}</p></div>;
   }
   if (!visual) return null;
 
@@ -218,58 +218,58 @@ export default function VisualEditorPage() {
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between px-4 py-2.5 border-b shrink-0" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
         <div className="flex items-center gap-3 min-w-0">
-          <button onClick={() => navigate(-1)} className="p-1.5 rounded-lg hover:opacity-70 shrink-0" style={{ color: 'var(--muted)' }}>
+          <button onClick={() => navigate(-1)} className="p-1.5 hover:opacity-70 shrink-0" style={{ color: 'var(--muted)', borderRadius: 'var(--radius-sm)' }}>
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div className="min-w-0">
-            <p className="text-sm font-medium truncate capitalize" style={{ color: 'var(--text)' }}>{visual.platform} post visual</p>
-            <p className="text-[11px]" style={{ color: 'var(--muted)' }}>{visual.width}×{visual.height}px · {visual.status === 'finalized' ? 'Finalized' : 'Draft'}</p>
+            <p className="font-medium truncate capitalize" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>{visual.platform} post visual</p>
+            <p style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{visual.width}×{visual.height}px · {visual.status === 'finalized' ? 'Finalized' : 'Draft'}</p>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button onClick={() => setShowPrompt(v => !v)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border"
-            style={showPrompt ? { background: 'var(--accent-bg)', borderColor: 'var(--accent)', color: 'var(--accent)' } : { borderColor: 'var(--border)', color: 'var(--muted)' }}>
+            className="flex items-center gap-1.5 px-3 py-1.5 font-medium border"
+            style={showPrompt ? { fontSize: 'var(--text-tiny)', background: 'var(--accent-bg)', borderColor: 'var(--accent)', color: 'var(--accent)', borderRadius: 'var(--radius-sm)' } : { fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--muted)', borderRadius: 'var(--radius-sm)' }}>
             <Wand2 className="w-3.5 h-3.5" /> Regenerate
           </button>
           <button onClick={handleSave} disabled={!dirty || saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border disabled:opacity-50"
-            style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+            className="flex items-center gap-1.5 px-3 py-1.5 font-medium border disabled:opacity-50"
+            style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>
             <Save className="w-3.5 h-3.5" /> Save
           </button>
           <button onClick={handleFinalize} disabled={finalizing}
-            className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg text-white disabled:opacity-50"
-            style={{ background: 'var(--accent)' }}>
+            className="flex items-center gap-1.5 px-4 py-1.5 font-medium text-white hover:opacity-90 disabled:opacity-50"
+            style={{ background: 'var(--accent)', fontSize: 'var(--text-small)', borderRadius: 'var(--radius-sm)' }}>
             <ImageIcon className="w-4 h-4" /> Finalize
           </button>
         </div>
       </div>
 
-      {error && <div className="px-4 py-2 text-xs text-red-700 shrink-0" style={{ background: '#fef2f2', borderBottom: '1px solid #fecaca' }}>{error}</div>}
+      {error && <div className="px-4 py-2 shrink-0" style={{ fontSize: 'var(--text-tiny)', color: 'var(--danger)', background: 'var(--danger-bg)', borderBottom: '1px solid var(--border)' }}>{error}</div>}
 
       {showPrompt && (
         <div className="flex items-center gap-2 px-4 py-2.5 shrink-0" style={{ background: 'var(--accent-bg)', borderBottom: '1px solid var(--border)' }}>
           <input autoFocus value={stylePrompt} onChange={e => setStylePrompt(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleRegenerate()}
             placeholder="Describe a new direction..."
-            className="flex-1 px-3 py-1.5 text-sm rounded-lg border focus:outline-none"
-            style={{ borderColor: 'var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }} />
+            className="flex-1 px-3 py-1.5 border focus:outline-none"
+            style={{ fontSize: 'var(--text-small)', borderColor: 'var(--border)', background: 'var(--card-bg)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }} />
           <button onClick={handleRegenerate} disabled={!stylePrompt.trim() || regenerating}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-white disabled:opacity-50" style={{ background: 'var(--accent)' }}>
+            className="flex items-center gap-1.5 px-3 py-1.5 font-medium text-white hover:opacity-90 disabled:opacity-50" style={{ background: 'var(--accent)', fontSize: 'var(--text-tiny)', borderRadius: 'var(--radius-sm)' }}>
             <Wand2 className="w-3.5 h-3.5" /> Regenerate
           </button>
-          <button onClick={() => setShowPrompt(false)} className="p-1.5 rounded-lg" style={{ color: 'var(--muted)' }}><X className="w-3.5 h-3.5" /></button>
+          <button onClick={() => setShowPrompt(false)} className="p-1.5" style={{ color: 'var(--muted)', borderRadius: 'var(--radius-sm)' }}><X className="w-3.5 h-3.5" /></button>
         </div>
       )}
 
       <div className="flex flex-1 min-h-0">
         <div className="w-14 border-r flex flex-col items-center py-3 gap-1 shrink-0" style={{ background: 'var(--card-bg)', borderColor: 'var(--border)' }}>
           <button title="Add text" onClick={() => { const o = newTextObject(visual.width); setObjects(p => [...p, o]); setSelectedId(o.id); }}
-            className="w-11 h-11 flex items-center justify-center rounded-lg hover:opacity-70" style={{ color: 'var(--muted)' }}><Type className="w-5 h-5" /></button>
+            className="w-11 h-11 flex items-center justify-center hover:opacity-70"  style={{ color: 'var(--muted)' }}><Type className="w-5 h-5" /></button>
           <button title="Add shape" onClick={() => { const o = newShapeObject(); setObjects(p => [...p, o]); setSelectedId(o.id); }}
-            className="w-11 h-11 flex items-center justify-center rounded-lg hover:opacity-70" style={{ color: 'var(--muted)' }}><Square className="w-5 h-5" /></button>
+            className="w-11 h-11 flex items-center justify-center hover:opacity-70"  style={{ color: 'var(--muted)' }}><Square className="w-5 h-5" /></button>
           <button title="Add image" onClick={() => { const o = newImageObject(); setObjects(p => [...p, o]); setSelectedId(o.id); }}
-            className="w-11 h-11 flex items-center justify-center rounded-lg hover:opacity-70" style={{ color: 'var(--muted)' }}><ImageIcon className="w-5 h-5" /></button>
+            className="w-11 h-11 flex items-center justify-center hover:opacity-70"  style={{ color: 'var(--muted)' }}><ImageIcon className="w-5 h-5" /></button>
         </div>
 
         <div ref={workspaceRef} className="flex-1 min-w-0 flex items-center justify-center overflow-auto" style={{ background: 'var(--body-bg)' }}>
@@ -318,38 +318,38 @@ export default function VisualEditorPage() {
             {selected ? (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5 min-w-0" style={{ color: 'var(--text)' }}>
+                  <p className="font-semibold uppercase flex items-center gap-1.5 min-w-0" style={{ fontSize: 'var(--text-tiny)', letterSpacing: 'var(--tracking-wide)', color: 'var(--text)' }}>
                     {selected.type === 'text' && <Type className="w-3.5 h-3.5 shrink-0" />}
                     {selected.type === 'image' && <ImageIcon className="w-3.5 h-3.5 shrink-0" />}
                     {selected.type === 'shape' && (selected.shape === 'ellipse' ? <Circle className="w-3.5 h-3.5 shrink-0" /> : <Square className="w-3.5 h-3.5 shrink-0" />)}
                     <span className="truncate">{selected.id}</span>
                   </p>
-                  <button onClick={() => deleteObject(selected.id)} className="p-1 rounded hover:bg-red-50 shrink-0"><Trash2 className="w-3.5 h-3.5 text-red-600" /></button>
+                  <button onClick={() => deleteObject(selected.id)} className="p-1 rounded hover:bg-red-500/10 shrink-0"><Trash2 className="w-3.5 h-3.5" style={{ color: 'var(--danger)' }} /></button>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {(['width', 'height', 'x', 'y'] as const).map(field => (
                     <div key={field}>
-                      <label className="block text-[10px] mb-1 capitalize" style={{ color: 'var(--muted)' }}>{field}</label>
+                      <label className="block mb-1 capitalize" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{field}</label>
                       <input type="number" value={Math.round(selected[field])} onChange={e => updateObject(selected.id, { [field]: field === 'width' || field === 'height' ? Math.max(10, +e.target.value) : +e.target.value })}
-                        className="w-full px-2 py-1 text-xs rounded border" style={{ borderColor: 'var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }} />
+                        className="w-full px-2 py-1 rounded border" style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }} />
                     </div>
                   ))}
                 </div>
                 {selected.type === 'text' && (
                   <>
                     <div>
-                      <label className="block text-[10px] mb-1" style={{ color: 'var(--muted)' }}>Text</label>
+                      <label className="block mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>Text</label>
                       <textarea value={selected.text ?? ''} onChange={e => updateObject(selected.id, { text: e.target.value })} rows={2}
-                        className="w-full px-2 py-1.5 text-xs rounded border resize-none" style={{ borderColor: 'var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }} />
+                        className="w-full px-2 py-1.5 rounded border resize-none" style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }} />
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-[10px] mb-1" style={{ color: 'var(--muted)' }}>Font Size</label>
+                        <label className="block mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>Font Size</label>
                         <input type="number" value={selected.fontSize ?? 16} onChange={e => updateObject(selected.id, { fontSize: +e.target.value })}
-                          className="w-full px-2 py-1 text-xs rounded border" style={{ borderColor: 'var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }} />
+                          className="w-full px-2 py-1 rounded border" style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }} />
                       </div>
                       <div>
-                        <label className="block text-[10px] mb-1" style={{ color: 'var(--muted)' }}>Color</label>
+                        <label className="block mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>Color</label>
                         <input type="color" value={selected.color ?? '#000000'} onChange={e => updateObject(selected.id, { color: e.target.value })}
                           className="w-full h-7 rounded border cursor-pointer" style={{ borderColor: 'var(--border)' }} />
                       </div>
@@ -358,20 +358,20 @@ export default function VisualEditorPage() {
                 )}
                 {selected.type === 'image' && (
                   <div>
-                    <label className="block text-[10px] mb-1" style={{ color: 'var(--muted)' }}>Image URL</label>
+                    <label className="block mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>Image URL</label>
                     <input type="text" value={selected.src ?? ''} onChange={e => updateObject(selected.id, { src: e.target.value })}
-                      placeholder="https://..." className="w-full px-2 py-1.5 text-xs rounded border font-mono" style={{ borderColor: 'var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }} />
+                      placeholder="https://..." className="w-full px-2 py-1.5 rounded border font-mono" style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }} />
                   </div>
                 )}
                 {selected.type === 'shape' && (
                   <div>
-                    <label className="block text-[10px] mb-1" style={{ color: 'var(--muted)' }}>Fill</label>
+                    <label className="block mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>Fill</label>
                     <input type="color" value={selected.fill ?? '#2563eb'} onChange={e => updateObject(selected.id, { fill: e.target.value })}
                       className="w-full h-7 rounded border cursor-pointer" style={{ borderColor: 'var(--border)' }} />
                   </div>
                 )}
                 <div>
-                  <label className="block text-[10px] mb-1" style={{ color: 'var(--muted)' }}>Canvas Background</label>
+                  <label className="block mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>Canvas Background</label>
                   <input type="color" value={/^#/.test(background) ? background : '#ffffff'} onChange={e => setBackground(e.target.value)}
                     className="w-full h-7 rounded border cursor-pointer" style={{ borderColor: 'var(--border)' }} />
                 </div>
@@ -379,21 +379,21 @@ export default function VisualEditorPage() {
             ) : (
               <>
                 <div>
-                  <label className="block text-[10px] mb-1" style={{ color: 'var(--muted)' }}>Canvas Background</label>
+                  <label className="block mb-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>Canvas Background</label>
                   <input type="color" value={/^#/.test(background) ? background : '#ffffff'} onChange={e => setBackground(e.target.value)}
                     className="w-full h-8 rounded border cursor-pointer" style={{ borderColor: 'var(--border)' }} />
                 </div>
-                <p className="text-xs text-center py-2" style={{ color: 'var(--muted)' }}>Click an object to edit it.</p>
+                <p className="text-center py-2" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>Click an object to edit it.</p>
               </>
             )}
           </div>
           <div className="px-4 pb-4 mt-auto">
-            <p className="text-[10px] font-semibold mb-1.5 uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Layers · {objects.length}</p>
+            <p className="font-semibold mb-1.5 uppercase" style={{ fontSize: 'var(--text-tiny)', letterSpacing: 'var(--tracking-wide)', color: 'var(--muted)' }}>Layers · {objects.length}</p>
             <div className="space-y-0.5 max-h-40 overflow-y-auto">
               {objects.map(o => (
                 <button key={o.id} onClick={() => setSelectedId(o.id)}
-                  className="w-full text-left px-2 py-1.5 rounded-md text-xs flex items-center gap-2"
-                  style={selectedId === o.id ? { background: 'var(--accent-bg)', color: 'var(--accent)' } : { color: 'var(--muted)' }}>
+                  className="w-full text-left px-2 py-1.5 rounded-md flex items-center gap-2"
+                  style={selectedId === o.id ? { background: 'var(--accent-bg)', color: 'var(--accent)', fontSize: 'var(--text-tiny)' } : { color: 'var(--muted)', fontSize: 'var(--text-tiny)' }}>
                   {o.type === 'text' && <Type className="w-3 h-3 shrink-0" />}
                   {o.type === 'image' && <ImageIcon className="w-3 h-3 shrink-0" />}
                   {o.type === 'shape' && <Square className="w-3 h-3 shrink-0" />}
