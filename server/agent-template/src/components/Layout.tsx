@@ -21,6 +21,25 @@ function usePendingCount(): number {
   return count;
 }
 
+// Live count of runs still needing review, shown as a badge on Run History
+// -- same shape as usePendingCount above. Definition mirrors RunsPage.tsx's
+// needsReview() and T1's idx_runs_needs_review partial index exactly
+// (unreviewed AND unflagged), so the 5-second glance at the sidebar answers
+// the same question the page itself defaults to.
+function usePendingReviewCount(): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!ECG.modules.includes('runs')) return;
+    ecgApi.runs.list()
+      .then((d: any) => {
+        const runs = Array.isArray(d) ? d : (d.runs ?? []);
+        setCount(runs.filter((r: any) => !(r.reviewedAt ?? r.reviewed_at) && !r.flagged).length);
+      })
+      .catch(() => {});
+  }, []);
+  return count;
+}
+
 const ALL_ICONS: Record<string, LucideIcon> = {
   LayoutDashboard, Zap, Calendar, FileText, Plug, History, BookOpen, MessageSquare, Settings,
 };
@@ -41,13 +60,13 @@ const ALL_NAV = [
   { id: 'settings',   label: 'Settings',          path: '/settings',      icon: 'Settings', always: true },
 ];
 
-// Run History is an execution-log concept most users only care about when
-// something's wrong -- reachable via AgentDetailPage's "View all" link
-// rather than a permanent sidebar slot. Schedulers used to be hidden the
-// same way, but that made it undiscoverable to anyone who didn't already
-// know it existed; it's common enough (setting a posting cadence) to earn
-// a real nav entry.
-const HIDDEN_FROM_SIDEBAR = ['runs'];
+// Run History used to be hidden here, treated as an execution-log concept
+// most users only care about when something's wrong. That's the opposite of
+// what "verify what the agent did" needs: reviewing runs is a routine,
+// trust-building action, not a break-glass debugging tool, so it earns the
+// same permanent sidebar slot every other module gets (agent-verify-runs
+// plan, Pass 1).
+const HIDDEN_FROM_SIDEBAR: string[] = [];
 
 // Assistant defaults to visible (moduleSettings.chat undefined) so every
 // dashboard generated before this toggle existed keeps behaving exactly as
@@ -126,6 +145,7 @@ const SIDEBAR_COLLAPSE_KEY = 'ecg_sidebar_collapsed';
 
 function Sidebar({ children, pathname }: { children: ReactNode; pathname: string }) {
   const pendingCount = usePendingCount();
+  const pendingReviewCount = usePendingReviewCount();
   // No saved preference yet -> default to the icon-only rail below the
   // mobile floor (768px) instead of squeezing the full 15rem sidebar into a
   // narrow viewport. A saved preference always wins once the user has toggled it.
@@ -168,7 +188,8 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
             const group = NAV_GROUPS[id] ?? '';
             const showLabel = !collapsed && group !== lastGroup;
             if (group !== lastGroup) lastGroup = group;
-            const showBadge = id === 'posts' && pendingCount > 0;
+            const badgeCount = id === 'posts' ? pendingCount : id === 'runs' ? pendingReviewCount : 0;
+            const showBadge = badgeCount > 0;
             return (
               <div key={path}>
                 {showLabel && (
@@ -199,7 +220,7 @@ function Sidebar({ children, pathname }: { children: ReactNode; pathname: string
                   {!collapsed && <span className="flex-1">{label}</span>}
                   {showBadge && (
                     <span className="font-bold px-1.5 py-0.5 rounded-full leading-none min-w-[18px] text-center text-white" style={{ fontSize: 'var(--text-tiny)', background: 'var(--accent)' }}>
-                      {pendingCount > 99 ? '99+' : pendingCount}
+                      {badgeCount > 99 ? '99+' : badgeCount}
                     </span>
                   )}
                 </NavLink>

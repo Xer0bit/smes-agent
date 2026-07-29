@@ -188,6 +188,21 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
 
   if (seg[0] === 'runs' && method === 'GET' && seg.length === 1) return { tool: 'list_runs', args: pick(query, ['agentId', 'agentId']) };
 
+  if (seg[0] === 'runs' && seg.length === 2) {
+    const runId = seg[1];
+    if (method === 'GET') return { tool: 'get_run', args: { runId } };
+    if (method === 'PATCH') {
+      // Cancel and review are the same PATCH /runs/:id resource, different
+      // body shapes -- mirrors the backend route (agent-portal/backend/src/
+      // routes/runs.ts) exactly.
+      if (body?.status === 'cancelled') return { tool: 'cancel_run', args: { runId } };
+      if (body?.reviewed === true || body?.flagged !== undefined) {
+        return { tool: 'review_run', args: { runId, ...pick(body, ['flagged', 'flagged'], ['flagNote', 'flag_note']) } };
+      }
+      return 'unsupported';
+    }
+  }
+
   if (seg[0] === 'knowledge' && seg[1] !== 'bases') {
     if (seg.length === 1) {
       if (method === 'GET') return { tool: 'list_knowledge', args: query.q ? { query: query.q } : {} };

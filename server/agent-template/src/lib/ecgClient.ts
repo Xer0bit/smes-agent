@@ -172,7 +172,14 @@ export const ecgApi = {
   },
 
   // Runs
-  runs: { list: () => req('GET', withActiveAgent('/runs')) },
+  runs: {
+    list:    () => req('GET', withActiveAgent('/runs')),
+    // Full detail for one run, including the post it produced (if any) --
+    // GET /runs (list) never carries output content, only metadata.
+    get:     (id: string) => req('GET', `/runs/${id}`),
+    approve: (id: string) => req('PATCH', `/runs/${id}`, { reviewed: true }),
+    flag:    (id: string, flagNote?: string) => req('PATCH', `/runs/${id}`, { flagged: true, flagNote }),
+  },
 
   // Notifications (failed runs, rate limits, repeat-topic warnings, etc.)
   notifications: {

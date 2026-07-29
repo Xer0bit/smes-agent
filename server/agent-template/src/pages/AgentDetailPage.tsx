@@ -7,7 +7,7 @@ import { Card, Spinner, EmptyState, SectionHeader, relTime, cadenceLabel } from 
 
 interface AgentDetail {
   agent: { id: string; name: string; status: string; lastRunAt: string | null };
-  recentRuns: Array<{ id: string; status: string; startedAt: string; durationMs: number; cost: number; tokensIn: number; tokensOut: number }>;
+  recentRuns: Array<{ id: string; status: string; startedAt: string; durationMs: number; cost: number; tokensIn: number; tokensOut: number; reviewedAt?: string | null; flagged?: boolean }>;
   schedulers: Array<{ id: string; cron: string; status: string; nextRun: string | null; lastRun: string | null; postCount: number }>;
 }
 
@@ -187,6 +187,14 @@ export default function AgentDetailPage() {
                   <span style={{ color: 'var(--muted)' }}>{(r.durationMs / 1000).toFixed(1)}s</span>
                   <span style={{ color: 'var(--muted)' }}>${Number(r.cost).toFixed(3)}</span>
                   <span style={{ color: 'var(--muted)' }}>{relTime(r.startedAt)}</span>
+                  {/* Matches RunsPage's reviewed/flagged state so the two
+                      surfaces never disagree about whether a run still
+                      needs a look. */}
+                  <span
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    title={r.flagged ? 'Flagged' : r.reviewedAt ? 'Reviewed' : 'Needs review'}
+                    style={{ background: r.flagged ? 'var(--warning)' : r.reviewedAt ? 'var(--success)' : 'var(--accent)' }}
+                  />
                 </div>
               ))}
             </div>

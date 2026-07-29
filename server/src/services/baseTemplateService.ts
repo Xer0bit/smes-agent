@@ -30,6 +30,7 @@ const COMMON_PACKAGE_JSON = {
     dev: 'vite',
     build: 'tsc -b && vite build',
     preview: 'vite preview',
+    test: 'vitest run',
   },
   dependencies: {
     // Core React
@@ -112,6 +113,10 @@ const COMMON_PACKAGE_JSON = {
     tailwindcss: '^3.4.14',
     autoprefixer: '^10.4.20',
     postcss: '^8.4.47',
+    vitest: '^3.2.4',
+    jsdom: '^20.0.3',
+    '@testing-library/react': '^16.0.0',
+    '@testing-library/jest-dom': '^6.6.0',
   },
 };
 
