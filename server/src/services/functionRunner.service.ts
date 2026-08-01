@@ -22,9 +22,40 @@ export interface InvokeResult {
   logs: string[];
   durationMs: number;
   error?: string;
+  status?: number;
 }
 
 const TIMEOUT_MS = 5_000;
+
+// The documented sandbox contract says "return a JSON-serializable result" —
+// no `Response` global was ever part of it. In practice, generated functions
+// consistently return `new Response(JSON.stringify({error}), {status: 4xx})`
+// for their error paths anyway (a natural pattern to reach for), which threw
+// "Response is not defined" and made every non-200 branch in every generated
+// function crash instead of returning the intended error. Providing a minimal
+// Response and unwrapping it below (instead of rejecting the pattern) fixes
+// every function that already uses it without requiring it to be rewritten.
+class EdgeFunctionResponse {
+  body: unknown;
+  status: number;
+  constructor(body: unknown, init?: { status?: number; headers?: Record<string, string> }) {
+    this.body = body;
+    this.status = init?.status ?? 200;
+  }
+}
+
+function unwrapResponse(value: unknown): { result: unknown; error?: string; status?: number } {
+  if (!(value instanceof EdgeFunctionResponse)) return { result: value ?? null };
+  let body: unknown = value.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch { /* leave as raw string */ }
+  }
+  if (value.status >= 400) {
+    const message = (body && typeof body === 'object' && 'error' in body) ? String((body as Record<string, unknown>).error) : 'Request failed';
+    return { result: null, error: message, status: value.status };
+  }
+  return { result: body, status: value.status };
+}
 
 // No database provisioned for this project   db.* stays callable but errors
 // only if the function code actually tries to use it, so functions that
@@ -51,12 +82,84 @@ function buildNoDbHelper() {
 // the table. That produced two real bugs at once: signup always claimed
 // "email already exists" (since existing.length was really "row count > 0"),
 // and login compared against an arbitrary row instead of the actual user.
-function toQueryString(query: string | Record<string, unknown>): string {
-  if (typeof query === 'string') return query;
-  if (!query || typeof query !== 'object') return '';
+type FilterArg = string | Record<string, unknown> | undefined;
+
+// A filter as generated functions actually call it: a raw PostgREST condition
+// string ("id=eq.X"), a comma-joined multi-condition string ("id=eq.X,role=eq.Y"
+// PostgREST wants those "&"-joined, not comma-joined), an "or(...)"/"and(...)"
+// compound expression (PostgREST wants "or=(...)"), or a { filter, order/orderBy }
+// wrapper mixing a raw filter with a sort. A comma inside a value (e.g.
+// "id=in.(a,b,c)") isn't followed by "key=" so the split leaves it alone.
+function normalizeFilterString(str: string): string {
+  const trimmed = str.trim();
+  const compound = trimmed.match(/^(or|and)\((.*)\)$/s);
+  if (compound) return `${compound[1]}=(${compound[2]})`;
+  return trimmed.split(/,(?=[A-Za-z_][A-Za-z0-9_.]*=)/).join('&');
+}
+
+function buildOrderParam(filters: Record<string, unknown>): string {
+  if (typeof filters.orderBy === 'string') return `order=${encodeURIComponent(filters.orderBy)}`;
+  if (typeof filters.order === 'string') {
+    // "col,dir" (comma) -> PostgREST's "col.dir" (dot)
+    const [col, dir] = filters.order.split(',');
+    return `order=${encodeURIComponent(col)}.${encodeURIComponent(dir || 'asc')}`;
+  }
+  return '';
+}
+
+// Accepts a raw string, a { filter, order|orderBy } wrapper, or a plain
+// equality-filter object ({ id: 'x' } -> "id=eq.x"). Every generated function
+// this session used one of these three shapes interchangeably   the object
+// form expecting simple equality filtering, but the helper only ever accepted
+// a raw string, so `${query}` on an object silently coerced to "[object Object]",
+// PostgREST ignored the garbage filter, and select() returned EVERY row in
+// the table. That produced two real bugs at once: signup always claimed
+// "email already exists" (since existing.length was really "row count > 0"),
+// and login compared against an arbitrary row instead of the actual user.
+function toQueryString(query: FilterArg): string {
+  if (!query) return '';
+  if (typeof query === 'string') return normalizeFilterString(query);
+  if (typeof query !== 'object') return '';
+  if ('filter' in query || 'order' in query || 'orderBy' in query) {
+    const parts: string[] = [];
+    if (typeof query.filter === 'string' && query.filter) parts.push(normalizeFilterString(query.filter));
+    const orderParam = buildOrderParam(query);
+    if (orderParam) parts.push(orderParam);
+    return parts.join('&');
+  }
   return Object.entries(query)
     .map(([key, value]) => `${encodeURIComponent(key)}=eq.${encodeURIComponent(String(value))}`)
     .join('&');
+}
+
+// The optional 3rd/4th select() arg: per-column range/inequality filters
+// ({ expires_at: { operator: 'gte', value } }) or a sort ({ created_at: { ascending: false } }).
+function buildExtraOpsQuery(extra: Record<string, unknown> | undefined): string {
+  if (!extra || typeof extra !== 'object') return '';
+  return Object.entries(extra)
+    .map(([key, v]) => {
+      if (!v || typeof v !== 'object') return '';
+      const ops = v as Record<string, unknown>;
+      if ('ascending' in ops) return `order=${encodeURIComponent(key)}.${ops.ascending ? 'asc' : 'desc'}`;
+      if ('operator' in ops) return `${encodeURIComponent(key)}=${encodeURIComponent(String(ops.operator))}.${encodeURIComponent(String(ops.value))}`;
+      return '';
+    })
+    .filter(Boolean)
+    .join('&');
+}
+
+// Generated functions call db.* two ways: `const rows = await db.select(...)`
+// (checking `rows`/`rows.length` directly) or Supabase-client style
+// `const { data, error } = await db.select(...)`. The helper only ever
+// returned the raw PostgREST JSON, so every destructuring call-site's `data`
+// was silently `undefined`. Non-enumerable so it doesn't leak into
+// `Object.keys`/spread/JSON.stringify of the returned value.
+function withDataError<T>(json: T): T {
+  if (json && typeof json === 'object') {
+    Object.defineProperty(json, 'data', { value: Array.isArray(json) ? [...json] : { ...json }, enumerable: false, configurable: true });
+    Object.defineProperty(json, 'error', { value: null, enumerable: false, configurable: true });
+  }
+  return json;
 }
 
 function buildDbHelper(ctx: FunctionContext) {
@@ -70,12 +173,24 @@ function buildDbHelper(ctx: FunctionContext) {
   };
 
   return {
-    async select(table: string, query: string | Record<string, unknown> = '') {
-      const qs = toQueryString(query);
+    // Generated functions call this three ways: select(table, filter), or
+    // select(table, columns[], filter, extraOps) to also pick specific
+    // columns and/or add a range filter or sort alongside the equality filter.
+    async select(table: string, columnsOrFilter?: string[] | FilterArg, maybeFilter?: FilterArg, maybeExtra?: Record<string, unknown>) {
+      const columns = Array.isArray(columnsOrFilter) ? columnsOrFilter : undefined;
+      const filters = columns ? maybeFilter : (columnsOrFilter as FilterArg);
+      const extra = columns ? maybeExtra : (maybeFilter as Record<string, unknown> | undefined);
+      const parts: string[] = [];
+      if (columns && columns.length) parts.push(`select=${columns.map(encodeURIComponent).join(',')}`);
+      const filterQs = toQueryString(filters);
+      if (filterQs) parts.push(filterQs);
+      const extraQs = buildExtraOpsQuery(extra);
+      if (extraQs) parts.push(extraQs);
+      const qs = parts.join('&');
       const url = `${base}/${table}${qs ? `?${qs}` : ''}`;
       const res = await fetch(url, { headers });
       if (!res.ok) throw new Error(`db.select failed: ${res.status} ${await res.text()}`);
-      return res.json();
+      return withDataError(await res.json());
     },
     async insert(table: string, data: unknown) {
       const res = await fetch(`${base}/${table}`, {
@@ -84,9 +199,9 @@ function buildDbHelper(ctx: FunctionContext) {
         body: JSON.stringify(data),
       });
       if (!res.ok) throw new Error(`db.insert failed: ${res.status} ${await res.text()}`);
-      return res.json();
+      return withDataError(await res.json());
     },
-    async update(table: string, data: unknown, query: string | Record<string, unknown>) {
+    async update(table: string, data: unknown, query: FilterArg) {
       const qs = toQueryString(query);
       const res = await fetch(`${base}/${table}?${qs}`, {
         method: 'PATCH',
@@ -94,16 +209,28 @@ function buildDbHelper(ctx: FunctionContext) {
         body: JSON.stringify(data),
       });
       if (!res.ok) throw new Error(`db.update failed: ${res.status} ${await res.text()}`);
-      return res.json();
+      return withDataError(await res.json());
     },
-    async delete(table: string, query: string | Record<string, unknown>) {
+    async delete(table: string, query: FilterArg) {
       const qs = toQueryString(query);
       const res = await fetch(`${base}/${table}?${qs}`, {
         method: 'DELETE',
         headers,
       });
       if (!res.ok) throw new Error(`db.delete failed: ${res.status} ${await res.text()}`);
-      return res.json();
+      return withDataError(await res.json());
+    },
+    // pm-manage-users' UPDATE_STATUS action calls this (`db.count('users', {...})`)
+    // to block deactivating the last active Super Admin — there was no such
+    // method at all, so that call threw "db.count is not a function".
+    async count(table: string, query: FilterArg) {
+      const qs = toQueryString(query);
+      const url = `${base}/${table}${qs ? `?${qs}` : ''}`;
+      const res = await fetch(url, { headers: { ...headers, Prefer: 'count=exact', Range: '0-0' } });
+      if (!res.ok) throw new Error(`db.count failed: ${res.status} ${await res.text()}`);
+      const range = res.headers.get('content-range');
+      const count = range ? parseInt(range.split('/')[1] ?? '0', 10) : 0;
+      return { count, error: null };
     },
     async rpc(fn: string, args: unknown = {}) {
       const res = await fetch(`${base}/rpc/${fn}`, {
@@ -112,7 +239,7 @@ function buildDbHelper(ctx: FunctionContext) {
         body: JSON.stringify(args),
       });
       if (!res.ok) throw new Error(`db.rpc failed: ${res.status} ${await res.text()}`);
-      return res.json();
+      return withDataError(await res.json());
     },
   };
 }
@@ -227,6 +354,7 @@ export async function runEdgeFunction(
     TextEncoder,
     TextDecoder,
     crypto: webcrypto,
+    Response: EdgeFunctionResponse,
   });
 
   // Wrap the user code so they can write top-level await
@@ -244,7 +372,8 @@ ${code}
         setTimeout(() => reject(new Error(`Function timed out after ${TIMEOUT_MS / 1000}s`)), TIMEOUT_MS)
       ),
     ]);
-    return { result: result ?? null, logs, durationMs: Date.now() - start };
+    const unwrapped = unwrapResponse(result);
+    return { ...unwrapped, logs, durationMs: Date.now() - start };
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     logger.warn('[EdgeFunction] runtime error', { error: msg });

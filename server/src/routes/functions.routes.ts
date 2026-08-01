@@ -279,9 +279,9 @@ router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: Authe
     persistInvokeLog(req.user!.id, invokeProjectId, bundle.functionId, params, result);
 
     if (result.error) {
-      res.status(422).json(result);
+      res.status(result.status ?? 422).json(result);
     } else {
-      res.json(result);
+      res.status(result.status ?? 200).json(result);
     }
   } catch (err) {
     logger.error('[EdgeFunction] invoke error', err);

@@ -455,6 +455,18 @@ export const databaseService = {
         // 5. Permissions   owner: full + login
         await c.query(`GRANT USAGE, CREATE ON SCHEMA "${schema}" TO "${ownerRole}"`);
 
+        // 5a. Every generated app's login/signup function is told (app-builder
+        // prompt) to hash passwords via pgcrypto's extensions.crypt/gen_salt.
+        // Without USAGE on the shared `extensions` schema, that call fails with
+        // "permission denied for schema extensions"   this was missing from
+        // provisioning entirely, so every tenant hit it the first time anyone
+        // logged in. `extensions` belongs to whichever tenant happened to
+        // CREATE EXTENSION pgcrypto first (a pre-existing quirk of this shared
+        // instance, not something to fix here), but "${superuser}" already
+        // holds USAGE WITH GRANT OPTION on it, so it can re-grant regardless of
+        // who owns it.
+        await c.query(`GRANT USAGE ON SCHEMA extensions TO "${anonRole}", "${serviceRole}", "${ownerRole}"`);
+
         // 5b. Default privileges, scoped to the roles that actually CREATE tables
         // (serviceRole   used by the agent's query_database tool   and ownerRole  
         // used by direct postgres:// connections). `ALTER DEFAULT PRIVILEGES` with
@@ -515,6 +527,103 @@ export const databaseService = {
       await supabase.from('tenant_databases').update({ status: 'error', error_message: msg }).eq('id', record.id);
       throw new Error(`Provisioning failed: ${msg}`);
     }
+  },
+
+  // ── Permission preflight for a newly-written edge function ────────────────
+  // Real incident this closes: an edge function's own code was always
+  // syntax-checked before saving (write_edge_function.ts), but never
+  // permission-checked   `db.select('users', ...)` or `db.rpc('rpc_hash_password', ...)`
+  // only ever failed with "permission denied" the first time a REAL USER hit
+  // it in production, days after the function was written and reported
+  // working. This runs read-only privilege checks against the tables/RPCs the
+  // code actually references and grants whatever's missing   the same grants
+  // provision() already gives every OTHER table, just applied retroactively
+  // for tables/functions that didn't exist yet at provisioning time. Never
+  // touches data, never blocks the write; best-effort, logs and returns a
+  // summary so write_edge_function can tell the agent what it did.
+  async ensureFunctionDbAccess(userId: string, projectId: string, code: string): Promise<string[]> {
+    const notes: string[] = [];
+    try {
+      const status = await this.getStatus(userId, projectId);
+      if (!status || status.status !== 'active') return notes;
+      const schema = status.schema_name;
+      const anonRole = `${schema}_anon`;
+      const serviceRole = `${schema}_service`;
+
+      // Static scan: table names from db.select/insert/update/delete/count,
+      // function names from db.rpc. Regex, not a real parser   this only
+      // grants what it's confident about; anything it misses just falls back
+      // to today's behavior (fails loudly at real invoke time).
+      const tableNames = new Set<string>();
+      for (const m of code.matchAll(/\bdb\.(?:select|insert|update|delete|count)\(\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]/g)) {
+        tableNames.add(m[1]);
+      }
+      const rpcNames = new Set<string>();
+      for (const m of code.matchAll(/\bdb\.rpc\(\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]/g)) {
+        rpcNames.add(m[1]);
+      }
+      if (tableNames.size === 0 && rpcNames.size === 0) return notes;
+
+      const pg = await pool();
+      const c = await pg.connect();
+      try {
+        // Any RPC call at all: pgcrypto-backed helpers (password hashing, etc.)
+        // are the single most common cause of this failure class, and USAGE on
+        // a schema is safe to grant unconditionally   it doesn't expose any
+        // table, just makes the schema's already-EXECUTE-granted functions
+        // resolvable by name.
+        if (rpcNames.size > 0) {
+          const { rows } = await c.query<{ ok: boolean }>(
+            `SELECT has_schema_privilege($1, 'extensions', 'USAGE') AS ok`,
+            [serviceRole]
+          );
+          if (!rows[0]?.ok) {
+            await c.query(`GRANT USAGE ON SCHEMA extensions TO "${anonRole}", "${serviceRole}"`);
+            notes.push('Granted USAGE ON SCHEMA extensions (needed for pgcrypto-backed db.rpc calls)');
+          }
+        }
+
+        for (const table of tableNames) {
+          const exists = await c.query(
+            `SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2`,
+            [schema, table]
+          );
+          if (!exists.rows.length) continue; // typo'd/not-yet-created table   not this function's problem
+
+          const { rows } = await c.query<{ ok: boolean }>(
+            `SELECT has_table_privilege($1, format('%I.%I', $2::text, $3::text), 'SELECT') AS ok`,
+            [serviceRole, schema, table]
+          );
+          if (!rows[0]?.ok) {
+            await c.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON "${schema}"."${table}" TO "${serviceRole}"`);
+            await c.query(`GRANT SELECT ON "${schema}"."${table}" TO "${anonRole}"`);
+            notes.push(`Granted table access on "${table}" (existed but was never granted to this project's DB roles)`);
+          }
+        }
+
+        for (const fn of rpcNames) {
+          const { rows } = await c.query<{ oid: string }>(
+            `SELECT p.oid FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = $1 AND p.proname = $2 LIMIT 1`,
+            [schema, fn]
+          );
+          if (!rows.length) continue;
+          const { rows: execRows } = await c.query<{ ok: boolean }>(
+            `SELECT has_function_privilege($1, $2::oid, 'EXECUTE') AS ok`,
+            [serviceRole, rows[0].oid]
+          );
+          if (!execRows[0]?.ok) {
+            await c.query(`GRANT EXECUTE ON FUNCTION "${schema}"."${fn}" TO "${anonRole}", "${serviceRole}"`);
+            notes.push(`Granted EXECUTE on function "${fn}"`);
+          }
+        }
+      } finally {
+        c.release();
+      }
+    } catch (err) {
+      logger.warn('[databaseService] ensureFunctionDbAccess preflight failed (non-fatal)', err);
+    }
+    return notes;
   },
 
   // ── Deprovision ──────────────────────────────────────────────────────────

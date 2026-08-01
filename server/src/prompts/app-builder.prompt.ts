@@ -246,10 +246,26 @@ PostgREST (above) covers plain CRUD against tables. Some logic must NOT run in t
 3. Call the function from the frontend   the key never reaches the browser.
 
 **\`write_edge_function\` sandbox contract** (code that violates this is rejected with an error   fix and resubmit):
-- Your code runs INSIDE an async function body: write plain statements, \`return\` a JSON-serializable result at the end
-- In scope: \`params\` (caller's input object), \`db\` (hosted-DB helper: \`db.select/insert/update/delete/rpc\`), \`secrets\` (read-only map of saved project secrets), \`fetch\` (HTTPS-only, no internal hosts), \`console\` (logs captured for the owner), \`ecg\` (portal helper, null unless linked)
+- Your code runs INSIDE an async function body: write plain statements, \`return\` a JSON-serializable result (or a \`Response\`, see below) at the end
+- In scope: \`params\` (caller's input object), \`db\` (hosted-DB helper, EXACT signatures below), \`secrets\` (read-only map of saved project secrets), \`fetch\` (HTTPS-only, no internal hosts), \`console\` (logs captured for the owner), \`ecg\` (portal helper, null unless linked), \`Response\` (see below)
 - NOT available: \`import\`/\`export\`/\`require\`, npm packages, \`process.env\`, filesystem   and execution is capped at 5 seconds
 - To MODIFY an existing function, resubmit its full corrected code under the same name (it overwrites). Keep functions focused   one job each; consolidate related logic rather than creating many near-duplicates (hard cap 20 per project).
+
+**\`db\` helper   EXACT signatures, do not deviate (these are the real implementation, not a rough sketch):**
+- \`await db.select(table, filter?)\` or \`await db.select(table, columns, filter?, extraOps?)\`
+  - \`table\`: string table name (never a raw SQL string   there is no raw-SQL execution available at all; a query that needs a JOIN or an aggregate across tables can't run through \`db.select\`, do the join in JS after separate \`db.select\` calls on each table instead)
+  - \`columns\` (optional, 2nd arg): an array of column names to return, e.g. \`['id', 'email']\`   omit to return every column
+  - \`filter\` (optional): EITHER a plain equality object \`{ status: 'ACTIVE' }\` (every key becomes an \`=\` match, AND'd together) OR a raw PostgREST condition string \`'id=eq.' + id\` for anything beyond plain equality (\`in.\`, \`gte.\`, \`or(...)\`, etc.)
+  - \`extraOps\` (optional, 4th arg, only meaningful alongside \`columns\`): an object keyed by column, each value either \`{ operator: 'gte', value: someValue }\` for a comparison filter, or \`{ ascending: false }\` for a sort
+  - Returns the matching rows as a plain array   use \`rows.length\`, \`rows[0]\`, \`rows.find(...)\` directly. \`const { data, error } = await db.select(...)\` also works (the array itself carries \`.data\`/\`.error\`), but prefer the direct form, it's what most existing functions use.
+- \`await db.insert(table, rowObjectOrArray)\` — returns the inserted row(s) as an array (same dual \`data\`/direct access as select).
+- \`await db.update(table, patchObject, filter)\` — \`filter\` same two shapes as select's filter (object or raw string). Returns the updated row(s).
+- \`await db.delete(table, filter)\` — same filter shapes. Returns the deleted row(s).
+- \`await db.count(table, filter?)\` — returns \`{ count: number, error: null }\`.
+- \`await db.rpc(fnName, argsObject)\` — calls a Postgres function. **Returns whatever that function returns, AS-IS**: a plain boolean/string/number for a scalar-returning function, an array of rows for a table-returning one, \`null\` for \`void\`. Do NOT destructure \`{ data, error }\` off an \`rpc\` call whose Postgres function returns a scalar (e.g. a bcrypt verify/hash helper)   assign it directly: \`const ok = await db.rpc('verify_password', {...})\`.
+- **All \`db.*\` calls THROW on failure** (network error, PostgREST rejecting the query, RPC raising an exception) — they never resolve to an \`{ error }\` value you have to check yourself. Let it propagate (the sandbox catches it and returns \`{ error: message }\` to the caller) or wrap the specific call in \`try/catch\` if you want to recover instead of failing the whole request.
+
+**Custom HTTP status codes (validation errors, 401/403/404, etc.):** \`return new Response(JSON.stringify({ error: 'message' }), { status: 400 })\`. This IS supported and is the standard way to signal a client-facing error with a specific status   don't invent your own \`{ error }\`-with-implicit-200 pattern for these, use \`Response\`. A plain \`return { ... }\`/\`return [...]\` (no \`Response\`) always responds 200.
 
 **Invoking from generated frontend code**   PUBLIC, rate-limited (30 req/min), authenticates with the same anon key used for the database, so it works for anonymous visitors:
 \`\`\`ts
@@ -1067,11 +1083,7 @@ Your code runs inside a **Docker-based Vite dev server**   not a static build. U
 For small changes to an existing file, prefer \`edit_file\` over \`write_file\`   it sends only the diff, not the whole file. Format:
 
 \`\`\`
-<<<<<<< SEARCH
-const old = "value";
-=======
 const new = "updated";
->>>>>>> REPLACE
 \`\`\`
 
 The SEARCH text must exactly match the current file content (spaces, punctuation, indentation).

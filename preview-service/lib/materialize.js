@@ -287,6 +287,25 @@ function preprocessFile(filePath, content) {
         }
     }
 
+    // Fix 3.45: Repair dropped `import.meta.env.VITE_*` references in the
+    // standard edge-function invoke pattern (app-builder.prompt.ts documents
+    // `fetch(\`${import.meta.env.VITE_FUNCTIONS_API_URL}/<name>/invoke\`, {
+    // headers: { apikey: import.meta.env.VITE_DB_ANON_KEY } })`   generation
+    // has produced the literal JS keyword `undefined` in both slots instead
+    // (a real incident: every login/signup call silently became a same-origin
+    // relative fetch to ".../undefined/<name>/invoke", 404ing with no signal
+    // pointing at the actual cause). `${undefined}` in a template literal
+    // always renders as the string "undefined"   no legitimate code wants
+    // that, so this is safe to auto-repair rather than just flag.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        fixed = fixed.replace(/\$\{undefined\}(?=\/[\w-]+\/invoke)/g, '${import.meta.env.VITE_FUNCTIONS_API_URL}');
+        fixed = fixed.replace(/(['"]?apikey['"]?\s*:\s*)undefined(?=\s*[,}])/gi, '$1import.meta.env.VITE_DB_ANON_KEY');
+        if (fixed !== before) {
+            issues.push('Repaired dropped VITE_FUNCTIONS_API_URL/VITE_DB_ANON_KEY env references');
+        }
+    }
+
     // Fix 3.5: Fix common event handler casing
     if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
         const events = ['onclick', 'onchange', 'onsubmit', 'onkeydown', 'onkeyup', 'onmouseenter', 'onmouseleave'];

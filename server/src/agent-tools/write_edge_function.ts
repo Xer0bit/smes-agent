@@ -186,7 +186,21 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
       // this is the ONLY write path for that copy, same as the DB row above.
       const dbStatus = await databaseService.getStatus(ctx.userId, ctx.projectId);
       let invokeUrl = '(provision a database first   invocation needs a tenant schema)';
+      let permissionNote = '';
       if (dbStatus?.status === 'active') {
+        // Permission preflight: a function that syntax-checks fine can still
+        // 403 the first time a real user hits it, if it touches a table/RPC
+        // that was never granted to this project's DB roles (e.g. pgcrypto
+        // via extensions.crypt). Check and self-heal now instead of finding
+        // out from a user's crash report later.
+        try {
+          const grants = await databaseService.ensureFunctionDbAccess(ownerId, ctx.projectId, args.code);
+          if (grants.length > 0) {
+            permissionNote = `\nSelf-healed database permissions before first use: ${grants.join('; ')}.`;
+          }
+        } catch (preflightErr) {
+          logger.warn(`[write_edge_function] permission preflight error for ${name}`, preflightErr);
+        }
         try {
           const creds = await databaseService.getCredentials(ownerId, ctx.projectId);
           if (creds) {
@@ -221,7 +235,7 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
 
       return (
         `${verb} edge function "${name}" (id: ${data.id}). It is active and invocable via ` +
-        `POST ${invokeUrl}.${noDbNote}\n` +
+        `POST ${invokeUrl}.${noDbNote}${permissionNote}\n` +
         `Now tell the user, in plain words: what this function does, what params it expects, and which part ` +
         `of the app calls it. Never show secret values   refer to them by name only.`
       );

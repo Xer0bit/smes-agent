@@ -846,7 +846,17 @@ REMOTE
         "$PROJECT_DIR/hosting-service/" "$VPS4_USER@$VPS4_IP:/opt/ecomgear/hosting-service.staging/"
 
     step "Remote: install deps, atomic swap, Caddy + PM2 restart..."
-    HOSTING_SECRET="${HOSTING_DEPLOY_SECRET:-}"
+    # Real incident: this read HOSTING_DEPLOY_SECRET, but .deploy.env (and
+    # VPS1's own env, via hosting.routes.ts) only ever defined
+    # HOSTING_SERVICE_SECRET   every vps4 deploy silently wrote an EMPTY
+    # secret into VPS4's ecosystem.config.cjs, so every deploy/activate call
+    # from the platform 401'd before writing a single file. Every custom
+    # domain on this node was broken until this was found by hand. Read the
+    # var that's actually defined.
+    HOSTING_SECRET="${HOSTING_SERVICE_SECRET:-}"
+    if [ -z "$HOSTING_SECRET" ]; then
+        echo -e "${YELLOW}  ⚠ HOSTING_SERVICE_SECRET is not set   VPS4 will be deployed with an EMPTY deploy secret, breaking all custom-domain deploys/activations.${NC}"
+    fi
     ssh_vps4 "bash -s" << REMOTE
 set -e
 cd /opt/ecomgear/hosting-service.staging

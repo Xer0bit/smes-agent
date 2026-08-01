@@ -32,7 +32,22 @@ function makeQueryBuilder(table: string) {
     order: () => builder,
     limit: () => builder,
     update: () => builder,
-    upsert: (rows: any[], opts: any) => { upsertCalls.push({ table, rows, opts }); return Promise.resolve({ data: rows, error: null }); },
+    upsert: (data: any, opts: any) => {
+      // provision() upserts a single row object; getCredentials() upserts an
+      // array of secret rows. Normalize so both shapes work.
+      const rows = Array.isArray(data) ? data : [data];
+      upsertCalls.push({ table, rows, opts });
+      // provision() chains .select().single() on the upsert result (needs the
+      // real row back); getCredentials()/deprovision() just await it directly.
+      // Support both without diverging behavior for either.
+      const result = { data: rows, error: null };
+      const upsertResult: any = {
+        select: () => upsertResult,
+        single: () => Promise.resolve({ data: rows[0] ?? null, error: null }),
+        then: (fulfill: any) => fulfill(result),
+      };
+      return upsertResult;
+    },
     delete: (...a: any[]) => { deleteCalls.push({ table, args: a }); return builder; },
   };
 
@@ -99,9 +114,13 @@ describe('databaseService.getCredentials   VITE_DB_* secret sync', () => {
     const keyNames = secretsUpsert.rows.map((r: any) => r.key_name).sort();
     expect(keyNames).toEqual(['VITE_DB_ANON_KEY', 'VITE_DB_API_URL', 'VITE_DB_SCHEMA', 'VITE_FUNCTIONS_API_URL']);
 
-    // Functions live on the API server   never gen.ecomgear.dev, never the tenant DB host.
+    // Functions execute on VPS5 (the tenant function-runner), reached through
+    // the same tenant-scoped cloud.ecomgear.app path as the DB itself   never
+    // api.ecomgear.dev, which stays reserved for EcomGear's own platform API.
+    // (Stale assertion fixed: this used to expect ECOMGEAR_SERVER_URL/api.ecomgear.dev,
+    // which was the wrong host and silently 404'd every generated app's function calls.)
     const fnUrlRow = secretsUpsert.rows.find((r: any) => r.key_name === 'VITE_FUNCTIONS_API_URL');
-    expect(fnUrlRow.key_value).toBe(process.env.ECOMGEAR_SERVER_URL?.replace(/\/$/, '') || 'https://api.ecomgear.dev');
+    expect(fnUrlRow.key_value).toBe(`${creds!.api_url}/functions`);
 
     const apiUrlRow = secretsUpsert.rows.find((r: any) => r.key_name === 'VITE_DB_API_URL');
     expect(apiUrlRow.project_id).toBe('project-1');
@@ -148,5 +167,89 @@ describe('databaseService.deprovision   VITE_DB_* secret cleanup', () => {
 
     const secretsDelete = deleteCalls.find((c) => c.table === 'project_secrets');
     expect(secretsDelete).toBeTruthy();
+  });
+});
+
+// Regression test for a real incident: every generated app's login/signup
+// function is told (app-builder.prompt.ts) to hash passwords via pgcrypto's
+// extensions.crypt/gen_salt, but provisioning never granted USAGE on the
+// shared `extensions` schema   so every one of the ~53 tenants provisioned
+// before this fix hit "permission denied for schema extensions" the first
+// time anyone logged in. The in-app AI agent couldn't fix it itself (its own
+// DB role has no GRANT rights on a schema it doesn't own), so this has to be
+// right at provisioning time, for every tenant, forever.
+// Regression test for the class of bug the extensions-schema incident was an
+// instance of: a function's own code can reference a table/RPC that was never
+// granted to this project's DB roles (created after provisioning, or simply
+// missed), and the only way to find out used to be a real user's crash
+// report. ensureFunctionDbAccess() statically scans db.select/insert/update/
+// delete/rpc calls and self-heals missing grants before write_edge_function
+// ever tells the agent the function is ready.
+describe('databaseService.ensureFunctionDbAccess   permission preflight for new functions', () => {
+  it('grants SELECT/INSERT/UPDATE/DELETE + EXECUTE for tables/RPCs the code references but the DB roles were never granted', async () => {
+    const executed: string[] = [];
+    pgQuery.mockImplementation((sql: string, params?: unknown[]) => {
+      executed.push(sql);
+      if (sql.includes('FROM information_schema.tables')) {
+        return Promise.resolve({ rows: [{ 1: 1 }] }); // table exists
+      }
+      if (sql.includes('has_table_privilege')) {
+        return Promise.resolve({ rows: [{ ok: false }] }); // exists, but never granted
+      }
+      if (sql.includes('FROM pg_proc')) {
+        return Promise.resolve({ rows: [{ oid: '12345' }] }); // rpc exists
+      }
+      if (sql.includes('has_function_privilege')) {
+        return Promise.resolve({ rows: [{ ok: false }] }); // exists, but never granted
+      }
+      if (sql.includes('has_schema_privilege')) {
+        return Promise.resolve({ rows: [{ ok: false }] }); // extensions USAGE missing
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    try {
+      const code = `
+        const orders = await db.select('orders', { id });
+        const hashed = await db.rpc('rpc_hash_password', { password_to_hash: 'x' });
+      `;
+      const notes = await databaseService.ensureFunctionDbAccess('user-1', 'project-1', code);
+
+      expect(notes.some((n) => n.includes('extensions'))).toBe(true);
+      expect(notes.some((n) => n.includes('orders'))).toBe(true);
+      expect(notes.some((n) => n.includes('rpc_hash_password'))).toBe(true);
+
+      expect(executed.some((sql) => sql.includes('GRANT USAGE ON SCHEMA extensions'))).toBe(true);
+      expect(executed.some((sql) => sql.includes('GRANT SELECT, INSERT, UPDATE, DELETE ON "tenant_project1"."orders"'))).toBe(true);
+      expect(executed.some((sql) => sql.includes('GRANT EXECUTE ON FUNCTION "tenant_project1"."rpc_hash_password"'))).toBe(true);
+    } finally {
+      pgQuery.mockReset();
+      pgQuery.mockResolvedValue({ rows: [] });
+    }
+  });
+
+  it('does nothing when the code references no tables/RPCs, or everything is already granted', async () => {
+    pgQuery.mockClear();
+    const notes = await databaseService.ensureFunctionDbAccess('user-1', 'project-1', 'return { ok: true };');
+    expect(notes).toEqual([]);
+    expect(pgQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('databaseService.provision   extensions schema access for password hashing', () => {
+  it('grants USAGE ON SCHEMA extensions to the anon, service, and owner roles', async () => {
+    pgQuery.mockClear();
+    await databaseService.provision('user-ext', 'org-ext', 'project-ext');
+
+    const schema = 'tenant_' + 'project-ext'.replace(/-/g, '').slice(0, 16);
+    const grantCall = pgQuery.mock.calls.find(([sql]: [string]) =>
+      typeof sql === 'string' && sql.includes('GRANT USAGE ON SCHEMA extensions')
+    );
+
+    expect(grantCall).toBeTruthy();
+    const sql: string = grantCall![0];
+    expect(sql).toContain(`${schema}_anon`);
+    expect(sql).toContain(`${schema}_service`);
+    expect(sql).toContain(`${schema}_owner`);
   });
 });
