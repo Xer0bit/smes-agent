@@ -69,12 +69,12 @@ export default function CreateAgentPage() {
   const connectorTypes = tpl?.connectorTypes ?? tpl?.connector_types ?? [];
   const scheduleCapable = tpl?.scheduleCapable ?? tpl?.schedule_capable ?? false;
   const instructionsHint = tpl?.instructionsHint ?? tpl?.instructions_hint;
-  // Template connectorTypes are `zapier-mcp-<platform>`-shaped; a real connector
-  // may be the generic multi-platform `zapier` type instead, so match on the
+  // Template connectorTypes are `buffer-<platform>`-shaped; a real connector
+  // may be the generic multi-platform `buffer` type instead, so match on the
   // platforms it actually covers rather than its raw type string (same fix as
   // platformsForConnector elsewhere -- a type-string match alone silently
   // excludes any connector using the generic type).
-  const templatePlatforms = connectorTypes.map(t => t.startsWith('zapier-mcp-') ? t.replace('zapier-mcp-', '') : t);
+  const templatePlatforms = connectorTypes.map(t => t.startsWith('buffer-') ? t.replace('buffer-', '') : t);
   const matchingConnectors = templatePlatforms.length === 0
     ? connectors
     : connectors.filter(c => platformsForConnector(c).some(p => templatePlatforms.includes(p)));
@@ -146,7 +146,7 @@ export default function CreateAgentPage() {
         }
       }
       if (scheduleCapable && scheduleDays.length > 0 && created?.id) {
-        // Backend expects a platform TYPE string ("zapier-mcp-linkedin"), not
+        // Backend expects a platform TYPE string ("buffer-linkedin"), not
         // the connector's row id  passing the raw id silently created a
         // scheduler with a garbage `connector` value that the publish
         // pipeline could never match to a real connector. `platforms` must

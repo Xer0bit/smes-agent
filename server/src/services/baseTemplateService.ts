@@ -140,6 +140,65 @@ function packageJsonHash(): string {
 const HASH_FILE = path.join(BASE_TEMPLATE_DIR, '.ecomgear-hash');
 const NODE_MODULES = path.join(BASE_TEMPLATE_DIR, 'node_modules');
 
+function isMuslLibc(): boolean {
+  try {
+    return fs.readFileSync('/usr/bin/ldd', 'utf8').includes('musl');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * npm has a long-documented bug (npm/cli#4828) where installing an optional
+ * native dependency -- Rollup's platform binary here -- can silently produce
+ * a CORRUPTED file with no error (npm install exits 0 either way). Verified
+ * directly: the registry tarball for this exact package/version has the
+ * correct published shasum and extracts to a byte-perfect binary via plain
+ * curl + tar, every time -- npm's own install/extraction step is what
+ * corrupts it locally. Work around it by re-extracting this one small
+ * package straight from its registry tarball, bypassing npm's install path
+ * for just this file.
+ */
+async function verifyOrFixRollupNativeBinary(templateDir: string): Promise<void> {
+  const platformPkg =
+    process.platform === 'linux' ? (isMuslLibc() ? '@rollup/rollup-linux-x64-musl' : '@rollup/rollup-linux-x64-gnu') :
+    process.platform === 'darwin' ? (process.arch === 'arm64' ? '@rollup/rollup-darwin-arm64' : '@rollup/rollup-darwin-x64') :
+    null;
+  if (!platformPkg) return; // Windows, or another platform this check doesn't cover
+
+  const pkgDir = path.join(templateDir, 'node_modules', platformPkg);
+  if (!fs.existsSync(pkgDir)) return; // nothing to verify (e.g. unsupported platform, wasm fallback)
+
+  // Does the binary actually load? (Exit code from npm install says nothing
+  // useful here -- that's the whole bug.)
+  try {
+    await execAsync(`node -e "require('${platformPkg}')"`, { cwd: templateDir, timeout: 15_000 });
+    return; // already fine
+  } catch {
+    // fall through to the fix below
+  }
+
+  console.log(`[BaseTemplate] ${platformPkg} failed to load -- re-extracting it directly from the npm registry`);
+  try {
+    const version = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8')).version;
+    const tarballUrl = `https://registry.npmjs.org/${platformPkg}/-/${platformPkg.split('/')[1]}-${version}.tgz`;
+    const tmpTar = path.join(os.tmpdir(), `${platformPkg.split('/')[1]}-${version}-${Date.now()}.tgz`);
+    const tmpExtract = `${tmpTar}.extract`;
+    await execAsync(`curl -sL "${tarballUrl}" -o "${tmpTar}"`, { timeout: 60_000 });
+    fs.mkdirSync(tmpExtract, { recursive: true });
+    await execAsync(`tar -xzf "${tmpTar}" -C "${tmpExtract}"`, { timeout: 30_000 });
+    // Overwrite the whole package dir with the freshly-extracted contents.
+    fs.rmSync(pkgDir, { recursive: true, force: true });
+    fs.renameSync(path.join(tmpExtract, 'package'), pkgDir);
+    fs.rmSync(tmpTar, { force: true });
+    fs.rmSync(tmpExtract, { recursive: true, force: true });
+    await execAsync(`node -e "require('${platformPkg}')"`, { cwd: templateDir, timeout: 15_000 });
+    console.log(`[BaseTemplate] ${platformPkg} re-extracted and verified working`);
+  } catch (e) {
+    console.error(`[BaseTemplate] Could not fix ${platformPkg} -- Vite will fail to start:`, (e as Error).message.slice(0, 300));
+  }
+}
+
 // ─── Scaffold files written into every new project ────────────────────────────
 // These files are copied (not hard-linked) since each project may customise them.
 
@@ -925,6 +984,16 @@ export async function ensureBaseTemplate(): Promise<void> {
     if (stderr && !stderr.includes('npm warn')) {
       console.warn('[BaseTemplate] npm install stderr:', stderr.slice(0, 500));
     }
+
+    // Rollup's platform-native binary (an npm optionalDependency) has been
+    // confirmed CORRUPTED by npm's own install/extraction step -- not a bad
+    // download: the exact same registry tarball, fetched and extracted by
+    // hand (curl + tar), produces a byte-perfect binary every time. This is
+    // npm's own long-documented optional-dependency bug (npm/cli#4828).
+    // Work around it by re-extracting this one small package directly from
+    // its registry tarball, bypassing npm's extraction entirely.
+    await verifyOrFixRollupNativeBinary(BASE_TEMPLATE_DIR);
+
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
     console.log(`[BaseTemplate] Base template ready in ${elapsed}s`);
 
@@ -978,6 +1047,23 @@ export async function initProjectFromTemplate(destDir: string): Promise<void> {
     await execAsync(`cp -r "${NODE_MODULES}/." "${destModules}/"`);
   }
 
+  // Rollup's platform-native binary has been observed corrupted specifically
+  // when accessed through a hard link (this project's copy AND the golden
+  // template's own copy going bad together, even though each verified fine
+  // moments earlier) -- something about a shared inode + Vite/Node's dlopen
+  // of a native addon doesn't survive on some filesystems. Break the link
+  // for just this one file: delete the hardlinked copy and lay down a real,
+  // independent copy instead. Cheap (one small binary) unlike falling back
+  // to cp -r for the whole ~480-package tree.
+  for (const nativePkg of ['@rollup/rollup-linux-x64-gnu', '@rollup/rollup-linux-x64-musl', '@rollup/rollup-darwin-arm64', '@rollup/rollup-darwin-x64']) {
+    const srcPkgDir = path.join(NODE_MODULES, nativePkg);
+    const destPkgDir = path.join(destModules, nativePkg);
+    if (fs.existsSync(srcPkgDir)) {
+      fs.rmSync(destPkgDir, { recursive: true, force: true });
+      fs.cpSync(srcPkgDir, destPkgDir, { recursive: true });
+    }
+  }
+
   // Seed a package.json if the project doesn't have one yet
   if (!fs.existsSync(destPkg)) {
     fs.writeFileSync(destPkg, JSON.stringify(COMMON_PACKAGE_JSON, null, 2), 'utf8');
@@ -998,6 +1084,13 @@ export async function initProjectFromTemplate(destDir: string): Promise<void> {
       fs.writeFileSync(destFile, content, 'utf8');
     }
   }
+
+  // Re-check right here, on THIS project's copy, as late as possible before
+  // Vite runs -- the corruption described in verifyOrFixRollupNativeBinary's
+  // doc comment has been observed appearing minutes after a copy verified
+  // fine, so checking immediately after ensureBaseTemplate() (which runs
+  // once per machine, not per project) isn't late enough.
+  await verifyOrFixRollupNativeBinary(destDir);
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(2);
   console.log(`[BaseTemplate] node_modules ready in ${elapsed}s`);

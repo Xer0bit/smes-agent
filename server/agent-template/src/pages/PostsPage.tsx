@@ -18,20 +18,20 @@ const defaultTab: Tab = configuredDefaultTab && (TABS as readonly string[]).incl
 
 const PLATFORM_LABELS: Record<string, string> = {
   linkedin: 'LinkedIn', x: 'X', twitter: 'X', instagram: 'Instagram', facebook: 'Facebook',
-  youtube: 'YouTube', tiktok: 'TikTok', threads: 'Threads', pinterest: 'Pinterest',
-  telegram: 'Telegram', whatsapp: 'WhatsApp',
+  youtube: 'YouTube', tiktok: 'TikTok', threads: 'Threads', bluesky: 'Bluesky',
+  whatsapp: 'WhatsApp',
 };
 
 // A connector's `platforms` array (set at creation, or backfilled server-side
-// for older rows) is the authoritative source -- one Zapier MCP connector can
-// cover several platforms at once (e.g. type: 'zapier' with
+// for older rows) is the authoritative source -- one Buffer connector can
+// cover several platforms at once (e.g. type: 'buffer' with
 // platforms: ['linkedin','facebook','youtube']), not just one. Only fall back
-// to guessing from `type` (`zapier-mcp-<platform>`, or the native `whatsapp`)
+// to guessing from `type` (`buffer-<platform>`, or the native `whatsapp`)
 // for legacy connectors created before the `platforms` field existed.
 export function platformsForConnector(c: { type: string; platforms?: string[] }): string[] {
   if (Array.isArray(c.platforms) && c.platforms.length > 0) return c.platforms;
   if (c.type === 'whatsapp') return ['whatsapp'];
-  if (c.type.startsWith('zapier-mcp-')) return [c.type.replace('zapier-mcp-', '')];
+  if (c.type.startsWith('buffer-')) return [c.type.replace('buffer-', '')];
   return [];
 }
 
@@ -159,7 +159,7 @@ export default function PostsPage() {
     }
   };
 
-  const handleUpdate = async (data: { content: string; platform: string }) => {
+  const handleUpdate = async (data: { content: string; platform: string; scheduledAt?: string }) => {
     if (!editingPost?.id) return;
     setModalLoading(true);
     try {
@@ -411,7 +411,11 @@ export default function PostsPage() {
       {editingPost && (
         <PostModal
           connectedPlatforms={connectedPlatforms}
-          initial={{ content: editingPost.content ?? '', platform: editingPost.platform ?? '' }}
+          initial={{
+            content: editingPost.content ?? '',
+            platform: editingPost.platform ?? '',
+            scheduledAt: editingPost.scheduledAt ?? editingPost.scheduled_at ?? undefined,
+          }}
           onClose={() => setEditingPost(null)}
           onSave={handleUpdate}
           loading={modalLoading}
@@ -483,22 +487,52 @@ function RegenerateModal({ onClose, onRegenerate, loading }: {
   );
 }
 
+// ISO string -> the local-time value a <input type="datetime-local"> needs
+// (YYYY-MM-DDTHH:mm, no seconds/timezone). Empty string if unset.
+function toDatetimeLocalValue(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function PostModal({ connectedPlatforms, initial, onClose, onSave, loading }: {
   connectedPlatforms: string[];
-  initial?: { content: string; platform: string };
+  initial?: { content: string; platform: string; scheduledAt?: string };
   onClose: () => void;
   onSave: (data: any) => void;
   loading: boolean;
 }) {
+  const isCreate = !initial;
   const [content, setContent] = useState(initial?.content ?? '');
   const [platform, setPlatform] = useState(initial?.platform || connectedPlatforms[0] || '');
+  // agentId only applies to creating a brand-new post -- an existing post is
+  // already attributed to whichever agent wrote (or was assigned to) it.
+  const [agentId, setAgentId] = useState(() => ECG.agentIds[0] ?? '');
+  // Publish time, editable in both modes: empty on create = save as a draft
+  // awaiting review (unchanged default); filled in = schedule it. Editing an
+  // existing post's time here does the same PATCH the calendar's
+  // drag-to-reschedule already uses -- this is just a more discoverable path
+  // to the same capability, not a new backend behavior.
+  const [scheduledAt, setScheduledAt] = useState(() => toDatetimeLocalValue(initial?.scheduledAt));
   const limit = useMemo(() => platformCharLimit(platform), [platform]);
   const overLimit = content.length > limit;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!content.trim() || !platform || overLimit) return;
-    onSave({ content: content.trim(), platform });
+    const scheduledAtIso = scheduledAt ? new Date(scheduledAt).toISOString() : undefined;
+    if (isCreate) {
+      onSave({
+        content: content.trim(),
+        platform,
+        agentId,
+        ...(scheduledAtIso ? { scheduledAt: scheduledAtIso, status: 'scheduled' } : {}),
+      });
+    } else {
+      onSave({ content: content.trim(), platform, ...(scheduledAtIso ? { scheduledAt: scheduledAtIso } : {}) });
+    }
   };
 
   return (
@@ -547,6 +581,40 @@ export function PostModal({ connectedPlatforms, initial, onClose, onSave, loadin
                 ))}
               </select>
             )}
+          </div>
+
+          {isCreate && ECG.agentIds.length > 1 && (
+            <div>
+              <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Agent</label>
+              <select
+                value={agentId}
+                onChange={e => setAgentId(e.target.value)}
+                className="w-full px-3 py-2 border focus:outline-none"
+                style={{ fontSize: 'var(--text-small)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
+              >
+                {ECG.agentIds.map(id => (
+                  <option key={id} value={id}>{ECG.agentNames[id] ?? id}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div>
+            <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>
+              Publish at {isCreate ? '(optional)' : ''}
+            </label>
+            <input
+              type="datetime-local"
+              value={scheduledAt}
+              onChange={e => setScheduledAt(e.target.value)}
+              className="w-full px-3 py-2 border focus:outline-none"
+              style={{ fontSize: 'var(--text-small)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
+            />
+            <p className="mt-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>
+              {isCreate
+                ? 'Leave blank to save as a draft awaiting review instead of scheduling it.'
+                : 'Change this to reschedule the post (same as dragging it on the calendar).'}
+            </p>
           </div>
 
           <div className="flex gap-3 pt-2">

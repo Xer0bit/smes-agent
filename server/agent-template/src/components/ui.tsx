@@ -238,8 +238,7 @@ export const PLATFORM_META: Record<string, { label: string; bar: string }> = {
   tiktok:    { label: 'TikTok',    bar: '#69C9D0' },
   whatsapp:  { label: 'WhatsApp',  bar: '#25D366' },
   threads:   { label: 'Threads',   bar: '#334155' },
-  pinterest: { label: 'Pinterest', bar: '#E60023' },
-  telegram:  { label: 'Telegram',  bar: '#229ED9' },
+  bluesky:   { label: 'Bluesky',   bar: '#0085FF' },
 };
 export function platformMeta(p: string) {
   return PLATFORM_META[p.toLowerCase()] ?? { label: p, bar: 'var(--muted)' };
@@ -247,10 +246,10 @@ export function platformMeta(p: string) {
 
 // Hard character limits per platform (mirrors queue-service/worker.ts's
 // PLATFORM_LIMITS on the agent-portal side -- static, small enough to
-// duplicate client-side rather than add a new endpoint just to read 11 numbers).
+// duplicate client-side rather than add a new endpoint just to read these numbers).
 export const PLATFORM_CHAR_LIMIT: Record<string, number> = {
   linkedin: 3000, instagram: 2200, facebook: 63000, x: 280, twitter: 280,
-  youtube: 5000, threads: 500, tiktok: 2200, pinterest: 800, telegram: 4096,
+  youtube: 5000, threads: 500, tiktok: 2200, bluesky: 300,
   whatsapp: 4096,
 };
 export function platformCharLimit(p: string): number {

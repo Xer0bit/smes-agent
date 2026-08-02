@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
-  Plug, Zap, MessageCircle, Linkedin, Twitter, Instagram, Facebook, Youtube,
-  Music2, AtSign, Pin, Send, Calendar, Scissors,
+  Plug, Cloud, MessageCircle, Linkedin, Twitter, Instagram, Facebook, Youtube,
+  Music2, AtSign, Feather,
   Plus, Pencil, Trash2, X, RefreshCw, CheckCircle, XCircle, AlertCircle, Search,
 } from 'lucide-react';
 import { ecgApi } from '../lib/ecgClient';
@@ -16,47 +16,46 @@ interface Connector {
   apiKey?: string; api_key?: string;
   phone?: string;
   platforms?: string[];
+  config?: { channelId?: string };
 }
 
-// Every platform Zapier MCP can publish to (see agent-runner's PLATFORM_CONFIG).
-// `zapier` is kept as the generic/legacy option; `whatsapp` is the native
-// (non-Zapier) connector.
+// Every platform Buffer can publish to. `buffer` is kept as the
+// generic/multi-platform option; `whatsapp` is the separate native Meta
+// WhatsApp Business connector (unrelated to social publishing).
 const CONNECTOR_TYPES = [
-  { value: 'zapier',              label: 'Zapier MCP (generic)', Icon: Zap },
-  { value: 'zapier-mcp-linkedin', label: 'LinkedIn',   Icon: Linkedin },
-  { value: 'zapier-mcp-x',        label: 'X (Twitter)', Icon: Twitter },
-  { value: 'zapier-mcp-instagram', label: 'Instagram',  Icon: Instagram },
-  { value: 'zapier-mcp-facebook', label: 'Facebook',    Icon: Facebook },
-  { value: 'zapier-mcp-youtube',  label: 'YouTube',     Icon: Youtube },
-  { value: 'zapier-mcp-tiktok',   label: 'TikTok',      Icon: Music2 },
-  { value: 'zapier-mcp-threads',  label: 'Threads',     Icon: AtSign },
-  { value: 'zapier-mcp-pinterest', label: 'Pinterest',  Icon: Pin },
-  { value: 'zapier-mcp-telegram', label: 'Telegram',    Icon: Send },
-  { value: 'zapier-mcp-google_calendar', label: 'Google Calendar', Icon: Calendar },
-  { value: 'zapier-mcp-fresha',   label: 'Fresha',       Icon: Scissors },
-  { value: 'whatsapp',            label: 'WhatsApp Business', Icon: MessageCircle },
+  { value: 'buffer',           label: 'Buffer (generic)', Icon: Cloud },
+  { value: 'buffer-linkedin',  label: 'LinkedIn',   Icon: Linkedin },
+  { value: 'buffer-x',         label: 'X (Twitter)', Icon: Twitter },
+  { value: 'buffer-instagram', label: 'Instagram',  Icon: Instagram },
+  { value: 'buffer-facebook',  label: 'Facebook',    Icon: Facebook },
+  { value: 'buffer-youtube',   label: 'YouTube',     Icon: Youtube },
+  { value: 'buffer-tiktok',    label: 'TikTok',      Icon: Music2 },
+  { value: 'buffer-threads',   label: 'Threads',     Icon: AtSign },
+  { value: 'buffer-bluesky',   label: 'Bluesky',     Icon: Feather },
+  { value: 'whatsapp',         label: 'WhatsApp Business', Icon: MessageCircle },
 ];
 function typeMeta(type: string) {
   return CONNECTOR_TYPES.find(t => t.value === type) ?? { value: type, label: type, Icon: Plug };
 }
 
-// Matches a Zapier-reported app display name ("LinkedIn", "Instagram for
-// Business", "X (Twitter)") back to our internal zapier-mcp-<platform> type
-// slug, so discovery can tell the user which of their enabled apps we
-// actually support and pre-select it  instead of them guessing among 12
-// dropdown options which one matches what they set up on zapier.com/mcp.
+// Matches a Buffer channel's `service` name ("linkedin", "twitter", "x",
+// "instagram"...) back to our internal buffer-<platform> type slug, so
+// discovery can tell the user which of their connected channels we actually
+// support and pre-select it  instead of them guessing among 8 dropdown
+// options which one matches what they set up in Buffer.
+// NOT YET LIVE-VERIFIED: exact `service` string values from Buffer's
+// channels query aren't confirmed (see buffer.ts in agent-runner for the
+// same caveat) -- keywords below are best-effort guesses at the obvious
+// names and should be checked against a real discovery response.
 const APP_NAME_KEYWORDS: Array<{ type: string; keywords: string[] }> = [
-  { type: 'zapier-mcp-linkedin', keywords: ['linkedin'] },
-  { type: 'zapier-mcp-x', keywords: ['twitter', 'x (twitter)'] },
-  { type: 'zapier-mcp-instagram', keywords: ['instagram'] },
-  { type: 'zapier-mcp-facebook', keywords: ['facebook'] },
-  { type: 'zapier-mcp-youtube', keywords: ['youtube'] },
-  { type: 'zapier-mcp-tiktok', keywords: ['tiktok'] },
-  { type: 'zapier-mcp-threads', keywords: ['threads'] },
-  { type: 'zapier-mcp-pinterest', keywords: ['pinterest'] },
-  { type: 'zapier-mcp-telegram', keywords: ['telegram'] },
-  { type: 'zapier-mcp-google_calendar', keywords: ['google calendar'] },
-  { type: 'zapier-mcp-fresha', keywords: ['fresha'] },
+  { type: 'buffer-linkedin', keywords: ['linkedin'] },
+  { type: 'buffer-x', keywords: ['twitter', 'x (twitter)', ' x'] },
+  { type: 'buffer-instagram', keywords: ['instagram'] },
+  { type: 'buffer-facebook', keywords: ['facebook'] },
+  { type: 'buffer-youtube', keywords: ['youtube'] },
+  { type: 'buffer-tiktok', keywords: ['tiktok'] },
+  { type: 'buffer-threads', keywords: ['threads'] },
+  { type: 'buffer-bluesky', keywords: ['bluesky'] },
 ];
 function matchAppToType(appName: string): string | null {
   const lower = appName.toLowerCase();
@@ -150,7 +149,7 @@ export default function ConnectorsPage() {
       {error && <div className="px-4 py-3" style={{ fontSize: 'var(--text-small)', color: 'var(--danger)', background: 'var(--danger-bg)', borderRadius: 'var(--radius)' }}>{error}</div>}
       {!loading && !rows.length && (
         <EmptyState Icon={Plug} title="No connectors configured"
-          hint="Connect a platform via Zapier MCP so your agents can publish content there directly."
+          hint="Connect a platform via Buffer so your agents can publish content there directly."
           action={
             <button onClick={() => setShowCreate(true)}
               className="flex items-center gap-2 px-4 py-2 font-medium text-white hover:opacity-90"
@@ -174,7 +173,7 @@ export default function ConnectorsPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold truncate" style={{ fontSize: 'var(--text-body)', color: 'var(--text)' }}>{c.name}</p>
-                    <p className="mt-0.5" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{meta.label} · via Zapier MCP</p>
+                    <p className="mt-0.5" style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }}>{meta.label} · via {c.type === 'whatsapp' ? 'Meta WhatsApp Business' : 'Buffer'}</p>
                   </div>
                 </div>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border shrink-0" style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: statusCfg.color }}>
@@ -253,23 +252,24 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
   loading: boolean;
 }) {
   const [name, setName] = useState(connector?.name ?? '');
-  const [type, setType] = useState(connector?.type ?? 'zapier-mcp-linkedin');
+  const [type, setType] = useState(connector?.type ?? 'buffer-linkedin');
   const [apiKey, setApiKey] = useState('');
+  const [channelId, setChannelId] = useState(connector?.config?.channelId ?? '');
   const [phone, setPhone] = useState(connector?.phone ?? '');
-  // Which platforms this connector actually covers. One Zapier MCP token can
+  // Which platforms this connector actually covers. One Buffer API key can
   // cover several at once (linkedin + facebook + youtube, say) -- this is
   // what posts.list()'s platform filter and the New Post platform dropdown
   // actually read (`platformsForConnector` in PostsPage.tsx), NOT `type`.
-  // A narrow type (zapier-mcp-linkedin) always implies exactly one platform;
-  // the generic `zapier` type needs this set explicitly via discovery below.
+  // A narrow type (buffer-linkedin) always implies exactly one platform;
+  // the generic `buffer` type needs this set explicitly via discovery below.
   const [platforms, setPlatforms] = useState<Set<string>>(new Set(connector?.platforms ?? []));
 
   const [discovering, setDiscovering] = useState(false);
   const [discoveredApps, setDiscoveredApps] = useState<string[] | null>(null);
   const [discoverError, setDiscoverError] = useState('');
 
-  const isZapier = type === 'zapier' || type.startsWith('zapier-mcp');
-  const isGeneric = type === 'zapier';
+  const isBuffer = type === 'buffer' || type.startsWith('buffer-');
+  const isGeneric = type === 'buffer';
 
   async function handleDiscover() {
     if (!apiKey.trim()) return;
@@ -279,22 +279,22 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
     try {
       const { apps } = await ecgApi.connectors.discover(apiKey.trim());
       setDiscoveredApps(apps);
-      if (apps.length === 0) setDiscoverError('This token is valid but has no apps enabled yet. Add one at zapier.com/mcp.');
+      if (apps.length === 0) setDiscoverError('This key is valid but has no channels connected yet. Add one in your Buffer account.');
     } catch (e: any) {
-      setDiscoverError(e?.message ?? 'Could not check this token.');
+      setDiscoverError(e?.message ?? 'Could not check this key.');
     } finally {
       setDiscovering(false);
     }
   }
 
-  // Toggle a discovered app in/out of the platform set (multi-select -- one
-  // token commonly covers several platforms at once). For a narrow single-
-  // platform type, clicking still just re-confirms that one platform and can
-  // switch `type` to match if it was left on a different narrow value.
+  // Toggle a discovered channel in/out of the platform set (multi-select --
+  // one API key commonly covers several platforms at once). For a narrow
+  // single-platform type, clicking still just re-confirms that one platform
+  // and can switch `type` to match if it was left on a different narrow value.
   function toggleDiscoveredApp(appName: string) {
     const matched = matchAppToType(appName);
     if (!matched) return;
-    const platformKey = matched.startsWith('zapier-mcp-') ? matched.replace('zapier-mcp-', '') : matched;
+    const platformKey = matched.startsWith('buffer-') ? matched.replace('buffer-', '') : matched;
     setPlatforms(prev => {
       const next = new Set(prev);
       if (next.has(platformKey)) next.delete(platformKey); else next.add(platformKey);
@@ -307,14 +307,15 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !type) return;
-    // Narrow types (zapier-mcp-linkedin, whatsapp) always imply exactly one
+    // Narrow types (buffer-linkedin, whatsapp) always imply exactly one
     // platform even if discovery was never run for them; only the generic
-    // `zapier` type relies entirely on the multi-select above.
+    // `buffer` type relies entirely on the multi-select above.
     const resolvedPlatforms = isGeneric
       ? [...platforms]
       : (platforms.size > 0 ? [...platforms] : platformsForConnector({ type, platforms: [] }));
     const payload: Record<string, unknown> = { name: name.trim(), type, platforms: resolvedPlatforms };
-    if (isZapier && apiKey.trim()) payload.api_key = apiKey.trim();
+    if (isBuffer && apiKey.trim()) payload.api_key = apiKey.trim();
+    if (isBuffer) payload.config = { channelId: channelId.trim() };
     if (type === 'whatsapp') payload.phone = phone.trim();
     onSave(payload);
   };
@@ -344,15 +345,15 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
             />
           </div>
 
-          {isZapier && (
+          {isBuffer && (
             <div>
-              <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Zapier MCP Token</label>
+              <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Buffer API Key</label>
               <div className="flex gap-2">
                 <input
                   type="password"
                   value={apiKey}
                   onChange={e => { setApiKey(e.target.value); setDiscoveredApps(null); setDiscoverError(''); }}
-                  placeholder={connector ? 'Leave blank to keep current token' : 'Paste your token from zapier.com/mcp'}
+                  placeholder={connector ? 'Leave blank to keep current key' : 'Paste your API key from your Buffer account settings'}
                   className="flex-1 min-w-0 px-3 py-2 border font-mono focus:outline-none"
                   style={{ fontSize: 'var(--text-tiny)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
                 />
@@ -360,12 +361,12 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
                   className="flex items-center gap-1.5 px-3 py-2 font-medium border shrink-0 disabled:opacity-50"
                   style={{ fontSize: 'var(--text-tiny)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}>
                   <Search className={`w-3.5 h-3.5 ${discovering ? 'animate-spin' : ''}`} />
-                  {discovering ? 'Checking…' : 'Check apps'}
+                  {discovering ? 'Checking…' : 'Check channels'}
                 </button>
               </div>
               <p style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }} className="mt-1">
-                "Check apps" tells you exactly which platforms this token can publish to  select every one this
-                connector should cover (one token commonly covers several).
+                "Check channels" tells you exactly which platforms this key can publish to  select every one this
+                connector should cover (one key commonly covers several).
               </p>
 
               {discoverError && (
@@ -374,11 +375,11 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
 
               {discoveredApps && discoveredApps.length > 0 && (
                 <div className="mt-2 space-y-1.5">
-                  <p style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }} className="font-medium">Found on this token  tap each platform to include it:</p>
+                  <p style={{ fontSize: 'var(--text-tiny)', color: 'var(--muted)' }} className="font-medium">Found on this key  tap each channel to include it:</p>
                   <div className="flex flex-wrap gap-1.5">
                     {discoveredApps.map(app => {
                       const matched = matchAppToType(app);
-                      const platformKey = matched?.startsWith('zapier-mcp-') ? matched.replace('zapier-mcp-', '') : matched;
+                      const platformKey = matched?.startsWith('buffer-') ? matched.replace('buffer-', '') : matched;
                       const isSelected = !!platformKey && platforms.has(platformKey);
                       return (
                         <button key={app} type="button" onClick={() => toggleDiscoveredApp(app)}
@@ -404,6 +405,18 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
                   Select at least one platform above  a generic connector with none picked won't show up anywhere posts can target it.
                 </p>
               )}
+
+              <div className="mt-3">
+                <label className="block font-medium mb-1" style={{ fontSize: 'var(--text-small)', color: 'var(--text)' }}>Buffer Channel ID</label>
+                <input
+                  type="text"
+                  value={channelId}
+                  onChange={e => setChannelId(e.target.value)}
+                  placeholder="Pick a channel from 'Check channels' above, or paste its ID"
+                  className="w-full px-3 py-2 border font-mono focus:outline-none"
+                  style={{ fontSize: 'var(--text-tiny)', background: 'var(--input-bg)', borderColor: 'var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)' }}
+                />
+              </div>
             </div>
           )}
 
@@ -420,7 +433,7 @@ function ConnectorModal({ connector, onClose, onSave, loading }: {
             </select>
             {!isGeneric && discoveredApps && !discoveredApps.some(a => matchAppToType(a) === type) && (
               <p className="mt-1" style={{ fontSize: 'var(--text-tiny)', color: 'var(--danger)' }}>
-                This platform wasn't found on your token  saving now may not actually work.
+                This platform wasn't found on your key  saving now may not actually work.
               </p>
             )}
           </div>

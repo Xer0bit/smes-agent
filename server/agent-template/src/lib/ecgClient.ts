@@ -157,7 +157,7 @@ export const ecgApi = {
 
   // Connectors   the backend router (connectors.ts) is mounted directly at
   // /v1/ecg/connectors but its actual routes all live under /org (/org,
-  // /org/:id, /org/:id/test, /zapier/discover)   there is no bare `/` or
+  // /org/:id, /org/:id/test, /buffer/discover)   there is no bare `/` or
   // `/:id` route. Every call here used to 404 silently before this fix.
   connectors: {
     list:    () => req('GET', '/connectors/org'),
@@ -165,9 +165,9 @@ export const ecgApi = {
     update:  (id: string, data: unknown) => req('PATCH', `/connectors/org/${id}`, data),
     delete:  (id: string) => req('DELETE', `/connectors/org/${id}`),
     test:    (id: string) => req('POST', `/connectors/org/${id}/test`),
-    // Checks which apps are actually enabled on a Zapier MCP token BEFORE
+    // Checks which channels are actually connected on a Buffer API key BEFORE
     // creating a connector  avoids guessing which platform dropdown option
-    // matches what's set up on zapier.com/mcp.
+    // matches what's set up in Buffer.
     discover: (token: string) => req('POST', '/connectors/discover', { token }) as Promise<{ apps: string[] }>,
   },
 

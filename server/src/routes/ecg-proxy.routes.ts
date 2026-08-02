@@ -126,6 +126,18 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
 
   if (seg[0] === 'planned-posts') {
     if (seg.length === 1 && method === 'GET') return { tool: 'get_planned_posts', args: pick(query, ['agentId', 'agentId']) };
+    // Manually-authored post (the dashboard's "New Post" modal) -- was
+    // previously unmapped entirely and fell through to 'unsupported', the
+    // exact 501 "This action is not available for an MCP-connected
+    // dashboard" the UI showed. agentId is required by the backend's own
+    // POST /planned-posts; scheduledAt/status are optional (draft by default).
+    if (seg.length === 1 && method === 'POST') {
+      return {
+        tool: 'create_post',
+        args: pick(body, ['agentId', 'agent_id'], ['content', 'content'], ['platform', 'platform'],
+          ['scheduledAt', 'scheduled_at'], ['status', 'status']),
+      };
+    }
     if (seg.length === 2 && seg[1] === 'bulk-approve' && method === 'POST') {
       return { tool: 'bulk_approve_posts', args: { postIds: Array.isArray(body?.postIds) ? body.postIds : [] } };
     }
@@ -181,7 +193,7 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
   }
 
   if (seg[0] === 'connectors' && seg[1] === 'discover' && method === 'POST') {
-    return { tool: 'discover_zapier_apps', args: { token: body?.token } };
+    return { tool: 'discover_buffer_channels', args: { token: body?.token } };
   }
 
   if (seg[0] === 'stats' && method === 'GET' && seg.length === 1) return { tool: 'get_stats', args: {} };

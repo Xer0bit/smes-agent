@@ -74,6 +74,12 @@ function buildFixtures(agentIds: string[], agentNames: Record<string, string>): 
       durationMs: 30_000 + i * 4_000,
       cost: 0.008 + i * 0.001,
       error: failed ? 'Model request timed out after 30s' : undefined,
+      // "Needs review" preview state: r1 untouched, r2 approved, r3 flagged,
+      // rest untouched -- exercises RunsPage's default filter + all three
+      // dot states on AgentDetailPage in one fixture set.
+      reviewedAt: i === 1 ? new Date(now - day).toISOString() : null,
+      flagged: i === 2,
+      post: !failed ? { platform: 'linkedin', content: `Preview post content for run ${i + 1} -- this is what RunReviewContent shows once you expand a row.` } : null,
     };
   });
 
@@ -164,7 +170,21 @@ export function startMockApi(port: number, agentIds: string[], agentNames: Recor
         if (path.includes('/generate')) return send({ id: randomUUID(), width: 1080, height: 1080, background: '#ffffff', objects: [], status: 'draft', platform: payload.platform ?? 'linkedin' });
         return send({ id: randomUUID(), width: 1080, height: 1080, background: '#ffffff', objects: [], status: 'draft' });
       }
-      if (path.startsWith('/runs')) return send(fixtures.runs);
+      if (path.startsWith('/runs')) {
+        const idMatch = path.match(/^\/runs\/([^/]+)$/);
+        if (idMatch) {
+          const run = fixtures.runs.find(r => r.id === idMatch[1]);
+          if (!run) return send({ error: 'not found' }, 404);
+          if (req.method === 'PATCH') {
+            if (payload.reviewed === true) run.reviewedAt = new Date().toISOString();
+            if (payload.flagged === true) { run.flagged = true; (run as any).flagNote = payload.flagNote; }
+            if (payload.status === 'cancelled') run.status = 'cancelled';
+            return send({ run });
+          }
+          return send({ run, post: run.post ?? null });
+        }
+        return send(fixtures.runs);
+      }
       if (path === '/notifications' || path.startsWith('/notifications?')) return send([]);
       if (path.startsWith('/notifications')) return send({ ok: true });
       if (path.startsWith('/agents')) {

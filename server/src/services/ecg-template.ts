@@ -92,8 +92,15 @@ interface DesignCfg {
 // Sidebar is a solid, saturated surface, not a near-white panel that blends
 // into the body   this single choice is the biggest lever on whether a
 // generated dashboard reads as "a real product" vs. a generic admin scaffold.
+// EXCEPTION: 'light' deliberately breaks this rule -- redesigned to match
+// Buffer's actual chrome (white/near-white sidebar with a subtle border, blue
+// accent used sparingly, not a saturated color block) since this platform's
+// job -- an agent managing social media -- is the same job Buffer's own UI is
+// built around. cssVars() derives sidebar text/hover shades from
+// isDark(sidebarColor), so this alone flips the whole sidebar to its light
+// variant automatically, no component changes needed.
 const THEME_DEFAULTS: Record<string, Pick<DesignCfg, 'accentColor' | 'sidebarColor' | 'bodyColor'>> = {
-  light:  { accentColor: '#2563eb', sidebarColor: '#161c3d', bodyColor: '#f4f5f7' },
+  light:  { accentColor: '#2C4BFF', sidebarColor: '#fbfbfd', bodyColor: '#ffffff' },
   dark:   { accentColor: '#60a5fa', sidebarColor: '#111827', bodyColor: '#030712' },
   ocean:  { accentColor: '#0ea5c9', sidebarColor: '#0c3d5e', bodyColor: '#eef8fc' },
   forest: { accentColor: '#16a34a', sidebarColor: '#16301f', bodyColor: '#eef8f0' },
@@ -380,10 +387,17 @@ export function seedEcgTemplate(
   const files: Record<string, string> = {};
 
   // Walk template directory
+  // agent-template/ gained its own package.json + node_modules for its
+  // vitest suite (T8) -- exclude those (and other non-template dirs) from
+  // the walk, which previously assumed templateDir only ever contained
+  // source files.
+  const WALK_EXCLUDE = new Set(['node_modules', '.git', 'dist', 'coverage']);
   function walk(dir: string) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory() && WALK_EXCLUDE.has(entry.name)) continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) { walk(full); continue; }
+      if (/\.test\.[jt]sx?$/.test(entry.name)) continue;
       const rel  = path.relative(templateDir, full);
       let content = fs.readFileSync(full, 'utf8');
       // Substitute placeholders
