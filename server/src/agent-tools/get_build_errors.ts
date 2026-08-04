@@ -5,18 +5,97 @@
  * instead of guessing from file contents. Call this FIRST when asked to fix an error.
  */
 import { z } from 'zod';
+import { createClient } from '@supabase/supabase-js';
 import { ToolDefinition, AgentContext } from './types.js';
 import { getBlastRadius } from '../knowledgebase/symbolGraph.js';
 
 // ─── Circuit breaker: detect repeated identical error signatures per project ──
 // Entries expire after MAX_ERROR_HISTORY_AGE_MS to avoid cross-run leakage.
 const MAX_ERROR_HISTORY_AGE_MS = 10 * 60 * 1000; // 10 minutes
-const errorHistory = new Map<string, { signature: string; count: number; ts: number }>();
+
+// Confirmed live 2026-08-04: `ecomgear-gen` runs as a 2-instance PM2 cluster
+// on VPS3   a process-local Map means a retry landing on the OTHER worker
+// silently resets the breaker, exactly when it matters most (the same
+// error repeating is the signal this exists to catch). Backed by a shared
+// Postgres table (build_error_breaker) when Supabase is configured; falls
+// back to the previous in-memory Map only when it isn't (e.g. local dev
+// without env vars set), so this degrades instead of hard-failing.
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || '';
+const breakerDb = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+const errorHistoryFallback = new Map<string, { signature: string; count: number; ts: number }>();
+
+/** Returns whether this (projectId, signature) pair has now been seen 2+
+ *  times in a row within MAX_ERROR_HISTORY_AGE_MS (and the hit count),
+ *  resetting on trip (mirrors the previous Map.delete-on-trip behavior). */
+async function checkCircuitBreaker(projectId: string, signature: string, now: number): Promise<{ tripped: boolean; count: number }> {
+  if (!breakerDb) {
+    const prev = errorHistoryFallback.get(projectId);
+    const isExpired = prev !== undefined && (now - prev.ts) > MAX_ERROR_HISTORY_AGE_MS;
+    if (prev && !isExpired && prev.signature === signature) {
+      prev.count++;
+      prev.ts = now;
+      if (prev.count >= 2) { errorHistoryFallback.delete(projectId); return { tripped: true, count: prev.count }; }
+      return { tripped: false, count: prev.count };
+    }
+    errorHistoryFallback.set(projectId, { signature, count: 1, ts: now });
+    return { tripped: false, count: 1 };
+  }
+
+  const { data: row } = await breakerDb
+    .from('build_error_breaker')
+    .select('signature, hit_count, updated_at')
+    .eq('project_id', projectId)
+    .maybeSingle();
+  const isExpired = row != null && (now - new Date(row.updated_at).getTime()) > MAX_ERROR_HISTORY_AGE_MS;
+
+  if (row && !isExpired && row.signature === signature) {
+    const newCount = row.hit_count + 1;
+    if (newCount >= 2) {
+      await breakerDb.from('build_error_breaker').delete().eq('project_id', projectId);
+      return { tripped: true, count: newCount };
+    }
+    await breakerDb.from('build_error_breaker')
+      .update({ hit_count: newCount, updated_at: new Date(now).toISOString() })
+      .eq('project_id', projectId);
+    return { tripped: false, count: newCount };
+  }
+
+  await breakerDb.from('build_error_breaker')
+    .upsert({ project_id: projectId, signature, hit_count: 1, updated_at: new Date(now).toISOString() });
+  return { tripped: false, count: 1 };
+}
 
 const PREVIEW_SERVICE_URL =
   process.env.PREVIEW_SERVICE_URL ||
   process.env.VITE_PREVIEW_SERVICE_URL ||
   'http://localhost:3001';
+
+// Pulls the module specifier out of a "module not found" style error line
+// (Vite/Rollup and Node phrase these differently, so match either quoting
+// style rather than one exact format) and reduces it to the installable
+// package root  a subpath import like "lodash/debounce" or
+// "@radix-ui/react-dialog/Foo" still installs as "lodash" / "@radix-ui/react-dialog".
+// Relative imports (./, ../) and the app's own "@/" path alias are not npm
+// packages and must never be suggested for install.
+export function extractMissingPackages(errorLines: string[]): string[] {
+  const found = new Set<string>();
+  for (const line of errorLines) {
+    if (!/module not found|cannot find module|cannot resolve|failed to resolve/i.test(line)) continue;
+    // Only the specifier immediately after "import"/"module"/"resolve" is
+    // the missing package  a plain "any quoted string" match would also
+    // catch the unrelated "from \"src/App.tsx\"" file-location clause.
+    const matches = line.matchAll(/\b(?:import|module|resolve)\s+["']([^"']+)["']/gi);
+    for (const m of matches) {
+      const spec = m[1];
+      if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('@/')) continue;
+      const parts = spec.split('/');
+      const root = spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+      if (root) found.add(root);
+    }
+  }
+  return Array.from(found);
+}
 
 const schema = z.object({
   projectId: z.string().describe('The project ID to check for build errors'),
@@ -155,44 +234,51 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
     // Check if any "module not found" errors are for packages the agent declared
     // with <ecomgear-add-dependency> (legacy)   tell the agent to install them.
     const declaredDeps = ctx.getDeclaredDependencies?.() ?? [];
+    const moduleNotFoundErrors = condensed.filter(e =>
+      /module not found|cannot find module|cannot resolve|failed to resolve/i.test(e)
+    );
     const pendingDepNote: string[] = [];
-    if (declaredDeps.length > 0) {
-      const moduleNotFoundErrors = condensed.filter(e =>
-        /module not found|cannot find module|cannot resolve|failed to resolve/i.test(e)
+    const matchingDeps = declaredDeps.filter(dep =>
+      moduleNotFoundErrors.some(e => e.toLowerCase().includes(dep.toLowerCase()))
+    );
+    if (matchingDeps.length > 0) {
+      pendingDepNote.push(
+        `\n\nIMPORTANT: The following packages are declared via <ecomgear-add-dependency> but NOT yet installed: ${matchingDeps.join(', ')}. ` +
+        `Use run_command({ command: "npm install ${matchingDeps.join(' ')}" }) to install them now. Do NOT remove imports or change code.`
       );
-      const matchingDeps = declaredDeps.filter(dep =>
-        moduleNotFoundErrors.some(e => e.toLowerCase().includes(dep.toLowerCase()))
+    }
+
+    // A package the agent never declared via <ecomgear-add-dependency>
+    // (e.g. it just wrote `import { z } from "zod"` assuming it's already
+    // installed) used to dead-end here as a plain "module not found" error
+    // with no next step. Any bare (non-relative, non-@/-alias) specifier
+    // named in a module-not-found error is a genuine npm package by
+    // definition   suggest installing it directly instead of leaving the
+    // agent to rediscover `npm install` on its own.
+    const undeclaredMissing = extractMissingPackages(moduleNotFoundErrors)
+      .filter(pkg => !matchingDeps.some(dep => dep.toLowerCase() === pkg.toLowerCase()));
+    if (undeclaredMissing.length > 0) {
+      pendingDepNote.push(
+        `\n\nIMPORTANT: These imported packages are not installed: ${undeclaredMissing.join(', ')}. ` +
+        `Use run_command({ command: "npm install ${undeclaredMissing.join(' ')}" }) to install them now. Do NOT remove the imports or rewrite the code to avoid them.`
       );
-      if (matchingDeps.length > 0) {
-        pendingDepNote.push(
-          `\n\nIMPORTANT: The following packages are declared via <ecomgear-add-dependency> but NOT yet installed: ${matchingDeps.join(', ')}. ` +
-          `Use run_command({ command: "npm install ${matchingDeps.join(' ')}" }) to install them now. Do NOT remove imports or change code.`
-        );
-      }
     }
 
     // ─── Circuit breaker: if same errors appear 2+ times IN THE SAME RUN, tell agent to STOP ──
     // Entries older than MAX_ERROR_HISTORY_AGE_MS are treated as expired (new run).
+    // Shared across PM2 cluster workers via checkCircuitBreaker   see its comment.
     const now = Date.now();
     const errorSignature = condensed.map(e => e.slice(0, 80)).sort().join('|');
-    const prev = errorHistory.get(projectId);
-    const isExpired = prev && (now - prev.ts) > MAX_ERROR_HISTORY_AGE_MS;
-    if (prev && !isExpired && prev.signature === errorSignature) {
-      prev.count++;
-      prev.ts = now;
-      if (prev.count >= 2) {
-        errorHistory.delete(projectId);
-        return (
-          `CIRCUIT BREAKER: These SAME ${condensed.length} errors appeared ${prev.count + 1} times in a row. ` +
-          'Your fixes are NOT working. STOP calling get_build_errors. ' +
-          'Instead: use write_file to REWRITE the broken file(s) completely from scratch   do not patch them. ' +
-          'After rewriting, call get_build_errors ONE final time, then STOP regardless of result.\n\n' +
-          `Errors: ${condensed.slice(0, 3).map((e, i) => `[${i + 1}] ${e}`).join('\n')}`
-        );
-      }
-    } else {
-      // New error signature, or entry expired (different run)   reset
-      errorHistory.set(projectId, { signature: errorSignature, count: 1, ts: now });
+    const breaker = await checkCircuitBreaker(projectId, errorSignature, now);
+    if (breaker.tripped) {
+      ctx.buildErrorCircuitBreakCount = (ctx.buildErrorCircuitBreakCount ?? 0) + 1;
+      return (
+        `CIRCUIT BREAKER: These SAME ${condensed.length} errors appeared ${breaker.count} times in a row. ` +
+        'Your fixes are NOT working. STOP calling get_build_errors. ' +
+        'Instead: use write_file to REWRITE the broken file(s) completely from scratch   do not patch them. ' +
+        'After rewriting, call get_build_errors ONE final time, then STOP regardless of result.\n\n' +
+        `Errors: ${condensed.slice(0, 3).map((e, i) => `[${i + 1}] ${e}`).join('\n')}`
+      );
     }
 
     return `${diagnosticPrefix} (${condensed.length} unique):\n\n${condensed.map((e, i) => `[${i + 1}] ${e}`).join('\n\n')}${pendingDepNote.join('')}${blastRadiusNote}`;

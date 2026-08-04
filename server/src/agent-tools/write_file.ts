@@ -101,7 +101,7 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
       }
     }
 
-    const { content, fixes } = sanitizeFileContent(args.path, args.content);
+    const { content, fixes, diff: sanitizeDiff } = sanitizeFileContent(args.path, args.content);
 
     // Gate 1: reject source files with ANY bracket imbalance after sanitization.
     // sanitize.ts Phase B auto-repairs truncated code; if imbalance remains, the
@@ -173,7 +173,9 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
       ctx.pendingPreviewFiles.set(args.path, content);
     }
 
-    const fixNote = fixes.length > 0 ? `\nAuto-fixed: ${fixes.join('; ')}` : '';
+    const fixNote = fixes.length > 0
+      ? `\nAuto-fixed: ${fixes.join('; ')}${sanitizeDiff ? `\n\nWhat actually changed:\n${sanitizeDiff}` : ''}`
+      : '';
 
     // Post-write: check if @/ or relative project imports resolve to files on disk.
     // This catches missing dependencies IMMEDIATELY instead of waiting for get_build_errors.

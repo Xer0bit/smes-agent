@@ -108,6 +108,23 @@ function computeEcoCost(costUsd: number): number {
   return Math.round(clamped * 10) / 10;
 }
 
+// ─── Stuck-loop content signal ──────────────────────────────────────────────
+// Cheap word-overlap similarity (Jaccard over normalized word sets, words >2
+// chars only) between two `think` call thoughts — no embeddings/API call,
+// same "character-distance only, no semantic matching" tradeoff sanitize.ts's
+// closestLucideIcon already makes for this codebase: good enough to catch
+// "restating the same conclusion" without adding cost or latency to every step.
+export function thinkContentSimilarity(a: string, b: string): number {
+  const words = (s: string) => new Set(s.toLowerCase().split(/\W+/).filter(w => w.length > 2));
+  const setA = words(a);
+  const setB = words(b);
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let intersection = 0;
+  for (const w of setA) if (setB.has(w)) intersection++;
+  const union = setA.size + setB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
 // ─── Agent params / result types ──────────────────────────────────────────────
 
 export interface AgentRunParams {
@@ -433,6 +450,17 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // the key fact via save_memory so it doesn't re-derive it next step.
   let consecutiveThinkOnlySteps = 0;
   let thinkStreakNoteFiredAt = -1;
+  // Content-based supplement to the step-count-only detector below (Phase 2
+  // of the enhancement checklist's "add a content-based signal instead of
+  // re-tuning the same threshold again"). Purely additive: STUCK_ANALYSIS_THRESHOLD
+  // and the incident history above are untouched, so the documented "6 steps
+  // of genuinely different reasoning is legitimate investigation" case is
+  // unaffected. This only ever SHORTENS the path to hard-stop, and only when
+  // three consecutive `think` calls restate near-identical reasoning   which
+  // is never legitimate (real multi-file investigation always produces
+  // different reasoning text per step, since it's looking at different code).
+  let lastThinkThought: string | null = null;
+  let consecutiveSimilarThinkSteps = 0;
   let stuckAnalysisNoteFiredAt = -1; // step number of last firing, so it can re-fire later in a long run
   // A soft nudge alone isn't enough   a real incident (2026-07-12) showed the
   // model ignore it 3 times in a row (fired at steps 6, 12, 18) and burn the
@@ -1742,8 +1770,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const wasThinkOnlyStep = stepToolNames.length > 0 && stepToolNames.every((n: string) => n === 'think');
           if (wasThinkOnlyStep) {
             consecutiveThinkOnlySteps++;
+            const currentThought = (toolCalls ?? []).find((tc: any) => tc?.toolName === 'think')?.input?.thought;
+            if (typeof currentThought === 'string' && lastThinkThought
+                && thinkContentSimilarity(currentThought, lastThinkThought) >= 0.55) {
+              consecutiveSimilarThinkSteps++;
+            } else {
+              consecutiveSimilarThinkSteps = 0;
+            }
+            lastThinkThought = typeof currentThought === 'string' ? currentThought : null;
           } else {
             consecutiveThinkOnlySteps = 0;
+            consecutiveSimilarThinkSteps = 0;
+            lastThinkThought = null;
           }
           if (consecutiveThinkOnlySteps >= 2 && stepCount - thinkStreakNoteFiredAt >= 2) {
             thinkStreakNoteFiredAt = stepCount;
@@ -1788,8 +1826,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // ignored   stop now, before the run burns the rest for nothing.
           const stuckAndBudgetCritical =
             stepsSinceLastWrite >= STUCK_ANALYSIS_THRESHOLD && runTokens.total > RUN_TOKEN_CAP * 0.65;
+          // Content-based fast path: three consecutive `think` calls that
+          // restate near-identical reasoning (>=0.55 word-overlap) is a much
+          // stronger stuck signal than step-count alone, and short-circuits
+          // straight to hard-stop instead of waiting for STUCK_ANALYSIS_THRESHOLD
+          // steps AND multiple ignored nudges   real multi-file investigation
+          // always produces different reasoning text per step, so this can't
+          // false-positive on the legitimate case the threshold history above
+          // was tuned to protect.
+          const stuckAndContentRepeating = consecutiveSimilarThinkSteps >= 3;
           if (
             stuckAndBudgetCritical ||
+            stuckAndContentRepeating ||
             (
               stepsSinceLastWrite >= STUCK_ANALYSIS_THRESHOLD &&
               stepCount - stuckAnalysisNoteFiredAt >= STUCK_ANALYSIS_THRESHOLD
@@ -1797,9 +1845,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           ) {
             stuckAnalysisFireCount++;
             stuckAnalysisNoteFiredAt = stepCount;
-            if (stuckAndBudgetCritical || stuckAnalysisFireCount >= STUCK_ANALYSIS_HARD_STOP_FIRINGS) {
-              console.warn(`[AgentLoop] Stuck-analysis hard stop: ${stepsSinceLastWrite} steps with no successful write/edit${stuckAndBudgetCritical ? ` (budget-critical: ${runTokens.total}/${RUN_TOKEN_CAP} tokens used)` : ` after ${stuckAnalysisFireCount - 1} ignored nudges`} (user=${userId ?? 'unknown'})`);
-              stuckAnalysisAbortReason = `stuck analyzing without making a change for ${stepsSinceLastWrite} steps`;
+            if (stuckAndBudgetCritical || stuckAndContentRepeating || stuckAnalysisFireCount >= STUCK_ANALYSIS_HARD_STOP_FIRINGS) {
+              console.warn(`[AgentLoop] Stuck-analysis hard stop: ${stepsSinceLastWrite} steps with no successful write/edit${stuckAndBudgetCritical ? ` (budget-critical: ${runTokens.total}/${RUN_TOKEN_CAP} tokens used)` : stuckAndContentRepeating ? ` (content-repeating: ${consecutiveSimilarThinkSteps} near-identical think calls)` : ` after ${stuckAnalysisFireCount - 1} ignored nudges`} (user=${userId ?? 'unknown'})`);
+              stuckAnalysisAbortReason = stuckAndContentRepeating
+                ? `stuck repeating near-identical reasoning for ${consecutiveSimilarThinkSteps} steps in a row`
+                : `stuck analyzing without making a change for ${stepsSinceLastWrite} steps`;
               generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
                 if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
               }).catch(() => {});
@@ -3322,6 +3372,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // Only link snapshot when code actually changed; null means no restore point
           snapshot_id: doneFilesToWrite.length > 0 ? snapshotId : null,
           completed_at: new Date().toISOString(),
+          // Both computed above but previously discarded after the 'done' SSE
+          // event   this is the queryable data Phase 2 of the enhancement
+          // checklist needed to stop tuning STUCK_ANALYSIS_THRESHOLD and the
+          // step-budget-exhaustion logic by incident instead of real outcomes.
+          stuck_abort_reason:  stuckAnalysisAbortReason,
+          needs_auto_continue: needsAutoContinue,
+          edit_search_miss_count:          ctx.editSearchMissCount ?? 0,
+          build_error_circuit_break_count: ctx.buildErrorCircuitBreakCount ?? 0,
         }).eq('id', agentRunId).then(
           ({ error }) => { if (error) console.warn(`[AgentLoop] agent_runs update failed: ${error.message}`); },
           (e: any) => console.warn('[AgentLoop] agent_runs update rejected:', e?.message)
@@ -3420,6 +3478,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           cache_read_tokens: runTokens.cacheReadTokens,
           cache_write_tokens: runTokens.cacheWriteTokens,
           narration_cost_usd: getNarrationCost(projectId),
+          stuck_abort_reason: stuckAnalysisAbortReason,
+          edit_search_miss_count:          ctx.editSearchMissCount ?? 0,
+          build_error_circuit_break_count: ctx.buildErrorCircuitBreakCount ?? 0,
         }).eq('id', agentRunId).then(() => {}, () => {});
       }
 
@@ -3491,6 +3552,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         cache_read_tokens: runTokens.cacheReadTokens,
         cache_write_tokens: runTokens.cacheWriteTokens,
         narration_cost_usd: getNarrationCost(projectId),
+        stuck_abort_reason: stuckAnalysisAbortReason,
+        edit_search_miss_count:          ctx.editSearchMissCount ?? 0,
+        build_error_circuit_break_count: ctx.buildErrorCircuitBreakCount ?? 0,
       }).eq('id', agentRunId).then(() => {}, () => {});
     }
     throw err;

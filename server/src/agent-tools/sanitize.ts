@@ -17,10 +17,19 @@
  */
 
 import { createRequire } from 'node:module';
+import { buildMinimalSearchReplace } from '../services/agentAppTsxGen.js';
 
 interface SanitizeResult {
   content: string;
   fixes: string[];
+  // The actual before/after lines for the fixes above, as a SEARCH/REPLACE
+  // block  previously the model only ever saw the terse `fixes` strings
+  // ("Removed duplicate import...") and never the real diff, so a fix that
+  // was wrong for some edge case had no way to be noticed: the model never
+  // saw its own written content get mutated underneath it. Absent when
+  // nothing changed, or the change is too large to be a useful snippet
+  // (buildMinimalSearchReplace's own >15-line cap).
+  diff?: string;
 }
 
 // ── Lucide icon export list ──────────────────────────────────────────────────
@@ -594,5 +603,9 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
     }
   }
 
+  if (fixes.length > 0 && content !== raw) {
+    const diff = buildMinimalSearchReplace(raw, content) ?? undefined;
+    return { content, fixes, diff };
+  }
   return { content, fixes };
 }

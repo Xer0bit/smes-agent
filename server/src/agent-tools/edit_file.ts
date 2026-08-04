@@ -55,10 +55,17 @@ function offsetToLine(offsets: number[], idx: number): number {
 }
 
 /** Try to find `needle` in `haystack` with progressively looser matching.
- *  Returns the ORIGINAL substring that matched (so replacement preserves formatting). */
-function fuzzyFind(haystack: string, needle: string): { found: boolean; original: string } {
+ *  Returns the ORIGINAL substring that matched, plus its exact [start, end)
+ *  character offsets in `haystack`  the caller splices at these offsets
+ *  instead of re-searching for `original` via String.replace(), which
+ *  would silently hit the wrong occurrence if that reconstructed text
+ *  happens to also appear earlier in the file. */
+export function fuzzyFind(haystack: string, needle: string): { found: boolean; original: string; start: number; end: number } {
   // 1. Exact match
-  if (haystack.includes(needle)) return { found: true, original: needle };
+  const exactIdx = haystack.indexOf(needle);
+  if (exactIdx !== -1) {
+    return { found: true, original: needle, start: exactIdx, end: exactIdx + needle.length };
+  }
 
   // 2. Whitespace-trimmed match (trailing spaces/tabs differ)
   const normHay = normalizeWs(haystack);
@@ -73,7 +80,9 @@ function fuzzyFind(haystack: string, needle: string): { found: boolean; original
     const startLine = offsetToLine(normOffsets, idx);
     const endLine = Math.min(hayLines.length, startLine + needleLineCount);
     const originalSlice = hayLines.slice(startLine, endLine).join('\n');
-    return { found: true, original: originalSlice };
+    const originalOffsets = buildOffsets(hayLines);
+    const start = originalOffsets[startLine];
+    return { found: true, original: originalSlice, start, end: start + originalSlice.length };
   }
 
   // 3. Indentation-agnostic match (different indent levels)
@@ -90,13 +99,15 @@ function fuzzyFind(haystack: string, needle: string): { found: boolean; original
     const startLine = offsetToLine(stripOffsets, idxStrip);
     const endLine = Math.min(hayLines.length, startLine + needleLineCount);
     const originalSlice = hayLines.slice(startLine, endLine).join('\n');
-    return { found: true, original: originalSlice };
+    const originalOffsets = buildOffsets(hayLines);
+    const start = originalOffsets[startLine];
+    return { found: true, original: originalSlice, start, end: start + originalSlice.length };
   }
 
-  return { found: false, original: '' };
+  return { found: false, original: '', start: -1, end: -1 };
 }
 
-function applySearchReplace(original: string, diff: string): { success: boolean; content?: string; error?: string } {
+export function applySearchReplace(original: string, diff: string): { success: boolean; content?: string; error?: string } {
   const blockRegex =
     /<<<<<<< SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE/g;
 
@@ -108,12 +119,15 @@ function applySearchReplace(original: string, diff: string): { success: boolean;
     const searchText = match[1];
     const replaceText = match[2];
 
-    const { found, original: matchedOriginal } = fuzzyFind(result, searchText);
+    const { found, start, end } = fuzzyFind(result, searchText);
     if (!found) {
       return { success: false, error: `SEARCH block not found in file:\n${searchText.slice(0, 200)}` };
     }
 
-    result = result.replace(matchedOriginal, replaceText);
+    // Splice at the exact offset fuzzyFind computed  never re-search, so
+    // this can't land on an earlier occurrence of the same text elsewhere
+    // in the file.
+    result = result.slice(0, start) + replaceText + result.slice(end);
     applied++;
   }
 
@@ -150,11 +164,12 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
       // Record the failed edit in the ledger so the journal shows ❌ at the next step
       const firstSearchLine = args.diff.match(/<<<<<<< SEARCH\n([\s\S]*?)\n=======/)?.[1] ?? '';
       ctx.ledger?.recordEditFailed(args.path, firstSearchLine, result.error ?? 'unknown error');
-      // Ops-visible signal: this failure is otherwise only returned to the
-      // model as a tool result and never appears in server logs, making the
-      // SEARCH-miss rate unmeasurable (confirmed: zero grep hits across 2
-      // months of production logs, audit 2026-07-21).
+      // Ops-visible signal: this failure used to be console.warn-only,
+      // making the SEARCH-miss rate unmeasurable (confirmed: zero grep hits
+      // across 2 months of production logs, audit 2026-07-21). Also counted
+      // on ctx so agentLoopService.ts can persist it to agent_runs.
       console.warn(`[edit_file] SEARCH_MISS project=${ctx.projectId} path=${args.path}`);
+      ctx.editSearchMissCount = (ctx.editSearchMissCount ?? 0) + 1;
 
       // Include the first 100 lines of the current file so the agent can see
       // the exact content and correct the SEARCH text without an extra read_file call.
@@ -165,7 +180,7 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
       return `Error applying edit to ${args.path}: ${result.error}\n\nCurrent file content (first 100 lines):\n\`\`\`\n${filePreview}\n\`\`\`\n\nFix your SEARCH text to exactly match the content above.`;
     }
 
-    const { content: sanitized, fixes } = sanitizeFileContent(args.path, result.content);
+    const { content: sanitized, fixes, diff: sanitizeDiff } = sanitizeFileContent(args.path, result.content);
 
     // Guard: if the edit made bracket balance significantly worse, reject it.
     // This catches cases where the fuzzy match replaced the wrong block or the
@@ -246,7 +261,9 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
       ctx.pendingPreviewFiles.set(args.path, sanitized);
     }
 
-    const fixNote = fixes.length > 0 ? `\nAuto-fixed: ${fixes.join('; ')}` : '';
+    const fixNote = fixes.length > 0
+      ? `\nAuto-fixed: ${fixes.join('; ')}${sanitizeDiff ? `\n\nWhat actually changed:\n${sanitizeDiff}` : ''}`
+      : '';
     return `${depWarning}Successfully edited ${args.path}${fixNote}`;
   },
 };

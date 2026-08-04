@@ -32,6 +32,24 @@ export function generateAppTsxFromPages(pagePaths: string[]): string {
     return { componentName, importPath: `./pages/${componentName}`, route: deriveRoutePath(componentName) };
   });
 
+  // Two page filenames that derive to the same route (e.g. "ContactUsPage"
+  // and "Contact-UsPage") would otherwise silently shadow each other  the
+  // second <Route> in JSX order always wins, and the first page becomes
+  // unreachable with no error anywhere. Fail loudly instead: the caller
+  // (agentLoopService.ts) already treats this as non-fatal and leaves the
+  // previous App.tsx in place, which beats generating a broken router.
+  const byRoute = new Map<string, string[]>();
+  for (const p of pages) {
+    const names = byRoute.get(p.route) ?? [];
+    names.push(p.componentName);
+    byRoute.set(p.route, names);
+  }
+  const collisions = Array.from(byRoute.entries()).filter(([, names]) => names.length > 1);
+  if (collisions.length > 0) {
+    const detail = collisions.map(([route, names]) => `"${route}" (${names.join(', ')})`).join('; ');
+    throw new Error(`generateAppTsxFromPages: duplicate route(s) ${detail}  rename one of the colliding pages.`);
+  }
+
   // Home page ("/") must be listed first for readability; stable sort keeps
   // the rest in their original (disk-read) order.
   pages.sort((a, b) => (a.route === '/' ? -1 : b.route === '/' ? 1 : 0));

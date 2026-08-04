@@ -59,6 +59,16 @@ export interface AgentContext {
    * error-check loops where errors never fully resolve.
    */
   buildErrorCallCount?: number;
+  /**
+   * Counts edit_file SEARCH-block misses and get_build_errors circuit-breaker
+   * trips this run. Previously these only reached a console.warn   the
+   * edit_file.ts comment admits the miss rate was "unmeasurable... zero grep
+   * hits across 2 months of production logs." agentLoopService.ts reads these
+   * at run end and persists them to agent_runs so miss/breaker rates become
+   * queryable instead of relying on someone noticing a bad run manually.
+   */
+  editSearchMissCount?: number;
+  buildErrorCircuitBreakCount?: number;
   /** URL of the preview service, e.g. http://localhost:3001 */
   previewServiceUrl?: string;
   /** Authenticated user id   required by database_query / get_database_schema to scope tenant DB access. */
