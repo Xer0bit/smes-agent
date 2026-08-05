@@ -143,7 +143,7 @@ export const DESIGN_TEMPLATES: DesignTemplate[] = [
     description: "Near-white canvas with warm undertones, whisper-thin typography, and multi-layered shadows.",
     accent: "#f5f2ef",
     fg: "#1a1a1a",
-    image: "/assets/templates/elevenlabs.png",
+    image: "/assets/templates/elevenlabs.webp",
     prompt: `Use the following design system to build this website. Follow the typography, color palette, component styles, and spacing exactly as described.
 
 # Design System Inspired by ElevenLabs
@@ -184,7 +184,7 @@ Near-white canvas (#ffffff, #f5f5f5) with warm stone undertones (#f5f2ef). Typog
     description: "Monochromatic UI with massive uppercase headlines and full-bleed hero photography.",
     accent: "#111111",
     fg: "#ffffff",
-    image: "/assets/templates/nike.png",
+    image: "/assets/templates/nike.webp",
     prompt: `Use the following design system to build this website. Follow the typography, color palette, component styles, and spacing exactly as described.
 
 # Design System Inspired by Nike
@@ -228,7 +228,7 @@ Monochromatic (black/white/grey) retail cathedral. UI disappears to let product 
     description: "Dark atmospheric hero with green accent, documentation-focused layout, ultra-round corners.",
     accent: "#0d1117",
     fg: "#18E299",
-    image: "/assets/templates/mintlify.png",
+    image: "/assets/templates/mintlify.webp",
     prompt: `Use the following design system to build this website. Follow the typography, color palette, component styles, and spacing exactly as described.
 
 # Design System Inspired by Mintlify
@@ -272,7 +272,7 @@ Documentation-as-product. White airy surface with dark atmospheric hero section.
     description: "Dark-first monospace-driven brutalist minimalism with extreme scale typography.",
     accent: "#1f2228",
     fg: "#ffffff",
-    image: "/assets/templates/xai.png",
+    image: "/assets/templates/xai.webp",
     prompt: `Use the following design system to build this website. Follow the typography, color palette, component styles, and spacing exactly as described.
 
 # Design System Inspired by xAI

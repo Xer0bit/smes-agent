@@ -22,6 +22,8 @@ const TemplateCard = ({ tpl, active, onHover, onUse }: { tpl: DesignTemplate; ac
             src={tpl.image}
             alt={`${tpl.name} template preview`}
             className="tpl-card__img"
+            loading="lazy"
+            decoding="async"
             onError={() => setImgError(true)}
           />
         ) : (

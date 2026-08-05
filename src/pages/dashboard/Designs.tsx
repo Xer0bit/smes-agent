@@ -100,6 +100,8 @@ export default function DashboardDesigns() {
                 <img
                   src={tpl.image}
                   alt={tpl.name}
+                  loading="lazy"
+                  decoding="async"
                   className="relative z-[1] h-full w-full object-cover object-top transition-transform duration-500 group-hover:scale-[1.03]"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = 'none';
