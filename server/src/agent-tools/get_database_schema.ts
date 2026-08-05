@@ -34,6 +34,14 @@ export const getDatabaseSchemaTool: ToolDefinition<z.infer<typeof schema>> = {
       tables = [];
     }
 
+    let functions: Awaited<ReturnType<typeof databaseService.listFunctions>>;
+    try {
+      functions = await databaseService.listFunctions(ctx.userId, ctx.projectId);
+    } catch (err) {
+      logger.warn('[get_database_schema] listFunctions failed', err);
+      functions = [];
+    }
+
     const tableLines = tables.length === 0
       ? '(no tables yet   use query_database with CREATE TABLE statements to add some)'
       : tables.map((t) => {
@@ -43,6 +51,10 @@ export const getDatabaseSchemaTool: ToolDefinition<z.infer<typeof schema>> = {
           return `- ${t.name} (${t.row_count ?? '?'} rows): ${cols}`;
         }).join('\n');
 
+    const functionLines = functions.length === 0
+      ? '(none   any db.rpc(...) call in an edge function needs the function created first via query_database)'
+      : functions.map((f) => `- ${f.name}(${f.argTypes}) -> ${f.returnType}`).join('\n');
+
     return [
       `Schema: "${creds.schema}" (this project's isolated schema)`,
       `API_URL: ${creds.api_url} (available as import.meta.env.VITE_DB_API_URL)`,
@@ -50,6 +62,9 @@ export const getDatabaseSchemaTool: ToolDefinition<z.infer<typeof schema>> = {
       '',
       'Tables:',
       tableLines,
+      '',
+      'Functions/RPCs (callable via db.rpc(name, args) inside an edge function):',
+      functionLines,
       '',
       'IMPORTANT   this database has NO row-level security. ANON_KEY is bundled into the public JS bundle and its role has a flat SELECT grant on every table, every row, no per-user scoping. Direct client-side fetches are only safe for genuinely public, world-readable data. For anything user-specific/private, and for ALL writes, use write_edge_function instead   never a direct client fetch.',
       '',

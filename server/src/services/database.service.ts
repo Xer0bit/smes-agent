@@ -147,6 +147,12 @@ export interface TenantTable {
   row_count: number | null;
 }
 
+export interface TenantFunction {
+  name: string;
+  argTypes: string;
+  returnType: string;
+}
+
 // ---------------------------------------------------------------------------
 // SQL literal formatting   used by dumpDatabase for INSERT statements
 // ---------------------------------------------------------------------------
@@ -783,6 +789,34 @@ export const databaseService = {
     }
 
     return tables;
+  },
+
+  // ── List Postgres functions/RPCs in the tenant schema ────────────────────
+  // The agent's `db.rpc(fnName, args)` bridge (functionRunner.service.ts) can
+  // call any function already granted EXECUTE in this schema, but until now
+  // there was no way for the agent to discover what already exists there --
+  // listTables() only ever covered tables, so the agent's only options were
+  // to guess a name or run a raw pg_proc query itself via query_database. The
+  // gap showed up as duplicate/near-duplicate RPC functions across runs, the
+  // same failure mode write_edge_function's disk mirror was built to prevent
+  // for edge functions. 2026-08-05 stability review follow-up.
+  async listFunctions(userId: string, projectId?: string): Promise<TenantFunction[]> {
+    const record = await this.getStatus(userId, projectId);
+    if (!record || record.status !== 'active') return [];
+
+    const pg = await pool();
+    const { rows } = await pg.query<{ name: string; arg_types: string; return_type: string }>(
+      `SELECT p.proname AS name,
+              pg_catalog.pg_get_function_arguments(p.oid) AS arg_types,
+              pg_catalog.pg_get_function_result(p.oid) AS return_type
+       FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = $1 AND p.prokind = 'f'
+       ORDER BY p.proname`,
+      [record.schema_name]
+    );
+
+    return rows.map((r) => ({ name: r.name, argTypes: r.arg_types, returnType: r.return_type }));
   },
 
   // ── Query rows from a table ──────────────────────────────────────────────

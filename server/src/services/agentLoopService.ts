@@ -1177,6 +1177,23 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               return `- ${t.name} (${t.row_count ?? '?'} rows): ${cols}`;
             }).join('\n') +
             '\n\nUse these EXACT table/column names   never guess or invent one. If you need to change the schema, call `query_database`, then re-check via `get_database_schema` before writing dependent code.';
+
+        // Functions/RPCs were previously invisible here (listTables only ever
+        // covered tables) -- the agent had no way to know a callable
+        // db.rpc(...) function already existed without a raw pg_proc query,
+        // which repeatedly produced duplicate/near-duplicate helper functions
+        // across runs. Unconditional like the table block above, for the same
+        // reason: don't rely on the agent remembering to ask.
+        try {
+          const functions = await databaseService.listFunctions(userId, projectId);
+          if (functions.length > 0) {
+            liveSchemaBlock += '\n\n**Existing functions/RPCs (callable via `db.rpc(name, args)` inside an edge function):**\n' +
+              functions.map((f) => `- ${f.name}(${f.argTypes}) -> ${f.returnType}`).join('\n') +
+              '\n\nReuse one of these if it already does what you need instead of creating a near-duplicate.';
+          }
+        } catch {
+          // Non-fatal   agent can still call get_database_schema itself
+        }
       } catch {
         // Non-fatal   agent can still call get_database_schema itself
       }
@@ -1191,7 +1208,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         '\n\n**Edge functions**   use `write_edge_function` for server-side logic the browser should never run directly: auth/password checks (above), any user-specific or private data access, any write, code that needs a secret API key, webhook handlers, scheduled/triggered jobs, or any multi-step backend operation. Do NOT put that logic in frontend code just because it seems simpler   if it touches private/owned data, writes anything, needs a secret, touches passwords, or must run server-side, it MUST be an edge function. Inside the function, read saved secrets with the EXACT key name they were saved under, including a `VITE_` prefix if that\'s how it\'s stored   `secrets.VITE_DB_API_URL`, not `secrets.DB_API_URL`. Guessing a shortened name silently breaks every call in the function (the "secrets not configured" guard trips immediately) with no visible error until someone actually tests it. Check the actual secret list above instead of assuming a name (save new keys with `set_secret` first   never paste key values into function code or frontend files).\n' +
         '\n\n**Writing an edge function is not the task   wiring it up is.** A function that exists in the database but that no frontend code ever calls does nothing; the app keeps using whatever it was using before, and it will look to the user like "the edge function isn\'t doing anything" even though the function itself is fine. Every time you write or update an edge function for an existing feature, in the SAME turn: (1) find every place in the frontend that currently does this work directly (a raw fetch, a `getDbUrl(...)` call, inline logic) and (2) replace it with an invoke call to the function, deleting the old direct-access code path. Never leave a newly written function orphaned while the old code keeps running.\n' +
         '\n\n**Do not write a generic pass-through proxy** (e.g. one function that accepts an arbitrary `path`/`method`/`body` and forwards it straight to the database) as a way to satisfy "route through edge functions." That technically avoids a direct frontend fetch but adds zero real authorization or validation   it\'s functionally identical to direct client access, just relocated. Each edge function should implement one specific operation (or a small, named set of operations) with real server-side logic: check who\'s asking, validate the input, only allow what that specific operation actually needs.\n' +
-        'Invoke a written function from the frontend with:\n```ts\nconst res = await fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/api/v1/functions/<name>/invoke`, {\n  method: \'POST\',\n  headers: { \'Content-Type\': \'application/json\', apikey: import.meta.env.VITE_DB_ANON_KEY },\n  body: JSON.stringify({ params: { /* ... */ } }),\n});\n```\nNo project_id is needed   the anon key itself identifies which project\'s function to run.\n' +
+        'Invoke a written function from the frontend with:\n```ts\nconst res = await fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/<name>/invoke`, {\n  method: \'POST\',\n  headers: { \'Content-Type\': \'application/json\', apikey: import.meta.env.VITE_DB_ANON_KEY },\n  body: JSON.stringify({ params: { /* ... */ } }),\n});\n```\n`VITE_FUNCTIONS_API_URL` ALREADY ends in `/functions` (a full base URL, not a bare host)   the path is FLAT: `${VITE_FUNCTIONS_API_URL}/<name>/invoke`. Do NOT prepend `/api/v1/functions` or any other prefix (that is this platform\'s OWN internal API shape, unrelated to a generated app\'s runtime calls, and will 404). No project_id is needed   the anon key itself identifies which project\'s function to run.\n' +
         'This endpoint is public and rate-limited (30 req/min)   it authenticates with the SAME `VITE_DB_ANON_KEY` used for the database, not a login session, so it works for anonymous visitors of the generated app, not just its owner.'
       : '';
     const ecgNote = hasEcg
