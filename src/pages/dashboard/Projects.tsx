@@ -74,6 +74,10 @@ export default function DashboardProjects() {
   // Real-time subscription for revision/project updates   debounced to avoid
   // a full reload for every row in a batch change.
   const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks which projects already had a thumbnail-capture request sent this
+  // session, so a debounced reload (real-time subscription) or a manual
+  // refresh doesn't re-request the same still-pending capture.
+  const requestedThumbnailsRef = useRef<Set<string>>(new Set());
   const debouncedReload = () => {
     if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
     reloadTimerRef.current = setTimeout(() => loadProjects(), 2000);
@@ -200,26 +204,42 @@ export default function DashboardProjects() {
 
       setProjects(filteredByRole);
 
-      // Fetch preview URLs for all projects
+      // Fetch preview URLs for ALL projects in ONE call instead of one
+      // RPC round-trip per project (was N parallel requests via Promise.all
+      // -- confirmed live contributor to excessive request count/load time
+      // on this page, found via network audit 2026-08-06). Same underlying
+      // resolution logic, batched server-side.
       const urls: Record<string, string> = {};
-      await Promise.all(
-        allProjects.map(async (project) => {
-          const { data } = await supabase.rpc('get_latest_preview_url', {
-            p_project_id: project.id
-          });
-          if (data) {
-            urls[project.id] = data;
+      if (allProjects.length > 0) {
+        const { data: urlRows, error: urlErr } = await supabase.rpc('get_latest_preview_urls', {
+          p_project_ids: allProjects.map(p => p.id),
+        });
+        if (urlErr) {
+          console.error('Error fetching preview URLs (batched):', urlErr);
+        } else {
+          for (const row of (urlRows || []) as { project_id: string; preview_url: string | null }[]) {
+            if (row.preview_url) urls[row.project_id] = row.preview_url;
           }
-        })
-      );
+        }
+      }
       setPreviewUrls(urls);
 
       // Auto-trigger thumbnail capture for projects that have a preview URL but no thumbnail yet.
       // Fire-and-forget   the real-time projects subscription will reload when thumbnails land.
+      // Capped per page load: this used to fire one POST per missing thumbnail
+      // unconditionally, so a workspace with many un-thumbnailed projects sent
+      // that many requests on every single dashboard visit. A thumbnail only
+      // needs to be captured once ever, so a small per-load cap plus a
+      // client-side "already requested" guard is enough -- the rest catch up
+      // on subsequent loads instead of all firing at once.
+      const THUMBNAIL_CAPTURE_CAP = 5;
       const session = (await supabase.auth.getSession()).data.session;
       if (session?.access_token) {
-        const needsCapture = allProjects.filter(p => !p.thumbnail_url);
+        const needsCapture = allProjects
+          .filter(p => !p.thumbnail_url && !requestedThumbnailsRef.current.has(p.id))
+          .slice(0, THUMBNAIL_CAPTURE_CAP);
         for (const p of needsCapture) {
+          requestedThumbnailsRef.current.add(p.id);
           fetch(getApiServerUrl(`/api/v1/projects/${p.id}/capture-thumbnail`), {
             method: 'POST',
             headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },

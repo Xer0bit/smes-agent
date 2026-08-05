@@ -12,29 +12,37 @@ import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
 import EditorWithWorkspace from "./pages/EditorWithWorkspace";
-import ProjectSettings from "./pages/ProjectSettings";
-import SeoManager from "./pages/SeoManager";
-import BatchValidate from "./pages/BatchValidate";
 import { DashboardLayout } from "./pages/Dashboard";
-import DashboardHome from "./pages/dashboard/Home";
-import WorkspaceSettings from "./pages/dashboard/WorkspaceSettings";
-import DashboardProjects from "./pages/dashboard/Projects";
-import DashboardDesigns from "./pages/dashboard/Designs";
-import EcgAgentsPage from "./pages/dashboard/EcgAgents";
-import DashboardSettings from "./pages/dashboard/Settings";
+// Route-level code-splitting: these previously all imported eagerly, bundling
+// marketing pages, dashboard pages, and rarely-hit utility routes into one
+// 1.57MB main chunk regardless of which single route a visitor actually
+// loads. Same lazy()+Suspense(fallback=null) pattern already proven in
+// production for /admin below -- a visitor to "/" never pays for dashboard
+// code, and vice versa. Index/NotFound/Auth/AuthCallback stay eager: Index is
+// the very first paint most cold visitors hit, and Auth/AuthCallback are
+// needed immediately in the sign-in flow.
+const ProjectSettings = lazy(() => import("./pages/ProjectSettings"));
+const SeoManager = lazy(() => import("./pages/SeoManager"));
+const BatchValidate = lazy(() => import("./pages/BatchValidate"));
+const DashboardHome = lazy(() => import("./pages/dashboard/Home"));
+const WorkspaceSettings = lazy(() => import("./pages/dashboard/WorkspaceSettings"));
+const DashboardProjects = lazy(() => import("./pages/dashboard/Projects"));
+const DashboardDesigns = lazy(() => import("./pages/dashboard/Designs"));
+const EcgAgentsPage = lazy(() => import("./pages/dashboard/EcgAgents"));
+const DashboardSettings = lazy(() => import("./pages/dashboard/Settings"));
 const AdminLogin = lazy(() => import("./pages/admin/Login"));
 const AdminApp = lazy(() => import("./pages/admin/AdminApp"));
-import AcceptInvite from "./pages/AcceptInvite";
-import AcceptProjectInvite from "./pages/AcceptProjectInvite";
+const AcceptInvite = lazy(() => import("./pages/AcceptInvite"));
+const AcceptProjectInvite = lazy(() => import("./pages/AcceptProjectInvite"));
 import { LandingLayout } from "./layouts/LandingLayout";
-import Features from "./pages/landing/Features";
-import Product from "./pages/landing/Product";
-import China from "./pages/landing/China";
-import Agents from "./pages/landing/Agents";
-import Pricing from "./pages/landing/Pricing";
-import Contact from "./pages/landing/Contact";
-import PrivacyPolicy from "./pages/landing/PrivacyPolicy";
-import TermsOfService from "./pages/landing/TermsOfService";
+const Features = lazy(() => import("./pages/landing/Features"));
+const Product = lazy(() => import("./pages/landing/Product"));
+const China = lazy(() => import("./pages/landing/China"));
+const Agents = lazy(() => import("./pages/landing/Agents"));
+const Pricing = lazy(() => import("./pages/landing/Pricing"));
+const Contact = lazy(() => import("./pages/landing/Contact"));
+const PrivacyPolicy = lazy(() => import("./pages/landing/PrivacyPolicy"));
+const TermsOfService = lazy(() => import("./pages/landing/TermsOfService"));
 import AuthCallback from "./pages/AuthCallback";
 import { supabase } from "./integrations/supabase/client";
 import './i18n/config';
@@ -108,36 +116,36 @@ const App = () => (
                 <Route path="/" element={<Index />} />
                 {/* Other landing routes still use shared Header/Footer */}
                 <Route element={<LandingLayout />}>
-                  <Route path="/product" element={<Product />} />
-                  <Route path="/china" element={<China />} />
-                  <Route path="/features" element={<Features />} />
-                  <Route path="/agents" element={<Agents />} />
-                  <Route path="/pricing" element={<Pricing />} />
-                  <Route path="/contact" element={<Contact />} />
-                  <Route path="/privacy" element={<PrivacyPolicy />} />
-                  <Route path="/terms" element={<TermsOfService />} />
+                  <Route path="/product" element={<Suspense fallback={null}><Product /></Suspense>} />
+                  <Route path="/china" element={<Suspense fallback={null}><China /></Suspense>} />
+                  <Route path="/features" element={<Suspense fallback={null}><Features /></Suspense>} />
+                  <Route path="/agents" element={<Suspense fallback={null}><Agents /></Suspense>} />
+                  <Route path="/pricing" element={<Suspense fallback={null}><Pricing /></Suspense>} />
+                  <Route path="/contact" element={<Suspense fallback={null}><Contact /></Suspense>} />
+                  <Route path="/privacy" element={<Suspense fallback={null}><PrivacyPolicy /></Suspense>} />
+                  <Route path="/terms" element={<Suspense fallback={null}><TermsOfService /></Suspense>} />
                 </Route>
                 <Route path="/auth" element={<Auth />} />
                 <Route path="/auth/callback" element={<AuthCallback />} />
                 <Route path="/project/:projectId" element={<EditorWithWorkspace />} />
-                <Route path="/project/:projectId/settings" element={<RequireAuth><ProjectSettings /></RequireAuth>} />
-                <Route path="/project/:projectId/seo" element={<RequireAuth><SeoManager /></RequireAuth>} />
+                <Route path="/project/:projectId/settings" element={<RequireAuth><Suspense fallback={null}><ProjectSettings /></Suspense></RequireAuth>} />
+                <Route path="/project/:projectId/seo" element={<RequireAuth><Suspense fallback={null}><SeoManager /></Suspense></RequireAuth>} />
                 <Route path="/dashboard" element={<RequireAuth><DashboardLayout /></RequireAuth>}>
-                  <Route index element={<DashboardHome />} />
-                  <Route path="organizations" element={<WorkspaceSettings />} />
-                  <Route path="projects" element={<DashboardProjects />} />
-                  <Route path="designs" element={<DashboardDesigns />} />
-                  <Route path="ecg-agents" element={<EcgAgentsPage />} />
+                  <Route index element={<Suspense fallback={null}><DashboardHome /></Suspense>} />
+                  <Route path="organizations" element={<Suspense fallback={null}><WorkspaceSettings /></Suspense>} />
+                  <Route path="projects" element={<Suspense fallback={null}><DashboardProjects /></Suspense>} />
+                  <Route path="designs" element={<Suspense fallback={null}><DashboardDesigns /></Suspense>} />
+                  <Route path="ecg-agents" element={<Suspense fallback={null}><EcgAgentsPage /></Suspense>} />
                   <Route path="profile" element={<Navigate to="/dashboard/settings" replace />} />
                   <Route path="team" element={<Navigate to="/dashboard/organizations" replace />} />
-                  <Route path="settings" element={<DashboardSettings />} />
+                  <Route path="settings" element={<Suspense fallback={null}><DashboardSettings /></Suspense>} />
                 </Route>
                 <Route path="/admin/login" element={<Suspense fallback={null}><AdminLogin /></Suspense>} />
                 {/* AdminApp mounts once with sidebar layout; handles auth + all /admin/* sub-routes */}
                 <Route path="/admin/*" element={<Suspense fallback={null}><AdminApp /></Suspense>} />
-                <Route path="/batch-validate" element={<BatchValidate />} />
-                <Route path="/invite/:token" element={<AcceptInvite />} />
-                <Route path="/project-invite/:token" element={<AcceptProjectInvite />} />
+                <Route path="/batch-validate" element={<Suspense fallback={null}><BatchValidate /></Suspense>} />
+                <Route path="/invite/:token" element={<Suspense fallback={null}><AcceptInvite /></Suspense>} />
+                <Route path="/project-invite/:token" element={<Suspense fallback={null}><AcceptProjectInvite /></Suspense>} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
