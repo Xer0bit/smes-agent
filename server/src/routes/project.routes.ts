@@ -4,6 +4,7 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middlew
 import { validateRequest, schemas } from '../middleware/validation.middleware.js';
 import { projectService } from '../services/project.service.js';
 import { captureThumbnail } from '../services/thumbnailService.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 
@@ -16,7 +17,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
         const projects = await projectService.listProjects(req.user!.id);
         res.json({ projects });
     } catch (error) {
-        res.status(500).json({ error: (error as Error).message });
+        res.status(500).json({ error: safeErrorMessage(error) });
     }
 });
 
@@ -32,7 +33,9 @@ router.get('/:projectId', async (req: AuthenticatedRequest, res: Response) => {
         const message = (error as Error).message;
         const status = message.includes('not found') ? 404 :
             message.includes('Unauthorized') ? 403 : 500;
-        res.status(status).json({ error: message });
+        // 404/403 messages are known, safe, internally-generated strings from
+        // projectService; only the unexpected 500 fallback gets sanitized.
+        res.status(status).json({ error: status === 500 ? safeErrorMessage(error) : message });
     }
 });
 
@@ -45,7 +48,7 @@ router.post(
             const project = await projectService.createProject(req.user!.id, req.body);
             res.status(201).json({ project });
         } catch (error) {
-            res.status(500).json({ error: (error as Error).message });
+            res.status(500).json({ error: safeErrorMessage(error) });
         }
     }
 );
@@ -63,7 +66,7 @@ router.patch(
             );
             res.json({ project });
         } catch (error) {
-            res.status(500).json({ error: (error as Error).message });
+            res.status(500).json({ error: safeErrorMessage(error) });
         }
     }
 );
@@ -121,7 +124,7 @@ router.delete('/:projectId', async (req: AuthenticatedRequest, res: Response) =>
         const message = (error as Error).message;
         const status = message.includes('not found') ? 404 :
             message.includes('Unauthorized') ? 403 : 500;
-        res.status(status).json({ error: message });
+        res.status(status).json({ error: status === 500 ? safeErrorMessage(error) : message });
     }
 });
 

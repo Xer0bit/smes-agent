@@ -12,6 +12,7 @@ import {
 } from '../services/llm-control.service.js';
 import { getEmbeddingStatus, resetProviderCache, probeEmbeddingProvider } from '../knowledgebase/index.js';
 import { getTierConfig, saveTierConfig } from '../services/tier-config.service.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
@@ -248,7 +249,7 @@ router.get('/kb/status', authMiddleware, async (req: AuthenticatedRequest, res: 
         });
     } catch (error) {
         logger.error('Failed to get KB status', error);
-        res.status(500).json({ success: false, error: (error as Error).message });
+        res.status(500).json({ success: false, error: safeErrorMessage(error) });
     }
 });
 
@@ -261,7 +262,7 @@ router.post('/kb/reprobe', authMiddleware, async (req: AuthenticatedRequest, res
         const status = getEmbeddingStatus();
         res.json({ success: true, provider: status.provider, googleCircuitOpen: status.googleCircuitOpen });
     } catch (error) {
-        res.status(500).json({ success: false, error: (error as Error).message });
+        res.status(500).json({ success: false, error: safeErrorMessage(error) });
     }
 });
 

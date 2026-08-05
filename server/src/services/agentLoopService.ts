@@ -2997,6 +2997,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const repairCtx: AgentContext = {
             appPath,
             projectId,
+            // 2026-08 audit: this was the one unguarded path in the whole
+            // loop -- every other context (see line ~508) initializes
+            // readFiles, which agentToolSet.ts's write_file/edit_file guard
+            // depends on (`ctx.readFiles && !ctx.readFiles.has(relPath)`).
+            // Omitting it here made that check always short-circuit false,
+            // so the repair agent could blind-overwrite any file without
+            // having read it first -- in the one context (write_file
+            // preferred for "broken files") where that's most likely.
+            readFiles: new Set<string>(),
             pendingPreviewFiles: ctx.pendingPreviewFiles,
             previewServiceUrl: ctx.previewServiceUrl,
             onXmlComplete: (xml: string) => {

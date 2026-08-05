@@ -44,7 +44,20 @@ app.set('trust proxy', 1);
 app.use(helmet());
 
 // CORS configuration
-const allowedOrigins = [
+// 2026-08 security audit finding: this allowlist previously accepted ANY
+// subdomain of ecomgear.dev/ecomgear.app via hostname.endsWith(...), combined
+// with credentials:true. Since {slug}.preview.ecomgear.app is the actual
+// domain space where user-published (potentially malicious) sites live, that
+// suffix match was an effective wildcard-with-credentials over attacker-
+// reachable origins. Replaced with an exact-match list. If per-project
+// published subdomains genuinely need authenticated access to THIS platform
+// API (api.ecomgear.dev) -- as opposed to preview-service's own separate
+// API, which has its own, already-exact-match CORS config -- that requires a
+// DB-backed origin validator (checking against provisioned domains) rather
+// than a string suffix check. Flagged as a product question, not decided
+// here: confirm whether that access pattern is actually needed before
+// building it.
+const localOrigins = [
     'http://localhost:3000',
     'http://localhost:5173',
     'http://localhost:8080',
@@ -53,26 +66,16 @@ const allowedOrigins = [
     'http://127.0.0.1:5173',
     'http://127.0.0.1:8080',
     'http://127.0.0.1:4173',
+];
+const allowedOrigins = [
     'https://ecomgear.dev',
     'https://www.ecomgear.dev',
     'https://preview.ecomgear.app',
+    ...(process.env.NODE_ENV !== 'production' ? localOrigins : []),
     ...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((s: string) => s.trim()) : []),
 ];
 
-const isAllowedOrigin = (origin: string): boolean => {
-    if (allowedOrigins.includes(origin)) return true;
-
-    try {
-        const url = new URL(origin);
-        const hostname = url.hostname.toLowerCase();
-        const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1';
-        const isEcomgearDomain = hostname === 'ecomgear.dev' || hostname.endsWith('.ecomgear.dev');
-        const isEcomgearApp = hostname === 'ecomgear.app' || hostname.endsWith('.ecomgear.app');
-        return isLocalHost || isEcomgearDomain || isEcomgearApp;
-    } catch {
-        return false;
-    }
-};
+const isAllowedOrigin = (origin: string): boolean => allowedOrigins.includes(origin);
 
 // Express handles CORS for all environments. The generated nginx config on VPS3
 // does not add CORS headers, so there is no duplicate-header risk in production.
@@ -83,7 +86,10 @@ app.use(cors({
         // only when the PREVIEW_UPDATE_SECRET env var is absent (local dev) or when
         // the caller is expected to authenticate via other headers (JWT/secret).
         // Browsers always send Origin, so this bypass does not affect web clients.
-        if (!origin || origin === 'null') return callback(null, true);
+        // NOTE: does NOT accept the literal string 'null' -- that IS sent by
+        // browsers for sandboxed iframes / data:/blob: documents, and accepting
+        // it here previously let those obtain credentialed cross-origin access.
+        if (!origin) return callback(null, true);
         if (isAllowedOrigin(origin)) {
             return callback(null, true);
         }
@@ -114,7 +120,11 @@ app.use(cors({
         'x-dashboard-access',          // ECG generated-dashboard AccessGate token
     ],
     exposedHeaders: ['Content-Type', 'Cache-Control', 'X-Request-Id', 'Last-Event-ID'],
-    maxAge: 86400,
+    // Was 86400 (24h) -- 2026-08 audit noted that meant any allowlist
+    // tightening took up to a day to reach already-cached browsers. Lowered
+    // to 1h: still meaningfully reduces preflight OPTIONS round-trips for
+    // active sessions, without leaving a stale allowlist cached that long.
+    maxAge: 3600,
 }));
 
 // Body parsing   limit raised for base64-encoded binary assets in sync payloads

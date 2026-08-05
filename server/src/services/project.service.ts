@@ -79,7 +79,7 @@ export class ProjectService {
     async getProject(projectId: string, userId: string): Promise<Project> {
         const { data, error } = await supabase
             .from('projects')
-            .select('*')
+            .select('id, name, status, created_at, updated_at, organization_id, slug, description, visibility, created_by, message_count, user_id, total_storage_bytes, revision_count, latest_revision_size, storage_warning_shown, org_id, docker_path, server_path, preview_port, template_type, node_version, package_manager, last_built_at, last_accessed_at, auto_save, preview_url, published_subdomain, published_url, published_at, website_name, website_description, meta_image_url, favicon_url, custom_system_prompt, context_notes, thumbnail_url')
             .eq('id', projectId)
             .single();
 
@@ -183,7 +183,7 @@ export class ProjectService {
         // Owned projects
         const { data: owned, error } = await supabase
             .from('projects')
-            .select('*')
+            .select('id, name, status, created_at, updated_at, organization_id, slug, description, visibility, created_by, message_count, user_id, total_storage_bytes, revision_count, latest_revision_size, storage_warning_shown, org_id, docker_path, server_path, preview_port, template_type, node_version, package_manager, last_built_at, last_accessed_at, auto_save, preview_url, published_subdomain, published_url, published_at, website_name, website_description, meta_image_url, favicon_url, custom_system_prompt, context_notes, thumbnail_url')
             .eq('user_id', userId)
             .neq('status', 'deleted')
             .order('updated_at', { ascending: false })
@@ -208,7 +208,7 @@ export class ProjectService {
         if (sharedIds.length > 0) {
             const { data: sharedData } = await supabase
                 .from('projects')
-                .select('*')
+                .select('id, name, status, created_at, updated_at, organization_id, slug, description, visibility, created_by, message_count, user_id, total_storage_bytes, revision_count, latest_revision_size, storage_warning_shown, org_id, docker_path, server_path, preview_port, template_type, node_version, package_manager, last_built_at, last_accessed_at, auto_save, preview_url, published_subdomain, published_url, published_at, website_name, website_description, meta_image_url, favicon_url, custom_system_prompt, context_notes, thumbnail_url')
                 .in('id', sharedIds)
                 .neq('status', 'deleted')
                 .order('updated_at', { ascending: false });

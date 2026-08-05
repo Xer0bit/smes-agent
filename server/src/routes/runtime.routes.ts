@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { runtimeService } from '../services/runtime.service.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 
@@ -11,7 +12,7 @@ router.post('/:projectId/start', async (req: AuthenticatedRequest, res: Response
     const runtime = await runtimeService.startRuntime(req.params.projectId, req.user!.id);
     res.json({ success: true, runtime });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status(500).json({ success: false, error: safeErrorMessage(error) });
   }
 });
 
@@ -21,7 +22,7 @@ router.post('/:projectId/stop', async (req: AuthenticatedRequest, res: Response)
     const runtime = await runtimeService.stopRuntime(req.params.projectId, reason);
     res.json({ success: true, runtime });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status(500).json({ success: false, error: safeErrorMessage(error) });
   }
 });
 
@@ -30,7 +31,7 @@ router.post('/:projectId/activity', async (req: AuthenticatedRequest, res: Respo
     await runtimeService.heartbeat(req.params.projectId);
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status(500).json({ success: false, error: safeErrorMessage(error) });
   }
 });
 
@@ -43,7 +44,7 @@ router.get('/:projectId/status', async (req: AuthenticatedRequest, res: Response
 
     res.json({ success: true, runtime });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    res.status(500).json({ success: false, error: safeErrorMessage(error) });
   }
 });
 

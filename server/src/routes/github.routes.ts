@@ -8,6 +8,7 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middlew
 import { supabase, supabaseAuth } from '../config/database.js';
 import { projectService } from '../services/project.service.js';
 import { logger } from '../utils/logger.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 
@@ -270,7 +271,8 @@ router.delete('/disconnect', authMiddleware, async (req: AuthenticatedRequest, r
 router.get('/:projectId/link', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     await projectService.getProject(req.params.projectId, req.user!.id);
-  } catch {
+  } catch (err) {
+    logger.warn('[github] access check failed', { projectId: req.params.projectId, error: (err as Error)?.message ?? String(err) });
     res.status(404).json({ error: 'Project not found or access denied.' });
     return;
   }
@@ -334,7 +336,7 @@ router.post('/:projectId/create-repo', authMiddleware, async (req: Authenticated
 
     res.json({ ...link, htmlUrl: body.html_url });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -364,7 +366,8 @@ export async function pushFilesToGithub(
 
   try {
     await projectService.getProject(projectId, userId);
-  } catch {
+  } catch (err) {
+    logger.warn('[github] access check failed', { projectId, error: (err as Error)?.message ?? String(err) });
     return { success: false, error: 'Project not found or access denied.', status: 404 };
   }
 
@@ -457,6 +460,11 @@ export async function pushFilesToGithub(
 
     return { success: true, filesPushed: files.length, commitUrl: `https://github.com/${owner}/${repo}/commit/${commit.sha}` };
   } catch (err) {
+    // Raw message intentionally NOT sanitized: this is the project owner's
+    // own connected GitHub repo (authMiddleware-gated route below), and the
+    // error is GitHub's own API response text (e.g. "reference already
+    // exists"), not internal system/schema detail -- the owner needs it to
+    // fix the push.
     logger.error('[GitHub push] error', err);
     return { success: false, error: (err as Error).message, status: 500 };
   }

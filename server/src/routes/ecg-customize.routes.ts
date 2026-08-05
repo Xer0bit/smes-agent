@@ -4,6 +4,8 @@ import { supabase } from '../config/database.js';
 import { projectService, getProjectServerPath } from '../services/project.service.js';
 import { seedEcgTemplate } from '../services/ecg-template.js';
 import { saveEcgRevision, syncEcgPreviewService } from './ecg-connect.routes.js';
+import { safeErrorMessage } from '../utils/sendError.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -33,7 +35,8 @@ router.get('/:projectId/customize', async (req: AuthenticatedRequest, res: Respo
   const { projectId } = req.params;
   try {
     await projectService.assertCanEditProject(projectId, req.user!.id);
-  } catch {
+  } catch (err) {
+    logger.warn('[ecg-customize] access check failed', { projectId, error: (err as Error)?.message ?? String(err) });
     res.status(404).json({ error: 'Project not found or access denied.' });
     return;
   }
@@ -55,7 +58,8 @@ router.post('/:projectId/customize', async (req: AuthenticatedRequest, res: Resp
   const { projectId } = req.params;
   try {
     await projectService.assertCanEditProject(projectId, req.user!.id);
-  } catch {
+  } catch (err) {
+    logger.warn('[ecg-customize] access check failed', { projectId, error: (err as Error)?.message ?? String(err) });
     res.status(404).json({ error: 'Project not found or access denied.' });
     return;
   }
@@ -95,7 +99,7 @@ router.post('/:projectId/customize', async (req: AuthenticatedRequest, res: Resp
 
     res.json({ success: true, config: mergedConfig });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Customize failed' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Customize failed') });
   }
 });
 

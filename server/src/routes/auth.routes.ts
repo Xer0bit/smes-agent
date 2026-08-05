@@ -48,6 +48,10 @@ router.post('/refresh', async (req: Request, res: Response) => {
         });
 
         if (error) {
+            // Raw message intentionally NOT sanitized: Supabase Auth's own
+            // messages here ("Invalid Refresh Token", "Token has expired")
+            // are designed to be user-facing auth feedback, not schema/system
+            // detail.
             res.status(401).json({ error: error.message });
             return;
         }

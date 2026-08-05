@@ -13,6 +13,8 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middlew
 import { requireAdmin } from './system.routes.js';
 import { projectService } from '../services/project.service.js';
 import { supabase } from '../config/database.js';
+import { safeErrorMessage } from '../utils/sendError.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -33,7 +35,10 @@ async function ownsProject(projectId: string, userId: string): Promise<boolean> 
   try {
     await projectService.assertCanEditProject(projectId, userId);
     return true;
-  } catch {
+  } catch (err) {
+    // Fail closed either way (deny), but log so a genuine unexpected error
+    // here isn't indistinguishable from a normal "not your project" denial.
+    logger.warn('[hosting] ownsProject check failed', { projectId, userId, error: (err as Error)?.message ?? String(err) });
     return false;
   }
 }
@@ -60,7 +65,7 @@ router.post('/:projectId/deploy', async (req: AuthenticatedRequest, res: Respons
     const data = await hostingRes.json().catch(() => ({}));
     res.json({ success: true, hostingUrl: (data as any)?.siteUrl });
   } catch (err) {
-    res.status(500).json({ success: false, error: (err as Error).message });
+    res.status(500).json({ success: false, error: safeErrorMessage(err) });
   }
 });
 
@@ -81,7 +86,7 @@ router.post('/:projectId/verify-domain', async (req: AuthenticatedRequest, res: 
     if (!hostingRes.ok) { res.status(502).json({ verified: false, error: `Hosting service error ${hostingRes.status}` }); return; }
     res.json(await hostingRes.json());
   } catch (err) {
-    res.status(500).json({ verified: false, error: (err as Error).message });
+    res.status(500).json({ verified: false, error: safeErrorMessage(err) });
   }
 });
 
@@ -106,7 +111,7 @@ router.post('/:projectId/activate-domain', async (req: AuthenticatedRequest, res
     }
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: (err as Error).message });
+    res.status(500).json({ success: false, error: safeErrorMessage(err) });
   }
 });
 
@@ -138,7 +143,7 @@ router.delete('/:projectId/domain/:domain', async (req: AuthenticatedRequest, re
     }
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: (err as Error).message });
+    res.status(500).json({ success: false, error: safeErrorMessage(err) });
   }
 });
 
@@ -160,7 +165,7 @@ router.delete('/:projectId/deployment', async (req: AuthenticatedRequest, res: R
     }
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: (err as Error).message });
+    res.status(500).json({ success: false, error: safeErrorMessage(err) });
   }
 });
 
@@ -172,7 +177,8 @@ router.get('/admin/health', async (req: AuthenticatedRequest, res: Response) => 
     const hostingRes = await fetch(`${HOSTING_BASE}/health`, { signal: AbortSignal.timeout(15_000) });
     if (!hostingRes.ok) { res.status(502).json(null); return; }
     res.json(await hostingRes.json());
-  } catch {
+  } catch (err) {
+    logger.warn('[hosting] admin/health check failed', { error: (err as Error)?.message ?? String(err) });
     res.status(502).json(null);
   }
 });
@@ -191,7 +197,7 @@ router.get('/admin/domains', async (req: AuthenticatedRequest, res: Response) =>
     const data = await hostingRes.json();
     res.json({ domains: (data as any)?.domains || [] });
   } catch (err) {
-    res.json({ domains: [], error: (err as Error).message });
+    res.json({ domains: [], error: safeErrorMessage(err) });
   }
 });
 
@@ -212,7 +218,7 @@ router.delete('/admin/domains/:domain', async (req: AuthenticatedRequest, res: R
     }
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: (err as Error).message });
+    res.status(500).json({ success: false, error: safeErrorMessage(err) });
   }
 });
 
@@ -233,7 +239,7 @@ router.delete('/admin/deployment/:projectId', async (req: AuthenticatedRequest, 
     }
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: (err as Error).message });
+    res.status(500).json({ success: false, error: safeErrorMessage(err) });
   }
 });
 

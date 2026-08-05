@@ -8,12 +8,16 @@ import { createClient } from '@supabase/supabase-js';
 // confusing generic 500s instead of the clear "Missing Supabase URL" error
 // below. If you see that error, check .env.local and restart the Vite dev
 // server   env vars are only read at startup, not hot-reloaded.
-const VITE_SUPABASE_URL =
-  import.meta.env.VITE_SUPABASE_URL || import.meta.env.SUPABASE_URL;
+// Only VITE_-prefixed names are ever read here. Vite strips everything else
+// from the client bundle at build time, so the previous unprefixed fallbacks
+// (SUPABASE_URL / SUPABASE_ANON_KEY) were always inert -- they implied a
+// boundary that doesn't exist and would silently misbehave if envPrefix were
+// ever widened. Removed as part of the 2026-08 security audit's client/
+// server variable-separation sweep.
+const VITE_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const VITE_SUPABASE_PUBLISHABLE_KEY =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  import.meta.env.SUPABASE_ANON_KEY;
+  import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 // External Supabase for database operations
 const supabaseUrl = VITE_SUPABASE_URL || '';

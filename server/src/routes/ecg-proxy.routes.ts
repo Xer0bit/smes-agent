@@ -6,6 +6,8 @@ import { extractDocumentText, EXTRACTABLE_DOC_TYPES } from '../services/agentVis
 import multer from 'multer';
 import fs from 'node:fs';
 import os from 'node:os';
+import { safeErrorMessage } from '../utils/sendError.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 
@@ -366,7 +368,7 @@ router.post('/knowledge/upload', resolveAuth, knowledgeUpload.single('file'), as
     }
     res.status(501).json({ error: 'This action is not available for this dashboard.' });
   } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : 'Upload failed' });
+    res.status(502).json({ error: safeErrorMessage(err, 'Upload failed') });
   } finally {
     fs.unlink(file.path, () => {});
   }
@@ -415,7 +417,8 @@ router.post('/ai-chat', resolveAuth, async (req: AuthenticatedRequest, res: Expr
     }
     const data = await llmRes.json();
     res.status(llmRes.status).json(data);
-  } catch {
+  } catch (err) {
+    logger.warn('[ecg-proxy] LLM provider unreachable', { error: (err as Error)?.message ?? String(err) });
     res.status(502).json({ error: 'LLM provider unreachable' });
   }
 });
@@ -467,7 +470,7 @@ router.all('*', resolveAuth, async (req: AuthenticatedRequest, res: ExpressRespo
       }
       res.json(result);
     } catch (err) {
-      res.status(502).json({ error: err instanceof Error ? err.message : 'eCG Agents MCP call failed' });
+      res.status(502).json({ error: safeErrorMessage(err, 'eCG Agents MCP call failed') });
     }
     return;
   }
@@ -492,7 +495,8 @@ router.all('*', resolveAuth, async (req: AuthenticatedRequest, res: ExpressRespo
     const contentType = upstream.headers.get('content-type') ?? '';
     const body = contentType.includes('application/json') ? await upstream.json() : await upstream.text();
     res.status(upstream.status).json(body);
-  } catch {
+  } catch (err) {
+    logger.warn('[ecg-proxy] Portal API unreachable', { error: (err as Error)?.message ?? String(err) });
     res.status(502).json({ error: 'Portal API unreachable' });
   }
 });

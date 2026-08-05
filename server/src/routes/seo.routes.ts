@@ -4,6 +4,7 @@ import { supabase } from '../config/database.js';
 import { projectService } from '../services/project.service.js';
 import { logger } from '../utils/logger.js';
 import { deployProjectToProduction } from '../services/hostingDeploy.service.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -189,7 +190,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
       requiresRepublish: !productionDeployed,
     });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -232,7 +233,7 @@ router.get('/:projectId/routes', async (req: AuthenticatedRequest, res: Response
     .select('*')
     .eq('project_id', projectId)
     .order('route_path', { ascending: true });
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (error) { res.status(500).json({ error: safeErrorMessage(error) }); return; }
   res.json({ routes: data ?? [] });
 });
 
@@ -257,7 +258,7 @@ router.put('/:projectId/routes', async (req: AuthenticatedRequest, res: Response
     .upsert(payload, { onConflict: 'project_id,route_path' })
     .select()
     .single();
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (error) { res.status(500).json({ error: safeErrorMessage(error) }); return; }
   res.json({ route: data });
 });
 
@@ -270,7 +271,7 @@ router.delete('/:projectId/routes/:routeId', async (req: AuthenticatedRequest, r
     .delete()
     .eq('id', routeId)
     .eq('project_id', projectId);
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (error) { res.status(500).json({ error: safeErrorMessage(error) }); return; }
   res.json({ success: true });
 });
 
@@ -283,7 +284,7 @@ router.get('/:projectId/redirects', async (req: AuthenticatedRequest, res: Respo
     .select('*')
     .eq('project_id', projectId)
     .order('from_path', { ascending: true });
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (error) { res.status(500).json({ error: safeErrorMessage(error) }); return; }
   res.json({ redirects: data ?? [] });
 });
 
@@ -328,7 +329,7 @@ router.put('/:projectId/redirects/:redirectId', async (req: AuthenticatedRequest
     .eq('project_id', projectId)
     .select()
     .single();
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (error) { res.status(500).json({ error: safeErrorMessage(error) }); return; }
   res.json({ redirect: data });
 });
 
@@ -341,7 +342,7 @@ router.delete('/:projectId/redirects/:redirectId', async (req: AuthenticatedRequ
     .delete()
     .eq('id', redirectId)
     .eq('project_id', projectId);
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (error) { res.status(500).json({ error: safeErrorMessage(error) }); return; }
   res.json({ success: true });
 });
 

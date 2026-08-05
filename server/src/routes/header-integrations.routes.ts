@@ -4,6 +4,7 @@ import { supabase } from '../config/database.js';
 import { projectService } from '../services/project.service.js';
 import { logger } from '../utils/logger.js';
 import { deployProjectToProduction } from '../services/hostingDeploy.service.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -212,7 +213,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
       verified: verifyHeaderIntegrations(updated, data),
     });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 

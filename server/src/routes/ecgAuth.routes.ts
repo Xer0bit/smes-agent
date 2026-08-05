@@ -530,6 +530,9 @@ router.post('/change-password', ecgAuthMiddleware, async (req: EcgAuthenticatedR
         password: newPassword,
       });
       if (error) {
+        // Raw message intentionally NOT sanitized: Supabase Auth's own
+        // validation text here ("Password should be at least 6 characters")
+        // is designed to be user-facing, not schema/system detail.
         res.status(400).json({ error: error.message });
         return;
       }

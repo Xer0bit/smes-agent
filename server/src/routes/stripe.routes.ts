@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
 import { projectService } from '../services/project.service.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -37,6 +38,10 @@ router.post('/:projectId/test', async (req: AuthenticatedRequest, res: Response)
     });
     const body = await stripeRes.json() as { id?: string; business_profile?: { name?: string }; email?: string; error?: { message?: string } };
     if (!stripeRes.ok) {
+      // Raw message intentionally NOT sanitized: this is Stripe's own API
+      // response about the key the project owner just entered (e.g. "Invalid
+      // API Key provided") -- diagnostic-useful for fixing their own
+      // integration, not internal system detail.
       res.status(400).json({ connected: false, error: body.error?.message ?? `Stripe rejected the key (${stripeRes.status})` });
       return;
     }
@@ -47,7 +52,7 @@ router.post('/:projectId/test', async (req: AuthenticatedRequest, res: Response)
       mode: secretKey.startsWith('sk_live_') ? 'live' : 'test',
     });
   } catch (err) {
-    res.status(502).json({ connected: false, error: (err as Error).message ?? 'Could not reach Stripe' });
+    res.status(502).json({ connected: false, error: safeErrorMessage(err) });
   }
 });
 

@@ -3,6 +3,7 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middlew
 import { requireAdmin } from './system.routes.js';
 import { databaseService } from '../services/database.service.js';
 import { supabase } from '../config/database.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -28,7 +29,7 @@ router.get('/:id/ping', async (req: AuthenticatedRequest, res: Response) => {
     const result = await databaseService.testConnection(owner.user_id, owner.project_id ?? undefined);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -44,7 +45,7 @@ router.get('/:id/dump', async (req: AuthenticatedRequest, res: Response) => {
     if (truncated) res.setHeader('X-Dump-Truncated', 'true');
     res.send(sql);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -57,7 +58,7 @@ router.post('/:id/deprovision', async (req: AuthenticatedRequest, res: Response)
     await databaseService.deprovision(owner.user_id, owner.project_id ?? undefined);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 

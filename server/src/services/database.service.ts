@@ -100,8 +100,23 @@ export async function getOwnerBySchema(schemaName: string): Promise<{ user_id: s
 // Schema ID: short, stable, postgres-safe from projectId.
 // Uses 16 hex chars (64 bits of UUID entropy) to make collisions negligible.
 // ---------------------------------------------------------------------------
+// 2026-08 audit (Domain 5): this value is interpolated raw into DDL
+// throughout this file (CREATE SCHEMA, GRANT, DROP SCHEMA ... CASCADE, etc.)
+// -- Postgres can't parameterize identifiers, so raw interpolation is
+// unavoidable there. Today's only caller path is safe (projectId/userId are
+// system-generated UUIDs verified against a real DB row before reaching
+// here, per requireProjectEdit in database.routes.ts), but that safety
+// depended entirely on every future caller preserving that upstream
+// contract, with no check at the point of actual use. Asserting the output
+// shape here is real defense-in-depth: even a future caller that passes
+// unvalidated input can only ever produce a schema name matching this exact
+// pattern, never break out of the quoted identifier.
 function schemaId(projectId: string): string {
-  return 'tenant_' + projectId.replace(/-/g, '').slice(0, 16);
+  const id = 'tenant_' + projectId.replace(/-/g, '').slice(0, 16);
+  if (!/^tenant_[a-zA-Z0-9]{1,16}$/.test(id)) {
+    throw new Error(`Invalid derived schema identifier for projectId "${projectId}"`);
+  }
+  return id;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +326,7 @@ export const databaseService = {
     if (projectId) {
       const { data } = await supabase
         .from('tenant_databases')
-        .select('*')
+        .select('id, user_id, project_id, organization_id, schema_name, status, error_message, created_at')
         .eq('project_id', projectId)
         .not('status', 'eq', 'deprovisioned')
         .order('created_at', { ascending: false })
@@ -329,7 +344,7 @@ export const databaseService = {
 
     const { data, error } = await supabase
       .from('tenant_databases')
-      .select('*')
+      .select('id, user_id, project_id, organization_id, schema_name, status, error_message, created_at')
       .eq('user_id', userId)
       .is('project_id', null)
       .not('status', 'eq', 'deprovisioned')

@@ -24,6 +24,7 @@ const {
     validateSourceFile, buildValidationResponse, checkCrossFileImports,
     quickViteBuildCheck,
 } = require('./lib/validation');
+const { typeCheckProject } = require('./lib/typecheck');
 const {
     TAILWIND_CSS_BASE, preprocessFile, ensureEssentialFiles,
     materializeProjectFiles, pruneProjectFiles,
@@ -1017,7 +1018,15 @@ function corsOptions(req, callback) {
     const allowMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
 
     // Allow requests with no origin (server-to-server, curl, mobile apps)
-    if (!origin || IS_PRODUCTION === false) {
+    // NOTE: this used to also fully open CORS+credentials whenever
+    // IS_PRODUCTION was false -- but NODE_ENV defaults to 'development'
+    // (see const NODE_ENV above) when unset, so a deployment that simply
+    // forgot to set NODE_ENV=production silently got wide-open credentialed
+    // CORS. Dev-permissive behavior now requires its own explicit opt-in
+    // (PREVIEW_SERVICE_DEV_CORS=true) instead of inferring safety from
+    // NODE_ENV's own fail-open default -- absence/misspelling of either var
+    // now falls through to the strict allowlist below, not around it.
+    if (!origin || (IS_PRODUCTION === false && process.env.PREVIEW_SERVICE_DEV_CORS === 'true')) {
         return callback(null, {
             origin: true,
             credentials: true,
@@ -2052,10 +2061,34 @@ export default App;
                 ...importErrors.map((e) => e.summary),
             ];
 
+            // Real type-check (2026-08 audit: the fast checks above are
+            // syntax/import-existence only, never semantic -- type errors and
+            // unused imports shipped silently as "complete"). Deliberately
+            // gated on the fast checks already being clean: this is a real
+            // cross-file program build, meaningfully slower (seconds, not
+            // milliseconds) than the per-file esbuild transform above, and
+            // this route is on the hot path of every agent turn via
+            // get_build_errors -- no point paying that cost while there's
+            // already a cheaper-to-find syntax/import error to fix first.
+            let typeErrors = [];
+            if (errors.length === 0) {
+                try {
+                    const overlay = Object.fromEntries(files.map((f) => [f.path, f.content]));
+                    const typeResult = typeCheckProject(projectRoot, overlay);
+                    typeErrors = typeResult.errors.map((e) => e.summary);
+                } catch (typeCheckErr) {
+                    // Never let a bug in the type-checker itself take down the
+                    // endpoint every agent run depends on -- degrade to "no
+                    // additional errors found" instead.
+                    console.error(`[${projectId}] Type-check failed (non-fatal):`, typeCheckErr);
+                }
+            }
+
+            const allErrors = [...errors, ...typeErrors];
             res.json({
-                healthy: errors.length === 0,
-                errors,
-                diagnosticKind: errors.length === 0 ? 'healthy' : 'build',
+                healthy: allErrors.length === 0,
+                errors: allErrors,
+                diagnosticKind: allErrors.length === 0 ? 'healthy' : 'build',
             });
         } catch (err) {
             console.error(`[${projectId}] Check failed:`, err);

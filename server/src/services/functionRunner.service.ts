@@ -1,6 +1,17 @@
-import vm from 'node:vm';
-import { webcrypto } from 'node:crypto';
+// Type-only import -- erased at compile time, so it never triggers loading
+// the actual native module. isolated-vm is an optionalDependency (see
+// package.json): SERVICE_ROLE=gen hosts (VPS3) never mount /api/v1/functions
+// at all (see app.ts's servesApi/servesGen split) and may run a Node version
+// this native addon doesn't have a build for yet (confirmed live: no
+// isolated-vm release currently targets Node 24 -- 6.x tops out around
+// Node 22/23's V8, 7.0.0 requires Node >=26). A static top-level `import`
+// would crash server startup entirely on such a host the moment the module
+// failed to install; runEdgeFunction() below dynamically imports it only
+// when a function is actually invoked, which structurally never happens on
+// a host that doesn't serve this route.
+import type ivm from 'isolated-vm';
 import { logger } from '../utils/logger.js';
+import { validateEdgeFunctionCode } from './edgeFunctionValidator.js';
 
 export interface FunctionContext {
   apiUrl: string;
@@ -26,70 +37,43 @@ export interface InvokeResult {
 }
 
 const TIMEOUT_MS = 5_000;
+// The isolate-level timeout (ISOLATE_TIMEOUT_MS below) only interrupts GUEST
+// code running inside the isolate -- it does NOT cancel a host-side fetch()
+// call these bridge functions make (db.*/ecg.*/fetch all run as plain Node
+// async functions outside the isolate). Without its own timeout, a hung
+// downstream call keeps running on the host process after the isolate's
+// timeout error has already been returned to the caller. Kept comfortably
+// under TIMEOUT_MS so a slow downstream call surfaces as a normal error
+// before the outer isolate timeout would otherwise fire.
+const DOWNSTREAM_TIMEOUT_MS = 4_000;
+// LLM completions routinely take longer than a typical REST call and often
+// already exceed the whole function's nominal 5s budget in practice (an
+// existing, accepted product constraint, not something to "fix" by cutting
+// the timeout tighter). This bound exists only to guarantee the underlying
+// host-side fetch eventually terminates instead of hanging indefinitely in
+// the background after the outer isolate timeout has already returned an
+// error to the caller -- not to make the common "LLM is a bit slow" case
+// fail faster than it already effectively does today.
+const LLM_TIMEOUT_MS = 30_000;
+// isolated-vm enforces this at the V8 level (real interrupt, not a
+// non-cancelling Promise.race) -- a synchronous `while(true){}` inside a
+// function is actually terminated at this deadline, not just abandoned
+// while it keeps burning CPU in the background. Small headroom over
+// TIMEOUT_MS so we return "Function timed out" (our message) rather than
+// isolated-vm's generic "Script execution timed out." in the common case.
+const ISOLATE_TIMEOUT_MS = TIMEOUT_MS + 250;
+const MEMORY_LIMIT_MB = 128;
 
-// The documented sandbox contract says "return a JSON-serializable result" —
-// no `Response` global was ever part of it. In practice, generated functions
-// consistently return `new Response(JSON.stringify({error}), {status: 4xx})`
-// for their error paths anyway (a natural pattern to reach for), which threw
-// "Response is not defined" and made every non-200 branch in every generated
-// function crash instead of returning the intended error. Providing a minimal
-// Response and unwrapping it below (instead of rejecting the pattern) fixes
-// every function that already uses it without requiring it to be rewritten.
-class EdgeFunctionResponse {
-  body: unknown;
-  status: number;
-  constructor(body: unknown, init?: { status?: number; headers?: Record<string, string> }) {
-    this.body = body;
-    this.status = init?.status ?? 200;
-  }
-}
+// ── Host-side implementations of everything exposed to guest code ───────────
+// These are IDENTICAL in behavior to the pre-migration vm.createContext
+// helpers -- only how they're wired into the sandbox changed. All args/
+// results here are plain JSON-serializable data (verified: every one of
+// these is a thin PostgREST/HTTP JSON wrapper), which is what makes bridging
+// them across the isolate boundary via a single JSON-string channel safe and
+// simple, instead of needing per-method Reference plumbing.
 
-function unwrapResponse(value: unknown): { result: unknown; error?: string; status?: number } {
-  if (!(value instanceof EdgeFunctionResponse)) return { result: value ?? null };
-  let body: unknown = value.body;
-  if (typeof body === 'string') {
-    try { body = JSON.parse(body); } catch { /* leave as raw string */ }
-  }
-  if (value.status >= 400) {
-    const message = (body && typeof body === 'object' && 'error' in body) ? String((body as Record<string, unknown>).error) : 'Request failed';
-    return { result: null, error: message, status: value.status };
-  }
-  return { result: body, status: value.status };
-}
-
-// No database provisioned for this project   db.* stays callable but errors
-// only if the function code actually tries to use it, so functions that
-// don't touch a database work fine without one.
-function buildNoDbHelper() {
-  const fail = () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); };
-  return { select: fail, insert: fail, update: fail, delete: fail, rpc: fail };
-}
-
-// Minimal PostgREST helper exposed to function code as `db`
-// ctx.apiUrl already carries the tenant schema as a URL path segment
-// (https://cloud.ecomgear.app/tenant_xxxx   see database.service.ts), so this
-// just adds the standard /rest/v1 suffix. Accept-Profile/Content-Profile are
-// still sent for defense in depth, but VPS5's nginx derives the real schema
-// from the URL path itself and overrides these headers regardless   the path
-// is the source of truth, not the header.
-// Accepts either a raw PostgREST query string ("email=eq.x&role=eq.buyer",
-// passed through unchanged) or a plain filter object ({ email: 'x' }),
-// converted to the equivalent eq-filter query string. Every generated
-// function this session used the object form   db.select('table', { email })
-//   expecting simple equality filtering, but the helper only ever accepted a
-// raw string, so `${query}` on an object silently coerced to "[object Object]",
-// PostgREST ignored the garbage filter, and select() returned EVERY row in
-// the table. That produced two real bugs at once: signup always claimed
-// "email already exists" (since existing.length was really "row count > 0"),
-// and login compared against an arbitrary row instead of the actual user.
 type FilterArg = string | Record<string, unknown> | undefined;
 
-// A filter as generated functions actually call it: a raw PostgREST condition
-// string ("id=eq.X"), a comma-joined multi-condition string ("id=eq.X,role=eq.Y"
-// PostgREST wants those "&"-joined, not comma-joined), an "or(...)"/"and(...)"
-// compound expression (PostgREST wants "or=(...)"), or a { filter, order/orderBy }
-// wrapper mixing a raw filter with a sort. A comma inside a value (e.g.
-// "id=in.(a,b,c)") isn't followed by "key=" so the split leaves it alone.
 function normalizeFilterString(str: string): string {
   const trimmed = str.trim();
   const compound = trimmed.match(/^(or|and)\((.*)\)$/s);
@@ -100,22 +84,12 @@ function normalizeFilterString(str: string): string {
 function buildOrderParam(filters: Record<string, unknown>): string {
   if (typeof filters.orderBy === 'string') return `order=${encodeURIComponent(filters.orderBy)}`;
   if (typeof filters.order === 'string') {
-    // "col,dir" (comma) -> PostgREST's "col.dir" (dot)
     const [col, dir] = filters.order.split(',');
     return `order=${encodeURIComponent(col)}.${encodeURIComponent(dir || 'asc')}`;
   }
   return '';
 }
 
-// Accepts a raw string, a { filter, order|orderBy } wrapper, or a plain
-// equality-filter object ({ id: 'x' } -> "id=eq.x"). Every generated function
-// this session used one of these three shapes interchangeably   the object
-// form expecting simple equality filtering, but the helper only ever accepted
-// a raw string, so `${query}` on an object silently coerced to "[object Object]",
-// PostgREST ignored the garbage filter, and select() returned EVERY row in
-// the table. That produced two real bugs at once: signup always claimed
-// "email already exists" (since existing.length was really "row count > 0"),
-// and login compared against an arbitrary row instead of the actual user.
 function toQueryString(query: FilterArg): string {
   if (!query) return '';
   if (typeof query === 'string') return normalizeFilterString(query);
@@ -132,8 +106,6 @@ function toQueryString(query: FilterArg): string {
     .join('&');
 }
 
-// The optional 3rd/4th select() arg: per-column range/inequality filters
-// ({ expires_at: { operator: 'gte', value } }) or a sort ({ created_at: { ascending: false } }).
 function buildExtraOpsQuery(extra: Record<string, unknown> | undefined): string {
   if (!extra || typeof extra !== 'object') return '';
   return Object.entries(extra)
@@ -148,18 +120,9 @@ function buildExtraOpsQuery(extra: Record<string, unknown> | undefined): string 
     .join('&');
 }
 
-// Generated functions call db.* two ways: `const rows = await db.select(...)`
-// (checking `rows`/`rows.length` directly) or Supabase-client style
-// `const { data, error } = await db.select(...)`. The helper only ever
-// returned the raw PostgREST JSON, so every destructuring call-site's `data`
-// was silently `undefined`. Non-enumerable so it doesn't leak into
-// `Object.keys`/spread/JSON.stringify of the returned value.
-function withDataError<T>(json: T): T {
-  if (json && typeof json === 'object') {
-    Object.defineProperty(json, 'data', { value: Array.isArray(json) ? [...json] : { ...json }, enumerable: false, configurable: true });
-    Object.defineProperty(json, 'error', { value: null, enumerable: false, configurable: true });
-  }
-  return json;
+function buildNoDbHelper(): Record<string, (...a: unknown[]) => never> {
+  const fail = () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); };
+  return { select: fail, insert: fail, update: fail, delete: fail, count: fail, rpc: fail };
 }
 
 function buildDbHelper(ctx: FunctionContext) {
@@ -173,9 +136,6 @@ function buildDbHelper(ctx: FunctionContext) {
   };
 
   return {
-    // Generated functions call this three ways: select(table, filter), or
-    // select(table, columns[], filter, extraOps) to also pick specific
-    // columns and/or add a range filter or sort alongside the equality filter.
     async select(table: string, columnsOrFilter?: string[] | FilterArg, maybeFilter?: FilterArg, maybeExtra?: Record<string, unknown>) {
       const columns = Array.isArray(columnsOrFilter) ? columnsOrFilter : undefined;
       const filters = columns ? maybeFilter : (columnsOrFilter as FilterArg);
@@ -188,18 +148,19 @@ function buildDbHelper(ctx: FunctionContext) {
       if (extraQs) parts.push(extraQs);
       const qs = parts.join('&');
       const url = `${base}/${table}${qs ? `?${qs}` : ''}`;
-      const res = await fetch(url, { headers });
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`db.select failed: ${res.status} ${await res.text()}`);
-      return withDataError(await res.json());
+      return await res.json();
     },
     async insert(table: string, data: unknown) {
       const res = await fetch(`${base}/${table}`, {
         method: 'POST',
         headers: { ...headers, 'Prefer': 'return=representation' },
         body: JSON.stringify(data),
+        signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`db.insert failed: ${res.status} ${await res.text()}`);
-      return withDataError(await res.json());
+      return await res.json();
     },
     async update(table: string, data: unknown, query: FilterArg) {
       const qs = toQueryString(query);
@@ -207,99 +168,210 @@ function buildDbHelper(ctx: FunctionContext) {
         method: 'PATCH',
         headers: { ...headers, 'Prefer': 'return=representation' },
         body: JSON.stringify(data),
+        signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`db.update failed: ${res.status} ${await res.text()}`);
-      return withDataError(await res.json());
+      return await res.json();
     },
     async delete(table: string, query: FilterArg) {
       const qs = toQueryString(query);
-      const res = await fetch(`${base}/${table}?${qs}`, {
-        method: 'DELETE',
-        headers,
-      });
+      const res = await fetch(`${base}/${table}?${qs}`, { method: 'DELETE', headers, signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`db.delete failed: ${res.status} ${await res.text()}`);
-      return withDataError(await res.json());
+      return await res.json();
     },
-    // pm-manage-users' UPDATE_STATUS action calls this (`db.count('users', {...})`)
-    // to block deactivating the last active Super Admin — there was no such
-    // method at all, so that call threw "db.count is not a function".
     async count(table: string, query: FilterArg) {
       const qs = toQueryString(query);
       const url = `${base}/${table}${qs ? `?${qs}` : ''}`;
-      const res = await fetch(url, { headers: { ...headers, Prefer: 'count=exact', Range: '0-0' } });
+      const res = await fetch(url, { headers: { ...headers, Prefer: 'count=exact', Range: '0-0' }, signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`db.count failed: ${res.status} ${await res.text()}`);
       const range = res.headers.get('content-range');
       const count = range ? parseInt(range.split('/')[1] ?? '0', 10) : 0;
       return { count, error: null };
     },
     async rpc(fn: string, args: unknown = {}) {
-      const res = await fetch(`${base}/rpc/${fn}`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(args),
-      });
+      const res = await fetch(`${base}/rpc/${fn}`, { method: 'POST', headers, body: JSON.stringify(args), signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`db.rpc failed: ${res.status} ${await res.text()}`);
-      return withDataError(await res.json());
+      return await res.json();
     },
   };
 }
 
-// Secure fetch wrapper: HTTPS-only, no internal IPs
-async function safeFetch(url: string | URL, init?: RequestInit): Promise<Response> {
-  const href = typeof url === 'string' ? url : url.href;
+// Secure fetch wrapper: HTTPS-only, no internal/cloud-metadata IPs. The
+// 2026-08 audit found 169.254.169.254 (AWS/GCP/Azure instance metadata) was
+// missing from this blocklist -- added the full link-local range, which
+// covers it, plus explicit IPv6 loopback/link-local forms.
+async function safeFetchCheck(href: string): Promise<void> {
   if (!href.startsWith('https://')) {
     throw new Error('fetch is restricted to HTTPS URLs inside edge functions');
   }
-  // Block internal/private IP ranges
   const host = new URL(href).hostname;
-  if (/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) {
-    throw new Error(`fetch to internal host "${host}" is not allowed`);
+  const blocked =
+    /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(host) ||
+    host === '::1' ||
+    host.startsWith('fe80:') ||
+    host === '0.0.0.0';
+  if (blocked) {
+    throw new Error(`fetch to internal/link-local host "${host}" is not allowed`);
   }
-  return fetch(url, init);
 }
 
-// ECG portal helper injected as `ecg` in edge functions.
-// Uses real fetch (server-side) with the stored portal token   user code never sees the token.
-function buildEcgHelper(ctx: EcgContext) {
+async function bridgedFetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) {
+  await safeFetchCheck(url);
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS) });
+  const bodyText = await res.text();
+  return {
+    ok: res.ok,
+    status: res.status,
+    statusText: res.statusText,
+    headers: Object.fromEntries(res.headers.entries()),
+    bodyText,
+  };
+}
+
+function buildEcgDispatch(ctx: EcgContext) {
   const base = `${ctx.portalApiUrl}/v1/ecg`;
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.portalToken}` };
 
-  const call = (method: string, path: string, body?: unknown) =>
-    fetch(`${base}${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined })
-      .then(r => r.json());
-
-  const ecg: Record<string, unknown> = {
-    get:    (path: string)                  => call('GET',    path),
-    post:   (path: string, body: unknown)   => call('POST',   path, body),
-    patch:  (path: string, body: unknown)   => call('PATCH',  path, body),
-    delete: (path: string)                  => call('DELETE', path),
+  // Previously: `return await res.json()` with no res.ok check -- a non-JSON
+  // error page (5xx) threw an opaque JSON-parse error instead of a clean
+  // message, and a JSON error BODY on a 4xx status was returned to guest
+  // code as if it were a successful payload (nothing in the shape says
+  // "this was actually an error"). Now mirrors db.*'s error handling.
+  const call = async (method: string, path: string, body?: unknown) => {
+    const res = await fetch(`${base}${path}`, {
+      method, headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`ecg.${method.toLowerCase()} failed: ${res.status} ${await res.text()}`);
+    return await res.json();
   };
 
-  // LLM helper   server-side call, API key never exposed to edge function code
+  const dispatch: Record<string, (...a: any[]) => Promise<unknown>> = {
+    get: (path: string) => call('GET', path),
+    post: (path: string, body: unknown) => call('POST', path, body),
+    patch: (path: string, body: unknown) => call('PATCH', path, body),
+    delete: (path: string) => call('DELETE', path),
+  };
+
   if (ctx.llmApiKey) {
-    ecg.llm = async (messages: unknown[], systemPrompt?: string) => {
+    dispatch.llm = async (messages: unknown[], systemPrompt?: string) => {
       const provider = ctx.llmProvider || 'openai';
       const model = ctx.llmModel || 'gpt-4o';
       if (provider === 'anthropic') {
-        return fetch('https://api.anthropic.com/v1/messages', {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': ctx.llmApiKey!, 'anthropic-version': '2023-06-01' },
           body: JSON.stringify({ model, max_tokens: 1024, system: systemPrompt, messages }),
-        }).then(r => r.json());
+          signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+        });
+        if (!res.ok) throw new Error(`ecg.llm failed: ${res.status} ${await res.text()}`);
+        return await res.json();
       }
       const base2 = provider === 'google'
         ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${ctx.llmApiKey}`
         : 'https://api.openai.com/v1/chat/completions';
-      return fetch(base2, {
+      const res = await fetch(base2, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.llmApiKey}` },
         body: JSON.stringify({ model, messages: systemPrompt ? [{ role: 'system', content: systemPrompt }, ...messages] : messages }),
-      }).then(r => r.json());
+        signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      });
+      if (!res.ok) throw new Error(`ecg.llm failed: ${res.status} ${await res.text()}`);
+      return await res.json();
     };
   }
 
-  return ecg;
+  return dispatch;
 }
+
+// ── Guest-side bootstrap ─────────────────────────────────────────────────────
+// Runs INSIDE the isolate. Reconstructs the db/ecg/fetch/console API surface
+// generated functions expect, entirely from calls back through the single
+// `_hostCall` bridge -- no host object/function is ever handed directly into
+// the isolate's realm (that direct handoff, via vm.createContext, was the
+// actual escape vector: Object.constructor.constructor(...) reachable off
+// any live host-realm object). Everything crossing the boundary here is a
+// JSON string; the guest realm never touches a host-realm Object/Function/
+// Promise/etc.
+const GUEST_BOOTSTRAP = `
+function __withDataError(json) {
+  if (json && typeof json === 'object') {
+    Object.defineProperty(json, 'data', { value: Array.isArray(json) ? [...json] : { ...json }, enumerable: false, configurable: true });
+    Object.defineProperty(json, 'error', { value: null, enumerable: false, configurable: true });
+  }
+  return json;
+}
+
+async function __call(path, args) {
+  const resultJson = await _hostCall.apply(undefined, [path, JSON.stringify(args)], { result: { promise: true } });
+  const parsed = JSON.parse(resultJson);
+  if (parsed && parsed.__error) throw new Error(parsed.__error);
+  return parsed.value;
+}
+
+class Response {
+  constructor(body, init) {
+    this.body = body;
+    this.status = (init && init.status) || 200;
+    this.__isEdgeFunctionResponse = true;
+  }
+}
+
+const db = __hasDb ? {
+  select: (...a) => __call('db.select', a).then(__withDataError),
+  insert: (...a) => __call('db.insert', a).then(__withDataError),
+  update: (...a) => __call('db.update', a).then(__withDataError),
+  delete: (...a) => __call('db.delete', a).then(__withDataError),
+  count:  (...a) => __call('db.count', a),
+  rpc:    (...a) => __call('db.rpc', a).then(__withDataError),
+} : {
+  select: () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); },
+  insert: () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); },
+  update: () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); },
+  delete: () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); },
+  count:  () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); },
+  rpc:    () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); },
+};
+
+const ecg = __hasEcg ? {
+  get:    (path) => __call('ecg.get', [path]),
+  post:   (path, body) => __call('ecg.post', [path, body]),
+  patch:  (path, body) => __call('ecg.patch', [path, body]),
+  delete: (path) => __call('ecg.delete', [path]),
+  ...(__hasEcgLlm ? { llm: (messages, systemPrompt) => __call('ecg.llm', [messages, systemPrompt]) } : {}),
+} : null;
+
+async function fetch(url, init) {
+  const res = await __call('fetch', [String(url), init ? { method: init.method, headers: init.headers, body: init.body } : undefined]);
+  return {
+    ok: res.ok,
+    status: res.status,
+    statusText: res.statusText,
+    headers: { get: (name) => res.headers[String(name).toLowerCase()] ?? null },
+    json: async () => JSON.parse(res.bodyText),
+    text: async () => res.bodyText,
+  };
+}
+
+const console = {
+  log:   (...a) => _consoleLog.applySync(undefined, ['log', a.map(String).join(' ')]),
+  warn:  (...a) => _consoleLog.applySync(undefined, ['warn', a.map(String).join(' ')]),
+  error: (...a) => _consoleLog.applySync(undefined, ['error', a.map(String).join(' ')]),
+};
+
+async function __run() {
+  const __fn__ = async function(params, db, ecg, fetch, console, secrets) {
+${'{{USER_CODE}}'}
+  };
+  const result = await __fn__(__params, db, ecg, fetch, console, __secrets);
+  if (result && typeof result === 'object' && result.__isEdgeFunctionResponse) {
+    return JSON.stringify({ __response: true, body: result.body, status: result.status });
+  }
+  return JSON.stringify({ __response: false, value: result === undefined ? null : result });
+}
+__run()
+`;
 
 export async function runEdgeFunction(
   code: string,
@@ -311,72 +383,109 @@ export async function runEdgeFunction(
   const logs: string[] = [];
   const start = Date.now();
 
-  const consoleMock = {
-    log:   (...a: unknown[]) => { logs.push(a.map(String).join(' ')); },
-    warn:  (...a: unknown[]) => { logs.push('[warn] ' + a.map(String).join(' ')); },
-    error: (...a: unknown[]) => { logs.push('[error] ' + a.map(String).join(' ')); },
-  };
+  // Defense-in-depth: re-validate at run time too, not just at write_edge_function
+  // save time -- catches a DB row tampered with directly, bypassing the tool.
+  const issues = validateEdgeFunctionCode(code);
+  if (issues.length > 0) {
+    return {
+      result: null,
+      logs,
+      durationMs: Date.now() - start,
+      error: `Blocked by sandbox validation: ${issues.map(i => i.message).join('; ')}`,
+    };
+  }
 
-  const context = vm.createContext({
-    // user-facing API
-    params,
-    db:  dbCtx ? buildDbHelper(dbCtx) : buildNoDbHelper(),
-    ecg: ecgCtx ? buildEcgHelper(ecgCtx) : null,
-    secrets: Object.freeze({ ...(secrets ?? {}) }),
-    fetch: safeFetch,
-    console: consoleMock,
-    // safe globals only
-    JSON,
-    Math,
-    Date,
-    Object,
-    Array,
-    String,
-    Number,
-    Boolean,
-    Promise,
-    Error,
-    Map,
-    Set,
-    parseInt,
-    parseFloat,
-    isNaN,
-    isFinite,
-    encodeURIComponent,
-    decodeURIComponent,
-    btoa,
-    atob,
-    // Hashing (password hashing, UUIDs) is a near-universal need in generated
-    // auth functions   without these, any function calling `new TextEncoder()`
-    // or `crypto.subtle.digest(...)`/`crypto.randomUUID()` crashed with
-    // "TextEncoder is not defined", since vm.createContext() only includes
-    // ECMAScript intrinsics, not Node's WHATWG globals, unless explicitly injected.
-    TextEncoder,
-    TextDecoder,
-    crypto: webcrypto,
-    Response: EdgeFunctionResponse,
-  });
-
-  // Wrap the user code so they can write top-level await
-  const wrapped = `
-(async function __fn__(params, db, ecg, fetch, console) {
-${code}
-})(params, db, ecg, fetch, console)
-`;
-
+  let isolate: ivm.Isolate | undefined;
   try {
-    const script = new vm.Script(wrapped, { filename: 'edge-function.js' });
-    const result = await Promise.race([
-      script.runInContext(context) as Promise<unknown>,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Function timed out after ${TIMEOUT_MS / 1000}s`)), TIMEOUT_MS)
-      ),
-    ]);
-    const unwrapped = unwrapResponse(result);
-    return { ...unwrapped, logs, durationMs: Date.now() - start };
+    let ivmRuntime: typeof ivm;
+    try {
+      ivmRuntime = (await import('isolated-vm')).default;
+    } catch (loadErr) {
+      logger.error('[EdgeFunction] isolated-vm unavailable on this host', loadErr);
+      return {
+        result: null,
+        logs,
+        durationMs: Date.now() - start,
+        error: 'Function execution is unavailable on this server instance.',
+      };
+    }
+
+    isolate = new ivmRuntime.Isolate({ memoryLimit: MEMORY_LIMIT_MB });
+    const context = await isolate.createContext();
+    const jail = context.global;
+    await jail.set('global', jail.derefInto());
+
+    const dbDispatch = dbCtx ? buildDbHelper(dbCtx) : buildNoDbHelper();
+    const ecgDispatch = ecgCtx ? buildEcgDispatch(ecgCtx) : null;
+
+    // Single bridge: every db.*/ecg.*/fetch call from the guest funnels
+    // through here as (path, jsonArgs) -> jsonResult. No host function or
+    // object is ever exposed to the guest realm directly.
+    const hostCallRef = new ivmRuntime.Reference(async (path: string, argsJson: string) => {
+      try {
+        const args = JSON.parse(argsJson);
+        let value: unknown;
+        if (path === 'fetch') {
+          value = await bridgedFetch(args[0], args[1]);
+        } else if (path.startsWith('db.')) {
+          const method = path.slice(3) as keyof typeof dbDispatch;
+          value = await (dbDispatch[method] as (...a: unknown[]) => Promise<unknown>)(...args);
+        } else if (path.startsWith('ecg.') && ecgDispatch) {
+          const method = path.slice(4);
+          value = await ecgDispatch[method](...args);
+        } else {
+          throw new Error(`Unknown bridged call: ${path}`);
+        }
+        return JSON.stringify({ value });
+      } catch (err) {
+        return JSON.stringify({ __error: (err as Error).message ?? String(err) });
+      }
+    });
+    await jail.set('_hostCall', hostCallRef);
+
+    const consoleLogRef = new ivmRuntime.Reference((level: string, message: string) => {
+      logs.push(level === 'log' ? message : `[${level}] ${message}`);
+    });
+    await jail.set('_consoleLog', consoleLogRef);
+
+    await jail.set('__hasDb', Boolean(dbCtx));
+    await jail.set('__hasEcg', Boolean(ecgCtx));
+    await jail.set('__hasEcgLlm', Boolean(ecgCtx?.llmApiKey));
+    await jail.set('__params', new ivmRuntime.ExternalCopy(params ?? null).copyInto());
+    await jail.set('__secrets', new ivmRuntime.ExternalCopy(Object.freeze({ ...(secrets ?? {}) })).copyInto());
+
+    const script = await isolate.compileScript(
+      GUEST_BOOTSTRAP.replace('{{USER_CODE}}', code),
+      { filename: 'edge-function.js' }
+    );
+
+    const resultJson = await script.run(context, { timeout: ISOLATE_TIMEOUT_MS, promise: true }) as string;
+    const parsed = JSON.parse(resultJson) as { __response: boolean; value?: unknown; body?: unknown; status?: number };
+
+    if (parsed.__response) {
+      let body: unknown = parsed.body;
+      if (typeof body === 'string') {
+        try { body = JSON.parse(body); } catch { /* leave as raw string */ }
+      }
+      const status = parsed.status ?? 200;
+      if (status >= 400) {
+        const message = (body && typeof body === 'object' && 'error' in body) ? String((body as Record<string, unknown>).error) : 'Request failed';
+        return { result: null, logs, durationMs: Date.now() - start, error: message, status };
+      }
+      return { result: body, logs, durationMs: Date.now() - start, status };
+    }
+
+    return { result: parsed.value ?? null, logs, durationMs: Date.now() - start };
   } catch (err) {
-    const msg = (err as Error).message ?? String(err);
+    const raw = (err as Error).message ?? String(err);
+    // isolated-vm's own timeout error text differs from our documented message;
+    // normalize so callers/UI see the same "timed out after Ns" copy as before.
+    const msg = /timed out|Script execution timed out/i.test(raw)
+      ? `Function timed out after ${TIMEOUT_MS / 1000}s`
+      : raw;
     logger.warn('[EdgeFunction] runtime error', { error: msg });
     return { result: null, logs, durationMs: Date.now() - start, error: msg };
+  } finally {
+    isolate?.dispose();
   }
 }

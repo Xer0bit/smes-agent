@@ -108,7 +108,7 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
     'When to call: (1) FIRST at the start of a fix run   never guess at errors, ' +
     '(2) ONCE after ALL files are written in a batch   not after each individual file write. ' +
     '(3) When the user explicitly reports a broken state. ' +
-    'LIMIT: Maximum 3 calls per run. After that, finish your response and stop.',
+    'LIMIT: Maximum 5 calls per run. After that, finish your response and stop.',
   inputSchema: schema,
   getConsentPreview: (args) => `Get build errors for project ${args.projectId}`,
 
@@ -118,8 +118,15 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
     const checkUrl = `${previewUrl}/preview/${projectId}/check`;
 
     // ─── Per-run call cap: prevent infinite error-check loops ────────────────
+    // Raised from 3 to 5 (2026-08 audit) alongside adding a real type-check
+    // stage to the underlying /check endpoint (preview-service/lib/typecheck.js)
+    // -- syntax errors and real type errors are now often found on separate
+    // calls (the type-check only runs once syntax is already clean), so the
+    // previous cap could cut off a legitimate fix-verify cycle before a type
+    // error was ever surfaced. Still capped, not unlimited: a genuine
+    // error-fix loop should still terminate, not retry indefinitely.
     ctx.buildErrorCallCount = (ctx.buildErrorCallCount ?? 0) + 1;
-    const MAX_CALLS_PER_RUN = 3;
+    const MAX_CALLS_PER_RUN = 5;
     if (ctx.buildErrorCallCount > MAX_CALLS_PER_RUN) {
       return (
         `STOP: get_build_errors has been called ${ctx.buildErrorCallCount} times this run (limit is ${MAX_CALLS_PER_RUN}). ` +

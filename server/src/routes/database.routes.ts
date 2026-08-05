@@ -5,6 +5,7 @@ import { databaseService, buildProjectEnvSecrets } from '../services/database.se
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { projectService } from '../services/project.service.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -61,7 +62,17 @@ async function requirePaidPlan(req: AuthenticatedRequest, res: Response, organiz
 // helpers close that gap; read ops accept any accepted role (owner down to
 // viewer/client), write/destructive/export ops require editor+.
 async function requireProjectView(req: AuthenticatedRequest, res: Response, projectId?: string): Promise<boolean> {
-  if (!projectId) return true; // legacy no-projectId path is scoped to the caller's own user_id already
+  // 2026-08 audit flagged this as fail-open. It isn't a bypass: every
+  // downstream operation on the legacy (pre-project-scoping) path filters by
+  // req.user!.id itself (see databaseService.getStatus/getCredentials's
+  // projectId-undefined branch), so a caller can only ever reach their OWN
+  // resources this way regardless of this check. Left as fail-open-by-design
+  // rather than flipped to fail-closed: doing that would 404 every legacy
+  // tenant-database row (provisioned before project_id existed) outright.
+  // The real invariant this relies on: any NEW route added here must keep
+  // scoping its own projectId-undefined branch by the caller's user_id --
+  // this helper alone does not enforce that for a future caller.
+  if (!projectId) return true;
   try {
     await projectService.getProject(projectId, req.user!.id);
     return true;
@@ -89,7 +100,7 @@ router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
     const record = await databaseService.getStatus(req.user!.id, projectId);
     res.json({ database: record });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -105,7 +116,7 @@ router.get('/credentials', async (req: AuthenticatedRequest, res: Response) => {
     if (!creds) { res.status(404).json({ error: 'No active database' }); return; }
     res.json(creds);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -143,7 +154,7 @@ router.post('/sync-secrets', async (req: AuthenticatedRequest, res: Response) =>
     res.json({ synced: (secrets ?? []).length, restarted: Boolean(previewResult.restarted) });
   } catch (err) {
     logger.error('sync-secrets error', err);
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -184,7 +195,7 @@ router.post('/preview-update', async (req: AuthenticatedRequest, res: Response) 
     res.json({ success: true, session: (data as any)?.session });
   } catch (err) {
     logger.error('preview-update error', err);
-    res.status(500).json({ success: false, error: (err as Error).message });
+    res.status(500).json({ success: false, error: safeErrorMessage(err) });
   }
 });
 
@@ -201,21 +212,40 @@ router.post('/provision', dbProvisionLimiter, async (req: AuthenticatedRequest, 
   } catch (err) {
     const msg = (err as Error).message;
     const status = msg.includes('already_provisioned') ? 409 : 500;
-    logger.error('Provision error', err);
-    res.status(status).json({ error: msg });
+    // 409's message is a known, safe, internally-generated string ("already_provisioned"),
+    // not upstream error detail   fine to return as-is. Anything reaching the 500
+    // branch is unexpected and gets sanitized like every other 500 in this file.
+    res.status(status).json({ error: status === 409 ? msg : safeErrorMessage(err, 'Provision error') });
   }
 });
 
 // ── DELETE /api/v1/database/deprovision ─────────────────────────────────────
 // No plan gate: if you own the database you can always delete it.
-router.delete('/deprovision', async (req: AuthenticatedRequest, res: Response) => {
+// Irreversible (DROP SCHEMA ... CASCADE, see database.service.ts) -- requires
+// the caller to echo the tenant's exact schema_name as a typed confirmation,
+// so a single accidental/forged DELETE can't wipe a tenant database outright.
+// Rate-limited to match /provision's existing pattern (this route had none).
+router.delete('/deprovision', dbProvisionLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const projectId = getProjectId(req);
     if (!(await requireProjectEdit(req, res, projectId))) return;
+
+    const status = await databaseService.getStatus(req.user!.id, projectId);
+    if (!status) { res.status(404).json({ error: 'No database provisioned for this project.' }); return; }
+
+    const confirm = (req.body?.confirm as string | undefined)?.trim();
+    if (confirm !== status.schema_name) {
+      res.status(400).json({
+        error: 'Confirmation required. Pass { "confirm": "<schema_name>" } in the request body, exactly matching the database to delete.',
+        schema_name: status.schema_name,
+      });
+      return;
+    }
+
     await databaseService.deprovision(req.user!.id, projectId);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -228,7 +258,7 @@ router.get('/ping', async (req: AuthenticatedRequest, res: Response) => {
     const result = await databaseService.testConnection(req.user!.id, projectId);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -246,7 +276,7 @@ router.get('/dump', async (req: AuthenticatedRequest, res: Response) => {
     if (truncated) res.setHeader('X-Dump-Truncated', 'true');
     res.send(sql);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -259,7 +289,7 @@ router.get('/tables', async (req: AuthenticatedRequest, res: Response) => {
     const tables = await databaseService.listTables(req.user!.id, projectId);
     res.json({ tables });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -274,6 +304,10 @@ router.get('/tables/:table/rows', async (req: AuthenticatedRequest, res: Respons
     const result = await databaseService.queryTable(req.user!.id, req.params.table, limit, offset, projectId);
     res.json(result);
   } catch (err) {
+    // Raw message intentionally NOT sanitized here: this is an owner-only
+    // (requireProjectView-gated) table-browser tool, not an end-user-facing
+    // endpoint -- the caller needs the real DB error to debug their own
+    // schema/query, same reasoning as /query below.
     const msg = (err as Error).message;
     res.status(msg.includes('not found') ? 404 : 500).json({ error: msg });
   }
@@ -299,6 +333,10 @@ router.post('/query', dbQueryLimiter, async (req: AuthenticatedRequest, res: Res
     const result = await databaseService.runQuery(req.user!.id, sql, role || 'anon', projectId);
     res.json(result);
   } catch (err) {
+    // Raw message intentionally NOT sanitized: this endpoint runs the
+    // caller's own SQL (a DB console/REPL tool, owner-gated above) -- they
+    // need the real Postgres error ("column does not exist", syntax error,
+    // etc.) to fix their query. Sanitizing would break the feature.
     const msg = (err as Error).message;
     res.status(msg.includes('Only SELECT') || msg.includes('blocked') ? 403 : 500).json({ error: msg });
   }

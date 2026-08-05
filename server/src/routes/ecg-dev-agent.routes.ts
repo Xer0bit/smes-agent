@@ -34,6 +34,7 @@ import { seedEcgTemplate } from '../services/ecg-template.js';
 import { saveEcgRevision, syncEcgPreviewService } from './ecg-connect.routes.js';
 import { captureThumbnail } from '../services/thumbnailService.js';
 import { logger } from '../utils/logger.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -72,7 +73,7 @@ router.post('/discover', async (req: AuthenticatedRequest, res: Response): Promi
     const discovery = await discoverEcgOrg(apiKey);
     res.json(discovery);
   } catch (err) {
-    res.status(422).json({ error: err instanceof Error ? err.message : 'Could not verify eCG Agent API key' });
+    res.status(422).json({ error: safeErrorMessage(err, 'Could not verify eCG Agent API key') });
   }
 });
 
@@ -122,7 +123,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
     try {
       discovery = await discoverEcgOrg(apiKey);
     } catch (err) {
-      sseWrite(res, 'error', { message: err instanceof Error ? err.message : 'Could not verify eCG Agent API key' });
+      sseWrite(res, 'error', { message: safeErrorMessage(err, 'Could not verify eCG Agent API key') });
       res.end();
       return;
     }
@@ -315,7 +316,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
     sseWrite(res, 'done', { projectId: project.id });
     res.end();
   } catch (err) {
-    sseWrite(res, 'error', { message: err instanceof Error ? err.message : 'Unexpected error' });
+    sseWrite(res, 'error', { message: safeErrorMessage(err, 'Unexpected error') });
     res.end();
   } finally {
     clearInterval(heartbeat);

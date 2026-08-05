@@ -5,15 +5,16 @@
  * /api/v1/functions is locked to users; only the agent (running server-side)
  * can create or modify edge functions via this tool.
  *
- * Code is validated against the actual sandbox contract (vm.Script syntax
- * check + banned-construct scan) BEFORE saving, so the agent gets a precise
+ * Code is validated against the actual sandbox contract (AST-based static
+ * check via edgeFunctionValidator.ts   the same validator functionRunner.ts
+ * re-applies at invoke time) BEFORE saving, so the agent gets a precise
  * error and can iterate to a working function instead of deploying broken code.
  */
-import vm from 'node:vm';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { ToolDefinition, AgentContext, safeJoin } from './types.js';
+import { validateEdgeFunctionCode } from '../services/edgeFunctionValidator.js';
 import { supabase } from '../config/database.js';
 import { databaseService } from '../services/database.service.js';
 import { logger } from '../utils/logger.js';
@@ -48,15 +49,20 @@ const schema = z.object({
   description: z.string().optional().describe(
     'Short description of what the function does (shown in the UI and chat).'
   ),
+  requiresServiceRole: z.boolean().optional().describe(
+    'Defaults to true. Set to FALSE for functions that only need to READ data the anon role can ' +
+    'already see (e.g. public listings) -- they run with the project\'s anon key instead of the ' +
+    'RLS-bypassing service key, so a bug or injection in the function\'s own logic can\'t write or ' +
+    'read outside what RLS already allows anonymous callers. Leave true (default) for anything ' +
+    'that writes data, or reads something RLS would otherwise block (most functions).'
+  ),
+  isPublic: z.boolean().optional().describe(
+    'Defaults to true (invocable with the project\'s public anon/service key, same as every other ' +
+    'function). Set to FALSE for admin-only operations (e.g. deleting other users\' data, financial ' +
+    'operations) that must only run for the project OWNER\'s own authenticated session -- an anon ' +
+    'key holder (any visitor to the generated app) will be rejected.'
+  ),
 });
-
-// Constructs that can never work inside the vm sandbox   catch them here with a
-// teachable error instead of letting them fail cryptically at invoke time.
-const BANNED: Array<{ re: RegExp; why: string }> = [
-  { re: /^\s*(import\s|export\s)/m, why: 'import/export are not available   the code runs inside a function body, not a module. Use the injected `db`, `secrets`, `fetch`, `ecg` helpers instead of importing packages.' },
-  { re: /\brequire\s*\(/, why: 'require() is not available in the sandbox. No npm packages   use the injected helpers and plain JS.' },
-  { re: /\bprocess\.env\b/, why: 'process.env does not exist in the sandbox. Read secrets via the injected `secrets` object (e.g. secrets.MY_API_KEY   save values first with set_secret).' },
-];
 
 export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
   name: 'write_edge_function',
@@ -91,20 +97,14 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
       return 'ERROR: function name must start with a letter and be alphanumeric with hyphens/underscores only (max 64 chars).';
     }
 
-    // ── Validate BEFORE saving   never deploy code that can't run ────────────
-    for (const { re, why } of BANNED) {
-      if (re.test(args.code)) {
-        return `ERROR: edge function "${name}" was NOT saved   ${why} Fix the code and call write_edge_function again.`;
-      }
-    }
-    try {
-      // Exact same wrapping the runner uses   a syntax error here IS a syntax
-      // error at invoke time, caught now instead.
-      new vm.Script(`(async function __fn__(params, db, ecg, fetch, console) {\n${args.code}\n})`, { filename: `${name}.js` });
-    } catch (err) {
+    // ── Validate BEFORE saving   never deploy code that can't run. Same AST
+    // check functionRunner.ts re-applies at invoke time (defense-in-depth
+    // against a DB row tampered with directly, bypassing this tool). ────────
+    const issues = validateEdgeFunctionCode(args.code);
+    if (issues.length > 0) {
       return (
-        `ERROR: edge function "${name}" was NOT saved   the code has a syntax error: ` +
-        `${err instanceof Error ? err.message : String(err)}. Fix it and call write_edge_function again.`
+        `ERROR: edge function "${name}" was NOT saved   ${issues.map(i => i.message).join('; ')} ` +
+        `Fix the code and call write_edge_function again.`
       );
     }
 
@@ -148,6 +148,8 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
             description: args.description ?? null,
             code: args.code,
             is_active: true,
+            requires_service_role: args.requiresServiceRole ?? true,
+            is_public: args.isPublic ?? true,
           },
           { onConflict: 'project_id,name' }
         )

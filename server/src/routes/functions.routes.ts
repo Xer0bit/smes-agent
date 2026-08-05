@@ -1,17 +1,39 @@
 import { Router, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
+import { createHash } from 'node:crypto';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase, supabaseAuth } from '../config/database.js';
 import { databaseService, verifyTenantJwt, getOwnerBySchema } from '../services/database.service.js';
 import { runEdgeFunction, EcgContext, FunctionContext } from '../services/functionRunner.service.js';
 import { projectService } from '../services/project.service.js';
 import { logger } from '../utils/logger.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
+
+// Previously IP-keyed (express-rate-limit's default), which meant one NAT/
+// corporate egress IP shared a single 30/min budget across every user of
+// every generated app behind it, while a distributed caller (or a leaked
+// anon key hit from many source IPs) could trivially exceed any per-project
+// limit entirely. Keyed on the caller's own bearer token/apikey instead --
+// this runs BEFORE resolveInvokeAuth (auth verification does real work: a
+// JWT check or a Supabase getUser() call, so it shouldn't be reachable
+// unlimited-rate before rate limiting even applies), so the raw credential
+// is the only caller-identifying value available yet. Hashed rather than
+// stored raw as an in-memory rate-limit-store key.
+function invokeRateLimitKey(req: AuthenticatedRequest): string {
+  const authHeader = req.headers.authorization;
+  const token = (authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined) || (req.headers['apikey'] as string | undefined);
+  if (token) return createHash('sha256').update(token).digest('hex');
+  return req.ip || 'unknown';
+}
 
 const invokeLimiter = rateLimit({
   windowMs: 60_000,
   max: 30,
+  keyGenerator: invokeRateLimitKey,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { error: 'Too many function invocations. Limit: 30/min.' },
 });
 
@@ -105,7 +127,7 @@ router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response)
     if (error) throw new Error(error.message);
     res.json({ functions: data || [] });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -125,7 +147,7 @@ router.get('/:name', authMiddleware, async (req: AuthenticatedRequest, res: Resp
     if (!data) { res.status(404).json({ error: 'Function not found.' }); return; }
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -170,6 +192,7 @@ interface FunctionBundle {
 
 async function resolveFunctionBundle(
   callerId: string,
+  callerRole: string,
   name: string,
   invokeProjectId: string | undefined,
 ): Promise<{ bundle?: FunctionBundle; error?: string; status?: number }> {
@@ -197,7 +220,7 @@ async function resolveFunctionBundle(
 
   let fnQuery = supabase
     .from('edge_functions')
-    .select('id, code, is_active')
+    .select('id, code, is_active, requires_service_role, is_public')
     .eq('user_id', ownerId)
     .eq('name', name);
   // Legacy rows written before project scoping have project_id NULL   only
@@ -205,9 +228,17 @@ async function resolveFunctionBundle(
   fnQuery = invokeProjectId ? fnQuery.eq('project_id', invokeProjectId) : fnQuery.is('project_id', null);
   const { data: fn, error } = await fnQuery.maybeSingle();
 
-  if (error) return { error: error.message, status: 500 };
+  if (error) return { error: safeErrorMessage(error, 'Function lookup failed'), status: 500 };
   if (!fn) return { error: 'Function not found.', status: 404 };
   if (!fn.is_active) return { error: 'Function is disabled.', status: 400 };
+  // Function-granularity authorization: a project's public anon/service key
+  // used to authorize invoking EVERY function in the project, including ones
+  // meant to be owner/admin-only -- there was no way to mark a function
+  // private. is_public=false rejects any caller that isn't a verified owner
+  // platform session (callerRole !== 'tenant-public', set by resolveInvokeAuth).
+  if (!fn.is_public && callerRole === 'tenant-public') {
+    return { error: 'This function requires an owner session and cannot be invoked with a project key.', status: 403 };
+  }
 
   // Load ECG secrets for this project (if it has ECG integration)
   let ecgCtx: EcgContext | undefined;
@@ -228,11 +259,17 @@ async function resolveFunctionBundle(
     }
   }
 
+  // Least-privilege invocation: functionRunner's db.* helper only ever reads
+  // ctx.serviceKey for its auth headers, so a function that opted out of
+  // service-role access (requires_service_role=false) gets the anon key put
+  // in that slot instead -- its db.* calls are then genuinely RLS-scoped
+  // (the anon role only has USAGE+SELECT grants in tenant schemas, per
+  // database.service.ts's role provisioning), not just labeled as such.
   const dbCtx: FunctionContext | undefined = creds ? {
     apiUrl:     creds.api_url,
     schema:     creds.schema,
     anonKey:    creds.anon_key,
-    serviceKey: creds.service_key,
+    serviceKey: fn.requires_service_role ? creds.service_key : creds.anon_key,
   } : undefined;
 
   // Expose all saved project secrets as `secrets.KEY_NAME` inside the function
@@ -265,33 +302,64 @@ function persistInvokeLog(userId: string, projectId: string | undefined, functio
   }).then(() => {}, () => {});
 }
 
+// ── Temporary kill switch ────────────────────────────────────────────────────
+// 2026-08 security audit found the vm sandbox used by runEdgeFunction() below
+// is escapable to host-process RCE (Object.constructor.constructor chain --
+// see audit report). Public invocation is disabled by default until that's
+// replaced with a real isolate (isolated-vm or equivalent) plus AST-based
+// static validation. Set EDGE_FUNCTIONS_INVOKE_ENABLED=true to re-enable
+// (e.g. for local dev where the exposure is not attacker-reachable) --
+// defaults CLOSED, not open, on any unset/misspelled value.
+function invokeKillSwitch(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  if (process.env.EDGE_FUNCTIONS_INVOKE_ENABLED !== 'true') {
+    res.status(503).json({
+      error: 'Function invocation is temporarily disabled pending a security fix. Contact support if this persists.',
+    });
+    return;
+  }
+  next();
+}
+
 // ── POST /api/v1/functions/:name/invoke ─────────────────────────────────────
 // Public path: a generated app's own end users call this with the project's
 // VITE_DB_ANON_KEY (or VITE_DB_SERVICE_KEY)   see resolveInvokeAuth above.
-router.post('/:name/invoke', invokeLimiter, resolveInvokeAuth, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/:name/invoke', invokeKillSwitch, invokeLimiter, resolveInvokeAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const invokeProjectId = getProjectId(req);
-    const { bundle, error, status } = await resolveFunctionBundle(req.user!.id, req.params.name, invokeProjectId);
+    const { bundle, error, status } = await resolveFunctionBundle(req.user!.id, req.user!.role ?? '', req.params.name, invokeProjectId);
     if (!bundle) { res.status(status ?? 500).json({ error }); return; }
 
     const params = req.body?.params ?? {};
     const result = await runEdgeFunction(bundle.code, params, bundle.dbCtx, bundle.ecgCtx, bundle.secrets);
     persistInvokeLog(req.user!.id, invokeProjectId, bundle.functionId, params, result);
 
+    // Previously the full `logs` array (every console.log the function made)
+    // went to EVERY caller, including anonymous end users holding only the
+    // project's public anon/service key -- contradicting the documented
+    // contract ("captured and shown to the project owner"). Only a verified
+    // owner platform-session caller (not 'tenant-public', set by
+    // resolveInvokeAuth above) gets logs back now.
+    const isOwnerCaller = req.user!.role !== 'tenant-public';
+    const responseBody = isOwnerCaller ? result : { ...result, logs: [] };
+
     if (result.error) {
-      res.status(result.status ?? 422).json(result);
+      res.status(result.status ?? 422).json(responseBody);
     } else {
-      res.status(result.status ?? 200).json(result);
+      res.status(result.status ?? 200).json(responseBody);
     }
   } catch (err) {
     logger.error('[EdgeFunction] invoke error', err);
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
-// Note: edge-function EXECUTION happens entirely on VPS5 (see
-// vps5-functions-runner/), not here   api.ecomgear.dev is reserved for
-// EcomGear's own platform API and never serves tenant/end-user traffic.
+// Note: this comment previously claimed edge-function EXECUTION happens
+// entirely on VPS5 and that api.ecomgear.dev never serves tenant/end-user
+// traffic. That is NOT what the code above does -- runEdgeFunction() at
+// line 278 executes in-process, on this server, right now. Unresolved
+// doc/behavior mismatch flagged by the 2026-08 security audit; needs a
+// product decision on which side is correct (dispatch to VPS5 for real, or
+// update this doc) before being closed. Not decided here.
 // write_edge_function.ts and set_secret.ts push code/secrets directly to
 // VPS5 (POST https://cloud.ecomgear.app/<schema>/functions/_sync and
 // /secrets/_sync) after saving here, so this file's DB rows stay the source
@@ -320,7 +388,7 @@ router.get('/:name/logs', authMiddleware, async (req: AuthenticatedRequest, res:
 
     res.json({ logs: data || [] });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 

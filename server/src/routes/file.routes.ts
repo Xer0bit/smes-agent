@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
 import { projectService } from '../services/project.service.js';
+import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 
@@ -30,7 +31,7 @@ router.get('/project/:projectId', async (req: AuthenticatedRequest, res: Respons
             files: data?.generated_files?.files || []
         });
     } catch (error) {
-        res.status(500).json({ error: (error as Error).message });
+        res.status(500).json({ error: safeErrorMessage(error) });
     }
 });
 
@@ -65,7 +66,7 @@ router.get('/project/:projectId/file', async (req: AuthenticatedRequest, res: Re
 
         res.json({ file });
     } catch (error) {
-        res.status(500).json({ error: (error as Error).message });
+        res.status(500).json({ error: safeErrorMessage(error) });
     }
 });
 
@@ -94,7 +95,7 @@ router.get('/project/:projectId/file/history', async (req: AuthenticatedRequest,
 
         res.json({ history: data || [] });
     } catch (error) {
-        res.status(500).json({ error: (error as Error).message });
+        res.status(500).json({ error: safeErrorMessage(error) });
     }
 });
 
