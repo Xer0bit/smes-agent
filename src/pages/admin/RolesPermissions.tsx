@@ -346,7 +346,7 @@ export default function AdminRolesPermissions() {
                                                 <TableRow key={r.id} className="border-white/[0.05] hover:bg-white/[0.02] transition-colors group">
                                                     <TableCell className="py-4 pl-6">
                                                         <div className="flex items-center gap-3">
-                                                            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center text-[10px] font-bold text-white shadow-inner">
+                                                            <div className="h-8 w-8 rounded-full bg-primary/15 border border-white/10 flex items-center justify-center text-[10px] font-bold text-white">
                                                                 {r.user_email.substring(0, 2).toUpperCase()}
                                                             </div>
                                                             <span className="text-sm text-gray-200 font-medium group-hover:text-white transition-colors">

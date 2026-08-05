@@ -64,9 +64,6 @@ export const Features = () => {
               <p className="text-muted-foreground leading-relaxed">
                 {feature.description}
               </p>
-              
-              {/* Hover effect gradient */}
-              <div className="absolute inset-0 rounded-2xl bg-gradient-accent opacity-0 group-hover:opacity-5 transition-opacity duration-300" />
             </div>
           ))}
         </div>

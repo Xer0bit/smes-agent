@@ -118,10 +118,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
           )}
           {content && (
             <div className="relative px-3.5 py-2.5 rounded-2xl rounded-tr-sm
-              bg-gradient-to-br from-indigo-600/[0.22] to-purple-600/[0.14]
-              border border-indigo-500/[0.2]
-              text-[12.5px] text-gray-100 leading-[1.65] whitespace-pre-wrap break-words
-              shadow-[0_2px_16px_rgba(99,102,241,0.08)]">
+              bg-primary/[0.14]
+              border border-primary/[0.2]
+              text-[12.5px] text-gray-100 leading-[1.65] whitespace-pre-wrap break-words">
               {content}
             </div>
           )}

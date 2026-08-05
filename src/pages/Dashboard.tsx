@@ -27,13 +27,6 @@ import { CreateWorkspaceDialog } from '@/components/dashboard/CreateWorkspaceDia
 
 const CREATE_WORKSPACE_VALUE = '__create_workspace__';
 
-function orgInitialClasses(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff;
-  const palettes = ['bg-primary/15 text-primary', 'bg-secondary/15 text-secondary', 'bg-accent/15 text-accent'];
-  return palettes[h % palettes.length];
-}
-
 interface DashboardSidebarProps {
   user: User | null;
   currentOrganizationId: string | null;
@@ -141,7 +134,7 @@ const DashboardSidebar = ({
               <SelectTrigger className="mt-2.5 h-10 rounded-full border-border/60 bg-background/60 pl-1.5 pr-2.5 text-xs text-foreground focus:ring-0 [&>span]:flex [&>span]:min-w-0 [&>span]:flex-1">
                 <SelectValue placeholder={loadingOrganizations ? 'Loading…' : 'No workspace'} className="truncate" />
               </SelectTrigger>
-              <SelectContent className="min-w-[15rem] rounded-xl border-border/60 bg-card p-1.5 text-foreground shadow-[0_18px_44px_hsl(220_45%_5%/0.3)]">
+              <SelectContent className="min-w-[15rem] rounded-xl border-border/60 bg-card p-1.5 text-foreground shadow-[var(--elev-2)]">
                 {organizations.map((organization) => (
                   <SelectItem
                     key={organization.id}
@@ -152,7 +145,7 @@ const DashboardSidebar = ({
                       {organization.avatar_url ? (
                         <img src={organization.avatar_url} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
                       ) : (
-                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${orgInitialClasses(organization.name)}`}>
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold bg-primary/15 text-primary">
                           {organization.name.charAt(0).toUpperCase()}
                         </span>
                       )}

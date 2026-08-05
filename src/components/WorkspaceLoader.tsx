@@ -91,9 +91,7 @@ export function WorkspaceLoader({
       />
 
       {/* Card */}
-      <div className="relative z-10 w-[340px] rounded-2xl border border-white/[0.06] bg-[hsl(var(--workspace-surface))] px-7 pt-8 pb-7 shadow-[0_24px_80px_-12px_rgba(0,0,0,0.6),0_0_120px_-40px_rgba(52,211,153,0.06)]">
-        {/* Top accent line */}
-        <div className="absolute top-0 left-8 right-8 h-px bg-gradient-to-r from-transparent via-emerald-400/20 to-transparent" />
+      <div className="relative z-10 w-[340px] rounded-2xl border border-white/[0.06] bg-[hsl(var(--workspace-surface))] px-7 pt-8 pb-7 shadow-[0_24px_80px_-12px_rgba(0,0,0,0.6)]">
 
         {/* Header */}
         <div className="flex items-center gap-3.5 mb-7">
@@ -132,7 +130,7 @@ export function WorkspaceLoader({
 
                 <div className={`relative shrink-0 w-3.5 h-3.5 rounded-full grid place-items-center border transition-all duration-300 ${
                   done ? 'border-emerald-400 bg-emerald-400' :
-                  active ? 'border-emerald-400 bg-emerald-400/10 shadow-[0_0_12px_rgba(52,211,153,0.15)]' :
+                  active ? 'border-emerald-400 bg-emerald-400/10' :
                   'border-white/10 bg-transparent'
                 }`}>
                   {active && (

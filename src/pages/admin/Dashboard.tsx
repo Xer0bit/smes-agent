@@ -143,9 +143,8 @@ export default function AdminDashboard() {
       title: 'Total Users',
       value: stats.totalUsers,
       icon: Users,
-      gradient: 'from-blue-500/20 to-cyan-500/10',
-      iconColor: 'text-blue-400',
-      borderColor: 'border-blue-500/20',
+      iconColor: 'text-primary',
+      borderColor: 'border-primary/20',
       trend: trends.totalUsers,
       path: '/admin/users',
     },
@@ -153,9 +152,8 @@ export default function AdminDashboard() {
       title: 'Organizations',
       value: stats.totalOrgs,
       icon: Building2,
-      gradient: 'from-purple-500/20 to-pink-500/10',
-      iconColor: 'text-purple-400',
-      borderColor: 'border-purple-500/20',
+      iconColor: 'text-primary',
+      borderColor: 'border-primary/20',
       trend: trends.totalOrgs,
       path: '/admin/organizations',
     },
@@ -163,9 +161,8 @@ export default function AdminDashboard() {
       title: 'Total Projects',
       value: stats.totalProjects,
       icon: FolderKanban,
-      gradient: 'from-emerald-500/20 to-teal-500/10',
-      iconColor: 'text-emerald-400',
-      borderColor: 'border-emerald-500/20',
+      iconColor: 'text-primary',
+      borderColor: 'border-primary/20',
       trend: trends.totalProjects,
       path: '/admin/projects',
     },
@@ -173,9 +170,8 @@ export default function AdminDashboard() {
       title: 'Active Projects',
       value: stats.activeProjects,
       icon: Activity,
-      gradient: 'from-amber-500/20 to-orange-500/10',
-      iconColor: 'text-amber-400',
-      borderColor: 'border-amber-500/20',
+      iconColor: 'text-primary',
+      borderColor: 'border-primary/20',
       trend: trends.activeProjects,
       path: '/admin/projects',
     },
@@ -206,10 +202,9 @@ export default function AdminDashboard() {
             onClick={() => navigate(stat.path)}
             role="button"
             tabIndex={0}
-            className={`relative overflow-hidden rounded-xl border ${stat.borderColor} p-5 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg cursor-pointer`}
+            className={`relative overflow-hidden rounded-xl border ${stat.borderColor} p-5 transition-all duration-150 hover:border-white/20 cursor-pointer`}
             style={{ background: 'rgba(255,255,255,0.02)' }}
           >
-            <div className={`absolute inset-0 bg-gradient-to-br ${stat.gradient} opacity-50`} />
             <div className="relative z-10">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">{stat.title}</span>

@@ -6,62 +6,74 @@
 
 @layer base {
   :root {
-    --background: 210 30% 12%;
-    --foreground: 210 20% 98%;
-    --card: 210 25% 16%;
-    --card-foreground: 210 20% 98%;
-    --popover: 210 25% 16%;
-    --popover-foreground: 210 20% 98%;
-    --primary: 180 95% 45%;
-    --primary-foreground: 210 30% 12%;
-    --primary-glow: 180 100% 60%;
-    --secondary: 30 100% 55%;
-    --secondary-foreground: 210 30% 12%;
-    --muted: 210 20% 25%;
-    --muted-foreground: 210 15% 60%;
-    --accent: 280 85% 60%;
-    --accent-foreground: 210 20% 98%;
-    --trigger: 286 87% 49%;
-    --trigger-foreground: 210 20% 98%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 20% 98%;
-    --border: 210 20% 22%;
-    --input: 210 20% 18%;
-    --ring: 180 95% 45%;
-    --radius: 0.5rem;
-    --gradient-hero: linear-gradient(135deg, hsl(210 30% 12%), hsl(210 35% 18%));
-    --gradient-primary: linear-gradient(135deg, hsl(180 95% 45%), hsl(190 90% 50%));
-    --gradient-accent: linear-gradient(135deg, hsl(180 95% 45%), hsl(280 85% 60%));
-    --gradient-card: linear-gradient(135deg, hsl(210 25% 16% / 0.9), hsl(210 30% 20% / 0.7));
-    --gradient-orange: linear-gradient(135deg, hsl(30 100% 55%), hsl(35 100% 60%));
-    --shadow-glow: 0 0 40px hsl(var(--primary) / 0.25);
-    --shadow-glow-accent: 0 0 40px hsl(var(--accent) / 0.25);
-    --shadow-elegant: 0 20px 60px -15px hsl(180 95% 45% / 0.3);
-    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    /* ── Minimal design language ───────────────────────────────────────────
+     * One accent (cyan --primary), everything else collapsed to neutral
+     * grayscale. Gradients removed (solid fallbacks kept under the same
+     * variable names so nothing referencing --gradient-* breaks). Glow
+     * shadows replaced with flat, low-opacity elevation. Radius set to a
+     * single moderate scale (not pill-shaped). Spring/bounce easing
+     * replaced with ease-out everywhere by default.
+     */
+    --background: 210 18% 10%;
+    --foreground: 210 20% 96%;
+    --card: 210 16% 13%;
+    --card-foreground: 210 20% 96%;
+    --popover: 210 16% 13%;
+    --popover-foreground: 210 20% 96%;
+    --primary: 180 70% 45%;
+    --primary-foreground: 210 18% 10%;
+    --primary-glow: 180 70% 45%;
+    --secondary: 210 14% 22%;
+    --secondary-foreground: 210 20% 96%;
+    --muted: 210 14% 20%;
+    --muted-foreground: 210 10% 62%;
+    --accent: 210 14% 22%;
+    --accent-foreground: 210 20% 96%;
+    --trigger: 210 14% 22%;
+    --trigger-foreground: 210 20% 96%;
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 210 20% 96%;
+    --border: 210 14% 20%;
+    --input: 210 14% 16%;
+    --ring: 180 70% 45%;
+    --radius: 0.625rem;
+    /* Flat (non-visible) linear-gradients: kept as gradients, not plain
+       colors, because these feed Tailwind's backgroundImage theme key
+       (background-image: var(...)) -- a bare color is an invalid value
+       there and silently drops, which breaks bg-clip-text usages. */
+    --gradient-hero: linear-gradient(hsl(210 18% 10%), hsl(210 18% 10%));
+    --gradient-primary: linear-gradient(hsl(180 70% 45%), hsl(180 70% 45%));
+    --gradient-accent: linear-gradient(hsl(210 14% 22%), hsl(210 14% 22%));
+    --gradient-card: linear-gradient(hsl(210 16% 13%), hsl(210 16% 13%));
+    --gradient-orange: linear-gradient(hsl(210 14% 22%), hsl(210 14% 22%));
+    --shadow-glow: 0 1px 2px hsl(220 45% 3% / 0.3);
+    --shadow-glow-accent: 0 1px 2px hsl(220 45% 3% / 0.3);
+    --shadow-elegant: 0 8px 24px hsl(220 45% 3% / 0.24);
+    --transition-smooth: all 0.15s ease-out;
     --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
     --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
     --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-    --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --spring: cubic-bezier(0.16, 1, 0.3, 1);
     --surface-0: var(--background);
-    --surface-1: 210 28% 14%;
-    --surface-2: 210 24% 18%;
-    --surface-3: 210 22% 22%;
+    --surface-1: 210 16% 13%;
+    --surface-2: 210 14% 16%;
+    --surface-3: 210 14% 19%;
     --text-strong: var(--foreground);
     --text-muted: var(--muted-foreground);
-    --text-soft: 210 14% 72%;
+    --text-soft: 210 10% 70%;
     --action-primary: var(--primary);
     --action-primary-contrast: var(--primary-foreground);
     --action-secondary: var(--secondary);
     --action-secondary-contrast: var(--secondary-foreground);
-    --feedback-success: 145 70% 42%;
-    --feedback-warning: 32 95% 54%;
+    --feedback-success: 145 45% 42%;
+    --feedback-warning: 32 60% 50%;
     --feedback-danger: var(--destructive);
-    --feedback-info: 198 88% 56%;
+    --feedback-info: 198 55% 52%;
     --focus-ring: var(--ring);
-    --interactive-hover: 210 24% 24%;
-    --interactive-active: 210 24% 28%;
-    --elev-1: 0 8px 24px hsl(220 45% 5% / 0.24);
-    --elev-2: 0 18px 44px hsl(220 45% 5% / 0.30);
+    --interactive-hover: 210 14% 18%;
+    --interactive-active: 210 14% 22%;
+    --elev-1: 0 1px 3px hsl(220 45% 3% / 0.2);
+    --elev-2: 0 4px 12px hsl(220 45% 3% / 0.24);
 
     /* ── Workspace tokens (editor, settings, in-app chrome) ──────────────────
      * Deliberately separate from the --surface and --background tokens above: those serve

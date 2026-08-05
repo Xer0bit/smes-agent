@@ -715,7 +715,7 @@ export default function WorkspaceSettings() {
             <p className="text-sm text-muted-foreground">Control how this workspace appears and identifies itself.</p>
           </div>
 
-          <div className="rounded-xl border border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+          <div className="rounded-xl border border-border/60 shadow-[var(--elev-1)]">
             {/* Avatar */}
             <div className="flex items-center justify-between gap-4 px-5 py-4">
               <div>
@@ -829,7 +829,7 @@ export default function WorkspaceSettings() {
           <div>
             <h2 className="font-display text-lg font-semibold text-foreground">Workspace access</h2>
           </div>
-          <div className="rounded-xl border border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+          <div className="rounded-xl border border-border/60 shadow-[var(--elev-1)]">
             <div className="flex items-center justify-between gap-4 px-5 py-4">
               <div>
                 <p className="text-sm font-medium">Leave workspace</p>
@@ -987,7 +987,7 @@ export default function WorkspaceSettings() {
 
         {/* ── Preferences ───────────────────────────────────────────────────── */}
         <TabsContent value="preferences" className="mt-0 space-y-5">
-          <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+          <Card className="rounded-xl border-border/60 shadow-[var(--elev-1)]">
             <CardHeader>
               <CardTitle className="font-display text-lg font-semibold">Preferences</CardTitle>
               <p className="text-sm text-muted-foreground">Personalize how this workspace works for its members.</p>

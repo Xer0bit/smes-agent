@@ -37,26 +37,23 @@ interface AuditLogEntry {
     created_at: string;
 }
 
-const TIER_CONFIG: Record<string, { bg: string; color: string; border: string; gradient: string; icon: any }> = {
+const TIER_CONFIG: Record<string, { bg: string; color: string; border: string; icon: any }> = {
     free: {
         bg: 'rgba(107,114,128,0.1)',
         color: '#9ca3af',
         border: 'rgba(107,114,128,0.2)',
-        gradient: 'from-gray-500/20 to-transparent',
         icon: Building2
     },
     pro: {
         bg: 'rgba(139,92,246,0.1)',
         color: '#a78bfa',
         border: 'rgba(139,92,246,0.2)',
-        gradient: 'from-purple-600/20 to-transparent',
         icon: Sparkles
     },
     agency: {
         bg: 'rgba(245,158,11,0.1)',
         color: '#fbbf24',
         border: 'rgba(245,158,11,0.2)',
-        gradient: 'from-amber-600/20 to-transparent',
         icon: Crown
     },
 };
@@ -348,9 +345,8 @@ export default function AdminSubscriptions() {
                     return (
                         <Card
                             key={tier}
-                            className="relative border-white/10 bg-white/[0.02] overflow-hidden group hover:scale-[1.02] transition-all duration-300"
+                            className="relative border-white/10 bg-white/[0.02] overflow-hidden group hover:border-white/20 transition-colors duration-150"
                         >
-                            <div className={cn("absolute inset-0 bg-gradient-to-br opacity-[0.15] group-hover:opacity-[0.25] transition-opacity", config.gradient)} />
                             <CardContent className="p-5 relative z-10">
                                 <div className="flex items-center justify-between mb-2">
                                     <div className={cn("p-2 rounded-lg border", config.border)} style={{ background: config.bg }}>

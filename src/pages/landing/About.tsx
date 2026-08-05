@@ -118,14 +118,11 @@ export default function About() {
 
       {/* Hero */}
       <section className="relative pt-28 pb-16 px-6 overflow-hidden">
-        <div className="absolute inset-0 -z-10 pointer-events-none">
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[60%] h-[50%] rounded-full bg-cyan-500/8 blur-[140px]" />
-        </div>
         <div className="max-w-3xl mx-auto text-center">
 
           <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6">
             Accelerate SME{" "}
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400">
+            <span className="text-primary">
               Digital to AI
             </span>{" "}
             Transformation
@@ -230,7 +227,7 @@ export default function About() {
 
       {/* Vision */}
       <section className="px-6 pb-20">
-        <div className="max-w-3xl mx-auto rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/8 to-indigo-500/8 p-10 text-center">
+        <div className="max-w-3xl mx-auto rounded-2xl border border-primary/20 bg-primary/[0.06] p-10 text-center">
           <h2 className="text-2xl font-bold text-white mb-4">Our vision</h2>
           <p className="text-slate-300 leading-7 text-base">
             Every SME deserves enterprise-grade infrastructure. We unify AI-powered development,

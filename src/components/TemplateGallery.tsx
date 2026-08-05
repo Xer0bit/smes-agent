@@ -93,7 +93,7 @@ export const TemplateGallery: React.FC<TemplateGalleryProps> = ({
                                     onClick={() => onSelect(template)}
                                 >
                                     {/* Thumbnail */}
-                                    <div className="aspect-video bg-gradient-to-br from-indigo-600/20 to-violet-600/20 flex items-center justify-center">
+                                    <div className="aspect-video bg-white/5 flex items-center justify-center">
                                         <div className="text-6xl opacity-30">
                                             {CATEGORY_ICONS[template.category]}
                                         </div>

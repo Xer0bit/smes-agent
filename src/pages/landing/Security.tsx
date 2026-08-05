@@ -3,43 +3,43 @@ import { Lock, Shield, Key, Server, Eye, AlertTriangle } from "lucide-react";
 const SECURITY_FEATURES = [
     {
         icon: Lock,
-        color: "text-blue-400",
-        bg: "bg-blue-500/10 border-blue-500/20",
+        color: "text-primary",
+        bg: "bg-primary/10 border-primary/20",
         title: "End-to-End Encryption",
         description: "All data transmitted between your browser and our servers is encrypted using TLS 1.3."
     },
     {
         icon: Key,
-        color: "text-indigo-400",
-        bg: "bg-indigo-500/10 border-indigo-500/20",
+        color: "text-primary",
+        bg: "bg-primary/10 border-primary/20",
         title: "Secure Authentication",
         description: "Multi-factor authentication with Supabase Auth. Passwords are never stored in plaintext."
     },
     {
         icon: Server,
-        color: "text-cyan-400",
-        bg: "bg-cyan-500/10 border-cyan-500/20",
+        color: "text-primary",
+        bg: "bg-primary/10 border-primary/20",
         title: "Infrastructure Security",
         description: "Hosted on enterprise-grade infrastructure with 24/7 monitoring and DDoS protection."
     },
     {
         icon: Eye,
-        color: "text-emerald-400",
-        bg: "bg-emerald-500/10 border-emerald-500/20",
+        color: "text-primary",
+        bg: "bg-primary/10 border-primary/20",
         title: "Regular Audits",
         description: "Third-party security audits and penetration testing performed quarterly."
     },
     {
         icon: Shield,
-        color: "text-amber-400",
-        bg: "bg-amber-500/10 border-amber-400/20",
+        color: "text-primary",
+        bg: "bg-primary/10 border-primary/20",
         title: "Data Isolation",
         description: "Row-level security ensures your projects and data are completely isolated from other users."
     },
     {
         icon: AlertTriangle,
-        color: "text-rose-400",
-        bg: "bg-rose-500/10 border-rose-500/20",
+        color: "text-primary",
+        bg: "bg-primary/10 border-primary/20",
         title: "Incident Response",
         description: "24/7 security monitoring with rapid incident response protocols."
     }
@@ -58,16 +58,13 @@ export default function Security() {
 
             {/* Hero */}
             <section className="relative pt-28 pb-16 px-6 overflow-hidden">
-                <div className="absolute inset-0 -z-10 pointer-events-none">
-                    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[60%] h-[50%] rounded-full bg-blue-500/8 blur-[140px]" />
-                </div>
                 <div className="max-w-3xl mx-auto text-center">
-                    <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 mb-6">
-                        <Shield className="w-7 h-7 text-blue-400" />
+                    <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 mb-6">
+                        <Shield className="w-7 h-7 text-primary" />
                     </div>
                     <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-5">
                         Security at{" "}
-                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400">
+                        <span className="text-primary">
                             eCOMGear
                         </span>
                     </h1>
@@ -119,7 +116,7 @@ export default function Security() {
                     </p>
                     <p className="text-slate-400 text-sm">
                         Report security issues to:{" "}
-                        <a href="mailto:info@ecomgear.dev" className="text-blue-400 hover:text-blue-300 transition-colors">
+                        <a href="mailto:info@ecomgear.dev" className="text-primary hover:text-primary/80 transition-colors">
                             info@ecomgear.dev
                         </a>
                     </p>

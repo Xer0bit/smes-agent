@@ -62,12 +62,6 @@ export default function AdminLogin() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#0a0b0f' }}>
-      {/* Background decoration */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full opacity-10" style={{ background: 'radial-gradient(circle, #8b5cf6, transparent)', filter: 'blur(120px)' }} />
-        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 rounded-full opacity-10" style={{ background: 'radial-gradient(circle, #6d28d9, transparent)', filter: 'blur(100px)' }} />
-      </div>
-
       <div
         className="relative w-full max-w-sm rounded-2xl border p-8"
         style={{

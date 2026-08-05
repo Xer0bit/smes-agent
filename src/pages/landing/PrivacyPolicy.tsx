@@ -6,12 +6,9 @@ export default function PrivacyPolicy() {
 
             {/* Hero */}
             <section className="relative pt-28 pb-16 px-6 overflow-hidden">
-                <div className="absolute inset-0 -z-10 pointer-events-none">
-                    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[50%] h-[40%] rounded-full bg-blue-500/8 blur-[120px]" />
-                </div>
                 <div className="max-w-3xl mx-auto text-center">
-                    <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 mb-6">
-                        <Shield className="w-7 h-7 text-blue-400" />
+                    <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 mb-6">
+                        <Shield className="w-7 h-7 text-primary" />
                     </div>
                     <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
                         Privacy Policy
@@ -86,7 +83,7 @@ export default function PrivacyPolicy() {
                                 <h2 className="text-2xl font-bold text-white mb-4">Contact Us</h2>
                                 <p className="text-slate-400 leading-relaxed">
                                     If you have any questions about this Privacy Policy, please contact us at{" "}
-                                    <a href="mailto:info@ecomgear.dev" className="text-blue-400 hover:text-blue-300 transition-colors">
+                                    <a href="mailto:info@ecomgear.dev" className="text-primary hover:text-primary/80 transition-colors">
                                         info@ecomgear.dev
                                     </a>
                                 </p>

@@ -1,8 +1,9 @@
 /* Hallmark · macrostructure: Marquee Hero (studied DNA: Lovable dashboard
  * reference — greeting + centered prompt bar + recents grid) · genre: editorial
- * theme: brand (preserved cyan/orange/purple HSL tokens + Fraunces/Manrope —
- * NOT the reference's blue/pink gradient, per "keep ecomgear's features")
- * tone: luxury · enrichment: none (real project thumbnails are the imagery)
+ * theme: minimal (single-accent cyan, secondary/accent tokens flattened to
+ * neutral — supersedes the prior multi-hue "brand" decision recorded here;
+ * see src/index.css tokens) · Fraunces/Manrope retained
+ * tone: restrained · enrichment: none (real project thumbnails are the imagery)
  * motion: framer-motion, restrained · differs from prior Workbench pick
  * pre-emit critique: P4 H4 E4 S4 R4 V4
  */
@@ -328,8 +329,6 @@ export default function DashboardHome() {
         transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
         className="relative overflow-hidden rounded-2xl border border-border/60 bg-card px-6 py-16 sm:px-10 lg:py-24"
       >
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_15%_10%,hsl(var(--primary)/0.14),transparent_60%),radial-gradient(ellipse_55%_45%_at_85%_90%,hsl(var(--accent)/0.14),transparent_60%),radial-gradient(ellipse_45%_40%_at_50%_100%,hsl(var(--secondary)/0.1),transparent_60%)]" />
-
         <div className="relative mx-auto max-w-2xl text-center">
           {invitationCount > 0 && (
             <span className="mb-4 inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
@@ -343,7 +342,7 @@ export default function DashboardHome() {
             Describe what you want and I&apos;ll start a new project around it.
           </p>
 
-          <div className="mt-9 rounded-2xl border border-border/60 bg-background/70 p-3 text-left shadow-[0_18px_44px_hsl(220_45%_5%/0.3)] backdrop-blur-sm transition-colors duration-200 focus-within:border-primary/50">
+          <div className="mt-9 rounded-2xl border border-border/60 bg-background/70 p-3 text-left shadow-[var(--elev-2)] transition-colors duration-150 focus-within:border-primary/50">
             {attachedFiles.length > 0 && (
               <div className="mb-2.5 flex flex-wrap gap-1.5">
                 {attachedFiles.map((file, i) => (
@@ -429,7 +428,7 @@ export default function DashboardHome() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.35, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
                 onClick={() => navigate(`/project/${project.id}`)}
-                className="group overflow-hidden rounded-xl border border-border/60 bg-card text-left shadow-[0_8px_24px_hsl(220_45%_5%/0.16)] transition-shadow duration-200 hover:shadow-[0_18px_44px_hsl(220_45%_5%/0.3)]"
+                className="group overflow-hidden rounded-xl border border-border/60 bg-card text-left shadow-[var(--elev-1)] transition-shadow duration-200 hover:shadow-[var(--elev-2)]"
               >
                 <ProjectThumbnail projectName={project.name} thumbnailUrl={project.thumbnail_url} previewUrl={null} />
                 <div className="p-4">
@@ -452,7 +451,7 @@ export default function DashboardHome() {
 
           {/* Invitations */}
           {!loadingInvitations && invitationCount > 0 ? (
-            <div className="rounded-xl border border-border/60 bg-card p-6 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+            <div className="rounded-xl border border-border/60 bg-card p-6 shadow-[var(--elev-1)]">
               <div className="mb-5 flex items-center justify-between">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Collaboration</p>
@@ -519,7 +518,7 @@ export default function DashboardHome() {
               </div>
             </div>
           ) : (
-            <div className="rounded-xl border border-border/60 bg-card p-6 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+            <div className="rounded-xl border border-border/60 bg-card p-6 shadow-[var(--elev-1)]">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Collaboration</p>
@@ -539,7 +538,7 @@ export default function DashboardHome() {
         <div className="space-y-4">
 
           {/* Quick access */}
-          <div className="rounded-xl border border-border/60 bg-card p-5 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+          <div className="rounded-xl border border-border/60 bg-card p-5 shadow-[var(--elev-1)]">
             <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Actions</p>
             <p className="mt-1.5 text-sm font-medium text-foreground">Quick access</p>
             <div className="mt-4 space-y-1">
@@ -562,8 +561,7 @@ export default function DashboardHome() {
           </div>
 
           {/* AI Agents promo */}
-          <div className="relative overflow-hidden rounded-xl border border-primary/20 bg-card p-5 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_90%_70%_at_50%_110%,hsl(var(--primary)/0.14),transparent)]" />
+          <div className="relative overflow-hidden rounded-xl border border-primary/20 bg-card p-5 shadow-[var(--elev-1)]">
             <div className="relative">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
                 <Bot className="h-5 w-5 text-primary" />

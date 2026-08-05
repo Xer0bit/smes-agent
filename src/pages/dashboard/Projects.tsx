@@ -460,7 +460,7 @@ export default function DashboardProjects() {
         </div>
 
         <Button
-          className="h-10 gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground shadow-[0_0_24px_hsl(var(--primary)/0.25)] transition-all duration-300 hover:bg-primary/90 hover:shadow-[0_0_32px_hsl(var(--primary)/0.35)]"
+          className="h-10 gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
           onClick={handleCreateProject}
           disabled={creating}
         >

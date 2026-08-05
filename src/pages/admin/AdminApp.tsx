@@ -172,17 +172,11 @@ export default function AdminApp() {
     }
 
     return (
-        <div className="min-h-screen flex selection:bg-purple-500/30 selection:text-white" style={{ background: '#07080a' }}>
-            {/* Background Effects */}
-            <div className="fixed inset-0 pointer-events-none overflow-hidden">
-                <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-purple-900/10 blur-[120px] rounded-full" />
-                <div className="absolute -bottom-[10%] -right-[10%] w-[40%] h-[40%] bg-indigo-900/10 blur-[120px] rounded-full" />
-            </div>
-
+        <div className="min-h-screen flex selection:bg-primary/30 selection:text-white" style={{ background: '#07080a' }}>
             {/* ═══════════════════ SIDEBAR ═══════════════════ */}
             <aside
                 className={cn(
-                    "fixed left-0 top-0 h-screen z-50 flex flex-col transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] border-r shadow-2xl overflow-hidden",
+                    "fixed left-0 top-0 h-screen z-50 flex flex-col transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] border-r overflow-hidden",
                     sidebarCollapsed ? 'w-[72px]' : 'w-[280px]'
                 )}
                 style={{
@@ -240,7 +234,7 @@ export default function AdminApp() {
                                                 {isActive && (
                                                     <motion.div
                                                         layoutId="nav-glow"
-                                                        className="absolute inset-0 bg-gradient-to-r from-purple-500/10 to-transparent blur-md opacity-50 rounded-xl"
+                                                        className="absolute inset-0 bg-primary/10 rounded-xl"
                                                     />
                                                 )}
                                                 <div className={cn(
@@ -355,10 +349,6 @@ export default function AdminApp() {
 
                 {/* Content Reservoir */}
                 <main className="flex-1 p-8 overflow-x-hidden relative">
-                    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-[radial-gradient(circle_at_center,rgba(88,28,135,0.03)_0%,transparent_70%)]" />
-                    </div>
-
                     <div className="relative z-10 mx-auto w-full max-w-[1600px]">
                         <AnimatePresence mode="wait">
                             <motion.div

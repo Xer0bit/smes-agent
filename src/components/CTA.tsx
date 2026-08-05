@@ -4,13 +4,8 @@ import { ArrowRight } from "lucide-react";
 export const CTA = () => {
   return (
     <section className="py-24 relative overflow-hidden">
-      {/* Background effects */}
-      <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-accent/20 to-secondary/20" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,hsl(var(--primary)/0.3),transparent_50%)]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_50%,hsl(var(--accent)/0.3),transparent_50%)]" />
-      
       <div className="container mx-auto px-4 relative z-10">
-        <div className="max-w-4xl mx-auto text-center backdrop-blur-sm bg-card/50 rounded-3xl p-12 md:p-16 border border-border shadow-elegant">
+        <div className="max-w-4xl mx-auto text-center bg-card rounded-3xl p-12 md:p-16 border border-border">
           <h2 className="text-4xl md:text-5xl font-bold mb-6">
             Ready to Transform Your
             <br />
