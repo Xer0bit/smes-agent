@@ -424,20 +424,30 @@ console.log(added.length + (added.length ? ':' + added.join(',') : ''));
         echo "  (no live preview-service found   first deploy, skipping check)"
     fi
 
-    step "Installing preview-service production deps locally..."
-    cd "$PROJECT_DIR/preview-service"
     if [ "${ADDED_COUNT:-0}" != "0" ]; then
-        # A package was merged in above   it won't be in package-lock.json yet,
-        # so `npm ci` would reject the lockfile as out of sync. Use `npm install`
-        # to resolve and update the lockfile, same as a developer adding a dep.
-        npm install --omit=dev
-    else
-        npm ci --omit=dev
+        # package.json was just merged above but package-lock.json wasn't --
+        # regenerate the lock file (no node_modules install, just the lock
+        # entry) so this repo's committed lockfile matches what's about to
+        # ship, and stays in sync for the NEXT deploy's npm ci.
+        step "Updating preview-service package-lock.json for the merged package(s)..."
+        (cd "$PROJECT_DIR/preview-service" && npm install --omit=dev --package-lock-only)
     fi
-    cd "$PROJECT_DIR"
+
+    # node_modules is NOT shipped over the network. It used to be either
+    # rsynced file-by-file (tens of thousands of small files) or, briefly,
+    # tarred into one archive -- both were tried live and both took hours,
+    # because the actual bottleneck is raw bandwidth from this environment to
+    # VPS2's IP (observed: ~20-30 KB/s on a single-stream transfer), not
+    # per-file overhead. A tarball of the same bytes is just as slow. The
+    # only real fix is to not move those bytes over this link at all: ship
+    # source + package.json/package-lock.json only (a few MB), then run
+    # `npm ci --omit=dev` ON VPS2 itself, same pattern already used for
+    # VPS1/VPS3's server deploys (see server.staging below). This also
+    # preserves rsync's delta-transfer benefit for the source files across
+    # deploys, which shipping a full node_modules archive every time would not.
     step "Uploading preview-service to VPS2 (staging dir)..."
     ssh_vps2 "mkdir -p $DEPLOY_PATH/preview-service.staging/projects $DEPLOY_PATH/logs"
-    scp_vps2 --exclude='.git' --exclude='projects/' \
+    scp_vps2 --exclude='.git' --exclude='projects/' --exclude='node_modules' \
              "$PROJECT_DIR/preview-service/" \
              "$VPS2_USER@$VPS2_IP:$DEPLOY_PATH/preview-service.staging/"
     scp_vps2 "$PROJECT_DIR/ecosystem.config.cjs" "$VPS2_USER@$VPS2_IP:$DEPLOY_PATH/"
@@ -454,6 +464,13 @@ SUPABASE_URL=https://api.ecomgear.dev
 SUPABASE_SERVICE_ROLE_KEY=${SK}
 ENV
 ENVREMOTE
+    step "Remote: installing node_modules on VPS2 (npm ci, not shipped over the network)..."
+    ssh_vps2 "bash -s" << 'REMOTE_NPM'
+set -e
+cd /var/www/ecomgear/preview-service.staging
+npm ci --omit=dev
+REMOTE_NPM
+
     step "Remote: atomic swap + pm2 graceful reload..."
     ssh_vps2 "bash -s" << 'REMOTE'
 set -e
