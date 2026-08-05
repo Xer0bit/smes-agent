@@ -7,13 +7,21 @@ Server-side JavaScript functions the AI agent writes for a project, for logic th
 `server/src/agent-tools/write_edge_function.ts` is the sole write path. Sequence on every call:
 
 1. **Name validation**: `^[A-Za-z][A-Za-z0-9_-]{0,63}$`.
-2. **Banned-construct scan** before anything is saved: rejects `import`/`export`, `require(...)`, `process.env` with a teachable error telling the agent what to use instead (the injected `secrets` object, etc.).
-3. **Syntax check**: wraps the code in the exact same shape the runtime uses — `new vm.Script(`(async function __fn__(params, db, ecg, fetch, console) {\n${code}\n})`)` — and rejects on a `vm` syntax error. This means a function that fails to save always fails for the same reason it would fail at invoke time; there's no separate "saved but broken" state.
-4. **Per-project cap**: max 20 edge functions per project (`MAX_FUNCTIONS_PER_PROJECT`), to stop a runaway generation loop from creating unbounded rows.
-5. **Owner resolution**: the row is always saved under the **project owner's** `user_id` (looked up from `projects.user_id`), never `ctx.userId` (whoever is currently chatting). This is deliberate — the invoke route looks up a function by matching `edge_functions.user_id` against the project owner, so saving under a collaborator's id would silently make the function permanently uninvokable (a 404 that looks like a bug but is actually an ownership mismatch).
-6. **Upsert** into `edge_functions` on `(project_id, name)` conflict — same name in the same project overwrites; different projects never collide.
-7. **Mirror to disk**: writes `__edge_functions__/<name>.js` into the project's file tree (`safeJoin(ctx.appPath, ...)`) and registers it in `ctx.pendingPreviewFiles`. This exists so the agent's own `read_file`/`list_files`/`grep` tools can see which functions already exist — before this mirror existed, functions were invisible outside the DB, which is the documented cause of the agent creating duplicate/orphaned functions instead of reusing one. **The DB row remains the actual invocation source of truth; the mirror is read/write convenience only.** It is never served to the browser — the preview build excludes `__edge_functions__/`.
-8. **Permission preflight + VPS5 sync** (only if a hosted database is provisioned — see below).
+2. **AST-based static validation** (`server/src/services/edgeFunctionValidator.ts`, acorn/acorn-walk): parses the code with `sourceType: 'script'` (so `import`/`export` are syntax errors — no separate check needed), then walks the AST to reject banned identifiers (`require`, `process`, `global`, `globalThis`, `Function`, `eval`, `module`, `exports`, `__dirname`, `__filename`), any `.constructor` access (dot or bracket-literal form — the exact primitive a sandbox-escape chain needs), `with` statements, and dynamic `import()`. This replaced an older regex/`vm.Script`-syntax-only check that never caught `.constructor` access; covered by `server/src/services/__tests__/edgeFunctionValidator.test.ts`. The same validator re-runs at invoke time (`functionRunner.service.ts`) as defense-in-depth against a DB row tampered with directly.
+3. **Per-project cap**: max 20 edge functions per project (`MAX_FUNCTIONS_PER_PROJECT`), to stop a runaway generation loop from creating unbounded rows.
+4. **Owner resolution**: the row is always saved under the **project owner's** `user_id` (looked up from `projects.user_id`), never `ctx.userId` (whoever is currently chatting). This is deliberate — the invoke route looks up a function by matching `edge_functions.user_id` against the project owner, so saving under a collaborator's id would silently make the function permanently uninvokable (a 404 that looks like a bug but is actually an ownership mismatch).
+5. **Upsert** into `edge_functions` on `(project_id, name)` conflict — same name in the same project overwrites; different projects never collide. Also sets `requires_service_role` (default `true`) and `is_public` (default `true`) — see "Least-privilege flags" below.
+6. **Mirror to disk**: writes `__edge_functions__/<name>.js` into the project's file tree (`safeJoin(ctx.appPath, ...)`) and registers it in `ctx.pendingPreviewFiles`. This exists so the agent's own `read_file`/`list_files`/`grep` tools can see which functions already exist — before this mirror existed, functions were invisible outside the DB, which is the documented cause of the agent creating duplicate/orphaned functions instead of reusing one. **The DB row remains the actual invocation source of truth; the mirror is read/write convenience only.** It is never served to the browser — the preview build excludes `__edge_functions__/`.
+7. **Permission preflight + VPS5 sync** (only if a hosted database is provisioned — see below). As of the 2026-08-05 stability review, a failed or skipped sync no longer silently succeeds from the agent/user's point of view — see "Where execution actually happens" below.
+
+## Least-privilege flags (`edge_functions.requires_service_role` / `.is_public`)
+
+Two boolean columns, added `supabase/migrations/20260805060000_edge_functions_least_privilege.sql`, both default `true` (matches pre-existing behavior for old rows):
+
+- **`requires_service_role`**: when `false`, the function's `db.*` calls run with the project's **anon** key instead of the RLS/grant-bypassing service key (`functions.routes.ts`'s `resolveFunctionBundle`: `serviceKey: fn.requires_service_role ? creds.service_key : creds.anon_key`). This is a real privilege reduction, not a label — the function's `db.*` calls become genuinely scoped to whatever the anon role can already do. Set `false` for functions that only read data the anon role can already see.
+- **`is_public`**: when `false`, invocation is rejected (`403`) for any caller authenticating with the project's public anon/service key (`callerRole === 'tenant-public'`) — only a verified owner platform session can invoke it. Set `false` for admin-only operations.
+
+Both are agent-settable via `write_edge_function`'s `requiresServiceRole`/`isPublic` optional args.
 
 `server/src/services/agentLoopService.ts` has a companion function, `backfillEdgeFunctionMirrors(appPath, projectId)`, called once per run: it reads every `edge_functions` row for the project and writes any mirror file that's missing on disk (e.g. after a preview container reset). Best-effort — a DB or FS failure here never blocks the run.
 
@@ -33,34 +41,48 @@ The agent is told, in the tool description, exactly what's available in scope:
 
 Hard limits: no `import`/`export`/`require`/npm packages, no `process.env`, 5-second execution timeout.
 
+### Sandbox mechanics (post 2026-08 security remediation)
+
+`server/src/services/functionRunner.service.ts` runs guest code inside an **`isolated-vm` isolate** — a genuinely separate V8 realm, not the shared-realm `vm.createContext` used before (which had a live `Object.constructor.constructor(...)` escape to host-process RCE). No host object or function is ever handed directly into the isolate; every capability (`db.*`, `ecg.*`, `fetch`, `console`) is proxied through a single `_hostCall` bridge that only crosses JSON strings, so the guest realm never touches a host-realm `Object`/`Function`/`Promise`. The 5s timeout is a real V8-level interrupt (`isolate.compileScript(...).run(context, { timeout, promise: true })`), not a non-cancelling `Promise.race` — it can actually terminate a synchronous `while(true){}` inside guest code. `fetch` blocks HTTP, localhost, all private/link-local ranges (including `169.254.169.254`, the AWS/GCP/Azure metadata endpoint), and IPv6 loopback/link-local equivalents. `secrets` passed into the sandbox are frozen and copied by value (`ExternalCopy`) — there is no bridge call that writes a value back into `project_secrets`, so they're genuinely read-only from inside guest code.
+
+`isolated-vm` is an `optionalDependency` (see `server/package.json`) and dynamically imported only when a function actually runs — this lets hosts that don't mount `/api/v1/functions` (or that run a Node version without a prebuilt binary for it) skip it entirely without crashing on startup. If it fails to load, invocation returns a clean "unavailable on this server instance" error rather than crashing.
+
 ## Where execution actually happens
 
-Per an explicit comment in `server/src/routes/functions.routes.ts`: **execution happens entirely on VPS5** (`vps5-functions-runner/` — not present in this repo checkout), never on the platform API (`api.ecomgear.dev`, which is reserved for EcomGear's own platform and never serves tenant/end-user traffic). After `write_edge_function`/`delete_edge_function`/`set_secret` write to this repo's DB, they push the same data directly to VPS5:
+**Unresolved doc/behavior mismatch, flagged by the 2026-08 security audit and still open as of this write-up.** An inline comment in `server/src/routes/functions.routes.ts` (right above the `/invoke` route) states plainly: the route's own code calls `runEdgeFunction()` **in-process, on this server** — not on VPS5. This doc previously claimed the opposite ("execution happens entirely on VPS5, never on the platform API"), which was wrong; that claim is corrected here, but which side is the *intended* target architecture (dispatch to VPS5 for real, vs. accept in-process execution as the actual design) has not been decided as a product question — don't treat either side as settled.
+
+What IS true and unambiguous: after `write_edge_function`/`delete_edge_function`/`set_secret` write to this repo's DB, they separately push the same data to VPS5:
 
 - `POST https://cloud.ecomgear.app/<schema>/functions/_sync` — code + active flag
 - `POST https://cloud.ecomgear.app/<schema>/secrets/_sync` — secrets (implied by the comment; not verified in this repo's code)
 
-Both syncs are authenticated with `X-Internal-Secret: $FUNCTIONS_INTERNAL_SECRET`. **This env var is required for the sync to actually happen** — if unset, `write_edge_function.ts` logs a warning and skips the sync (the DB row and local mirror still save fine, but the function won't be invocable on VPS5 until the var is set and a resync occurs).
+Both syncs are authenticated with `X-Internal-Secret: $FUNCTIONS_INTERNAL_SECRET`. **This env var is required for the sync to actually happen.** As of the 2026-08-05 stability review, an unset secret or a failed sync is no longer a silent no-op from the caller's point of view: `write_edge_function.ts` tracks sync status and, on `skipped_no_secret`/`failed`, returns a message telling the agent the function was *saved* but is **NOT yet invocable at the VPS5 URL** — the agent is expected to relay that to the user instead of claiming the function works. (The DB row and local mirror still save successfully regardless; only the returned status message changed.)
 
-Before syncing, `write_edge_function.ts` also runs a **permission preflight** (`databaseService.ensureFunctionDbAccess`) — a function can syntax-check fine but still 403 the first real invocation if it touches a table/RPC never granted to the project's DB roles (e.g. `pgcrypto` via `extensions.crypt`). This step self-heals missing grants proactively and reports what it healed back to the agent, rather than waiting for a user's crash report.
+Before syncing, `write_edge_function.ts` also runs a **permission preflight** (`databaseService.ensureFunctionDbAccess`) — a function can validate fine but still 403 the first real invocation if it touches a table/RPC never granted to the project's DB roles (e.g. `pgcrypto` via `extensions.crypt`). This step self-heals missing grants proactively and reports what it healed back to the agent, rather than waiting for a user's crash report.
 
 **This is a different execution mechanism from the tenant hosting system described in `docs/hosting-service-guide.md`** (VPS4+ Docker/Caddy nodes with a per-tenant "Edge Runtime"). Both exist in this codebase; this doc only covers the `edge_functions` table / VPS5 functions-runner path. Whether/how the two relate wasn't verified here — flag if you need that reconciled.
 
+### Invocation kill switch
+
+`functions.routes.ts`'s `/invoke` route is gated by `EDGE_FUNCTIONS_INVOKE_ENABLED` — must be exactly `'true'` or every invocation returns `503`. Defaults **closed** (disabled) on any unset or misspelled value. Added as an emergency stop during the 2026-08 sandbox-escape remediation; check current value before assuming invocation is live in any given environment.
+
 ## Database schema
 
-Two tables, `supabase/migrations/20260620100000_edge_functions.sql` (original) + `supabase/migrations/20260709120000_edge_functions_project_scope.sql` (added project scoping):
+Two tables, `supabase/migrations/20260620100000_edge_functions.sql` (original) + `supabase/migrations/20260709120000_edge_functions_project_scope.sql` (added project scoping) + `supabase/migrations/20260805060000_edge_functions_least_privilege.sql` (added the two flags below):
 
 ```sql
 CREATE TABLE edge_functions (
-  id          UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id     UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  project_id  UUID        REFERENCES public.projects(id) ON DELETE CASCADE,  -- added later
-  name        TEXT        NOT NULL,
-  description TEXT,
-  code        TEXT        NOT NULL DEFAULT '',
-  is_active   BOOLEAN     NOT NULL DEFAULT TRUE,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),  -- auto-touched by a trigger
+  id                     UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id                UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  project_id             UUID        REFERENCES public.projects(id) ON DELETE CASCADE,  -- added later
+  name                   TEXT        NOT NULL,
+  description            TEXT,
+  code                   TEXT        NOT NULL DEFAULT '',
+  is_active              BOOLEAN     NOT NULL DEFAULT TRUE,
+  requires_service_role  BOOLEAN     NOT NULL DEFAULT TRUE,   -- added later, see "Least-privilege flags"
+  is_public              BOOLEAN     NOT NULL DEFAULT TRUE,   -- added later, see "Least-privilege flags"
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),  -- auto-touched by a trigger
   CONSTRAINT name_valid CHECK (name ~ '^[a-zA-Z][a-zA-Z0-9_-]{0,63}$')
 );
 -- UNIQUE(project_id, name) where project_id IS NOT NULL (partial index, replaced the original UNIQUE(user_id, name))
