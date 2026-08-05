@@ -12,6 +12,13 @@ Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `
 
 Single-context layout: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
+### System reference docs
+
+Architecture, database, settings, edge functions, server, agent loop, and
+brand — start at `docs/architecture.md`, which links the rest. Every claim in
+these traces to a real file at time of writing; re-verify before relying on a
+specific detail in a fast-changing area.
+
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
 
