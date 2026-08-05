@@ -436,6 +436,16 @@ export const databaseService = {
       const pg = await pool();
       const c  = await pg.connect();
       try {
+        // Steps 1-8 below were previously each auto-committed individually --
+        // a failure partway through (e.g. a GRANT failing after roles were
+        // already created) left permanently orphaned schema/role state with
+        // no rollback, since Postgres has no implicit rollback across
+        // separate statements. Wrapped in one transaction so a failure at any
+        // point undoes everything back to nothing, matching CREATE SCHEMA IF
+        // NOT EXISTS / role-exists-check's own idempotency (a retry after a
+        // clean rollback is safe). 2026-08 stability review, Step 1.
+        await c.query('BEGIN');
+
         // 1. Schema
         await c.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
 
@@ -524,17 +534,39 @@ export const databaseService = {
            VALUES ($1, $2, $3, $4) ON CONFLICT (schema_name) DO NOTHING`,
           [schema, schema, anonRole, serviceRole]
         );
+
+        await c.query('COMMIT');
+      } catch (err) {
+        try { await c.query('ROLLBACK'); } catch { /* connection may already be dead */ }
+        throw err;
       } finally {
         c.release();
       }
 
-      // 9. Reload PostgREST so it picks up the new schema
-      await this._reloadPostgREST();
+      // 9. Reload PostgREST so it picks up the new schema. This is a
+      // best-effort, retried, but SEPARATE step from the DDL transaction
+      // above -- schema/roles/grants/registry-row are already fully and
+      // correctly committed by this point. A reload failure here must NOT
+      // be reported as a provisioning failure (that would be a false
+      // negative: the tenant DB is actually live and correct, just not yet
+      // visible to PostgREST's cache). Recorded as a non-blocking warning on
+      // the 'active' row instead, so it's still surfaced without masking a
+      // real success. 2026-08 stability review, Step 1.
+      let reloadWarning: string | null = null;
+      try {
+        await this._reloadPostgREST();
+      } catch (err) {
+        reloadWarning = (err as Error).message;
+        logger.warn('Tenant DB provisioned but PostgREST reload failed -- schema is live but may 404 until reloaded', { userId, schema, error: reloadWarning });
+      }
 
       // 10. Mark active
-      await supabase.from('tenant_databases').update({ status: 'active' }).eq('id', record.id);
+      await supabase.from('tenant_databases').update({
+        status: 'active',
+        error_message: reloadWarning ? `Provisioned successfully; PostgREST reload failed and may need a retry: ${reloadWarning}` : null,
+      }).eq('id', record.id);
       record.status = 'active';
-      logger.info('Tenant DB provisioned', { userId, schema });
+      logger.info('Tenant DB provisioned', { userId, schema, reloadWarning });
       return record;
 
     } catch (err) {
@@ -653,6 +685,15 @@ export const databaseService = {
       const pg = await pool();
       const c  = await pg.connect();
       try {
+        // Previously three separate auto-committed statements -- a crash or
+        // connection drop between the registry DELETE and the schema DROP
+        // left the registry saying "gone" while the schema and all its data
+        // silently still existed (orphaned, invisible to PostgREST, but not
+        // actually deleted -- worse than data loss, since the user believes
+        // it's gone). Wrapped in a transaction so this is all-or-nothing.
+        // 2026-08 stability review, Step 5.
+        await c.query('BEGIN');
+
         // Remove from registry first
         await c.query(`DELETE FROM public.ecg_tenant_registry WHERE schema_name = $1`, [schema]);
 
@@ -663,18 +704,37 @@ export const databaseService = {
         for (const role of [`${schema}_anon`, `${schema}_service`, `${schema}_owner`]) {
           await c.query(`DROP ROLE IF EXISTS "${role}"`);
         }
+
+        await c.query('COMMIT');
+      } catch (err) {
+        try { await c.query('ROLLBACK'); } catch { /* connection may already be dead */ }
+        throw err;
       } finally {
         c.release();
       }
 
-      await this._reloadPostgREST();
-      await supabase.from('tenant_databases').update({ status: 'deprovisioned' }).eq('id', record.id);
+      // Schema/roles/registry are already fully and correctly dropped by this
+      // point -- a reload failure here doesn't change that the data is gone,
+      // it only means PostgREST's cache may serve stale 404s/lookups for a
+      // bit longer. Same non-blocking-warning treatment as provision().
+      let reloadWarning: string | null = null;
+      try {
+        await this._reloadPostgREST();
+      } catch (err) {
+        reloadWarning = (err as Error).message;
+        logger.warn('Tenant DB deprovisioned but PostgREST reload failed -- schema is gone but cache may be stale', { userId, projectId, schema, error: reloadWarning });
+      }
+
+      await supabase.from('tenant_databases').update({
+        status: 'deprovisioned',
+        error_message: reloadWarning ? `Deprovisioned successfully; PostgREST reload failed and may need a retry: ${reloadWarning}` : null,
+      }).eq('id', record.id);
       if (projectId) {
         await supabase.from('project_secrets').delete()
           .eq('project_id', projectId)
           .in('key_name', ['VITE_DB_API_URL', 'VITE_DB_ANON_KEY', 'VITE_DB_SCHEMA']);
       }
-      logger.info('Tenant DB deprovisioned', { userId, projectId, schema });
+      logger.info('Tenant DB deprovisioned', { userId, projectId, schema, reloadWarning });
 
     } catch (err) {
       const msg = (err as Error).message;
@@ -877,6 +937,21 @@ export const databaseService = {
         } catch (err) {
           console.warn(`[DatabaseService] Schema-cache reload after DDL failed (non-fatal, will self-heal on next provision event): ${(err as Error).message}`);
         }
+
+        // Append-only audit trail for tenant DDL -- there is otherwise no
+        // record anywhere of what schema changes landed on a tenant schema or
+        // when. Best-effort, never blocks the query result: this is
+        // visibility, not correctness (runQuery's own transaction above is
+        // what actually keeps the DDL safe). 2026-08 stability review, Step 6.
+        supabase.from('tenant_schema_migrations').insert({
+          schema_name: record.schema_name,
+          project_id: projectId ?? null,
+          user_id: userId,
+          sql_text: trimmed,
+          statement_count: statements.length,
+        }).then(({ error }) => {
+          if (error) logger.warn('[databaseService] failed to record tenant_schema_migrations audit row (non-fatal)', error);
+        });
       }
 
       return {

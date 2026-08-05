@@ -189,6 +189,8 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
       const dbStatus = await databaseService.getStatus(ctx.userId, ctx.projectId);
       let invokeUrl = '(provision a database first   invocation needs a tenant schema)';
       let permissionNote = '';
+      // 'synced' | 'skipped_no_secret' | 'failed' | 'not_applicable' (no DB provisioned yet)
+      let syncStatus: 'synced' | 'skipped_no_secret' | 'failed' | 'not_applicable' = 'not_applicable';
       if (dbStatus?.status === 'active') {
         // Permission preflight: a function that syntax-checks fine can still
         // 403 the first time a real user hits it, if it touches a table/RPC
@@ -217,14 +219,19 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
                   project_id: ctx.projectId, user_id: ownerId,
                 }),
               });
-              if (!syncRes.ok) {
+              if (syncRes.ok) {
+                syncStatus = 'synced';
+              } else {
+                syncStatus = 'failed';
                 logger.warn(`[write_edge_function] VPS5 sync failed for ${name}: ${syncRes.status} ${await syncRes.text()}`);
               }
             } else {
+              syncStatus = 'skipped_no_secret';
               logger.warn('[write_edge_function] FUNCTIONS_INTERNAL_SECRET not set   skipped VPS5 sync.');
             }
           }
         } catch (syncErr) {
+          syncStatus = 'failed';
           logger.warn(`[write_edge_function] VPS5 sync error for ${name}`, syncErr);
         }
       }
@@ -235,9 +242,29 @@ export const writeEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
           'Mention this to the user if the function is meant to be called from the app.'
         : '';
 
+      // The URL handed back is the VPS5-hosted invoke path (used by the
+      // generated app's real frontend/end users). That path only works once
+      // the code has actually reached VPS5 -- if the sync above didn't
+      // succeed, saying "it is active and invocable" is false: the DB row and
+      // local mirror are fine, but a real end user hitting invokeUrl will get
+      // a 404/stale-code response until this resyncs. Surface that instead of
+      // silently claiming success (this was previously a silent no-op --
+      // 2026-08 stability review, Step 8).
+      const syncWarning = syncStatus === 'failed'
+        ? `\n⚠️ SYNC FAILED: the code saved here but did NOT reach the execution host. ` +
+          `POST ${invokeUrl} will likely fail or run stale code until this is retried (call write_edge_function ` +
+          `again to retry the sync, or tell the user this function is not yet live).`
+        : syncStatus === 'skipped_no_secret'
+        ? `\n⚠️ SYNC SKIPPED: this server is not configured to push functions to the execution host ` +
+          `(FUNCTIONS_INTERNAL_SECRET unset). The code is saved but NOT yet invocable at POST ${invokeUrl}. ` +
+          `Tell the user this function needs a server-side configuration fix before it will work.`
+        : '';
+
+      const statusVerb = syncWarning ? 'saved (NOT yet synced to the execution host)' : 'active and invocable';
+
       return (
-        `${verb} edge function "${name}" (id: ${data.id}). It is active and invocable via ` +
-        `POST ${invokeUrl}.${noDbNote}${permissionNote}\n` +
+        `${verb} edge function "${name}" (id: ${data.id}). It is ${statusVerb} via ` +
+        `POST ${invokeUrl}.${noDbNote}${permissionNote}${syncWarning}\n` +
         `Now tell the user, in plain words: what this function does, what params it expects, and which part ` +
         `of the app calls it. Never show secret values   refer to them by name only.`
       );
