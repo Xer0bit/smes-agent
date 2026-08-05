@@ -9,6 +9,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 process.env.TENANT_DB_HOST = 'db.internal';
 process.env.TENANT_DB_SUPERUSER_PASSWORD = 'test-pass';
 process.env.TENANT_DB_JWT_SECRET = 'test-secret';
+process.env.SUPABASE_URL = 'https://api.ecomgear.dev';
+process.env.SUPABASE_ANON_KEY = 'platform-anon-key';
 
 const upsertCalls: any[] = [];
 const deleteCalls: any[] = [];
@@ -19,6 +21,10 @@ const tenantDbRows = [
   { id: 'row-1', user_id: 'user-1', project_id: 'project-1', organization_id: null, schema_name: 'tenant_project1', status: 'active', error_message: null, created_at: new Date().toISOString() },
   { id: 'row-2', user_id: 'user-1', project_id: 'project-2', organization_id: null, schema_name: 'tenant_project2', status: 'active', error_message: null, created_at: new Date().toISOString() },
 ];
+
+// Mutable per-test fixture for the project_secrets table, used by
+// buildProjectEnvSecrets()'s stale-value-override regression tests below.
+let projectSecretsRows: { project_id: string; key_name: string; key_value: string }[] = [];
 
 function makeQueryBuilder(table: string) {
   const filters: { field: string; op: string; value: unknown }[] = [];
@@ -52,6 +58,18 @@ function makeQueryBuilder(table: string) {
   };
 
   const resolve = () => {
+    if (table === 'project_secrets') {
+      const matches = projectSecretsRows.filter((row) =>
+        filters.every((f) => {
+          const rowVal = (row as any)[f.field];
+          if (f.op === 'eq') return rowVal === f.value;
+          return true;
+        })
+      );
+      // buildProjectEnvSecrets() awaits the plain SELECT (no .single()/
+      // .maybeSingle()), so `data` must be the array, not a single row.
+      return { data: matches, error: null };
+    }
     if (table !== 'tenant_databases') return { data: null, error: null };
     const matches = tenantDbRows.filter((row) =>
       filters.every((f) => {
@@ -86,11 +104,12 @@ vi.mock('pg', () => ({
 }));
 
 // Import AFTER mocks are registered.
-const { databaseService } = await import('../database.service.js');
+const { databaseService, buildProjectEnvSecrets } = await import('../database.service.js');
 
 beforeEach(() => {
   upsertCalls.length = 0;
   deleteCalls.length = 0;
+  projectSecretsRows = [];
 });
 
 describe('databaseService.getCredentials   VITE_DB_* secret sync', () => {
@@ -251,5 +270,53 @@ describe('databaseService.provision   extensions schema access for password hash
     expect(sql).toContain(`${schema}_anon`);
     expect(sql).toContain(`${schema}_service`);
     expect(sql).toContain(`${schema}_owner`);
+  });
+});
+
+describe('buildProjectEnvSecrets   platform-managed keys always win over stale stored rows', () => {
+  // Regression test for a real production bug (2026-08-05 stability review):
+  // a stale project_secrets row for a platform-managed key (VITE_DB_API_URL,
+  // VITE_FUNCTIONS_API_URL, VITE_SUPABASE_URL, etc.) used to be returned
+  // FOREVER instead of the freshly-derived correct value, because the old
+  // "user secrets win on collision" rule applied indiscriminately to every
+  // key already sitting in the table -- including these six, which the
+  // platform itself owns and re-derives every call. Confirmed live: one
+  // project's VITE_FUNCTIONS_API_URL stayed pointed at the wrong host despite
+  // repeated Sync-button clicks and agent runs, because nothing in that path
+  // ever actually preferred the fresh value over the stale stored one.
+  it('ignores a stale stored VITE_FUNCTIONS_API_URL and returns the freshly-derived value', async () => {
+    projectSecretsRows = [
+      { project_id: 'project-1', key_name: 'VITE_FUNCTIONS_API_URL', key_value: 'https://api.ecomgear.dev' },
+      { project_id: 'project-1', key_name: 'VITE_DB_API_URL', key_value: 'https://cloud.ecomgear.app/tenant_project1' },
+    ];
+
+    const secrets = await buildProjectEnvSecrets('user-1', 'project-1');
+    const fnUrl = secrets.find((s) => s.key_name === 'VITE_FUNCTIONS_API_URL');
+
+    expect(fnUrl).toBeTruthy();
+    expect(fnUrl!.key_value).toBe('https://cloud.ecomgear.app/tenant_project1/functions');
+    expect(fnUrl!.key_value).not.toBe('https://api.ecomgear.dev');
+  });
+
+  it('still lets a genuine user-set secret (not one of the six platform-managed keys) win as usual', async () => {
+    projectSecretsRows = [
+      { project_id: 'project-1', key_name: 'STRIPE_SECRET_KEY', key_value: 'sk_test_user_set_value' },
+    ];
+
+    const secrets = await buildProjectEnvSecrets('user-1', 'project-1');
+    const stripeKey = secrets.find((s) => s.key_name === 'STRIPE_SECRET_KEY');
+
+    expect(stripeKey).toBeTruthy();
+    expect(stripeKey!.key_value).toBe('sk_test_user_set_value');
+  });
+
+  it('returns the correct platform-managed values on a project with no stored rows at all', async () => {
+    projectSecretsRows = [];
+    const secrets = await buildProjectEnvSecrets('user-1', 'project-1');
+    const keyNames = secrets.map((s) => s.key_name).sort();
+    expect(keyNames).toEqual([
+      'VITE_DB_ANON_KEY', 'VITE_DB_API_URL', 'VITE_DB_SCHEMA', 'VITE_FUNCTIONS_API_URL',
+      'VITE_SUPABASE_ANON_KEY', 'VITE_SUPABASE_URL',
+    ]);
   });
 });

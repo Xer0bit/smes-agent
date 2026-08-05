@@ -281,7 +281,6 @@ export async function buildProjectEnvSecrets(userId: string, projectId: string):
     .select('key_name, key_value')
     .eq('project_id', projectId);
   const userSecrets: ProjectSecret[] = (userRows ?? []) as ProjectSecret[];
-  const userKeys = new Set(userSecrets.map(s => s.key_name));
 
   const derived: ProjectSecret[] = [];
 
@@ -316,8 +315,27 @@ export async function buildProjectEnvSecrets(userId: string, projectId: string):
     // needs the raw key in agent-visible context.
   }
 
-  // User-defined secrets win on any key collision.
-  return [...derived.filter(s => !userKeys.has(s.key_name)), ...userSecrets];
+  // User-defined secrets win on any key collision -- EXCEPT for the platform-
+  // managed keys derived above. Those get upserted into project_secrets as a
+  // side effect (syncPlatformAuthSecrets / getCredentials, both fire-and-
+  // forget, not awaited), so `userSecrets` here is a snapshot fetched BEFORE
+  // that upsert lands -- on every call, not just the first. Previously this
+  // function's "user secrets win" rule applied to these keys too (they live
+  // in the same table), which meant a stale/wrong stored row for e.g.
+  // VITE_FUNCTIONS_API_URL would win over the freshly-computed correct value
+  // FOREVER: the returned value on every call (including every Sync-button
+  // click and every agent-turn injection) was the old snapshot, and the
+  // "self-heal" upsert only ever wrote a value nothing then read back this
+  // way. Confirmed live: this is why one production project's
+  // VITE_FUNCTIONS_API_URL sat on a stale host for an extended period despite
+  // Sync being clicked and the agent running turns against it repeatedly --
+  // neither could actually correct it, only a direct backfill could.
+  // 2026-08-05 stability review follow-up. Real user secrets (API keys saved
+  // via set_secret) are unaffected -- only these six reserved names are now
+  // always platform-authoritative.
+  const platformManagedKeys = new Set(derived.map(s => s.key_name));
+  const userOverrides = userSecrets.filter(s => !platformManagedKeys.has(s.key_name));
+  return [...derived, ...userOverrides];
 }
 
 // ---------------------------------------------------------------------------

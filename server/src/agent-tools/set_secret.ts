@@ -9,6 +9,17 @@ import { supabase } from '../config/database.js';
 import { databaseService } from '../services/database.service.js';
 import { logger } from '../utils/logger.js';
 
+// Keep in sync with buildProjectEnvSecrets()'s `derived` key set in
+// database.service.ts -- these are always platform-computed, never user-set.
+const PLATFORM_MANAGED_KEYS = new Set([
+  'VITE_SUPABASE_URL',
+  'VITE_SUPABASE_ANON_KEY',
+  'VITE_DB_API_URL',
+  'VITE_DB_ANON_KEY',
+  'VITE_DB_SCHEMA',
+  'VITE_FUNCTIONS_API_URL',
+]);
+
 const schema = z.object({
   key_name: z.string().describe(
     'Env var name, UPPER_SNAKE_CASE (letters, digits, underscores; must start with a letter or underscore). ' +
@@ -40,6 +51,14 @@ export const setSecretTool: ToolDefinition<z.infer<typeof schema>> = {
     const keyName = args.key_name.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
     if (!/^[A-Z_][A-Z0-9_]*$/.test(keyName)) {
       return `ERROR: "${args.key_name}" is not a valid env var name. Use UPPER_SNAKE_CASE only.`;
+    }
+    // These six are platform-managed (auth + hosted-DB credentials), derived
+    // fresh by buildProjectEnvSecrets() on every read and always authoritative
+    // over whatever's stored -- a value written here for one of them would be
+    // silently ignored (never actually used), which is more confusing than a
+    // clear rejection up front.
+    if (PLATFORM_MANAGED_KEYS.has(keyName)) {
+      return `ERROR: "${keyName}" is a platform-managed variable (set automatically for auth/hosted-database access) and cannot be overridden. It's already correctly configured -- use it as-is via import.meta.env.${keyName}.`;
     }
     if (!ctx.projectId) return 'ERROR: no project context available.';
 
