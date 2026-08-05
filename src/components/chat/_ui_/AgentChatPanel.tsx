@@ -1069,8 +1069,16 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         </div>
       </div>
 
+      {/* ── Screen-reader announcer   decoupled from the visual ticker below ──
+          so SR announcements aren't fighting the visual animate-status-in
+          re-mount on every update. Visually hidden; the sighted ticker
+          further down is aria-hidden so nothing gets announced twice. */}
+      <div aria-live="polite" className="sr-only">
+        {isGenerating ? (statusLabel || 'Working…') : ''}
+      </div>
+
       {/* ── Messages   plain div so scrollTop works directly ── */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0" aria-busy={isGenerating}>
         <div className="px-3 py-3 space-y-3">
           {/* Load-more indicator at top */}
           {isLoadingMore && (
@@ -1098,7 +1106,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   <div className="absolute -top-6 -right-6 w-28 h-28 rounded-full opacity-20"
                     style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.8), transparent 70%)' }} />
                   <div className="relative z-10 flex items-center gap-3 mb-3">
-                    <img src={ecgAgentLogo} alt="EcomGear Agent" className="w-10 h-8 shrink-0" />
+                    {/* Decorative -- the adjacent label already says "EcomGear Agent",
+                        so alt="" here (not a repeated alt text) prevents the browser
+                        from ever showing a second "EcomGear Agent" as broken-image
+                        fallback text, and avoids double-announcing it to screen readers. */}
+                    <img src={ecgAgentLogo} alt="" className="w-10 h-8 shrink-0" />
                     <div>
                       <p className="text-[13px] font-semibold text-white/90 leading-tight">EcomGear Agent</p>
                       <p className="text-[10px] text-indigo-300/60 font-medium tracking-wide">App Builder · AI Powered</p>
@@ -1151,33 +1163,16 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 </div>
               )}
 
-              {/* Step-by-step history   live while streaming, survives after completion
-                  (unlike the single-line status ticker above, which is wiped). Grouped
-                  into one pill-chip strip per turn, matching the follow-up chip language
-                  below rather than the bare icon+text rows this used to be. */}
-              {msg.role === 'assistant' && msg.steps && msg.steps.length > 0 && (
-                <div className="mt-1.5 ml-[30px] flex flex-wrap gap-1">
-                  {msg.steps.map((step, i) => {
-                    const cfg: Record<StepEntry['type'], { icon: string; cls: string }> = {
-                      write:      { icon: '✦', cls: 'text-indigo-300 border-indigo-500/20 bg-indigo-500/[0.06]'  },
-                      edit:       { icon: '✎', cls: 'text-blue-300 border-blue-500/20 bg-blue-500/[0.06]'        },
-                      delete:     { icon: '✕', cls: 'text-red-300 border-red-500/20 bg-red-500/[0.06]'           },
-                      rename:     { icon: '↪', cls: 'text-yellow-300 border-yellow-500/20 bg-yellow-500/[0.06]'  },
-                      dependency: { icon: '⬡', cls: 'text-emerald-300 border-emerald-500/20 bg-emerald-500/[0.06]' },
-                      command:    { icon: '⚡', cls: 'text-orange-300 border-orange-500/20 bg-orange-500/[0.06]'  },
-                      status:     { icon: '·', cls: 'text-gray-400 border-white/10 bg-white/[0.03]'              },
-                    };
-                    const { icon, cls } = cfg[step.type] ?? cfg.status;
-                    return (
-                      <span
-                        key={i}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-medium max-w-[220px] ${cls}`}
-                      >
-                        <span className="shrink-0">{icon}</span>
-                        <span className="truncate">{step.label}</span>
-                      </span>
-                    );
-                  })}
+              {/* Step-by-step record. While streaming, the live status ticker
+                  below already carries the "something's happening" signal --
+                  a second bouncing-dots indicator here just duplicated it.
+                  Once done, one neutral count chip replaces what used to be
+                  one colored pill per file. */}
+              {msg.role === 'assistant' && msg.steps && msg.steps.length > 0 && msg.status !== 'streaming' && msg.status !== 'pending' && (
+                <div className="mt-1.5 ml-[30px]">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-white/10 bg-white/[0.03] text-[10px] font-medium text-gray-400">
+                    {msg.steps.length} {msg.steps.length === 1 ? 'change' : 'changes'}
+                  </span>
                 </div>
               )}
 
@@ -1268,12 +1263,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                           disabled={isGenerating}
                           onClick={() => handleSubmit(suggestion)}
                           className="animate-chip-pop px-2.5 py-1 rounded-full
-                            bg-gradient-to-r from-white/[0.04] to-white/[0.02]
-                            hover:from-indigo-500/[0.1] hover:to-purple-500/[0.07]
-                            border border-white/[0.07] hover:border-indigo-500/30
+                            bg-white/[0.03] hover:bg-primary/[0.08]
+                            border border-white/[0.07] hover:border-primary/30
                             text-gray-500 hover:text-gray-200 text-[11px]
-                            transition-all duration-200 disabled:opacity-40
-                            shadow-[0_1px_3px_rgba(0,0,0,0.2)]"
+                            transition-all duration-200 disabled:opacity-40"
                         >
                           {suggestion}
                         </button>
@@ -1291,7 +1284,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               it just replaces itself each time a new `think` step arrives and
               disappears the moment the agent moves to a real action or finishes. ── */}
           {isGenerating && liveThought && (
-            <div className="ml-[28px] mb-1 flex items-start gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5 max-w-[320px]">
+            <div className="ml-[28px] mb-1 flex items-start gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5 max-w-[320px]" aria-hidden="true">
               <Sparkles className="w-3 h-3 mt-0.5 shrink-0 text-indigo-300/60 animate-pulse" />
               <p className="text-[11px] leading-snug text-white/40 italic line-clamp-3">
                 {liveThought}
@@ -1313,7 +1306,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             const fileDetail = f ? `${fileIcon[f.type] ?? '·'} ${f.path.replace(/^src\//, '')}` : '';
 
             return (
-              <div className="ml-[28px] flex items-center gap-2 py-1">
+              <div className="ml-[28px] flex items-center gap-2 py-1" aria-hidden="true">
                 {/* Pulsing activity dot   indigo while thinking, emerald while writing files */}
                 <span className="relative flex h-2 w-2 shrink-0">
                   <span className={`absolute inline-flex h-full w-full rounded-full opacity-60 ${hasFile ? 'bg-emerald-400' : 'bg-indigo-400'} animate-ping`} />
@@ -1412,10 +1405,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           )}
 
           {/* Textarea   overflow-hidden only wraps this so rounded corners work */}
-          <div className={`rounded-xl overflow-hidden transition-all duration-250
+          <div className={`rounded-xl overflow-hidden transition-all duration-150
             ${isDragOver
-              ? 'bg-[#0e0e14] border border-indigo-500/40 shadow-[0_0_0_1px_rgba(99,102,241,0.22),0_0_24px_rgba(99,102,241,0.10)]'
-              : 'bg-[#0c0c10] border border-white/[0.08] focus-within:border-indigo-500/35 focus-within:shadow-[0_0_0_1px_rgba(99,102,241,0.18),0_0_20px_rgba(99,102,241,0.08)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04),0_2px_8px_rgba(0,0,0,0.2)]'}`}>
+              ? 'bg-[#0e0e14] border border-primary/40 shadow-[0_0_0_1px_rgba(45,212,191,0.22)]'
+              : 'bg-[#0c0c10] border border-white/[0.08] focus-within:border-primary/35 focus-within:shadow-[0_0_0_1px_rgba(45,212,191,0.18)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04),0_2px_8px_rgba(0,0,0,0.2)]'}`}>
             <Textarea
               ref={inputRef}
               placeholder={
@@ -1517,13 +1510,9 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               onClick={() => handleSubmit()}
               disabled={(!input.trim() && pendingAttachments.length === 0) || isGenerating || !projectId || input.length > MAX_INPUT_CHARS}
               className="h-7 w-7 flex items-center justify-center rounded-lg
-                bg-gradient-to-br from-indigo-500 to-violet-600
-                hover:from-indigo-400 hover:to-violet-500
-                disabled:from-white/[0.05] disabled:to-white/[0.03] disabled:text-white/15
-                text-white
-                shadow-[0_2px_12px_rgba(99,102,241,0.30),inset_0_1px_0_rgba(255,255,255,0.15)]
-                hover:shadow-[0_4px_16px_rgba(99,102,241,0.45),inset_0_1px_0_rgba(255,255,255,0.15)]
-                disabled:shadow-none
+                bg-primary hover:bg-primary/90
+                disabled:bg-white/[0.05] disabled:text-white/15
+                text-primary-foreground
                 transition-all duration-150"
             >
               {isGenerating
