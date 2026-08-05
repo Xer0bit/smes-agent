@@ -81,17 +81,14 @@ import { domainService } from "@/eCG/Publish";
 import type { DomainConfiguration, DomainStatus } from "@/eCG/Publish/types";
 import { countNonEmptyLines } from "@/utils/ecoCounter";
 import { checkAndIncrementPublishLines, showLimitToast } from "@/services/subscriptionService";
-
-// Native color inputs need a #rrggbb value; computed styles report rgb(...).
-function rgbToHex(rgb?: string): string {
-  const m = rgb?.match(/\d+/g);
-  if (!m || m.length < 3) return '#000000';
-  return '#' + m.slice(0, 3).map(n => Math.min(255, parseInt(n, 10)).toString(16).padStart(2, '0')).join('');
-}
+import type { BuilderTab } from "./editor/types";
+import { BUILDER_TABS, AUTO_REPAIR_COOLDOWN_MS, MAX_CONSECUTIVE_REPAIRS, NAV_BLANK_GRACE_MS } from "./editor/constants";
+import type { MagicCursorTarget } from "./editor/types";
+import { buildMagicCursorPrompt } from "./editor/utils/magicCursorPrompt";
+import { extractInvalidSourceFiles, buildRetryFilesWithFallback, buildSafeFilesAfterValidation } from "./editor/utils/fileRecovery";
+import { normalizeProjectFiles } from "./editor/utils/fileNormalization";
 
 const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
-  type BuilderTab = 'brief' | 'generate' | 'code' | 'preview' | 'revisions' | 'publish';
-  const BUILDER_TABS: BuilderTab[] = ['brief', 'generate', 'code', 'preview', 'revisions', 'publish'];
   const params = useParams();
   let projectId = propProjectId || params.projectId;
   if (projectId === 'undefined') {
@@ -253,160 +250,6 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   const [activityDetails, setActivityDetails] = useState<string | undefined>();
 
 
-  const extractErrorMeta = (message: string) => {
-    const fileMatch = message.match(/((?:[A-Za-z]:)?[^\s:]+\.(?:tsx|ts|jsx|js))/);
-    const locMatch = message.match(/\((\d+):(\d+)\)/);
-    if (!fileMatch) return null;
-
-    let filePath = fileMatch[1];
-    const projectRootMarker = `/preview-service/projects/${projectId}/`;
-    if (filePath.includes(projectRootMarker)) {
-      filePath = filePath.split(projectRootMarker)[1];
-    }
-    filePath = filePath.replace(/^\//, '');
-
-    return {
-      filePath,
-      line: locMatch ? Number(locMatch[1]) : undefined,
-      column: locMatch ? Number(locMatch[2]) : undefined,
-      raw: message,
-    };
-  };
-
-  const extractInvalidSourceFiles = (errorMessage?: string): string[] => {
-    if (!errorMessage) return [];
-
-    const matches = errorMessage.matchAll(/([A-Za-z0-9_./-]+\.(?:tsx|ts|jsx|js)):\d+:\d+/g);
-    const files = new Set<string>();
-
-    for (const match of matches) {
-      const normalized = (match[1] || '').replace(/^\//, '');
-      if (normalized) files.add(normalized);
-    }
-
-    return Array.from(files);
-  };
-
-  const buildRetryFilesWithFallback = (
-    candidateFiles: Array<{ path: string; content: string }>,
-    previousFilesMap: Map<string, { path: string; content: string }>,
-    invalidFilePaths: string[]
-  ) => {
-    if (invalidFilePaths.length === 0) return null;
-
-    const invalidSet = new Set(invalidFilePaths.map(p => p.replace(/^\//, '')));
-    const previousByPath = new Map<string, { path: string; content: string }>();
-
-    previousFilesMap.forEach((value, key) => {
-      previousByPath.set(key.replace(/^\//, ''), { path: value.path, content: value.content });
-    });
-
-    const criticalFiles = new Set(['index.html', 'src/main.tsx', 'src/App.tsx']);
-    const missingFallbackPaths: string[] = [];
-    const invalidCriticalWithoutFallback: string[] = [];
-
-    let replaced = 0;
-    let removed = 0;
-    const files: Array<{ path: string; content: string }> = [];
-
-    for (const file of candidateFiles) {
-      const normalizedPath = file.path.replace(/^\//, '');
-      if (!invalidSet.has(normalizedPath)) {
-        files.push(file);
-        continue;
-      }
-
-      const fallback = previousByPath.get(normalizedPath);
-      if (fallback) {
-        files.push({ path: file.path, content: fallback.content });
-        replaced++;
-      } else {
-        // No previous version   keep the file as-is and let the preview service
-        // handle it. Never replace with a generated fallback placeholder.
-        files.push(file);
-        missingFallbackPaths.push(normalizedPath);
-        if (criticalFiles.has(normalizedPath)) {
-          invalidCriticalWithoutFallback.push(normalizedPath);
-        }
-        removed++;
-      }
-    }
-
-    const safeToRetry = removed === 0 && invalidCriticalWithoutFallback.length === 0;
-    const reason = !safeToRetry
-      ? (
-        invalidCriticalWithoutFallback.length > 0
-          ? `Critical file(s) invalid without fallback: ${invalidCriticalWithoutFallback.join(', ')}`
-          : `Invalid file(s) have no fallback: ${missingFallbackPaths.join(', ')}`
-      )
-      : undefined;
-
-    return { files, replaced, removed, safeToRetry, reason };
-  };
-
-  const buildSafeFilesAfterValidation = (
-    candidateFiles: Array<{ path: string; content: string }>,
-    previousFilesMap: Map<string, { path: string; content: string }>,
-    validationErrors: Array<{ file: string; severity: 'error' | 'warning' }>
-  ) => {
-    const blockingFiles = new Set(
-      validationErrors
-        .filter((error) => error.severity === 'error')
-        .map((error) => (error.file || '').replace(/^\//, ''))
-        .filter(Boolean)
-    );
-
-    if (blockingFiles.size === 0) {
-      return {
-        files: candidateFiles,
-        rolledBack: 0,
-        removed: 0,
-        unresolved: [] as string[],
-        blocking: [] as string[],
-      };
-    }
-
-    const previousByPath = new Map<string, { path: string; content: string }>();
-    previousFilesMap.forEach((value, key) => {
-      previousByPath.set(key.replace(/^\//, ''), { path: value.path, content: value.content });
-    });
-
-    let rolledBack = 0;
-    let removed = 0;
-    const unresolved: string[] = [];
-    const files: Array<{ path: string; content: string }> = [];
-
-    for (const file of candidateFiles) {
-      const normalizedPath = file.path.replace(/^\//, '');
-      if (!blockingFiles.has(normalizedPath)) {
-        files.push(file);
-        continue;
-      }
-
-      const fallback = previousByPath.get(normalizedPath);
-      if (fallback) {
-        files.push({ path: file.path, content: fallback.content });
-        rolledBack++;
-      } else {
-        // No previous version available   keep the current file as-is and let
-        // the preview service handle validation. Never replace with a generated
-        // "temporarily recovered" placeholder   that confuses users.
-        files.push(file);
-        removed++;
-        unresolved.push(normalizedPath);
-      }
-    }
-
-    return {
-      files,
-      rolledBack,
-      removed,
-      unresolved,
-      blocking: Array.from(blockingFiles),
-    };
-  };
-
-
   // Listen for logs from preview iframe
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -487,15 +330,10 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
             transitionPreviewStatus('ready', { message: 'Preview Ready' });
           }
         });
-      } else if (event.data?.type === 'ecg-element-selected') {
-        // Click-to-select from inspect mode   scope the chat input to the
-        // clicked element so the next prompt has context (Lovable/v0 parity).
-        const { selector, tagName, text, style } = event.data;
-        const label = text ? `"${text.slice(0, 60)}"` : selector;
-        setInspectTarget({ selector, tagName: tagName || '', label: label || '', text: text || '', style: style || {} });
-        setQuickEditText(text || '');
-        setQuickEditColor(rgbToHex(style?.color));
-        setQuickEditBg(rgbToHex(style?.backgroundColor));
+      } else if (event.data?.type === 'ecg-multi-select-changed') {
+        // Magic Cursor: click-to-select (Cmd/Ctrl+click to add more) from
+        // inspect mode, resolved to real JSX source location where possible.
+        setInspectTargets((event.data.items || []) as MagicCursorTarget[]);
       }
     };
 
@@ -522,39 +360,29 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   // True while the agent is mid-install of an npm dependency; suppresses the
   // preview's build-error overlay for that window (see MultiDevicePreview).
   const [installingDependency, setInstallingDependency] = useState(false);
-  // Click-to-select inspect mode
+  // Magic Cursor: click-to-select inspect mode (Cmd/Ctrl+click adds more)
   const [inspectMode, setInspectMode] = useState(false);
-  const [inspectTarget, setInspectTarget] = useState<{
-    selector: string; tagName: string; label: string; text: string;
-    style: { color?: string; backgroundColor?: string; fontSize?: string };
-  } | null>(null);
-  const [quickEditText, setQuickEditText] = useState('');
-  const [quickEditColor, setQuickEditColor] = useState('#000000');
-  const [quickEditBg, setQuickEditBg] = useState('#ffffff');
+  const [inspectTargets, setInspectTargets] = useState<MagicCursorTarget[]>([]);
+  const [magicCursorInstruction, setMagicCursorInstruction] = useState('');
   const [triggerLabel, setTriggerLabel] = useState<string | undefined>(undefined);
 
-  // Turns the inspected element + edited fields into one unambiguous, scoped
-  // instruction (exact selector + tag + original text as a fingerprint) instead
-  // of the user having to describe the element in free-text chat — this is the
-  // "more precise and accurate" edit path. Only changed fields are mentioned.
-  const applyQuickEdit = () => {
-    if (!inspectTarget) return;
-    const changes: string[] = [];
-    if (quickEditText !== inspectTarget.text) changes.push(`change its text content to "${quickEditText}"`);
-    if (rgbToHex(inspectTarget.style.color) !== quickEditColor) changes.push(`set its text color to ${quickEditColor}`);
-    if (rgbToHex(inspectTarget.style.backgroundColor) !== quickEditBg) changes.push(`set its background color to ${quickEditBg}`);
-    if (changes.length === 0) { setInspectTarget(null); return; }
+  // Turns the selected element(s) + the user's free-text instruction into one
+  // source-addressed prompt: exact file, exact line range, exact source text
+  // per region (see editor/utils/magicCursorPrompt.ts) -- the agent gets a
+  // precise address instead of having to re-locate the target itself.
+  const submitMagicCursorEdit = () => {
+    if (inspectTargets.length === 0 || !magicCursorInstruction.trim()) return;
 
-    const fingerprint = inspectTarget.text
-      ? `a <${inspectTarget.tagName}> element currently containing the text "${inspectTarget.text}"`
-      : `the <${inspectTarget.tagName}> element`;
-    const instruction =
-      `Precisely edit ${fingerprint}, matching CSS selector \`${inspectTarget.selector}\`: ${changes.join('; ')}. ` +
-      `Locate this exact element in the source and apply only these changes, preserving everything else about it.`;
+    const instruction = buildMagicCursorPrompt(
+      inspectTargets,
+      magicCursorInstruction.trim(),
+      (path) => workspaceFiles.get(path.replace(/^\//, ''))?.content
+    );
 
-    setTriggerLabel('Edit Precisely...');
+    setTriggerLabel(inspectTargets.length > 1 ? `Edit ${inspectTargets.length} selections...` : 'Edit selection...');
     setRepairPrompt(instruction);
-    setInspectTarget(null);
+    setInspectTargets([]);
+    setMagicCursorInstruction('');
     setInspectMode(false);
   };
 
@@ -595,12 +423,6 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
   const isAgentRunningRef = useRef<boolean>(false);
   const pendingAutoRepairRef = useRef<boolean>(false);
   const lastUserNavigationAtRef = useRef<number>(0); // timestamp of last user-initiated route change
-  const AUTO_REPAIR_COOLDOWN_MS = 60_000; // 60 s between auto-repairs
-  const MAX_CONSECUTIVE_REPAIRS = 2;      // stop looping after 2 back-to-back attempts
-  // How long after a user-initiated navigation to suppress blank-screen auto-repair.
-  // Covers slow initial loads on new routes (SPA hydration + lazy chunks).
-  // If users report missed repairs after navigating, lower this value.
-  const NAV_BLANK_GRACE_MS = 8_000;
 
   // Route navigation state
   const [currentRoutePath, setCurrentRoutePath] = useState<string>(() => searchParams.get('page') || '/');
@@ -1083,203 +905,7 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
     return () => window.removeEventListener('focus', syncDomainState);
   }, [projectId]);
 
-  const normalizeProjectFiles = (files: any[]) => {
-    const sanitizePath = (rawPath: unknown): string | null => {
-      if (typeof rawPath !== 'string') return null;
-
-      // Repair common malformed AI output (quoted/comma suffixed paths)
-      const path = rawPath
-        .trim()
-        .replace(/^[\"'`,\s]+|[\"'`,\s]+$/g, '')
-        .replace(/\\/g, '/')
-        .replace(/^\.\//, '')
-        .replace(/\/+/g, '/');
-
-      if (!path) return null;
-      if (path.includes('..')) return null;
-      if (/[^A-Za-z0-9._/@\-\s]/.test(path)) return null;
-
-      return path;
-    };
-
-    // Clone/sanitize to avoid mutation of original objects and drop invalid paths
-    const normalizedSeed = files
-      .map((f) => {
-        const nextPath = sanitizePath(f?.path);
-        if (!nextPath) {
-          console.warn('[Editor] Dropping invalid file path during normalization:', f?.path);
-          return null;
-        }
-
-        return {
-          ...f,
-          path: nextPath,
-          content: typeof f?.content === 'string' ? f.content : '',
-        };
-      })
-      .filter((f): f is { path: string; content: string; [key: string]: any } => Boolean(f));
-
-    // De-duplicate by path, latest entry wins
-    const byPath = new Map<string, any>();
-    normalizedSeed.forEach((f) => byPath.set(f.path, f));
-    const normalized = Array.from(byPath.values());
-
-    const hasPath = (target: string) => normalized.some(f => f.path === target);
-    const upsert = (path: string, content: string) => {
-      if (hasPath(path)) return;
-      normalized.push({ path, content });
-    };
-
-    // Check for entry point
-    const mainIndex = normalized.findIndex(f => f.path === 'src/main.tsx' || f.path === 'src/main.jsx');
-    const indexIndex = normalized.findIndex(f => f.path === 'src/index.tsx' || f.path === 'src/index.jsx');
-    const appIndex = normalized.findIndex(f => f.path === 'src/App.tsx' || f.path === 'src/App.jsx');
-
-    if (mainIndex === -1) {
-      if (indexIndex !== -1) {
-        // Rename index to main
-        console.log('[Editor] Normalizing: Renaming index.tsx to main.tsx');
-        normalized[indexIndex].path = 'src/main.tsx';
-      } else if (appIndex !== -1) {
-        // Create main.tsx
-        console.log('[Editor] Normalizing: Creating default main.tsx');
-        normalized.push({
-          path: 'src/main.tsx',
-          content: `import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App.tsx'
-import './index.css'
-
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)`
-        });
-      }
-    }
-
-    upsert('index.html', `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Preview</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>`);
-
-    upsert('src/App.tsx', `function App() {
-  return <div className="p-6">Preview Ready</div>;
-}
-
-export default App;
-`);
-
-    upsert('src/main.tsx', `import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App'
-import './index.css'
-
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
-`);
-
-    upsert('src/index.css', `@tailwind base;
-@tailwind components;
-@tailwind utilities;
-`);
-
-    upsert('package.json', JSON.stringify({
-      name: 'preview-app',
-      private: true,
-      version: '0.0.0',
-      type: 'module',
-      scripts: {
-        dev: 'vite',
-        build: 'vite build',
-        preview: 'vite preview'
-      },
-      dependencies: {
-        react: '^18.3.1',
-        'react-dom': '^18.3.1'
-      },
-      devDependencies: {
-        '@types/react': '^18.3.5',
-        '@types/react-dom': '^18.3.0',
-        '@vitejs/plugin-react': '^4.3.1',
-        autoprefixer: '^10.4.20',
-        postcss: '^8.4.47',
-        tailwindcss: '^3.4.13',
-        typescript: '^5.5.3',
-        vite: '^5.4.1'
-      }
-    }, null, 2));
-
-    upsert('postcss.config.js', `export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-};
-`);
-
-    upsert('tailwind.config.ts', `import type { Config } from 'tailwindcss';
-
-export default {
-  content: ['./index.html', './src/**/*.{ts,tsx,js,jsx}'],
-  theme: { extend: {} },
-  plugins: [],
-} satisfies Config;
-`);
-
-    upsert('vite.config.ts', `import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-
-export default defineConfig({
-  plugins: [react()],
-});
-`);
-
-    upsert('tsconfig.json', JSON.stringify({
-      compilerOptions: {
-        target: 'ES2020',
-        useDefineForClassFields: true,
-        lib: ['ES2020', 'DOM', 'DOM.Iterable'],
-        module: 'ESNext',
-        skipLibCheck: true,
-        moduleResolution: 'Bundler',
-        allowImportingTsExtensions: true,
-        resolveJsonModule: true,
-        isolatedModules: true,
-        noEmit: true,
-        jsx: 'react-jsx',
-        strict: false
-      },
-      include: ['src']
-    }, null, 2));
-
-    upsert('tsconfig.node.json', JSON.stringify({
-      compilerOptions: {
-        composite: true,
-        skipLibCheck: true,
-        module: 'ESNext',
-        moduleResolution: 'bundler',
-        allowSyntheticDefaultImports: true,
-        strict: true,
-        noEmit: true
-      },
-      include: ['vite.config.ts']
-    }, null, 2));
-
-    return normalized;
-  };
+  // normalizeProjectFiles is imported from ./editor/utils/fileNormalization
 
   // buildPreviewNavigationUrl is imported from @/utils/previewNavigation
 
@@ -2508,7 +2134,7 @@ export default defineConfig({
           <Sheet open={!isMinimized} onOpenChange={(open) => setIsMinimized(!open)}>
             <SheetContent
               side="bottom"
-              className="h-[82vh] border-white/[0.06] bg-[#0e0e10] p-0 sm:max-w-none"
+              className="h-[100dvh] border-white/[0.06] bg-[#0e0e10] p-0 sm:max-w-none"
               aria-describedby={undefined}
             >
               <SheetTitle className="sr-only">Assistant</SheetTitle>
@@ -2563,6 +2189,12 @@ export default defineConfig({
                         normalizedFiles.forEach((file) => writeFileWorkspace(file.path, file.content, 'ai'));
                         saveWorkspaceToDb().catch((err) => {
                           console.error('[Editor] Failed to persist agent files:', err);
+                          // Real incident (2026-08-04): this save silently failed for an
+                          // env-mismatch reason (frontend Supabase URL != backend's), and
+                          // the only trace was a console.error no one saw -- a real, paid
+                          // agent run looked like it produced nothing. A save failure must
+                          // never be silent again, regardless of cause.
+                          toast.error('Changes generated but not saved -- your edits may be lost on reload. Check your connection and try again.');
                           scheduleWorkspaceSave();
                         });
                         if (normalizedFiles.length > 0 && !previewPushed) {
@@ -2972,7 +2604,7 @@ export default defineConfig({
                 <Button
                   onClick={handleExpandToComplete}
                   disabled={isLoading}
-                  className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg rounded-lg"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg"
                 >
                   {isLoading ? "Expanding..." : "Expand to Full App"}
                 </Button>
@@ -3008,44 +2640,53 @@ export default defineConfig({
                 className={cn("h-7 w-7 rounded-md", inspectMode ? "bg-indigo-500/20 text-indigo-300" : "text-white/25 hover:text-white/70 hover:bg-white/[0.06] disabled:text-white/10 disabled:hover:bg-transparent")}>
                 <MousePointerClick className="h-3.5 w-3.5" />
               </Button>
-              {inspectTarget && (
-                <Popover open onOpenChange={(o) => { if (!o) setInspectTarget(null); }}>
+              {inspectTargets.length > 0 && (
+                <Popover open onOpenChange={(o) => { if (!o) { setInspectTargets([]); setMagicCursorInstruction(''); } }}>
                   <PopoverTrigger asChild>
                     <span className="hidden lg:flex items-center gap-1 h-7 px-2 rounded-md bg-indigo-500/10 text-[11px] text-indigo-300 whitespace-nowrap cursor-default">
-                      Editing <code className="font-mono text-indigo-200">{inspectTarget.tagName}</code>
-                      <button onClick={(e) => { e.stopPropagation(); setInspectTarget(null); }} className="text-indigo-300/50 hover:text-white ml-0.5">×</button>
+                      {inspectTargets.length === 1
+                        ? <>Editing <code className="font-mono text-indigo-200">{inspectTargets[0].source?.componentName || inspectTargets[0].tagName}</code></>
+                        : <>{inspectTargets.length} selected</>}
+                      <button onClick={(e) => { e.stopPropagation(); setInspectTargets([]); setMagicCursorInstruction(''); }} className="text-indigo-300/50 hover:text-white ml-0.5">×</button>
                     </span>
                   </PopoverTrigger>
-                  <PopoverContent align="start" className="w-72 z-[300] p-3 space-y-3">
-                    <div>
-                      <p className="text-[11px] text-white/45">Precise edit</p>
-                      <p className="text-xs text-white/70 font-mono truncate" title={inspectTarget.selector}>{inspectTarget.selector}</p>
+                  <PopoverContent align="start" className="w-80 z-[300] p-3 space-y-3">
+                    <div className="space-y-1">
+                      <p className="text-[11px] text-white/45">
+                        {inspectTargets.length === 1 ? 'Selected element' : `${inspectTargets.length} selected elements`}
+                        <span className="text-white/25"> · ⌘/Ctrl+click to add more</span>
+                      </p>
+                      <div className="space-y-1 max-h-28 overflow-y-auto">
+                        {inspectTargets.map((target, i) => (
+                          <div key={i} className="flex items-center gap-1.5 text-xs text-white/70 font-mono truncate">
+                            <span className="shrink-0 flex items-center justify-center h-4 w-4 rounded-full bg-indigo-500/20 text-indigo-300 text-[9px] font-semibold">{i + 1}</span>
+                            <span className="truncate" title={target.source ? `${target.source.file}:${target.source.line}` : target.selector}>
+                              {target.source
+                                ? `${target.source.componentName || target.tagName} — ${target.source.file.split('/').pop()}:${target.source.line}`
+                                : target.selector}
+                            </span>
+                            <button
+                              onClick={() => setInspectTargets(prev => prev.filter((_, j) => j !== i))}
+                              className="ml-auto shrink-0 text-white/25 hover:text-white/70"
+                            >×</button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    {inspectTarget.text && (
-                      <div className="space-y-1">
-                        <label className="text-[11px] text-white/45">Text content</label>
-                        <input
-                          value={quickEditText}
-                          onChange={(e) => setQuickEditText(e.target.value)}
-                          className="w-full h-7 px-2 rounded-md bg-white/[0.05] border border-white/[0.08] text-xs text-white/85 outline-none focus:border-indigo-500/50"
-                        />
-                      </div>
-                    )}
-                    <div className="flex items-center gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[11px] text-white/45 block">Text color</label>
-                        <input type="color" value={quickEditColor} onChange={(e) => setQuickEditColor(e.target.value)}
-                          className="h-7 w-10 rounded bg-transparent border border-white/[0.08] cursor-pointer" />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[11px] text-white/45 block">Background</label>
-                        <input type="color" value={quickEditBg} onChange={(e) => setQuickEditBg(e.target.value)}
-                          className="h-7 w-10 rounded bg-transparent border border-white/[0.08] cursor-pointer" />
-                      </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-white/45">Instruction</label>
+                      <textarea
+                        autoFocus
+                        value={magicCursorInstruction}
+                        onChange={(e) => setMagicCursorInstruction(e.target.value)}
+                        placeholder="What should change here?"
+                        rows={2}
+                        className="w-full px-2 py-1.5 rounded-md bg-white/[0.05] border border-white/[0.08] text-xs text-white/85 outline-none focus:border-indigo-500/50 resize-none"
+                      />
                     </div>
                     <div className="flex gap-2 pt-1">
-                      <Button size="sm" variant="ghost" className="flex-1 h-7 text-[11px]" onClick={() => setInspectTarget(null)}>Cancel</Button>
-                      <Button size="sm" className="flex-1 h-7 text-[11px] bg-indigo-600 hover:bg-indigo-500 text-white" onClick={applyQuickEdit}>Apply</Button>
+                      <Button size="sm" variant="ghost" className="flex-1 h-7 text-[11px]" onClick={() => { setInspectTargets([]); setMagicCursorInstruction(''); }}>Cancel</Button>
+                      <Button size="sm" className="flex-1 h-7 text-[11px] bg-indigo-600 hover:bg-indigo-500 text-white" disabled={!magicCursorInstruction.trim()} onClick={submitMagicCursorEdit}>Apply</Button>
                     </div>
                   </PopoverContent>
                 </Popover>
@@ -3622,20 +3263,11 @@ export default defineConfig({
             }
           }}
         >
-          <DialogContent className="max-w-sm p-0 overflow-hidden" style={{ background: '#111318', borderColor: 'rgba(255,255,255,0.08)' }}>
+          <DialogContent className="w-[min(24rem,calc(100vw-2rem))] max-w-sm p-0 overflow-hidden" style={{ background: '#111318', borderColor: 'rgba(255,255,255,0.08)' }}>
             {/* Header */}
-            <div className="flex items-center justify-between px-5 pt-5 pb-3">
+            <div className="flex items-center px-5 pt-5 pb-3">
               <DialogTitle className="text-white text-base font-semibold">{publishedUrl || project?.published_url ? 'Update Site' : 'Publish'}</DialogTitle>
               <DialogDescription className="sr-only">Publish your project to a live URL.</DialogDescription>
-              <a
-                href="https://docs.ecomgear.app/publish"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
-              >
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path strokeLinecap="round" strokeLinejoin="round" d="M12 16v-4m0-4h.01"/></svg>
-                Docs
-              </a>
             </div>
 
             <div className="px-5 pb-5 space-y-3">
@@ -3647,11 +3279,13 @@ export default defineConfig({
                   {/* URL field */}
                   {isEditingSlug ? (
                     <div className="rounded-lg border border-purple-500/50 bg-white/[0.04] overflow-hidden">
-                      <div className="px-3 pt-2 text-[11px] text-gray-600 select-none font-mono">preview.ecomgear.app/p/</div>
+                      <div className="px-3 pt-2 text-[11px] text-gray-600 select-none font-mono truncate">
+                        {publishSlug || 'my-awesome-app'}<span className="text-gray-700">.preview.ecomgear.app</span>
+                      </div>
                       <div className="flex items-center gap-2 px-3 pb-2.5">
                         <input
                           autoFocus
-                          className="flex-1 bg-transparent text-sm text-white placeholder:text-gray-600 focus:outline-none font-mono"
+                          className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder:text-gray-600 focus:outline-none focus-visible:outline-none focus-visible:shadow-none font-mono"
                           placeholder="my-awesome-app"
                           value={publishSlug}
                           onChange={e => {
