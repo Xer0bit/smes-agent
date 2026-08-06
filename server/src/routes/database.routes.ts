@@ -184,7 +184,14 @@ router.post('/preview-update', async (req: AuthenticatedRequest, res: Response) 
         ...(process.env.PREVIEW_UPDATE_SECRET ? { 'x-update-secret': process.env.PREVIEW_UPDATE_SECRET } : {}),
       },
       body: JSON.stringify({ files, fullSync }),
-      signal: AbortSignal.timeout(30_000),
+      // Must exceed preview-service's own internal worst-case processing
+      // budget (materialize + warmupInstance's own 30s ceiling + build
+      // check, all before it responds) -- see previewHealthService.ts's
+      // matching client-side timeout for the full explanation. A proxy
+      // timeout equal to that inner ceiling meant this hop could abort the
+      // request out from under a preview-service call that was still
+      // legitimately working and would have succeeded.
+      signal: AbortSignal.timeout(60_000),
     });
     if (!previewRes.ok) {
       const text = await previewRes.text().catch(() => '');

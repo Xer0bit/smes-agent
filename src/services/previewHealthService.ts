@@ -248,8 +248,19 @@ export async function updateDockerPreview(projectId: string, files: { path: stri
         let timeoutId: any;
         try {
             const controller = new AbortController();
-            // Increase timeout to 30s for large payloads or slow parsing
-            timeoutId = setTimeout(() => controller.abort(), 30000);
+            // Must exceed the preview-service's own internal worst-case budget:
+            // the /update handler on the server does materialize -> (optional
+            // restart) -> warmupInstance (up to its own 30s timeout) -> a
+            // syntax build check, ALL before it responds. A client timeout
+            // equal to that inner 30s ceiling means any project that actually
+            // needs a real warmup (large file count, cold Vite instance) is
+            // guaranteed to abort here even when the server-side work would
+            // have succeeded given a few more seconds   confirmed live: this
+            // was the cause of "AbortError: signal is aborted without reason"
+            // looping forever on a real production project with 187 files.
+            // 60s leaves ~30s of headroom over the inner ceiling for
+            // materialize + build-check + network overhead.
+            timeoutId = setTimeout(() => controller.abort(), 60000);
 
             if (attempt === 1) console.log(`[PreviewHealth] Updating preview for ${projectId} (Attempt ${attempt})...`);
 
