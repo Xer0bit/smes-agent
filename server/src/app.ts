@@ -70,6 +70,14 @@ const localOrigins = [
 const allowedOrigins = [
     'https://ecomgear.dev',
     'https://www.ecomgear.dev',
+    'https://1000.ecomgear.dev', // legitimate secondary domain -- own nginx vhost
+    // (infrastructure/nginx/vps1-1000.ecomgear.dev.conf), auto-deployed by
+    // scripts/deploy.sh, whitelisted in every Supabase edge function's CORS
+    // list. Dropped when the wildcard *.ecomgear.dev suffix match was
+    // replaced with this exact-match list during the 2026-08 security
+    // remediation -- confirmed live regression: every /api/v1/* call from
+    // this domain (including agent chat streaming) was being silently
+    // rejected by CORS with no visible error in the chat UI.
     'https://preview.ecomgear.app',
     ...(process.env.NODE_ENV !== 'production' ? localOrigins : []),
     ...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((s: string) => s.trim()) : []),
