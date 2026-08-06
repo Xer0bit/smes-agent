@@ -125,6 +125,13 @@ export function thinkContentSimilarity(a: string, b: string): number {
   return union === 0 ? 0 : intersection / union;
 }
 
+// Language that explicitly explains why a prior diagnosis was wrong, as opposed
+// to silently replacing it. Used by the root-cause-lock (Phase 3 of the
+// 2026-08-06 audit) to distinguish a legitimate, evidence-backed pivot from a
+// silent hypothesis swap.
+export const FALSIFICATION_RE =
+  /\b(wasn'?t (the|actually the|really the)\s*(real\s+|actual\s+)?(cause|issue|problem|root cause)|(that|this)\s+(wasn'?t|was not|isn'?t|is not) (it|correct|right|the (cause|issue|problem))|turns out|actually,?\s+the (real\s+)?(cause|issue|problem) (is|was)|i was (wrong|mistaken)|misdiagnosed|ruled out|doesn'?t explain|does not explain|not the (real\s+)?(cause|issue|problem)|rethinking|scratch that)\b/i;
+
 // ─── Agent params / result types ──────────────────────────────────────────────
 
 export interface AgentRunParams {
@@ -915,7 +922,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
               : '';
 
             const oldAssetsNote = existingAssetsList
-              ? `\n  Existing image assets: ${existingAssetsList}. If you are REPLACING one of these, call delete_file on the old path FIRST, then call place_asset.`
+              ? `\n  Existing image assets: ${existingAssetsList}. If you are REPLACING one of these: place_asset the NEW file first, then call replace_asset_references(oldAssetPath, newAssetPath), THEN delete_file the old path -- it will now succeed cleanly since replace_asset_references already cleared the references delete_file would otherwise block on.`
               : '';
 
             parts.push(
@@ -923,9 +930,9 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
               `  Temporary path: \`${resolvedPath}\`\n` +
               `  The image has NOT been copied to the project yet. To use it as a project asset:\n` +
               `  1. Determine WHERE it should go based on the user's message AND the visual analysis above (logo, hero, background, icon, etc.)\n` +
-              `  2. If replacing an existing asset: call delete_file("old/path/here") FIRST\n` +
-              `  3. Call place_asset(tmpPath: "${resolvedPath}", destName: "${safeName}") to copy it to public/assets/${safeName}\n` +
-              `  4. Update every component/file that referenced the old asset to use the new filename\n` +
+              `  2. Call place_asset(tmpPath: "${resolvedPath}", destName: "${safeName}") to copy it to public/assets/${safeName}\n` +
+              `  3. If REPLACING an existing asset: call replace_asset_references(oldAssetPath: "old/path/here", newAssetPath: "public/assets/${safeName}") to rewrite every reference (img src, CSS url(), favicon/manifest entries), THEN delete_file the old path.\n` +
+              `  4. If this is a NEW asset (nothing to replace), just update the component(s) that should render it.\n` +
               `  Path rules after placing (MUST follow   preview runs at non-root base URL):\n` +
               `  • CORRECT: <img src={\`\${import.meta.env.BASE_URL}assets/${safeName}\`} />\n` +
               `  • WRONG:   <img src="/assets/${safeName}" />  (404 in preview)\n` +
@@ -980,7 +987,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         }
       }
     }
-    attachmentContext = `\n\n# User-Attached Files\n\nThe user attached the following files with this message.\n\n**IMPORTANT   Images are NOT yet in the project.** Each image stays in a temporary path until you explicitly call \`place_asset\` to copy it to \`public/assets/\`. You MUST call \`place_asset\` before you can reference an image in any component.\n\n**YOUR OBLIGATION:** You MUST act on these files as the user instructs. Do not just acknowledge them   actually use them in the code.\n\nCommon scenarios   execute immediately:\n- "use as logo / header logo" → call place_asset to place the image, then update the Navbar/Header component to render an \`<img>\` using it\n- "use as favicon" → call place_asset, then write to \`public/favicon.ico\` (or .png) and update \`index.html\` \`<link rel="icon">\`\n- "use as hero / banner" → call place_asset, then place in the hero section of the relevant page\n- "use as background" → call place_asset, then apply as CSS \`background-image\` on the specified element\n- "use this data / content" → parse the document content and populate the UI with it\n- General "use this" → infer the best placement from context and the image description\n\nAlways modify the actual component files to reference the image. An image that was never placed with \`place_asset\` cannot be referenced in code.\n\n${parts.join('\n\n')}`;
+    attachmentContext = `\n\n# User-Attached Files\n\nThe user attached the following files with this message.\n\n**IMPORTANT   Images are NOT yet in the project.** Each image stays in a temporary path until you explicitly call \`place_asset\` to copy it to \`public/assets/\`. You MUST call \`place_asset\` before you can reference an image in any component.\n\n**YOUR OBLIGATION:** You MUST act on these files as the user instructs. Do not just acknowledge them   actually use them in the code.\n\nCommon scenarios   execute immediately:\n- "use as logo / header logo" → call place_asset to place the image, then update the Navbar/Header component to render an \`<img>\` using it. If this REPLACES an existing logo, call replace_asset_references(oldAssetPath, newAssetPath) before deleting the old file   see the numbered steps above.\n- "use as favicon" → call place_asset, then write to \`public/favicon.ico\` (or .png) and update \`index.html\` \`<link rel="icon">\`\n- "use as hero / banner" → call place_asset, then place in the hero section of the relevant page\n- "use as background" → call place_asset, then apply as CSS \`background-image\` on the specified element\n- "use this data / content" → parse the document content and populate the UI with it\n- General "use this" → infer the best placement from context and the image description\n\nAlways modify the actual component files to reference the image. An image that was never placed with \`place_asset\` cannot be referenced in code.\n\n${parts.join('\n\n')}`;
     attachmentContext = clampContextSection('Attachment context', attachmentContext, MAX_ATTACHMENT_CONTEXT_CHARS);
   }
 
@@ -1810,6 +1817,52 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             circuitBreakerNote = circuitBreakerNote ? `${circuitBreakerNote}\n\n${thinkStreakNote}` : thinkStreakNote;
           }
 
+          // ── Root-cause-lock (fix tier only) ──────────────────────────────────
+          // Diagnosis-before-write only gates the FIRST write of a run (see
+          // agentToolSet.ts): once get_build_errors has been called once, every
+          // later write is unguarded, including one that acts on a THIRD or
+          // SIXTH silently-substituted root cause. This closes that gap: the
+          // first post-diagnosis `think` this run is locked in as the active
+          // hypothesis; a later `think` that diverges from it (low similarity)
+          // without either the active hypothesis's fix being verified healthy,
+          // or explicit falsification language, is a silent pivot that blocks
+          // the next write_file/edit_file until the model reconciles.
+          if (_tier === 'fix' && (ctx.buildErrorCallCount ?? 0) > 0) {
+            const thinkCallThisStep = (toolCalls ?? []).find((tc: any) => tc?.toolName === 'think');
+            const thought = thinkCallThisStep?.input?.thought;
+            if (typeof thought === 'string' && thought.trim().length > 0) {
+              if (!ctx.activeHypothesis) {
+                ctx.activeHypothesis = thought;
+                ctx.rootCauseLockViolation = false;
+              } else if (thinkContentSimilarity(thought, ctx.activeHypothesis) >= 0.55) {
+                // Same hypothesis, still being reasoned about   fine, no action.
+              } else if (ctx.lastBuildErrorsHealthy === true) {
+                // Active hypothesis's fix was already verified healthy   this is
+                // a new think about a NEW issue, not an abandoned diagnosis.
+                ctx.activeHypothesis = thought;
+                ctx.rootCauseLockViolation = false;
+              } else if (FALSIFICATION_RE.test(thought)) {
+                // Legitimate pivot: the model explained what evidence showed the
+                // active hypothesis was wrong before moving to a new one.
+                ctx.activeHypothesis = thought;
+                ctx.rootCauseLockViolation = false;
+              } else {
+                // Silent pivot: a different, unverified hypothesis with no
+                // falsification of the one it's replacing.
+                ctx.rootCauseLockViolation = true;
+                ctx.rootCauseLockTriggerCount = (ctx.rootCauseLockTriggerCount ?? 0) + 1;
+                console.warn(`[RootCauseLock] Silent hypothesis pivot detected (trigger #${ctx.rootCauseLockTriggerCount}) user=${userId ?? 'unknown'}`);
+                const rootCauseLockNote =
+                  `You just stated a different explanation for this bug without confirming your previous one was fixed ` +
+                  `and verified, or saying what evidence showed it was wrong. Before writing any more code: either (1) ` +
+                  `state specifically what you observed that shows the earlier hypothesis was incorrect, or (2) if the ` +
+                  `earlier hypothesis was actually right, go verify and finish that fix instead of pivoting away from it. ` +
+                  `Don't silently abandon a diagnosis.`;
+                circuitBreakerNote = circuitBreakerNote ? `${circuitBreakerNote}\n\n${rootCauseLockNote}` : rootCauseLockNote;
+              }
+            }
+          }
+
           // ── Over-budget think nudge ─────────────────────────────────────────
           // think.ts's own description sets a 60/400-word budget depending on task
           // size, but that's just prompt text   nothing enforces it. Confirmed live
@@ -2259,6 +2312,154 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       } catch (correctiveErr: any) {
         console.warn('[AgentLoop] Corrective continuation failed (non-fatal):', correctiveErr?.message ?? correctiveErr);
       }
+    }
+
+    // ─── Verified-fix-before-closure-claim filter (fix tier only) ─────────────
+    // Root-cause audit finding: a fix run could end with "this should resolve
+    // it" / "this will permanently fix it" language with no passing verification
+    // behind it   the same claim repeating run after run while the underlying
+    // bug never actually closes. Force one corrective continuation instead of
+    // letting an unverified resolution claim reach the user. Scoped to
+    // tier === 'fix': other tiers don't carry this specific "I diagnosed and
+    // fixed a bug" framing, so the check would false-positive on normal build
+    // narration ("I've added the cart drawer").
+    //
+    // Stress-tested 2026-08-06 against paraphrases a model under repair
+    // pressure actually uses instead of repeating the same flagged string
+    // ("all set now", "that takes care of it", "good to go", "no more
+    // errors", etc.)   the original narrow pattern list only caught 4/12 of
+    // those. This broadened version catches 17/18 in the same test set,
+    // while still not firing on the prompt's own required progress-narration
+    // format ("Fixed the import error in Navbar.tsx   now checking the
+    // build.")   the negative lookahead after "fixed/resolved the X" excludes
+    // that "in <file>" shape specifically. Regex/keyword matching has a hard
+    // ceiling on paraphrase coverage no matter how it's tuned; see the
+    // Phase 1 report for what a semantic (LLM-graded) classifier would add.
+    const RESOLUTION_CLAIM_RE =
+      /\b(this (should|will|'?ll)\s+(now\s+)?(resolve|fix|solve)|should now be (fixed|resolved|working)|(will|should)\s+permanently\s+(resolve|fix)|the (issue|error|bug|problem)\s+(is|has been|should be)\s+(now\s+)?(fixed|resolved|solved)|all (set|good|fixed)\b|(that|this)\s+(should\s+)?(takes?|takes?\s+care\s+of|does\s+it|do\s+it|sorts?\s+(it|that)\s+out)|fixed\s+the\s+(problem|issue|bug|error)\b(?!\s+in\s)|working\s+(as\s+expected|correctly|properly|fine|now)\b|(should\s+be|is|looks)\s+good\s+(to\s+go|now)?\b|good\s+to\s+go\b|resolved\s+(the\s+)?(problem|issue|bug|error)\b(?!\s+in\s)|no\s+more\s+errors?\b|(everything|it)\s+(is\s+|now\s+)?work(s|ing)\s+(now|correctly|properly|fine)?)\b/i;
+    // Bounded RE-CHECK loop, not a single one-shot correction: the original
+    // shipped version corrected once and then accepted whatever came back
+    // unconditionally   a model that just rephrases the same unverified claim
+    // on the retry (the exact "six phrasings of the same unverified claim"
+    // pattern from the original transcript) sailed straight through. Confirmed
+    // by reading the code, not assumed: nothing re-ran RESOLUTION_CLAIM_RE
+    // against verifyConsume.text. Capped at 2 attempts so this can't itself
+    // become an unbounded loop; if still unverified after the cap, the claim
+    // is stripped and replaced with an honest "couldn't confirm" message
+    // instead of either the unverified claim OR silent infinite retry.
+    // thrashEscalated (Phase 2) takes priority over this loop and skips it
+    // entirely: the escalation message explicitly told the model to STOP
+    // calling get_build_errors, so re-entering this loop would push it to
+    // call get_build_errors AGAIN   directly contradicting that instruction
+    // and extending the exact thrash pattern this is meant to end. See the
+    // dedicated override block right after this loop.
+    const MAX_CLOSURE_VERIFY_ATTEMPTS = 2;
+    let closureVerifyAttempts = 0;
+    while (
+      !ctx.thrashEscalated &&
+      _tier === 'fix' &&
+      RESOLUTION_CLAIM_RE.test(accumulatedText) &&
+      ctx.lastBuildErrorsHealthy !== true &&
+      (MAX_STEPS - stepCount) >= 2 &&
+      !abortController.signal.aborted &&
+      closureVerifyAttempts < MAX_CLOSURE_VERIFY_ATTEMPTS
+    ) {
+      closureVerifyAttempts++;
+      console.warn(`[AgentLoop] Unverified resolution claim detected (attempt ${closureVerifyAttempts}/${MAX_CLOSURE_VERIFY_ATTEMPTS}, no passing get_build_errors this run)   forcing corrective continuation. user=${userId ?? 'unknown'}`);
+      generateStatus(projectId, { kind: 'lifecycle', phase: 'post-gen-verify' }).then((s) => {
+        if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
+      }).catch(() => {});
+
+      conversationMessages = [
+        ...conversationMessages,
+        { role: 'assistant' as const, content: accumulatedText },
+        {
+          role: 'user' as const,
+          content: closureVerifyAttempts === 1
+            ? 'You just claimed this fix resolves the issue, but get_build_errors has not confirmed a healthy ' +
+              'build/preview this run. Call get_build_errors now to verify. If it comes back healthy, restate your ' +
+              'closing message. If it still shows errors, keep fixing   do not repeat the resolution claim until it ' +
+              'actually passes.'
+            : 'You STILL asserted the fix is resolved without get_build_errors confirming a healthy build/preview   ' +
+              'rephrasing the same claim does not count as verification. Call get_build_errors now. If it is not ' +
+              'healthy, say plainly that you have not been able to confirm the fix yet and describe what remains ' +
+              'broken; do NOT restate the resolution claim again unless get_build_errors actually returns healthy.',
+        },
+      ];
+
+      try {
+        const verifyStream = await attemptStream(streamingProvider, 0, providerName);
+        const verifyConsume = await consumeResultStream(verifyStream);
+        if (!verifyConsume.err && verifyConsume.text) {
+          accumulatedText = verifyConsume.text;
+        } else if (verifyConsume.err) {
+          console.warn('[AgentLoop] Verified-fix corrective continuation errored (non-fatal):', verifyConsume.err?.message ?? verifyConsume.err);
+          break;
+        }
+      } catch (verifyErr: any) {
+        console.warn('[AgentLoop] Verified-fix corrective continuation failed (non-fatal):', verifyErr?.message ?? verifyErr);
+        break;
+      }
+    }
+    // Cap exhausted and STILL an unverified claim: don't let it reach the user
+    // as-is. Override with an honest, explicit "couldn't confirm" statement.
+    if (
+      !ctx.thrashEscalated &&
+      _tier === 'fix' &&
+      RESOLUTION_CLAIM_RE.test(accumulatedText) &&
+      ctx.lastBuildErrorsHealthy !== true &&
+      closureVerifyAttempts >= MAX_CLOSURE_VERIFY_ATTEMPTS
+    ) {
+      console.warn(`[AgentLoop] Resolution claim still unverified after ${closureVerifyAttempts} corrective attempts   overriding with honest-fail message. user=${userId ?? 'unknown'}`);
+      accumulatedText =
+        `I made changes aimed at this issue, but I was not able to confirm with get_build_errors that the build/preview ` +
+        `is actually healthy after ${closureVerifyAttempts} verification attempts. I don't want to tell you it's fixed ` +
+        `without that confirmation. Please check the preview yourself, or ask me to try again and I'll re-diagnose from ` +
+        `the current state rather than repeating the same claim.`;
+    }
+
+    // ─── Asset-replacement completeness claim check (root cause #2 of the ────
+    // 2026-08-06 asset-replacement audit) ───────────────────────────────────
+    // Deliberately NOT the same mechanism as RESOLUTION_CLAIM_RE above: that
+    // gate is hard-scoped to tier 'fix' + build-error health, a different task
+    // class (asset-replacement runs are 'edit'/'micro', never 'fix', and have
+    // nothing to do with get_build_errors). Keeping this independent avoids
+    // coupling two unrelated fingerprint shapes into one flag. Also
+    // deliberately simpler than that gate's corrective re-streaming loop: this
+    // appends an honest caveat deterministically (no extra LLM call) rather
+    // than forcing a re-verification turn   proportionate to a lower-stakes
+    // claim than "the build is fixed", and keeps this addition low-risk.
+    const ASSET_REPLACEMENT_CLAIM_RE =
+      /\b((replaced|updated|swapped|changed)\s+(it\s+|the\s+)?(logo|image|asset|icon|favicon)s?\s+(everywhere|across|throughout|site-?wide)|every\s+reference\s+(is|has been|was)\s+updated|all\s+references?\s+(are|is|were|have\s+been)\s+updated|(logo|image|asset)\s+(is\s+)?(now\s+)?updated\s+everywhere)\b/i;
+    if (
+      ctx.placeAssetCallCount &&
+      ctx.placeAssetCallCount > 0 &&
+      ASSET_REPLACEMENT_CLAIM_RE.test(accumulatedText) &&
+      (!ctx.assetReferencesChecked ||
+        ctx.assetReferencesChecked.size === 0 ||
+        [...ctx.assetReferencesChecked.values()].some((v) => !v.fullyResolved))
+    ) {
+      console.warn(`[AgentLoop] Asset-replacement completeness claim without a verified replace_asset_references pass   appending caveat. user=${userId ?? 'unknown'}`);
+      accumulatedText +=
+        `\n\n(Note: I placed a new asset this run but haven't run a verified replace_asset_references pass confirming ` +
+        `every reference to the old one was found and updated, so I can't confirm "everywhere" is actually complete. ` +
+        `If you spot the old image anywhere, tell me where and I'll check that specific file.)`;
+    }
+
+    // ─── Thrash-escalation override (Phase 2) ──────────────────────────────────
+    // Deterministic, no further LLM call: the whole point of escalation is to
+    // STOP spending steps/tokens on this fingerprint. If the model already
+    // wrote an honest status (no resolution-claim language), leave it as-is
+    // only override when it ignored the tool's instruction and either claimed
+    // success anyway or produced nothing usable.
+    if (ctx.thrashEscalated && (RESOLUTION_CLAIM_RE.test(accumulatedText) || !accumulatedText.trim())) {
+      const fileHint = (ctx.thrashFingerprint ?? '').split('::')[0];
+      console.warn(`[AgentLoop] Thrash-escalated run still produced a resolution claim (or nothing)   overriding with honest-fail message. user=${userId ?? 'unknown'}`);
+      accumulatedText =
+        `I've now attempted to fix this ${ctx.thrashTripCount ?? 2} times${fileHint && fileHint !== 'unknown-file' ? ` (repeatedly in ${fileHint})` : ''} ` +
+        `and the same error keeps coming back. I don't want to keep trying the same kind of fix without new information, ` +
+        `since it hasn't worked so far. Could you share more context about what's expected here, point me at something ` +
+        `I might be missing, or let me know if you'd like me to try a fundamentally different approach?`;
     }
 
     // ─── Empty-response guard ────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { ToolDefinition, AgentContext } from './types.js';
 import { getBlastRadius } from '../knowledgebase/symbolGraph.js';
+import { computeErrorFingerprint, recordThrashTrip } from '../services/thrashDetector.js';
 
 // ─── Circuit breaker: detect repeated identical error signatures per project ──
 // Entries expire after MAX_ERROR_HISTORY_AGE_MS to avoid cross-run leakage.
@@ -186,13 +187,16 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
     }
 
     if (data.healthy) {
+      ctx.lastBuildErrorsHealthy = true;
       return 'No build errors   the preview is healthy and running correctly.';
     }
 
     const errors = data.errors ?? [];
     if (errors.length === 0) {
+      // Inconclusive, not confirmed-broken   leave lastBuildErrorsHealthy as-is.
       return 'Preview is unhealthy but no error details are available yet. Try again in a moment.';
     }
+    ctx.lastBuildErrorsHealthy = false;
 
     const diagnosticPrefix = data.diagnosticKind && data.diagnosticKind !== 'healthy'
       ? `${data.diagnosticKind} errors`
@@ -279,6 +283,31 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
     const breaker = await checkCircuitBreaker(projectId, errorSignature, now);
     if (breaker.tripped) {
       ctx.buildErrorCircuitBreakCount = (ctx.buildErrorCircuitBreakCount ?? 0) + 1;
+
+      // ─── Session-level thrash detector ────────────────────────────────────
+      // This in-call breaker resets its counter the moment it trips, so it has
+      // no memory of whether the "rewrite from scratch" it just prescribed
+      // actually worked. Record the trip against the persistent, file+kind
+      // fingerprinted counter; a SECOND trip on the same underlying error
+      // (even after a rewrite was already tried) escalates to an honest
+      // stop-and-surface instead of a third confident rewrite attempt.
+      const fingerprint = computeErrorFingerprint(condensed);
+      const thrash = await recordThrashTrip(projectId, fingerprint);
+      if (thrash.escalate) {
+        ctx.thrashEscalated = true;
+        ctx.thrashFingerprint = fingerprint;
+        ctx.thrashTripCount = thrash.tripCount;
+        return (
+          `THRASH DETECTED: this exact error (${fingerprint}) has now tripped the circuit breaker ${thrash.tripCount} ` +
+          `times   a previous rewrite-from-scratch attempt did NOT fix it. STOP trying to fix this yourself. ` +
+          `Do not attempt another rewrite, do not state a new root cause, do not claim this is resolved. ` +
+          `End your response now with an honest status: state plainly that you've made ${thrash.tripCount} attempts ` +
+          `and the issue is still not resolved, briefly describe what you tried, and ask the user for guidance ` +
+          `(e.g. more context, or permission to try a fundamentally different approach) instead of continuing.\n\n` +
+          `Errors: ${condensed.slice(0, 3).map((e, i) => `[${i + 1}] ${e}`).join('\n')}`
+        );
+      }
+
       return (
         `CIRCUIT BREAKER: These SAME ${condensed.length} errors appeared ${breaker.count} times in a row. ` +
         'Your fixes are NOT working. STOP calling get_build_errors. ' +

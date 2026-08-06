@@ -60,6 +60,40 @@ export interface AgentContext {
    */
   buildErrorCallCount?: number;
   /**
+   * Result of the MOST RECENT get_build_errors call this run: true only when
+   * it returned "healthy", false when it returned real errors, undefined if
+   * never called or the result was inconclusive (service unreachable/5xx).
+   * Used to gate resolution-claim language ("this should fix it") in the
+   * agent's final message   a claim with no passing verification behind it
+   * gets forced back for an actual check instead of reaching the user unverified.
+   */
+  lastBuildErrorsHealthy?: boolean;
+  /**
+   * Set by get_build_errors when the session-level thrash detector escalates
+   * (same file+error-kind fingerprint has tripped the circuit breaker 2+ times
+   * across this and/or prior runs). agentLoopService.ts reads this at run end
+   * to force an honest "N attempts, still broken" closing message regardless
+   * of what the model actually wrote   mirrors the verified-fix-before-
+   * closure-claim override, reused rather than rebuilt.
+   */
+  thrashEscalated?: boolean;
+  thrashFingerprint?: string;
+  thrashTripCount?: number;
+  /**
+   * Root-cause-lock (Phase 3 of the 2026-08-06 audit). The first post-diagnosis
+   * `think` thought this run (fix tier only) is recorded here as the session's
+   * active hypothesis. A later `think` call that diverges from it (low text
+   * similarity) without either (a) the active hypothesis's fix having been
+   * verified healthy, or (b) explicit falsification language explaining why it
+   * was wrong, is a SILENT pivot   agentLoopService.ts flags
+   * rootCauseLockViolation, which agentToolSet.ts's write_file/edit_file guard
+   * then blocks on until the model reconciles. Prevents the "six different
+   * stated root causes, no acknowledgment any prior one was wrong" pattern.
+   */
+  activeHypothesis?: string;
+  rootCauseLockViolation?: boolean;
+  rootCauseLockTriggerCount?: number;
+  /**
    * Counts edit_file SEARCH-block misses and get_build_errors circuit-breaker
    * trips this run. Previously these only reached a console.warn   the
    * edit_file.ts comment admits the miss rate was "unmeasurable... zero grep
@@ -77,6 +111,19 @@ export interface AgentContext {
   dbQueryCallCount?: number;
   /** eCG Agents Portal MCP endpoint, present only for projects with MCP enabled at launch. */
   ecgMcp?: { url: string; token?: string };
+  /**
+   * Asset-reference completeness tracking (root cause #2 of the 2026-08-06
+   * asset-replacement audit). Keyed by old asset path (project-relative,
+   * e.g. "public/assets/old-logo.png"). Set by replace_asset_references
+   * after it scans+rewrites; read by agentToolSet.ts's delete_file gate
+   * (block deleting an old asset until references to it were checked) and
+   * by agentLoopService.ts's asset-completeness closure-claim check (don't
+   * let "replaced everywhere" stand unless this actually ran and found
+   * nothing left un-rewritten).
+   */
+  assetReferencesChecked?: Map<string, { fullyResolved: boolean; unresolvedCount: number }>;
+  /** Counts place_asset calls this run   cheap signal for "an asset task happened", used to scope the asset-completeness closure-claim check without a false trigger on unrelated runs. */
+  placeAssetCallCount?: number;
 }
 
 // ─── Tool abstraction ────────────────────────────────────────────────────────
@@ -151,23 +198,59 @@ export function readProjectFile(
 
 // ─── Reference-scan helper ───────────────────────────────────────────────────
 
-const REF_SCAN_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.cache', '__edge_functions__']);
-const REF_SCAN_TEXT_EXTS = new Set(['.tsx', '.ts', '.jsx', '.js', '.css', '.scss', '.html', '.json']);
-const REF_SCAN_MAX_FILES = 2000;
+// Exported (not just used by findReferencesToPath below) so replace_asset_references.ts
+// can reuse the exact same skip/scan boundaries instead of maintaining a parallel
+// set that could silently drift out of sync with delete_file's own scan scope.
+export const REF_SCAN_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.cache', '__edge_functions__']);
+// .webmanifest added alongside manifest.json   PWA manifests commonly use either
+// filename/extension for the same icon-list shape replace_asset_references scans.
+export const REF_SCAN_TEXT_EXTS = new Set(['.tsx', '.ts', '.jsx', '.js', '.css', '.scss', '.html', '.json', '.webmanifest']);
+export const REF_SCAN_MAX_FILES = 2000;
+
+const REF_SCAN_SOURCE_EXTS = /\.(tsx?|jsx?)$/;
+export const IMPORT_SPECIFIER_RE = /(?:from\s+|import\s*\(\s*)['"]([^'"]+)['"]/g;
+
+/**
+ * Resolves an import specifier found in `fromFile` to a project-relative path
+ * (no extension), or null if it's a bare package specifier (not a project file).
+ */
+export function resolveImportSpecifier(specifier: string, fromFile: string): string | null {
+  if (specifier.startsWith('@/')) {
+    return path.posix.normalize(`src/${specifier.slice(2)}`);
+  }
+  if (specifier.startsWith('.')) {
+    const fromDir = path.posix.dirname(fromFile);
+    return path.posix.normalize(path.posix.join(fromDir, specifier));
+  }
+  return null;
+}
 
 /**
  * Finds other project files that still reference a given path   either as a
- * code import (`from './logo'`) or as an asset path string (`src="/assets/
- * logo.png"`, `url(...)`). Shared by delete_file (where it originated   see
- * that tool's history for the incident this fixed: a deleted logo image left
- * an <img src="..."> pointing at nothing, with no warning) and rename_file
- * (which had no equivalent check at all   a rename could silently break
- * every importer's `from './OldName'`, identified as a real gap in a code-
- * quality audit since delete_file already had this exact protection).
+ * code import (`from './logo'`, `from '@/lib/supabase'`) or as an asset path
+ * string (`src="/assets/logo.png"`, `url(...)`). Shared by delete_file (where
+ * it originated   see that tool's history for the incident this fixed: a
+ * deleted logo image left an <img src="..."> pointing at nothing, with no
+ * warning) and rename_file (which had no equivalent check at all   a rename
+ * could silently break every importer's `from './OldName'`, identified as a
+ * real gap in a code-quality audit since delete_file already had this exact
+ * protection).
+ *
+ * Import-specifier resolution (not just substring matching) is required, not
+ * optional: confirmed via a live repro that plain substring needles ("supabase.ts",
+ * "src/lib/supabase.ts") never match `import { supabase } from '@/lib/supabase'`
+ * the extensionless `@/` alias form this codebase's own app-builder prompt tells
+ * every generated app to use. A substring-only version of this function would
+ * silently miss the exact "deleted file still imported elsewhere" scenario it
+ * exists to catch. Resolving each import specifier to a path and comparing it
+ * against the target (both extension-stripped) closes that gap; the substring
+ * needles remain as a fallback for asset-path references, which aren't import
+ * statements and have no specifier to resolve.
  */
 export function findReferencesToPath(appPath: string, targetRelPath: string): string[] {
   const basename = path.basename(targetRelPath);
-  const needles = [basename, `/${targetRelPath}`, targetRelPath].filter((n, i, arr) => arr.indexOf(n) === i);
+  const targetNoExt = targetRelPath.replace(REF_SCAN_SOURCE_EXTS, '');
+  const assetNeedles = [basename, `/${targetRelPath}`, targetRelPath].filter((n, i, arr) => arr.indexOf(n) === i);
   const referencing: string[] = [];
   let scanned = 0;
 
@@ -190,7 +273,23 @@ export function findReferencesToPath(appPath: string, targetRelPath: string): st
       scanned++;
       try {
         const content = fs.readFileSync(fullPath, 'utf8');
-        if (needles.some((n) => content.includes(n))) {
+
+        let matched = false;
+        if (REF_SCAN_SOURCE_EXTS.test(relPath)) {
+          IMPORT_SPECIFIER_RE.lastIndex = 0;
+          let m: RegExpExecArray | null;
+          while ((m = IMPORT_SPECIFIER_RE.exec(content)) !== null) {
+            const resolved = resolveImportSpecifier(m[1], relPath);
+            if (resolved && (resolved === targetNoExt || resolved === targetRelPath)) {
+              matched = true;
+              break;
+            }
+          }
+        }
+        if (!matched && assetNeedles.some((n) => content.includes(n))) {
+          matched = true;
+        }
+        if (matched) {
           referencing.push(relPath);
         }
       } catch { /* unreadable   skip */ }

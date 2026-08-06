@@ -4,6 +4,7 @@ import type { AgentContext } from '../agent-tools/types.js';
 import { safeJoin } from '../agent-tools/types.js';
 import { writeFileTool } from '../agent-tools/write_file.js';
 import { placeAssetTool } from '../agent-tools/place_asset.js';
+import { replaceAssetReferencesTool } from '../agent-tools/replace_asset_references.js';
 import { readFileTool } from '../agent-tools/read_file.js';
 import { readFilesTool } from '../agent-tools/read_files.js';
 import { listFilesTool } from '../agent-tools/list_files.js';
@@ -53,6 +54,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
     deleteFileTool,
     renameFileTool,
     placeAssetTool,
+    replaceAssetReferencesTool,
     grepTool,
     globFilesTool,
     searchCodebaseTool,
@@ -77,6 +79,40 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
       description: def.description,
       inputSchema: def.inputSchema,
       execute: async (args: any) => {
+        // ── Diagnosis-before-write guard (fix tier only) ─────────────────────
+        // Root-cause audit finding: a fix run could jump straight from a bug
+        // report to write_file/edit_file with zero verified evidence of what's
+        // actually broken   producing a new "root cause" guess every turn
+        // instead of confirming one against the real compiler/runtime output.
+        // get_build_errors already documents itself as "call FIRST, never guess
+        // at errors"; this makes that a hard requirement instead of an ignorable
+        // prompt line. Read-before-write (below) only proves the model looked at
+        // a file's contents, not that it knows WHY that file is broken   those
+        // are different guarantees, so this doesn't piggyback on that guard.
+        // Scoped to tier === 'fix' only: build/feature/edit runs legitimately
+        // write files with no pre-existing error to diagnose.
+        if (tier === 'fix' && (def.name === 'write_file' || def.name === 'edit_file') && !ctx.buildErrorCallCount) {
+          return (
+            `BLOCKED: call get_build_errors first to see the real error before making a fix. ` +
+            `This is a fix run   don't guess at the root cause from the bug report alone; confirm it against ` +
+            `the actual compiler/runtime output, then make ONE targeted change.`
+          );
+        }
+        // ── Root-cause-lock (Phase 3) ────────────────────────────────────────
+        // Diagnosis-before-write above only gates the FIRST write of a run.
+        // agentLoopService.ts's per-step think-comparison sets this flag the
+        // moment a `think` call silently contradicts the run's locked active
+        // hypothesis (different reasoning, no falsification language, active
+        // hypothesis not yet verified fixed)   block the write that would act
+        // on that unreconciled pivot instead of letting it through ungated.
+        if (tier === 'fix' && (def.name === 'write_file' || def.name === 'edit_file') && ctx.rootCauseLockViolation) {
+          return (
+            `BLOCKED: you pivoted to a different explanation for this bug without reconciling it against your ` +
+            `previous one. Call \`think\` again and either (1) state specifically what evidence showed the earlier ` +
+            `hypothesis was wrong, or (2) go back and verify/finish the earlier hypothesis's fix instead of ` +
+            `abandoning it silently. Then retry this write.`
+          );
+        }
         // ── Read-before-write guard ──────────────────────────────────────────
         // Copilot-style discipline: the agent must read an existing file before
         // overwriting it. This prevents clobbering unread content and forces the

@@ -13,9 +13,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import http from 'node:http';
 import { z } from 'zod';
-import { ToolDefinition, AgentContext, safeJoin } from './types.js';
+import { ToolDefinition, AgentContext, safeJoin, escapeXmlAttr } from './types.js';
 
 const UPLOAD_BASE = path.join(os.tmpdir(), 'ecomgear-chat-uploads');
 
@@ -73,9 +72,11 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
     'Copy a user-uploaded image from temp storage (/tmp) into the project\'s public/assets/ directory so it can be used in the app. ' +
     'ONLY call this when the user explicitly wants to embed the image in the project. ' +
     'NEVER call this for screenshots shared as reference context. ' +
-    'IMPORTANT: if you are REPLACING an existing asset (logo, hero image, etc.) you MUST first call ' +
-    'delete_file on the OLD asset path (e.g. "public/assets/old-logo.png") BEFORE calling place_asset. ' +
-    'After placing, update every component/file that references the old asset to use the new filename.',
+    'IMPORTANT: if you are REPLACING an existing asset (logo, hero image, etc.), the order is: ' +
+    '(1) call place_asset for the NEW file first, (2) call replace_asset_references(oldAssetPath, newAssetPath) to ' +
+    'rewrite every reference to the old one, (3) THEN call delete_file on the OLD asset path -- it will now succeed ' +
+    'cleanly since no references remain. Do NOT delete the old asset before replacing its references; delete_file ' +
+    'will block on the very references replace_asset_references exists to fix.',
   inputSchema: schema,
   modifiesState: true,
   getConsentPreview: (args) => `Place uploaded image → public/assets/${args.destName}`,
@@ -112,40 +113,42 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
       ? `\n⚠ Warning: image is ${sizeKB} KB   consider using a smaller/compressed version for better page load performance.`
       : '';
 
+    ctx.placeAssetCallCount = (ctx.placeAssetCallCount ?? 0) + 1;
+
     // ── Copy to public/assets/ ────────────────────────────────────────────────
     const assetsDir = safeJoin(ctx.appPath, 'public/assets');
     fs.mkdirSync(assetsDir, { recursive: true });
     const destPath = path.join(assetsDir, safeDest);
     fs.copyFileSync(resolvedSrc, destPath);
 
-    // Surface the placed asset in the chat as an activity chip/steps entry
-    // (same <ecomgear-write path="…"> tag the frontend already parses for
-    // write_file). Without this, an asset placement is a silent mutation.
-    ctx.onXmlComplete?.(`<ecomgear-write path="public/assets/${safeDest}" description="Placed uploaded image (${validation.format}, ${sizeKB} KB)" />`);
-
-    // ── Pre-push binary to preview service so preview updates immediately ─────
-    try {
-      const imgBytes = fs.readFileSync(resolvedSrc);
-      const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001';
-      const payload = JSON.stringify({
-        files: [{ path: `public/assets/${safeDest}`, content: `__ECOMGEAR_BIN64__${imgBytes.toString('base64')}` }],
-        fullSync: false,
-      });
-      const target = new URL(`${previewServiceUrl}/preview/${ctx.projectId}/update`);
-      const req = http.request({
-        hostname: target.hostname,
-        port: Number(target.port) || 80,
-        path: target.pathname,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
-      }, () => {});
-      req.on('error', () => {/* best-effort */});
-      req.write(payload);
-      req.end();
-    } catch { /* best-effort */ }
+    // Surface the placed asset in the chat as an activity chip/steps entry AND
+    // register it with the same operation-tracking pathway write_file uses.
+    // MUST be a real open/close tag, not self-closing: parseXmlOperation's
+    // <ecomgear-write> regex requires a closing </ecomgear-write> to match
+    // (see agentXmlParser.ts) -- a self-closing tag silently fails to match,
+    // so this file never reached agentLoopService.ts's `filesToWrite` array
+    // and `agentWroteFiles` stayed false on any place_asset-only turn. That
+    // skipped the one reliable, authenticated (x-update-secret +
+    // x-agent-lock-token), retried preview-sync path entirely -- the ONLY
+    // delivery mechanism left was the unawaited fire-and-forget HTTP push
+    // below, which this codebase's own agent_locks check rejects with 423
+    // whenever the run holding it doesn't send a matching lock token (which
+    // this push never did). Confirmed live: the tool always returned success
+    // regardless. Fix: emit a real <ecomgear-write>...</ecomgear-write> so
+    // this participates in the exact same tracked-write / full-sync path
+    // write_file already uses, and drop the dead push entirely -- content
+    // here is a placeholder (binary content is re-read fresh from disk by
+    // the full-sync's own disk walk, same as any other binary asset; this
+    // entry's only job is to flip `agentWroteFiles` to true).
+    const placeholderContent = `[binary asset — ${validation.format}, ${sizeKB} KB — see public/assets/${safeDest} on disk]`;
+    ctx.onXmlComplete?.(
+      `<ecomgear-write path="${escapeXmlAttr(`public/assets/${safeDest}`)}" description="${escapeXmlAttr(`Placed uploaded image (${validation.format}, ${sizeKB} KB)`)}">${placeholderContent}</ecomgear-write>`
+    );
 
     return (
-      `✓ Image placed: public/assets/${safeDest} (${sizeKB} KB, ${validation.format})${sizeWarning}\n` +
+      `✓ Image copied to public/assets/${safeDest} (${sizeKB} KB, ${validation.format}) on disk.${sizeWarning}\n` +
+      `Queued for preview sync — this reaches the live preview when the run's end-of-turn sync completes, not immediately. ` +
+      `Do NOT tell the user the preview already shows it until that sync has run (e.g. after your next get_build_errors check comes back healthy).\n` +
       `Reference in JSX:        <img src={\`\${import.meta.env.BASE_URL}assets/${safeDest}\`} />\n` +
       `Reference as bg (inline): style={{ backgroundImage: \`url(\${import.meta.env.BASE_URL}assets/${safeDest})\` }}\n` +
       `Do NOT use a leading slash like "/assets/${safeDest}"   that breaks the preview.`
