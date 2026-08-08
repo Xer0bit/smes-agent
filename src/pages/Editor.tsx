@@ -11,7 +11,7 @@ import { RevisionPanel } from "@/components/RevisionPanel";
 import { VersionHistoryPanel } from "@/components/VersionHistoryPanel";
 import { WorkspaceLoader } from "@/components/WorkspaceLoader";
 import { CodeEditorPanel } from "@/components/CodeEditorPanel";
-import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkspace, WorkspaceProvider } from "@/contexts/WorkspaceContext";
 import { MultiDevicePreview } from "@/components/MultiDevicePreview";
 import type { ActivityType } from "@/components/ProjectActivityIndicator";
 import { AgentChatPanel } from "@/components/chat/_ui_/AgentChatPanel";
@@ -88,7 +88,7 @@ import { buildMagicCursorPrompt } from "./editor/utils/magicCursorPrompt";
 import { extractInvalidSourceFiles, buildRetryFilesWithFallback, buildSafeFilesAfterValidation } from "./editor/utils/fileRecovery";
 import { normalizeProjectFiles } from "./editor/utils/fileNormalization";
 
-const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
+const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   const params = useParams();
   let projectId = propProjectId || params.projectId;
   if (projectId === 'undefined') {
@@ -3593,6 +3593,24 @@ const Editor = ({ projectId: propProjectId }: { projectId?: string }) => {
 
       </div>
     </div>
+  );
+};
+
+// EditorInner reads projectId itself (prop or route param) purely to decide
+// what to render/fetch: it still needs a real, resolved id to seed
+// WorkspaceProvider's file-sync manager before EditorInner mounts.
+const Editor = (props: { projectId?: string }) => {
+  const params = useParams();
+  const projectId = props.projectId || params.projectId;
+
+  if (!projectId || projectId === 'undefined') {
+    return <EditorInner {...props} />;
+  }
+
+  return (
+    <WorkspaceProvider projectId={projectId}>
+      <EditorInner {...props} />
+    </WorkspaceProvider>
   );
 };
 export default Editor;

@@ -11,6 +11,10 @@ if (!supabaseServiceKey) {
     throw new Error('SUPABASE_SERVICE_KEY or SUPABASE_SERVICE_ROLE_KEY environment variable is required');
 }
 
+if (!process.env.SUPABASE_ANON_KEY) {
+    throw new Error('SUPABASE_ANON_KEY environment variable is required');
+}
+
 // Supabase client with service role key for server-side operations
 export const supabase: SupabaseClient = createClient(
     process.env.SUPABASE_URL,
@@ -26,7 +30,7 @@ export const supabase: SupabaseClient = createClient(
 // Supabase client for user authentication verification
 export const supabaseAuth: SupabaseClient = createClient(
     process.env.SUPABASE_URL,
-    process.env.SUPABASE_ANON_KEY || supabaseServiceKey
+    process.env.SUPABASE_ANON_KEY
 );
 
 export default supabase;

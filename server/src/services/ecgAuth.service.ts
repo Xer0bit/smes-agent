@@ -215,6 +215,97 @@ export function ecgResetPassword(
   return ecgFetch('POST', '/auth/password/reset', { token, newPassword });
 }
 
+// ─── Admin API (cross-app identity lookup) ──────────────────────────────────
+//
+//  Separate credential set (JWT username/password login, not X-API-Key).
+//  Used ONLY to resolve the AR-0006 case: an email already registered on
+//  eCG Auth from another app (Mirofish/OneNET/etc) -- we need that user's
+//  real eCG Auth id to link profiles.ecg_auth_user_id, we are not creating
+//  a new account. Token is cached in-process; re-login on expiry/401.
+
+export function isEcgAuthAdminConfigured(): boolean {
+  return !!(config.ecgAuthBaseUrl && config.ecgAuthAdminUsername && config.ecgAuthAdminPassword);
+}
+
+let adminToken: string | null = null;
+let adminTokenExpiresAt = 0;
+
+async function getAdminToken(): Promise<string | null> {
+  if (!isEcgAuthAdminConfigured()) return null;
+  if (adminToken && Date.now() < adminTokenExpiresAt) return adminToken;
+
+  try {
+    const res = await fetch(`${getBaseUrl()}/admin/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: config.ecgAuthAdminUsername, password: config.ecgAuthAdminPassword }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const json = await res.json().catch(() => ({})) as { token?: string };
+    if (!res.ok || !json.token) {
+      logger.warn('eCG Auth admin login failed', { status: res.status });
+      return null;
+    }
+    adminToken = json.token;
+    // Token is valid 12h server-side; refresh a bit early to dodge edge-of-expiry races.
+    adminTokenExpiresAt = Date.now() + 11.5 * 60 * 60_000;
+    return adminToken;
+  } catch (err) {
+    logger.warn('eCG Auth admin login request failed', { error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+const ADMIN_LOOKUP_MAX_PAGES = 50; // 50 * 100 = 5,000 users scanned ceiling
+const ADMIN_LOOKUP_PAGE_SIZE = 100;
+
+/**
+ * Finds a user on eCG Auth by email via the admin list endpoint. No
+ * email-filter query param is documented for GET /admin/users, so this
+ * paginates client-side. Only called from the AR-0006 background-migration
+ * path, never a request's hot path -- an occasional multi-page scan is an
+ * acceptable cost there.
+ */
+export async function ecgAdminFindUserByEmail(email: string): Promise<{ id: string; email: string } | null> {
+  const token = await getAdminToken();
+  if (!token) return null;
+
+  const target = email.toLowerCase();
+  try {
+    for (let page = 1; page <= ADMIN_LOOKUP_MAX_PAGES; page++) {
+      const res = await fetch(`${getBaseUrl()}/admin/users?page=${page}&limit=${ADMIN_LOOKUP_PAGE_SIZE}`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (res.status === 401) {
+        // Token expired/invalidated mid-scan -- force a fresh login on the
+        // next call rather than retrying inline here.
+        adminToken = null;
+        logger.warn('eCG Auth admin token rejected during lookup', { email });
+        return null;
+      }
+      if (!res.ok) {
+        logger.warn('eCG Auth admin user list failed', { email, status: res.status });
+        return null;
+      }
+
+      const json = await res.json().catch(() => ({})) as { users?: Array<{ id: string; email: string }>; total?: number };
+      const match = json.users?.find((u) => u.email.toLowerCase() === target);
+      if (match) return { id: match.id, email: match.email };
+
+      const scanned = page * ADMIN_LOOKUP_PAGE_SIZE;
+      if (!json.users || json.users.length === 0 || (json.total !== undefined && scanned >= json.total)) {
+        break;
+      }
+    }
+  } catch (err) {
+    logger.warn('eCG Auth admin lookup request failed', { email, error: err instanceof Error ? err.message : String(err) });
+  }
+  return null;
+}
+
 // ─── Branded email templates ─────────────────────────────────────────────────
 //
 //  These replicate the eComGear visual branding (dark header, indigo accent
@@ -224,46 +315,43 @@ export function ecgResetPassword(
 
 const LOGO_URL = 'https://www.ecomgear.dev/assets/ecomgear-auth-logo-sfGodRbL.png';
 
-function brandedEmailShell(title: string, body: string, frontendUrl: string): string {
+const FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+function brandedEmailShell(title: string, preheader: string, body: string, frontendUrl: string): string {
   const year = new Date().getFullYear();
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
   <title>${title}</title>
 </head>
-<body style="margin:0;padding:0;background:#f1f5f9;-webkit-text-size-adjust:100%;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:48px 16px;">
+<body style="margin:0;padding:0;background:#0B0D0F;font-family:${FONT_STACK};-webkit-text-size-adjust:100%;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${preheader}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0B0D0F;padding:48px 16px;">
     <tr><td align="center">
-      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+      <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
         <tr>
-          <td align="center" style="background:#0f0f11;border-radius:14px 14px 0 0;padding:28px 40px 24px;">
+          <td align="center" style="padding:0 0 28px;">
             <a href="${frontendUrl}" style="text-decoration:none;display:inline-block;line-height:1;">
-              <img src="${LOGO_URL}" alt="EcomGear" width="148" style="display:block;height:auto;border:0;outline:0;margin:0 auto;" />
+              <img src="${LOGO_URL}" alt="EcomGear" width="132" style="display:block;height:auto;border:0;outline:0;margin:0 auto;" />
             </a>
           </td>
         </tr>
         <tr>
-          <td style="background:linear-gradient(90deg,#4f46e5 0%,#7c3aed 100%);height:3px;font-size:0;line-height:0;">&nbsp;</td>
-        </tr>
-        <tr>
-          <td style="background:#ffffff;padding:44px 40px 36px;">
+          <td style="background:#15191E;border:1px solid #2C333A;border-radius:16px;padding:40px 36px;">
             ${body}
           </td>
         </tr>
         <tr>
-          <td style="background:#f8fafc;border-radius:0 0 14px 14px;border-top:1px solid #e2e8f0;padding:20px 40px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-              <tr>
-                <td style="font-size:12px;color:#94a3b8;line-height:1.6;">
-                  &copy; ${year} EcomGear &middot;
-                  <a href="${frontendUrl}" style="color:#94a3b8;text-decoration:underline;">ecomgear.dev</a>
-                  &middot;
-                  <a href="${frontendUrl}/dashboard/settings" style="color:#94a3b8;text-decoration:underline;">Manage preferences</a>
-                </td>
-              </tr>
-            </table>
+          <td align="center" style="padding:28px 12px 0;">
+            <p style="margin:0;font-size:12px;color:#5C6570;line-height:1.7;font-family:${FONT_STACK};">
+              &copy; ${year} EcomGear &middot;
+              <a href="${frontendUrl}" style="color:#5C6570;text-decoration:underline;">ecomgear.dev</a>
+              &middot;
+              <a href="${frontendUrl}/dashboard/settings" style="color:#5C6570;text-decoration:underline;">Manage preferences</a>
+            </p>
           </td>
         </tr>
       </table>
@@ -280,28 +368,27 @@ function brandedEmailShell(title: string, body: string, frontendUrl: string): st
 export function buildBrandedResetEmailHtml(resetUrl: string): string {
   const frontendUrl = process.env.FRONTEND_URL || 'https://ecomgear.dev';
   const body = `
-    <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#18181b;">Reset your password</h1>
-    <p style="margin:0 0 8px;font-size:15px;color:#52525b;line-height:1.6;">Hi there,</p>
-    <p style="margin:0 0 8px;font-size:15px;color:#52525b;line-height:1.6;">
-      We received a request to reset the password for your EcomGear account.
+    <h1 style="margin:0 0 14px;font-size:20px;font-weight:600;color:#F3F5F7;font-family:${FONT_STACK};">Reset your password</h1>
+    <p style="margin:0 0 28px;font-size:14px;color:#949EA8;line-height:1.65;font-family:${FONT_STACK};">
+      We received a request to reset the password on your EcomGear account.
+      Click below to choose a new one -- this link expires in 1 hour.
     </p>
-    <table cellpadding="0" cellspacing="0" style="margin:36px 0 0;">
+    <table cellpadding="0" cellspacing="0" style="width:100%;">
       <tr>
-        <td style="border-radius:8px;background:#4f46e5;box-shadow:0 2px 8px rgba(79,70,229,.28);">
+        <td style="border-radius:10px;background:#22C3C3;">
           <a href="{{resetUrl}}"
-             style="display:inline-block;padding:14px 32px;color:#ffffff;
-                    text-decoration:none;font-weight:600;font-size:15px;
-                    letter-spacing:-0.1px;white-space:nowrap;">
-            Reset password &rarr;
+             style="display:block;padding:13px 0;color:#0B0D0F;text-align:center;
+                    text-decoration:none;font-weight:600;font-size:14px;
+                    font-family:${FONT_STACK};">
+            Reset password
           </a>
         </td>
       </tr>
     </table>
-    <p style="margin:32px 0 0;padding-top:28px;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8;line-height:1.7;">
-      This link expires in 1 hour. If you did not request a password reset,
-      you can safely ignore this email.
+    <p style="margin:28px 0 0;padding-top:24px;border-top:1px solid #2C333A;font-size:12px;color:#5C6570;line-height:1.7;font-family:${FONT_STACK};">
+      If you didn't request this, you can safely ignore this email -- your password won't change.
     </p>`;
-  return brandedEmailShell('Reset your EcomGear password', body, frontendUrl);
+  return brandedEmailShell('Reset your EcomGear password', 'Reset the password on your EcomGear account.', body, frontendUrl);
 }
 
 /**
@@ -311,16 +398,19 @@ export function buildBrandedResetEmailHtml(resetUrl: string): string {
 export function buildBrandedOtpEmailHtml(): string {
   const frontendUrl = process.env.FRONTEND_URL || 'https://ecomgear.dev';
   const body = `
-    <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#18181b;">Your verification code</h1>
-    <p style="margin:0 0 8px;font-size:15px;color:#52525b;line-height:1.6;">Hi there,</p>
-    <p style="margin:0 0 8px;font-size:15px;color:#52525b;line-height:1.6;">
-      Use this code to complete your login. It expires in 10 minutes.
+    <h1 style="margin:0 0 14px;font-size:20px;font-weight:600;color:#F3F5F7;font-family:${FONT_STACK};">Your verification code</h1>
+    <p style="margin:0 0 28px;font-size:14px;color:#949EA8;line-height:1.65;font-family:${FONT_STACK};">
+      Enter this code to finish signing in. It expires in 10 minutes.
     </p>
-    <p style="margin:24px 0;font-size:32px;font-weight:700;color:#4f46e5;letter-spacing:6px;">
-      {{code}}
-    </p>
-    <p style="margin:32px 0 0;padding-top:28px;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8;line-height:1.7;">
-      If you did not request this code, you can safely ignore this email.
+    <table cellpadding="0" cellspacing="0" style="width:100%;">
+      <tr>
+        <td align="center" style="background:#0B0D0F;border:1px solid #2C333A;border-radius:10px;padding:20px 0;">
+          <span style="font-family:'SF Mono',Consolas,Menlo,monospace;font-size:30px;font-weight:600;color:#22C3C3;letter-spacing:8px;">{{code}}</span>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:28px 0 0;padding-top:24px;border-top:1px solid #2C333A;font-size:12px;color:#5C6570;line-height:1.7;font-family:${FONT_STACK};">
+      If you didn't request this code, you can safely ignore this email.
     </p>`;
-  return brandedEmailShell('EcomGear verification code', body, frontendUrl);
+  return brandedEmailShell('EcomGear verification code', 'Your verification code for EcomGear.', body, frontendUrl);
 }

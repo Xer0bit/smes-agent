@@ -458,8 +458,13 @@ export default function WorkspaceSettings() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      const { data: profileByEmail } = await supabase
-        .from('profiles').select('id, email').eq('email', validated.email).maybeSingle();
+      // profiles has no SELECT-by-email policy (would reopen email
+      // enumeration against the whole user base) -- existence lookup goes
+      // through a SECURITY DEFINER RPC instead, see
+      // supabase/migrations/20260807120000_enable_profiles_rls.sql
+      const { data: profileByEmailRows } = await supabase
+        .rpc('lookup_user_by_email', { p_email: validated.email });
+      const profileByEmail = profileByEmailRows?.[0] ?? null;
 
       if (profileByEmail) {
         const { data: existingMember } = await supabase

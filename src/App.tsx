@@ -11,7 +11,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
-import EditorWithWorkspace from "./pages/EditorWithWorkspace";
+import Editor from "./pages/Editor";
 import { DashboardLayout } from "./pages/Dashboard";
 // Route-level code-splitting: these previously all imported eagerly, bundling
 // marketing pages, dashboard pages, and rarely-hit utility routes into one
@@ -34,6 +34,7 @@ const AdminLogin = lazy(() => import("./pages/admin/Login"));
 const AdminApp = lazy(() => import("./pages/admin/AdminApp"));
 const AcceptInvite = lazy(() => import("./pages/AcceptInvite"));
 const AcceptProjectInvite = lazy(() => import("./pages/AcceptProjectInvite"));
+const Billing = lazy(() => import("./pages/Billing"));
 import { LandingLayout } from "./layouts/LandingLayout";
 const Features = lazy(() => import("./pages/landing/Features"));
 const Product = lazy(() => import("./pages/landing/Product"));
@@ -127,7 +128,9 @@ const App = () => (
                 </Route>
                 <Route path="/auth" element={<Auth />} />
                 <Route path="/auth/callback" element={<AuthCallback />} />
-                <Route path="/project/:projectId" element={<EditorWithWorkspace />} />
+                <Route path="/project/:projectId" element={<RequireAuth><Editor /></RequireAuth>} />
+                <Route path="/editor/:projectId" element={<RequireAuth><Editor /></RequireAuth>} />
+                <Route path="/billing" element={<RequireAuth><Suspense fallback={null}><Billing /></Suspense></RequireAuth>} />
                 <Route path="/project/:projectId/settings" element={<RequireAuth><Suspense fallback={null}><ProjectSettings /></Suspense></RequireAuth>} />
                 <Route path="/project/:projectId/seo" element={<RequireAuth><Suspense fallback={null}><SeoManager /></Suspense></RequireAuth>} />
                 <Route path="/dashboard" element={<RequireAuth><DashboardLayout /></RequireAuth>}>

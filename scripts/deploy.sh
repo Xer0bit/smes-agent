@@ -260,6 +260,9 @@ REMOTE
             "$PROJECT_DIR/server/" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/server.staging/"
     scp_vps1 "$PROJECT_DIR/ecosystem.config.cjs" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/"
     step "Writing ecomgear-api env to VPS1..."
+    if [[ -n "${ECG_AUTH_BASE_URL:-}" && ( -z "${ECG_AUTH_ADMIN_USERNAME:-}" || -z "${ECG_AUTH_ADMIN_PASSWORD:-}" ) ]]; then
+        echo -e "${YELLOW}  ⚠ ECG_AUTH_ADMIN_USERNAME/PASSWORD not set   eCG Auth is configured but the AR-0006 cross-app identity lookup (server/scripts/migrate-existing-users-to-ecg-auth.ts, and the login-time background-migration path) will silently no-op on production.${NC}"
+    fi
     SK="${SUPABASE_SERVICE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
     ssh_vps1 "bash -s" << ENVREMOTE
 set -e
@@ -295,6 +298,8 @@ HOSTING_SERVICE_SECRET=${HOSTING_SERVICE_SECRET:-}
 ECG_AUTH_BASE_URL=${ECG_AUTH_BASE_URL:-https://auth.ecomgear.ai}
 ECG_AUTH_API_KEY=${ECG_AUTH_API_KEY:-}
 ECG_AUTH_2FA_ACTIVE=${ECG_AUTH_2FA_ACTIVE:-false}
+ECG_AUTH_ADMIN_USERNAME=${ECG_AUTH_ADMIN_USERNAME:-}
+ECG_AUTH_ADMIN_PASSWORD=${ECG_AUTH_ADMIN_PASSWORD:-}
 FUNCTIONS_INTERNAL_SECRET=${FUNCTIONS_INTERNAL_SECRET:-}
 ENV
 ENVREMOTE

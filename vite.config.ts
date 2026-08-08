@@ -27,6 +27,18 @@ export default defineConfig(({ mode }) => ({
       host: 'localhost',
       port: 8080,
     },
+    // Generated per-project sandboxes (preview-data/, preview-service/projects/,
+    // agent-template*/) are runtime data, not part of this app  watching them
+    // floods HMR and their own broken/half-written files must never affect
+    // the root dev server.
+    watch: {
+      ignored: [
+        "**/preview-data/**",
+        "**/preview-service/projects/**",
+        "**/server/agent-template/**",
+        "**/server/agent-template-preview.local/**",
+      ],
+    },
   },
   plugins: [react()], // Disabled componentTagger to fix preamble error
   resolve: {
@@ -40,6 +52,14 @@ export default defineConfig(({ mode }) => ({
     },
   },
   optimizeDeps: {
+    // Explicit entry restricts esbuild's dependency-scan crawl to the real
+    // app. Without this, Vite globs every index.html under the repo root
+    // including preview-data/**, preview-service/projects/**, and
+    // server/agent-template*/**  generated per-project sandboxes whose
+    // source files are user/agent-written and routinely syntactically
+    // invalid. A single broken file in any of them used to fatally crash
+    // the ROOT dev server's dependency scan before it could even boot.
+    entries: ["index.html"],
     include: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
   },
   test: {

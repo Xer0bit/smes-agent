@@ -1,4 +1,5 @@
 [
+  { "date": "2026-08-07", "macrostructure": "adapted, auth-scope (centered single card, no marketing macrostructure)", "theme": "brand (preserved cyan/dark neutral + Fraunces/Manrope)", "enrichment": "none", "brief": "src/pages/Auth.tsx — removed split-panel + fake terminal chrome + glow blob + feature badges + off-brand indigo colors" },
   { "date": "2026-07-22", "macrostructure": "Marquee Hero (studied DNA: Lovable dashboard reference)", "theme": "brand (preserved cyan/orange/purple + Fraunces/Manrope)", "enrichment": "none", "brief": "src/pages/dashboard/Home.tsx — greeting hero + prompt bar + recents grid" },
   { "date": "2026-07-22", "macrostructure": "Workbench (adapted, dashboard-scope)", "theme": "brand (preserved cyan/orange/purple + Fraunces/Manrope)", "enrichment": "none", "brief": "src/pages/dashboard/Projects.tsx — luxury restyle for indie-builder dashboard" }
 ]

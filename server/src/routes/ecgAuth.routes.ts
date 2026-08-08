@@ -11,9 +11,11 @@
  *   - Successful legacy logins trigger background migration to eCG Auth.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import rateLimit from 'express-rate-limit';
 import { supabaseAuth, supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
+import { createError } from '../middleware/error.middleware.js';
 import {
   isEcgAuthConfigured,
   isEcgAuth2faActive,
@@ -26,16 +28,121 @@ import {
   ecgChangePassword,
   ecgForgotPassword,
   ecgResetPassword,
+  ecgAdminFindUserByEmail,
   buildBrandedResetEmailHtml,
   buildBrandedOtpEmailHtml,
 } from '../services/ecgAuth.service.js';
 import { ecgAuthMiddleware, type EcgAuthenticatedRequest } from '../middleware/ecgAuth.middleware.js';
+import { ensureSupabaseMirror } from '../services/authBridge.service.js';
 
 const router = Router();
 
+// IP-keyed, not user-keyed: the attack this stops (credential stuffing /
+// brute force against an existing end-user account) is defined by source IP,
+// not by which account is being guessed. Login tighter than register --
+// brute-forcing a known/guessed email is the primary threat; register only
+// needs throttling against signup-spam/abuse, a lower-frequency threat.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 8,
+  keyGenerator: (req) => req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts   please wait a few minutes and try again' },
+});
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60_000,
+  max: 8,
+  keyGenerator: (req) => req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many signup attempts   please wait and try again later' },
+});
+
+// A 6-digit OTP needs a tighter cap than login: IP-keyed limiter stops one
+// source from hammering many different pending tokens.
+const twoFaVerifyLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 10,
+  keyGenerator: (req) => req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many verification attempts   please wait a few minutes and try again' },
+});
+const twoFaResendLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 10,
+  keyGenerator: (req) => req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many resend requests   please wait a few minutes and try again' },
+});
+
+// Per-token attempt cap: the IP limiter above doesn't stop an attacker who
+// rotates IPs against one stolen/guessed pendingToken. OTP verification is
+// fully delegated to the external eCG Auth service (ecgVerify2fa) -- this
+// codebase has no visibility into per-token attempt counts there, so we
+// track it locally instead.
+// ponytail: in-memory Map, not a DB table -- resets on restart and doesn't
+// share state across multiple server instances. Matches the OTP's own
+// validity window (a few minutes), so a restart mid-window just resets the
+// counter, it doesn't leave a stale lock. Move to Redis/DB if this ever
+// runs multi-instance.
+const TWO_FA_MAX_ATTEMPTS = 5;
+const TWO_FA_ATTEMPT_TTL_MS = 5 * 60_000;
+const twoFaAttempts = new Map<string, { count: number; expiresAt: number }>();
+
+function checkTwoFaAttempt(pendingToken: string): boolean {
+  const now = Date.now();
+  const entry = twoFaAttempts.get(pendingToken);
+  if (!entry || entry.expiresAt < now) {
+    twoFaAttempts.set(pendingToken, { count: 1, expiresAt: now + TWO_FA_ATTEMPT_TTL_MS });
+    return true;
+  }
+  if (entry.count >= TWO_FA_MAX_ATTEMPTS) return false;
+  entry.count += 1;
+  return true;
+}
+
+function clearTwoFaAttempts(pendingToken: string): void {
+  twoFaAttempts.delete(pendingToken);
+}
+
+// Sweep expired entries every minute so the Map doesn't grow unbounded.
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, entry] of twoFaAttempts) {
+    if (entry.expiresAt < now) twoFaAttempts.delete(token);
+  }
+}, 60_000).unref();
+
+// The Supabase mirror (ensureSupabaseMirror) needs the plaintext password
+// eCG Auth just verified -- the 2FA-verify request only carries the OTP
+// code, not the password, so it's held here keyed by pendingToken for the
+// same short window as the OTP itself. Cleared on use or TTL expiry; never
+// persisted anywhere durable.
+const TWO_FA_PENDING_TTL_MS = 5 * 60_000;
+const twoFaPendingCreds = new Map<string, { email: string; password: string; expiresAt: number }>();
+
+function stashTwoFaPending(pendingToken: string, email: string, password: string): void {
+  twoFaPendingCreds.set(pendingToken, { email, password, expiresAt: Date.now() + TWO_FA_PENDING_TTL_MS });
+}
+function takeTwoFaPending(pendingToken: string): { email: string; password: string } | null {
+  const entry = twoFaPendingCreds.get(pendingToken);
+  twoFaPendingCreds.delete(pendingToken);
+  if (!entry || entry.expiresAt < Date.now()) return null;
+  return { email: entry.email, password: entry.password };
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, entry] of twoFaPendingCreds) {
+    if (entry.expiresAt < now) twoFaPendingCreds.delete(token);
+  }
+}, 60_000).unref();
+
 // ─── POST /login ─────────────────────────────────────────────────────────────
 
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', loginLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -52,33 +159,45 @@ router.post('/login', async (req: Request, res: Response) => {
         // Check if this is a 2FA challenge
         if ('requires2fa' in ecgResult.data && ecgResult.data.requires2fa) {
           if (isEcgAuth2faActive()) {
-            res.json({ requires2fa: true, pendingToken: (ecgResult.data as { pendingToken: string }).pendingToken });
+            const pendingToken = (ecgResult.data as { pendingToken: string }).pendingToken;
+            stashTwoFaPending(pendingToken, email, password);
+            res.json({ requires2fa: true, pendingToken });
             return;
           }
-          // 2FA flag is off   ignore the challenge and treat as error
-          logger.warn('eCG Auth 2FA required but ECG_AUTH_2FA_ACTIVE is false', { email });
-        } else {
-          // Successful login
-          const loginData = ecgResult.data as { accessToken: string; refreshToken: string; user: { id: string; email: string; firstName: string; lastName: string } };
-
-          // Upsert ecg_auth_user_id in profiles (link if not yet linked)
-          try {
-            await supabase
-              .from('profiles')
-              .upsert({ id: loginData.user.id, email, ecg_auth_user_id: loginData.user.id }, { onConflict: 'email' });
-          } catch (err: any) {
-            logger.warn('Failed to upsert ecg_auth_user_id on login', { error: err?.message });
-          }
-
-          res.json({
-            accessToken: loginData.accessToken,
-            refreshToken: loginData.refreshToken,
-            user: {
-              id: loginData.user.id,
-              email: loginData.user.email,
-              fullName: `${loginData.user.firstName} ${loginData.user.lastName}`.trim(),
-            },
+          // 2FA flag is off locally but eCG Auth requires it for this account --
+          // must NOT fall through to the legacy Supabase path below, since the
+          // mirror account has no 2FA at all and that would silently bypass
+          // the protection eCG Auth is enforcing for this user.
+          logger.warn('security_event', { event: 'login_blocked_2fa_unsupported', email, ip: req.ip, path: req.path });
+          res.status(501).json({
+            error: '2fa_not_supported',
+            message: 'This account requires two-factor authentication, which is not yet enabled on this app. Please contact support.',
           });
+          return;
+        } else {
+          // Successful login. eCG Auth's user.id is NOT a Supabase auth.users
+          // id -- profiles.id has a hard FK to auth.users(id)
+          // (20260105133931_initial_schema.sql:43), so writing it there
+          // directly fails the FK constraint. Mirror a real Supabase account
+          // instead and hand back a REAL Supabase session, so every existing
+          // RLS policy / auth.middleware.ts / frontend getSession() call
+          // keeps working unchanged -- see authBridge.service.ts.
+          const loginData = ecgResult.data as { accessToken: string; refreshToken: string; user: { id: string; email: string; firstName: string; lastName: string } };
+          const fullName = `${loginData.user.firstName} ${loginData.user.lastName}`.trim();
+
+          try {
+            const { supabaseUserId, session } = await ensureSupabaseMirror(email, password, fullName, loginData.user.id);
+
+            logger.info('security_event', { event: 'login_success', userId: supabaseUserId, email, ip: req.ip, path: req.path });
+            res.json({
+              accessToken: session.access_token,
+              refreshToken: session.refresh_token,
+              user: { id: supabaseUserId, email: loginData.user.email, fullName },
+            });
+          } catch (mirrorErr: any) {
+            logger.error('[ecgAuth] Supabase mirror failed on login', { email, error: mirrorErr?.message });
+            res.status(500).json({ error: 'Login succeeded on eCG Auth but session setup failed. Please try again.' });
+          }
           return;
         }
       }
@@ -100,6 +219,7 @@ router.post('/login', async (req: Request, res: Response) => {
             .maybeSingle();
 
           if (profile?.ecg_auth_user_id) {
+            logger.warn('security_event', { event: 'login_failure', email, ip: req.ip, path: req.path, reason: 'ecg_wrong_password_migrated' });
             res.status(401).json({
               error: 'invalid_credentials',
               message: 'This email is registered with a unified eCG account. Please use the password you use on other eCG apps like Mirofish, OneNET, or eComGear, or use "Forgot Password" to reset it.',
@@ -126,6 +246,7 @@ router.post('/login', async (req: Request, res: Response) => {
     const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
 
     if (error) {
+      logger.warn('security_event', { event: 'login_failure', email, ip: req.ip, path: req.path, reason: error.message });
       res.status(401).json({ error: 'Invalid login credentials' });
       return;
     }
@@ -139,7 +260,7 @@ router.post('/login', async (req: Request, res: Response) => {
         const firstName = (userMeta.full_name || '').split(' ')[0] || '';
         const lastName = (userMeta.full_name || '').split(' ').slice(1).join(' ') || '';
 
-        ecgRegister(email, data.session.access_token, firstName, lastName)
+        ecgRegister(email, password, firstName, lastName)
           .then(async (regResult) => {
             if (regResult.ok && regResult.data?.user?.id) {
               const ecgUserId = regResult.data.user.id;
@@ -152,13 +273,31 @@ router.post('/login', async (req: Request, res: Response) => {
               } catch (err: any) {
                 logger.warn('Failed to store ecg_auth_user_id after migration', { userId, error: err?.message });
               }
+            } else if (regResult.code === 'AR-0006') {
+              // Email already exists on eCG Auth from another app (Mirofish/
+              // OneNET/etc) -- we're not creating a new account, just need
+              // to find and link its real id so this user gets routed
+              // through eCG-Auth-primary on future logins instead of being
+              // stuck on the Supabase mirror forever.
+              const found = await ecgAdminFindUserByEmail(email);
+              if (found) {
+                try {
+                  await supabase.from('profiles').update({ ecg_auth_user_id: found.id }).eq('id', userId);
+                  logger.info('Linked existing eCG Auth identity to legacy user', { email, ecgUserId: found.id });
+                } catch (err: any) {
+                  logger.warn('Failed to store ecg_auth_user_id after admin lookup', { userId, error: err?.message });
+                }
+              } else {
+                logger.info('eCG Auth migration: user already exists on eCG Auth but admin lookup could not resolve id (probably from another app)', { email, code: regResult.code });
+              }
             } else {
-              logger.info('eCG Auth migration: user already exists on eCG Auth (probably from another app)', { email, code: regResult.code });
+              logger.info('eCG Auth migration: registration failed for an unrelated reason', { email, code: regResult.code });
             }
           })
           .catch((err) => logger.warn('eCG Auth background migration failed', { email, error: err.message }));
       }
 
+      logger.info('security_event', { event: 'login_success', userId, email, ip: req.ip, path: req.path });
       res.json({
         accessToken: data.session.access_token,
         refreshToken: data.session.refresh_token,
@@ -170,11 +309,11 @@ router.post('/login', async (req: Request, res: Response) => {
         migrated: true,
       });
     } else {
+      logger.warn('security_event', { event: 'login_failure', email, ip: req.ip, path: req.path, reason: 'no_session' });
       res.status(401).json({ error: 'Invalid login credentials' });
     }
   } catch (error) {
-    logger.error('eCG login error:', error);
-    res.status(500).json({ error: 'Login failed' });
+    next(createError('Login failed', 500));
   }
 });
 
@@ -240,7 +379,7 @@ async function provisionWorkspace(
 
 // ─── POST /register ───────────────────────────────────────────────────────────
 
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', registerLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email, password, fullName, organizationName, projectName } = req.body;
     if (!email || !password || !fullName || !organizationName || !projectName) {
@@ -258,28 +397,33 @@ router.post('/register', async (req: Request, res: Response) => {
 
       if (regResult.ok) {
         const ecgUserId = regResult.data!.user.id;
-        const provisioned = await provisionWorkspace(ecgUserId, email, fullName, organizationName, projectName, ecgUserId);
+
+        // eCG Auth's id has no matching auth.users row -- profiles.id's FK
+        // would reject it. Mirror a real Supabase account (same password)
+        // and provision the workspace against THAT id, same reasoning as
+        // the login handler above (see authBridge.service.ts).
+        let supabaseUserId: string;
+        let session: { access_token: string; refresh_token: string };
+        try {
+          const mirrored = await ensureSupabaseMirror(email, password, fullName, ecgUserId);
+          supabaseUserId = mirrored.supabaseUserId;
+          session = mirrored.session;
+        } catch (mirrorErr: any) {
+          logger.error('[ecgAuth] Supabase mirror failed on register', { email, error: mirrorErr?.message });
+          res.status(500).json({ error: 'Account created but session setup failed. Please try logging in.' });
+          return;
+        }
+
+        const provisioned = await provisionWorkspace(supabaseUserId, email, fullName, organizationName, projectName, ecgUserId);
         if (!provisioned.ok) {
           res.status(500).json({ error: provisioned.error });
           return;
         }
 
-        // Login to eCG Auth to get tokens
-        const loginResult = await ecgLogin(email, password);
-        if (!loginResult.ok || !loginResult.data || 'requires2fa' in loginResult.data) {
-          // Registration succeeded but auto-login failed   user can log in manually
-          res.status(201).json({
-            message: 'Account created successfully. Please log in.',
-            projectId: provisioned.projectId,
-          });
-          return;
-        }
-
-        const loginData = loginResult.data as { accessToken: string; refreshToken: string; user: { id: string; email: string } };
         res.status(201).json({
-          accessToken: loginData.accessToken,
-          refreshToken: loginData.refreshToken,
-          user: { id: loginData.user.id, email: loginData.user.email, fullName },
+          accessToken: session.access_token,
+          refreshToken: session.refresh_token,
+          user: { id: supabaseUserId, email, fullName },
           projectId: provisioned.projectId,
         });
         return;
@@ -341,14 +485,13 @@ router.post('/register', async (req: Request, res: Response) => {
       migrated: true,
     });
   } catch (error) {
-    logger.error('eCG register error:', error);
-    res.status(500).json({ error: 'Registration failed' });
+    next(createError('Registration failed', 500));
   }
 });
 
 // ─── POST /2fa/verify ───────────────────────────────────────────────────────
 
-router.post('/2fa/verify', async (req: Request, res: Response) => {
+router.post('/2fa/verify', twoFaVerifyLimiter, async (req: Request, res: Response) => {
   if (!isEcgAuth2faActive()) {
     res.status(404).json({ error: '2FA is not enabled' });
     return;
@@ -364,27 +507,51 @@ router.post('/2fa/verify', async (req: Request, res: Response) => {
     return;
   }
 
+  if (!checkTwoFaAttempt(pendingToken)) {
+    logger.warn('security_event', { event: '2fa_rate_limited', ip: req.ip, path: req.path });
+    res.status(429).json({ error: 'Too many incorrect attempts for this code   please request a new one' });
+    return;
+  }
+
   const result = await ecgVerify2fa(pendingToken, code);
   if (!result.ok) {
+    logger.warn('security_event', { event: '2fa_failure', ip: req.ip, path: req.path, reason: result.error });
     res.status(result.status || 401).json({ error: result.error || '2FA verification failed' });
     return;
   }
 
+  clearTwoFaAttempts(pendingToken);
   const data = result.data!;
-  res.json({
-    accessToken: data.accessToken,
-    refreshToken: data.refreshToken,
-    user: {
-      id: data.user.id,
-      email: data.user.email,
-      fullName: `${data.user.firstName} ${data.user.lastName}`.trim(),
-    },
-  });
+  const fullName = `${data.user.firstName} ${data.user.lastName}`.trim();
+
+  // Same FK problem as the primary login path -- data.user.id is eCG Auth's
+  // own id, not a Supabase auth.users id. The plaintext password isn't in
+  // this request (only the OTP code is); it was captured when the 2FA
+  // challenge was issued, see stashTwoFaPending above.
+  const pending = takeTwoFaPending(pendingToken);
+  if (!pending) {
+    logger.error('[ecgAuth] 2FA verify succeeded but no pending credentials found', { pendingToken });
+    res.status(500).json({ error: '2FA verified but session setup failed -- please log in again.' });
+    return;
+  }
+
+  try {
+    const { supabaseUserId, session } = await ensureSupabaseMirror(pending.email, pending.password, fullName, data.user.id);
+    logger.info('security_event', { event: 'login_success', userId: supabaseUserId, email: data.user.email, ip: req.ip, path: req.path });
+    res.json({
+      accessToken: session.access_token,
+      refreshToken: session.refresh_token,
+      user: { id: supabaseUserId, email: data.user.email, fullName },
+    });
+  } catch (mirrorErr: any) {
+    logger.error('[ecgAuth] Supabase mirror failed on 2FA verify', { email: data.user.email, error: mirrorErr?.message });
+    res.status(500).json({ error: '2FA verified but session setup failed. Please try again.' });
+  }
 });
 
 // ─── POST /2fa/resend ────────────────────────────────────────────────────────
 
-router.post('/2fa/resend', async (req: Request, res: Response) => {
+router.post('/2fa/resend', twoFaResendLimiter, async (req: Request, res: Response) => {
   if (!isEcgAuth2faActive()) {
     res.status(404).json({ error: '2FA is not enabled' });
     return;
@@ -464,7 +631,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
 
 // ─── POST /reset-password ───────────────────────────────────────────────────
 
-router.post('/reset-password', async (req: Request, res: Response) => {
+router.post('/reset-password', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { token, newPassword } = req.body;
     if (!token || !newPassword) {
@@ -485,14 +652,13 @@ router.post('/reset-password', async (req: Request, res: Response) => {
 
     res.json({ message: 'Password reset successfully. Please log in again.' });
   } catch (error) {
-    logger.error('Reset password error:', error);
-    res.status(500).json({ error: 'Password reset failed' });
+    next(createError('Password reset failed', 500));
   }
 });
 
 // ─── POST /change-password ───────────────────────────────────────────────────
 
-router.post('/change-password', ecgAuthMiddleware, async (req: EcgAuthenticatedRequest, res: Response) => {
+router.post('/change-password', ecgAuthMiddleware, async (req: EcgAuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword) {
@@ -539,14 +705,13 @@ router.post('/change-password', ecgAuthMiddleware, async (req: EcgAuthenticatedR
       res.json({ message: 'Password changed successfully.' });
     }
   } catch (error) {
-    logger.error('Change password error:', error);
-    res.status(500).json({ error: 'Password change failed' });
+    next(createError('Password change failed', 500));
   }
 });
 
 // ─── POST /refresh ───────────────────────────────────────────────────────────
 
-router.post('/refresh', async (req: Request, res: Response) => {
+router.post('/refresh', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { refreshToken } = req.body;
     if (!refreshToken) {
@@ -567,14 +732,13 @@ router.post('/refresh', async (req: Request, res: Response) => {
 
     res.json({ accessToken: result.data!.accessToken });
   } catch (error) {
-    logger.error('Token refresh error:', error);
-    res.status(500).json({ error: 'Token refresh failed' });
+    next(createError('Token refresh failed', 500));
   }
 });
 
 // ─── POST /logout ────────────────────────────────────────────────────────────
 
-router.post('/logout', async (req: Request, res: Response) => {
+router.post('/logout', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { userId, refreshToken } = req.body;
 
@@ -587,8 +751,7 @@ router.post('/logout', async (req: Request, res: Response) => {
 
     res.json({ message: 'Logged out successfully' });
   } catch (error) {
-    logger.error('Logout error:', error);
-    res.status(500).json({ error: 'Logout failed' });
+    next(createError('Logout failed', 500));
   }
 });
 

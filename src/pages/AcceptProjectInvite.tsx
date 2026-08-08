@@ -92,14 +92,15 @@ export default function AcceptProjectInvite() {
                 .eq('id', inv.project_id)
                 .single();
 
-            // Fetch inviter name (best-effort)
+            // Fetch inviter name (best-effort). Scoped to this specific,
+            // already-verified invitation row via a SECURITY DEFINER RPC --
+            // profiles has no general read-by-id policy for non-collaborators,
+            // see supabase/migrations/20260807120000_enable_profiles_rls.sql
             let inviterName: string | undefined;
             if (inv.invited_by) {
-                const { data: inviterProfile } = await supabase
-                    .from('profiles')
-                    .select('full_name, email')
-                    .eq('id', inv.invited_by)
-                    .single();
+                const { data: inviterRows } = await supabase
+                    .rpc('get_inviter_display_name', { p_invite_id: inv.id });
+                const inviterProfile = inviterRows?.[0];
                 inviterName = inviterProfile?.full_name || inviterProfile?.email;
             }
 

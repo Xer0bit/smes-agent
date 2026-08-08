@@ -21,6 +21,7 @@ export async function authMiddleware(
         // Extract token from header
         const authHeader = req.headers.authorization;
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            logger.warn('security_event', { event: 'permission_denied', outcome: 'no_token', ip: req.ip, resource: req.originalUrl });
             res.status(401).json({ error: 'No token provided' });
             return;
         }
@@ -39,7 +40,7 @@ export async function authMiddleware(
         const { data, error } = authResult;
 
         if (error || !data.user) {
-            logger.warn('Invalid token attempt', { error: error?.message });
+            logger.warn('security_event', { event: 'permission_denied', outcome: 'invalid_token', ip: req.ip, resource: req.originalUrl, error: error?.message });
             res.status(401).json({ error: 'Invalid token' });
             return;
         }

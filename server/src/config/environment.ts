@@ -36,6 +36,10 @@ export const config = {
     ecgAuthBaseUrl: process.env.ECG_AUTH_BASE_URL || '',
     ecgAuthApiKey: process.env.ECG_AUTH_API_KEY || '',
     ecgAuth2faActive: process.env.ECG_AUTH_2FA_ACTIVE === 'true',
+    // Admin API (separate JWT-login credential set, only used to look up
+    // cross-app identities on AR-0006 -- see authBridge migration path)
+    ecgAuthAdminUsername: process.env.ECG_AUTH_ADMIN_USERNAME || '',
+    ecgAuthAdminPassword: process.env.ECG_AUTH_ADMIN_PASSWORD || '',
 
     // Logging
     logLevel: process.env.LOG_LEVEL || 'info'

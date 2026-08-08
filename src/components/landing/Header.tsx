@@ -70,7 +70,7 @@ export const Header = ({ onLoginClick, user }: HeaderProps) => {
             </Button>
           ) : (
             <>
-              <button onClick={onLoginClick} className="nav__sign-in" type="button">
+              <button onClick={() => navigate('/auth?tab=login')} className="nav__sign-in" type="button">
                 Log in
               </button>
               <Button
@@ -132,7 +132,14 @@ export const Header = ({ onLoginClick, user }: HeaderProps) => {
               </Button>
             ) : (
               <>
-                <Button onClick={onLoginClick} variant="ghost" className="btn btn--ghost">
+                <Button
+                  onClick={() => {
+                    setIsMobileOpen(false);
+                    navigate('/auth?tab=login');
+                  }}
+                  variant="ghost"
+                  className="btn btn--ghost"
+                >
                   Log in
                 </Button>
                 <Button onClick={onLoginClick} className="btn btn--primary">
