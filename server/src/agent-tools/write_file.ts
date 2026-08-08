@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import ts from 'typescript';
-import { ToolDefinition, AgentContext, safeJoin, escapeXmlAttr } from './types.js';
+import { ToolDefinition, AgentContext, safeJoin, escapeXmlAttr, extractAnonFetchTables } from './types.js';
 import { sanitizeFileContent, checkSyntaxBalance } from './sanitize.js';
 
 // Paths that are pre-seeded by the base template   re-writing them wastes a step.
@@ -152,6 +152,18 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
     const lineCount = content.split('\n').length;
     const topExports = /\.(tsx?|jsx?)$/.test(args.path) ? extractTopExports(content) : '';
     ctx.ledger?.recordWrite(args.path, lineCount, topExports);
+
+    // Anon-fetch-without-policy gate: record any table this file fetches
+    // directly via the anon key. See types.ts AgentContext.anonFetchTables.
+    if (/\.(tsx?|jsx?)$/.test(args.path)) {
+      const anonTables = extractAnonFetchTables(content);
+      if (anonTables.length > 0) {
+        if (!ctx.anonFetchTables) ctx.anonFetchTables = new Map();
+        for (const t of anonTables) {
+          if (!ctx.anonFetchTables.has(t)) ctx.anonFetchTables.set(t, args.path);
+        }
+      }
+    }
 
     // Warn agent about existing importers (only meaningful when overwriting an existing file)
     const importers = ctx.reverseGraph?.get(args.path);

@@ -119,7 +119,7 @@ function StatCard({
   iconColor: string;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[#0d0f14] p-5">
+    <div className="rounded-xl border border-white/[0.06] bg-[hsl(var(--admin-surface))] p-5">
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs font-medium text-white/45 uppercase tracking-wider">{title}</span>
         <Icon className={`h-4 w-4 ${iconColor}`} />
@@ -425,7 +425,7 @@ export default function AdminAIMetrics() {
           icon={ShieldAlert}
           iconColor={abortRate > 10 ? 'text-red-400' : 'text-white/45'}
         />
-        <div className="rounded-xl border border-white/[0.06] bg-[#0d0f14] p-5 md:col-span-2">
+        <div className="rounded-xl border border-white/[0.06] bg-[hsl(var(--admin-surface))] p-5 md:col-span-2">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-medium text-white/45 uppercase tracking-wider flex items-center gap-1.5">
               <HeartPulse className="h-3.5 w-3.5" /> Provider Health
@@ -468,7 +468,7 @@ export default function AdminAIMetrics() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Tier distribution */}
-        <div className="rounded-xl border border-white/[0.06] bg-[#0d0f14] p-5">
+        <div className="rounded-xl border border-white/[0.06] bg-[hsl(var(--admin-surface))] p-5">
           <h3 className="text-sm font-semibold text-white/85 mb-4">Tier Distribution (this month)</h3>
           <table className="w-full text-sm">
             <thead>
@@ -497,7 +497,7 @@ export default function AdminAIMetrics() {
         </div>
 
         {/* Model usage */}
-        <div className="rounded-xl border border-white/[0.06] bg-[#0d0f14] p-5">
+        <div className="rounded-xl border border-white/[0.06] bg-[hsl(var(--admin-surface))] p-5">
           <h3 className="text-sm font-semibold text-white/85 mb-4 flex items-center gap-2">
             <Cpu className="h-4 w-4 text-white/45" />
             Model Usage (this month)
@@ -529,7 +529,7 @@ export default function AdminAIMetrics() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Top projects by spend */}
-        <div className="rounded-xl border border-white/[0.06] bg-[#0d0f14] p-5">
+        <div className="rounded-xl border border-white/[0.06] bg-[hsl(var(--admin-surface))] p-5">
           <h3 className="text-sm font-semibold text-white/85 mb-4 flex items-center gap-2">
             <Trophy className="h-4 w-4 text-white/45" />
             Top Projects by Spend (this month)
@@ -561,7 +561,7 @@ export default function AdminAIMetrics() {
         </div>
 
         {/* Recent failed runs */}
-        <div className="rounded-xl border border-white/[0.06] bg-[#0d0f14] p-5">
+        <div className="rounded-xl border border-white/[0.06] bg-[hsl(var(--admin-surface))] p-5">
           <h3 className="text-sm font-semibold text-white/85 mb-4 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-white/45" />
             Recent Failed Runs
@@ -587,7 +587,7 @@ export default function AdminAIMetrics() {
       </div>
 
       {/* KB index stats */}
-      <div className="rounded-xl border border-white/[0.06] bg-[#0d0f14] p-5">
+      <div className="rounded-xl border border-white/[0.06] bg-[hsl(var(--admin-surface))] p-5">
         <h3 className="text-sm font-semibold text-white/85 mb-4 flex items-center gap-2">
           <Database className="h-4 w-4 text-white/45" />
           Knowledge Base Index
@@ -618,7 +618,7 @@ export default function AdminAIMetrics() {
       </div>
 
       {/* Recent runs */}
-      <div className="rounded-xl border border-white/[0.06] bg-[#0d0f14] p-5">
+      <div className="rounded-xl border border-white/[0.06] bg-[hsl(var(--admin-surface))] p-5">
         <h3 className="text-sm font-semibold text-white/85 mb-4">Recent Runs</h3>
         {recent.length === 0 ? (
           <p className="text-sm text-white/45 text-center py-8">No runs yet</p>

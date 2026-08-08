@@ -124,6 +124,84 @@ export interface AgentContext {
   assetReferencesChecked?: Map<string, { fullyResolved: boolean; unresolvedCount: number }>;
   /** Counts place_asset calls this run   cheap signal for "an asset task happened", used to scope the asset-completeness closure-claim check without a false trigger on unrelated runs. */
   placeAssetCallCount?: number;
+  /**
+   * Turn-scoped staging area for schema-mutating SQL (DDL: CREATE/ALTER/DROP/
+   * TRUNCATE) awaiting a confirm_database_change call. query_database stages
+   * DDL here instead of executing it immediately   closes the "agent silently
+   * altered live schema with zero visibility" gap found in the 2026-08 core-loop
+   * audit. Never persisted; abandoned entries just expire with the run.
+   */
+  pendingDbChanges?: Map<string, { sql: string; createdAt: number }>;
+  /**
+   * Turn-scoped staging area for edge-function deploys awaiting a
+   * confirm_edge_function_deploy call. write_edge_function validates and
+   * stages here instead of writing the live DB row / syncing to the execution
+   * host immediately   same "surface then confirm" gate as pendingDbChanges,
+   * for the other live-effecting tool the 2026-08 audit flagged.
+   */
+  pendingEdgeFunctionDeploys?: Map<string, {
+    name: string;
+    code: string;
+    description?: string;
+    requiresServiceRole?: boolean;
+    isPublic?: boolean;
+    createdAt: number;
+  }>;
+  /**
+   * Anon-fetch-without-policy gate (2026-08 audit follow-up). Live repro: an
+   * agent created a table (RLS auto-enabled, zero policies   correct), wrote
+   * clean frontend code doing a direct `fetch()` to `/rest/v1/<table>` with
+   * the anon key, never issued a CREATE POLICY, and closed the run with a
+   * confident summary. get_build_errors passes clean (nothing is syntactically
+   * wrong)   the anon role just gets 0 rows back at runtime. Two turn-scoped
+   * sets close that gap:
+   *   - anonFetchTables: table name (lowercased) -> first file path where
+   *     write_file/edit_file detected a direct `/rest/v1/<table>` fetch
+   *     alongside an ANON_KEY/VITE_DB_ANON_KEY/DB_ANON_KEY marker in the same
+   *     file content. See extractAnonFetchTables in this file.
+   *   - anonPolicyTables: table names (lowercased) that got a CREATE POLICY
+   *     actually EXECUTED this run (confirm_database_change, not just staged)
+   *     targeting an anon/public role. See extractAnonPolicyTables in
+   *     query_database.ts.
+   * agentLoopService.ts computes the gap (anonFetchTables minus
+   * anonPolicyTables) at the closure-claim gate and forces a corrective
+   * continuation when non-empty. KNOWN LIMITATION: a pre-existing table from
+   * a prior run that already has an anon policy, newly wired to a fetch this
+   * run, will false-positive here   there's no live pg_policies check, only
+   * this-run tracking. Accepted trade-off; flagged rather than silently
+   * expanding scope to a live DB check.
+   */
+  anonFetchTables?: Map<string, string>;
+  anonPolicyTables?: Set<string>;
+}
+
+// ─── Anon-fetch detection helper ─────────────────────────────────────────────
+
+// Matches `/rest/v1/<table>`, optionally preceded by a hardcoded tenant-schema
+// path segment (`/tenant_xxx/rest/v1/<table>`)   the normal generated-code form
+// is `${import.meta.env.VITE_DB_API_URL}/rest/v1/<table>` where the schema
+// segment lives inside the env var, not the source literal, but a model can
+// also hardcode it, so both forms are matched.
+const ANON_FETCH_URL_RE = /(?:tenant_[a-zA-Z0-9_]+\/)?rest\/v1\/([a-zA-Z_][a-zA-Z0-9_]*)/g;
+const ANON_KEY_MARKER_RE = /\b(?:VITE_DB_ANON_KEY|DB_ANON_KEY|ANON_KEY)\b/;
+
+/**
+ * Extracts table names a piece of frontend source code fetches directly via
+ * the anon key. Requires BOTH an anon-key marker AND a `/rest/v1/<table>`
+ * path somewhere in the same file content   deliberately not "contains the
+ * substring anon anywhere", which would cross-contaminate on unrelated code
+ * (a comment, an unrelated identifier). Returns [] for files with no anon-key
+ * marker, however many REST-looking paths they contain.
+ */
+export function extractAnonFetchTables(content: string): string[] {
+  if (!ANON_KEY_MARKER_RE.test(content)) return [];
+  const tables = new Set<string>();
+  ANON_FETCH_URL_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = ANON_FETCH_URL_RE.exec(content)) !== null) {
+    tables.add(m[1].toLowerCase());
+  }
+  return [...tables];
 }
 
 // ─── Tool abstraction ────────────────────────────────────────────────────────

@@ -10,6 +10,11 @@ import { Download, Save, Plus, Trash2, Minus } from 'lucide-react';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
 import { cn } from '@/lib/utils';
+import {
+    AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
+import { buttonVariants } from '@/components/ui/button';
 
 interface WorkspaceFile {
     path: string;
@@ -52,6 +57,7 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
     const [isDirty, setIsDirty] = useState(false);
     const [showNewFileInput, setShowNewFileInput] = useState(false);
     const [newFilePath, setNewFilePath] = useState('');
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const streamRef = useRef<HTMLDivElement>(null);
     const [fontSize, setFontSize] = useState(14);
     const [treeWidth, setTreeWidth] = useState(176);
@@ -132,9 +138,11 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
 
     const handleDeleteSelectedFile = useCallback(() => {
         if (!selectedFilePath || !onFileDelete || readOnly) return;
+        setShowDeleteConfirm(true);
+    }, [selectedFilePath, onFileDelete, readOnly]);
 
-        const confirmed = window.confirm(`Delete ${selectedFilePath}?`);
-        if (!confirmed) return;
+    const handleConfirmDeleteFile = useCallback(() => {
+        if (!selectedFilePath || !onFileDelete || readOnly) return;
 
         const currentIndex = normalizedFiles.findIndex((file) => file.path === selectedFilePath);
         const fallbackFile = normalizedFiles[currentIndex + 1] || normalizedFiles[currentIndex - 1] || null;
@@ -143,6 +151,7 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
         setSelectedFilePath(fallbackFile?.path || null);
         setIsDirty(true);
         toast.success(`Deleted ${selectedFilePath}`);
+        setShowDeleteConfirm(false);
     }, [selectedFilePath, onFileDelete, readOnly, normalizedFiles]);
 
     const handleSave = useCallback(() => {
@@ -382,6 +391,27 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
                     )}
                 </div>
             </div>
+
+            {/* Delete File Confirmation */}
+            <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete file?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Delete {selectedFilePath}?
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(e) => { e.preventDefault(); handleConfirmDeleteFile(); }}
+                            className={buttonVariants({ variant: 'destructive' })}
+                        >
+                            Delete
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 };

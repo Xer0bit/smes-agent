@@ -296,7 +296,7 @@ export default function AdminTenantDetail() {
 
       {/* Destroy Confirmation */}
       <Dialog open={confirmDestroy} onOpenChange={setConfirmDestroy}>
-        <DialogContent className="bg-[#0d0f14] border-white/10">
+        <DialogContent className="bg-[hsl(var(--admin-surface))] border-white/10">
           <DialogHeader>
             <DialogTitle className="text-white">Destroy Tenant</DialogTitle>
             <DialogDescription className="text-gray-400">

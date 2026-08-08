@@ -8,6 +8,11 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
+import { buttonVariants } from '@/components/ui/button';
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
@@ -44,6 +49,10 @@ export default function Users() {
   // Role management
   const [roleUser, setRoleUser] = useState<UserWithRole | null>(null);
   const [selectedRole, setSelectedRole] = useState('');
+
+  // Delete user
+  const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [deletingUser, setDeletingUser] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -170,7 +179,7 @@ export default function Users() {
     }
   };
 
-  const handleDeleteUser = async (id: string) => {
+  const handleRequestDeleteUser = (id: string) => {
     const target = users.find((u) => u.id === id);
     if (id === currentUserId) {
       toast.error('You cannot delete your own account from admin panel');
@@ -180,8 +189,11 @@ export default function Users() {
       toast.error('Only super admins can delete super admin users');
       return;
     }
+    setDeleteUserId(id);
+  };
 
-    if (!confirm('Are you sure you want to delete this user? This will permanently remove them from auth and they can re-register with the same email.')) return;
+  const handleDeleteUser = async (id: string) => {
+    setDeletingUser(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const { data, error } = await supabase.functions.invoke('admin-delete-user', {
@@ -194,6 +206,9 @@ export default function Users() {
       loadUsers();
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete user');
+    } finally {
+      setDeletingUser(false);
+      setDeleteUserId(null);
     }
   };
 
@@ -283,7 +298,7 @@ export default function Users() {
                     <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-gray-400 hover:text-purple-400 hover:bg-purple-500/10" onClick={() => handleManageRole(user)}>
                       <Shield className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-gray-400 hover:text-red-400 hover:bg-red-500/10" onClick={() => handleDeleteUser(user.id)}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-gray-400 hover:text-red-400 hover:bg-red-500/10" onClick={() => handleRequestDeleteUser(user.id)}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -328,7 +343,7 @@ export default function Users() {
 
       {/* Edit User Dialog */}
       <Dialog open={!!editUser} onOpenChange={() => setEditUser(null)}>
-        <DialogContent className="bg-[#111318] border-white/10 text-white">
+        <DialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
           <DialogHeader>
             <DialogTitle className="text-white">Edit User</DialogTitle>
           </DialogHeader>
@@ -351,7 +366,7 @@ export default function Users() {
 
       {/* Manage Role Dialog */}
       <Dialog open={!!roleUser} onOpenChange={() => setRoleUser(null)}>
-        <DialogContent className="bg-[#111318] border-white/10 text-white">
+        <DialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
           <DialogHeader>
             <DialogTitle className="text-white">Manage Role   {roleUser?.email}</DialogTitle>
           </DialogHeader>
@@ -374,6 +389,30 @@ export default function Users() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete User Confirmation */}
+      <AlertDialog open={!!deleteUserId} onOpenChange={(open) => { if (!open) setDeleteUserId(null); }}>
+        <AlertDialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Delete user?</AlertDialogTitle>
+            <AlertDialogDescription className="text-gray-400">
+              This will permanently remove them from auth and they can re-register with the same email.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingUser} className="bg-transparent border-white/10 text-gray-300 hover:bg-white/10 hover:text-white">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deletingUser}
+              onClick={(e) => { e.preventDefault(); if (deleteUserId) handleDeleteUser(deleteUserId); }}
+              className={buttonVariants({ variant: 'destructive' })}
+            >
+              {deletingUser ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

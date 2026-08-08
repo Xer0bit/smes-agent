@@ -70,7 +70,7 @@ function StatCard({ label, value, icon: Icon, color }: {
   label: string; value: string; icon: React.ElementType; color: string;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[#0d0f14] p-5 flex items-center gap-4">
+    <div className="rounded-xl border border-white/[0.06] bg-[hsl(var(--admin-surface))] p-5 flex items-center gap-4">
       <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${color}`}>
         <Icon className="h-5 w-5" />
       </div>
@@ -275,7 +275,7 @@ export default function AdminUsage() {
       )}
 
       {/* Tabs */}
-      <div className="rounded-xl border border-white/[0.06] bg-[#0d0f14] overflow-hidden">
+      <div className="rounded-xl border border-white/[0.06] bg-[hsl(var(--admin-surface))] overflow-hidden">
         {/* Tab bar */}
         <div className="flex gap-1 p-3 border-b border-white/[0.06]">
           {([['org','By Organization'],['project','By Project'],['model','By Model']] as [TabId, string][]).map(([id, label]) => (

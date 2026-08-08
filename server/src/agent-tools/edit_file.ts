@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import { z } from 'zod';
 import ts from 'typescript';
-import { ToolDefinition, AgentContext, safeJoin } from './types.js';
+import { ToolDefinition, AgentContext, safeJoin, extractAnonFetchTables } from './types.js';
 import { sanitizeFileContent, checkSyntaxBalance } from './sanitize.js';
 
 const schema = z.object({
@@ -254,6 +254,18 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
     fs.writeFileSync(fullPath, sanitized, 'utf8');
     // Emit SSE tool-output so the frontend shows an activity chip
     ctx.onXmlComplete(`<ecomgear-edit path="${args.path}"></ecomgear-edit>`);
+
+    // Anon-fetch-without-policy gate: record any table this file fetches
+    // directly via the anon key. See types.ts AgentContext.anonFetchTables.
+    if (/\.(tsx?|jsx?)$/.test(args.path)) {
+      const anonTables = extractAnonFetchTables(sanitized);
+      if (anonTables.length > 0) {
+        if (!ctx.anonFetchTables) ctx.anonFetchTables = new Map();
+        for (const t of anonTables) {
+          if (!ctx.anonFetchTables.has(t)) ctx.anonFetchTables.set(t, args.path);
+        }
+      }
+    }
 
     // Incremental live push   same as write_file, keeps preview in sync mid-run
     // Buffer for deferred preview sync   same pattern as write_file.

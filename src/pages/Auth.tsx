@@ -222,7 +222,7 @@ export default function AuthPage() {
 
         <div className="mb-8 flex items-center gap-2.5">
           <img src={logo} alt="eComGear" className="h-7 w-auto object-contain" />
-sssss        </div>
+        </div>
 
         <div className="mb-6 space-y-1">
           <h1 className="font-display text-2xl font-semibold tracking-tight">

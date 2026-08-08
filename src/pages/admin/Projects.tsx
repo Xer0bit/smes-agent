@@ -7,6 +7,11 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
+import { buttonVariants } from '@/components/ui/button';
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
@@ -39,6 +44,8 @@ export default function Projects() {
   const [editName, setEditName] = useState('');
   const [editStatus, setEditStatus] = useState('');
   const [accessProject, setAccessProject] = useState<ProjectWithOrg | null>(null);
+  const [deleteProjectId, setDeleteProjectId] = useState<string | null>(null);
+  const [deletingProject, setDeletingProject] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -106,7 +113,7 @@ export default function Projects() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this project? This cannot be undone.')) return;
+    setDeletingProject(true);
     try {
       const { error } = await supabase.from('projects').delete().eq('id', id);
       if (error) throw error;
@@ -114,6 +121,9 @@ export default function Projects() {
       loadProjects();
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete project');
+    } finally {
+      setDeletingProject(false);
+      setDeleteProjectId(null);
     }
   };
 
@@ -202,7 +212,7 @@ export default function Projects() {
                     <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-gray-400 hover:text-white hover:bg-white/10" onClick={() => handleEdit(project)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-gray-400 hover:text-red-400 hover:bg-red-500/10" onClick={() => handleDelete(project.id)}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-gray-400 hover:text-red-400 hover:bg-red-500/10" onClick={() => setDeleteProjectId(project.id)}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -245,7 +255,7 @@ export default function Projects() {
 
       {/* Access Management Dialog */}
       <Dialog open={!!accessProject} onOpenChange={() => setAccessProject(null)}>
-        <DialogContent className="bg-[#111318] border-white/10 text-white max-w-lg">
+        <DialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white max-w-lg">
           <DialogHeader>
             <DialogTitle className="text-white flex items-center gap-2">
               <Users className="h-4 w-4 text-blue-400" />
@@ -270,7 +280,7 @@ export default function Projects() {
 
       {/* Edit Dialog */}
       <Dialog open={!!editProject} onOpenChange={() => setEditProject(null)}>
-        <DialogContent className="bg-[#111318] border-white/10 text-white">
+        <DialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
           <DialogHeader>
             <DialogTitle className="text-white">Edit Project</DialogTitle>
           </DialogHeader>
@@ -299,6 +309,30 @@ export default function Projects() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Project Confirmation */}
+      <AlertDialog open={!!deleteProjectId} onOpenChange={(open) => { if (!open) setDeleteProjectId(null); }}>
+        <AlertDialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Delete this project?</AlertDialogTitle>
+            <AlertDialogDescription className="text-gray-400">
+              This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingProject} className="bg-transparent border-white/10 text-gray-300 hover:bg-white/10 hover:text-white">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deletingProject}
+              onClick={(e) => { e.preventDefault(); if (deleteProjectId) handleDelete(deleteProjectId); }}
+              className={buttonVariants({ variant: 'destructive' })}
+            >
+              {deletingProject ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

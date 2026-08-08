@@ -5,6 +5,11 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
+import { buttonVariants } from '@/components/ui/button';
 import { Database, Search, Loader2, RefreshCw, Radio, Download, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -36,6 +41,7 @@ export default function DatabaseHosting() {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [actioningId, setActioningId] = useState<string | null>(null);
+  const [deprovisionRow, setDeprovisionRow] = useState<TenantDbRow | null>(null);
 
   const authedFetch = async (path: string, options: RequestInit = {}) => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -82,9 +88,12 @@ export default function DatabaseHosting() {
     }
   };
 
-  const handleDeprovision = async (row: TenantDbRow) => {
+  const handleRequestDeprovision = (row: TenantDbRow) => {
     if (row.status === 'deprovisioned') return;
-    if (!confirm(`Deprovision database "${row.schema_name}" (owned by ${row.owner_email || row.user_id})? This cannot be undone.`)) return;
+    setDeprovisionRow(row);
+  };
+
+  const handleDeprovision = async (row: TenantDbRow) => {
     setActioningId(row.id);
     try {
       const res = await authedFetch(`/api/v1/admin/database/${row.id}/deprovision`, { method: 'POST' });
@@ -96,6 +105,7 @@ export default function DatabaseHosting() {
       toast.error(err.message || 'Deprovision failed');
     } finally {
       setActioningId(null);
+      setDeprovisionRow(null);
     }
   };
 
@@ -244,7 +254,7 @@ export default function DatabaseHosting() {
                         variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400 hover:text-red-300"
                         title="Deprovision"
                         disabled={actioningId === r.id || r.status === 'deprovisioned'}
-                        onClick={() => handleDeprovision(r)}
+                        onClick={() => handleRequestDeprovision(r)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -256,6 +266,30 @@ export default function DatabaseHosting() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Deprovision Confirmation */}
+      <AlertDialog open={!!deprovisionRow} onOpenChange={(open) => { if (!open) setDeprovisionRow(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deprovision database?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Deprovision database "{deprovisionRow?.schema_name}" (owned by {deprovisionRow?.owner_email || deprovisionRow?.user_id})? This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actioningId === deprovisionRow?.id}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={actioningId === deprovisionRow?.id}
+              onClick={(e) => { e.preventDefault(); if (deprovisionRow) handleDeprovision(deprovisionRow); }}
+              className={buttonVariants({ variant: 'destructive' })}
+            >
+              {actioningId === deprovisionRow?.id ? 'Deprovisioning…' : 'Deprovision'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

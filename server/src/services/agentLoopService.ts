@@ -8,10 +8,43 @@ import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import type { AgentContext } from '../agent-tools/types.js';
 import { safeJoin } from '../agent-tools/types.js';
+import { traceSpan } from '../utils/telemetry.js';
 import { EDGE_FUNCTIONS_DIR } from '../agent-tools/write_edge_function.js';
 import { sanitizeFileContent, sanitizeConfigFile } from '../agent-tools/sanitize.js';
 import ts from 'typescript';
-import { getAppBuilderBuildSystemPrompt, getAppBuilderSystemPrompt, MICRO_SYSTEM_PROMPT, getFixSystemPrompt, getEditSystemPrompt } from '../prompts/app-builder.prompt.js';
+import { buildSystemMessagesFor, type PromptMessage } from './agentPromptBuilder.js';
+import { AgentMetrics, type StepMetrics } from './agentMetricsCollector.js';
+import {
+  getAppBuilderBuildSystemPrompt,
+  getAppBuilderSystemPrompt,
+  MICRO_SYSTEM_PROMPT,
+  getFixSystemPrompt,
+  getEditSystemPrompt,
+} from '../prompts/app-builder.prompt.js';
+
+export interface ToolCallPayload {
+  toolName: string;
+  args?: Record<string, unknown>;
+  executionId?: string;
+}
+
+export interface ToolOutputPayload {
+  toolName?: string;
+  path?: string;
+  content?: string;
+  files?: Array<{ path: string; content: string }>;
+  status?: string;
+  xml?: string;
+}
+
+export function isToolCallPayload(payload: unknown): payload is ToolCallPayload {
+  return typeof payload === 'object' && payload !== null && ('toolName' in payload || 'name' in payload);
+}
+
+export function isToolOutputPayload(payload: unknown): payload is ToolOutputPayload {
+  return typeof payload === 'object' && payload !== null;
+}
+
 import { PRE_INSTALLED_PACKAGES } from './baseTemplateService.js';
 import { RunStateLedger } from './runStateLedger.js';
 import { canonicalizeModelId, DEFAULT_PRIMARY_MODEL, DEFAULT_FALLBACK_MODEL } from '../config/models.js';
@@ -206,6 +239,8 @@ export interface AgentRunResult {
   costUsd: number;
   /** Eco credits charged for this run, see computeEcoCost() */
   ecoUsed: number;
+  /** Number of steps executed in this run */
+  stepCount?: number;
   /** True when the run hit the budget cap mid-task but made real progress   safe to auto-continue */
   needsAutoContinue?: boolean;
   /** Ready-to-send prompt for the auto-continuation turn, set only when needsAutoContinue is true */
@@ -215,13 +250,25 @@ export interface AgentRunResult {
 }
 
 export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResult> {
-  const { projectId } = params;
+  const { projectId, promptIntent } = params;
+  const requestTier = promptIntent?.requestTier ?? 'unknown';
 
   // ── Per-project mutex: prevent interleaved file writes from concurrent runs ──
   const lock = acquireProjectLock(projectId);
   await lock.ready;
   try {
-  return await _runAgentLoopInner(params);
+    return await traceSpan(
+      'agent.run_loop',
+      { projectId, requestTier },
+      async (span) => {
+        const result = await _runAgentLoopInner(params);
+        span.setAttributes({
+          totalCostUsd: result.costUsd ?? 0,
+          totalSteps: result.stepCount ?? 0,
+        });
+        return result;
+      }
+    );
   } finally {
     lock.release();
     endNarration(projectId);
@@ -517,6 +564,10 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     editFailures: new Map<string, number>(),
     buildErrorCallCount: 0,
     dbQueryCallCount: 0,
+    pendingDbChanges: new Map(),
+    pendingEdgeFunctionDeploys: new Map(),
+    anonFetchTables: new Map(),
+    anonPolicyTables: new Set(),
     previewServiceUrl: process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001',
     ledger: runLedger,
     ecgMcp: (() => {
@@ -1208,8 +1259,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     const dbNote = hasDb
       ? '\n\nThis project\'s hosted database is the ONLY place for application data (any table the user asks for   posts, products, orders, custom records, etc.).' +
-        '\n\n**⚠️ CRITICAL   this database has NO row-level security.** `VITE_DB_ANON_KEY` is bundled straight into the public JS bundle (anyone can read it via devtools), and its role has a flat `GRANT SELECT` on every table   not scoped per user, per row, or by ownership. There is no `auth.uid()`-style policy layer like real Supabase. Direct client-side PostgREST access lets every visitor read or corrupt every table in full, public data or not   there is nothing stopping them. This is why direct frontend database access is never used here (see the rule right below): edge functions are the only place `db.*` access is safe to grant.' +
-        '\n\n**ALL database work MUST go through edge functions   never call the database directly from frontend code, including read-only data.** Use `write_edge_function` for every read and write: user-specific/private data (orders, profiles, messages, anything with an owner), ALL writes (INSERT/UPDATE/DELETE from the browser bypasses any validation you meant to enforce), anything requiring authorization logic ("only the owner can see this"), AND plain public reads (a product catalog, public blog posts, a leaderboard)   there is no exception for "it\'s just public read-only data." The frontend must never construct a `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` fetch itself; every piece of data the UI needs comes from an edge function you write and the frontend invokes via the pattern below. Inside an edge function, `VITE_DB_API_URL` is never needed   the privileged `db.*` helper is already scoped to this project\'s isolated schema.' + liveSchemaBlock +
+        '\n\n**⚠️ CRITICAL   every table is deny-all by default (RLS enabled, zero policies) the instant it\'s created.** `VITE_DB_ANON_KEY` is bundled straight into the public JS bundle (anyone can read it via devtools), but its role can read NOTHING on a new table until you explicitly run `CREATE POLICY ... TO <schema>_anon` for it. A direct fetch against a table with no such policy does not error   it silently returns an empty array, which looks like "no code changes needed" but is actually a broken feature. There is no `auth.uid()`-style per-end-user identity layer like real Supabase; a policy is table-wide (readable by any anon-key holder), not scoped per visitor.' +
+        '\n\n**Database access rule: writes and anything private go through edge functions, always. Plain public reads MAY use a direct client fetch, but ONLY if you also add the matching anon-read policy in the SAME turn   the two are not optional companions.** Use `write_edge_function` for: user-specific/private data (orders, profiles, messages, anything with an owner), ALL writes (INSERT/UPDATE/DELETE from the browser bypasses any validation you meant to enforce), and anything requiring authorization logic ("only the owner can see this"). For a genuinely public read (a product catalog, public blog posts, a leaderboard) you may fetch `import.meta.env.VITE_DB_API_URL/rest/v1/<table>` directly from the frontend   but immediately after creating or first wiring that table, call `query_database` with `CREATE POLICY "public_read_<table>" ON <table> FOR SELECT TO <schema>_anon USING (true)` (or a narrower condition if only some rows are public). Skipping this step is the single most common way a "finished" feature ships broken. Inside an edge function, `VITE_DB_API_URL` is never needed   the privileged `db.*` helper is already scoped to this project\'s isolated schema.' + liveSchemaBlock +
         (hasSb ? ' This hosted database has NO auth/login server of its own   it is Postgres + PostgREST only. Never attempt to hit `VITE_DB_API_URL/auth/...`   that endpoint does not exist here; auth always goes through Supabase (above).' : '') +
         '\n\n**Login/signup/password checks are SECURITY-CRITICAL and MUST be an edge function   never a direct client-side PostgREST call.** Querying `users?email=eq.X&password=eq.Y` straight from the browser puts the password in the URL (logged everywhere) and exposes the whole table to anyone with the anon key. Write an edge function that looks up the user via `db.select` and compares a HASHED password server-side; return only a session token/user object.\n' +
         '\n\n**Edge functions**   use `write_edge_function` for server-side logic the browser should never run directly: auth/password checks (above), any user-specific or private data access, any write, code that needs a secret API key, webhook handlers, scheduled/triggered jobs, or any multi-step backend operation. Do NOT put that logic in frontend code just because it seems simpler   if it touches private/owned data, writes anything, needs a secret, touches passwords, or must run server-side, it MUST be an edge function. Inside the function, read saved secrets with the EXACT key name they were saved under, including a `VITE_` prefix if that\'s how it\'s stored   `secrets.VITE_DB_API_URL`, not `secrets.DB_API_URL`. Guessing a shortened name silently breaks every call in the function (the "secrets not configured" guard trips immediately) with no visible error until someone actually tests it. Check the actual secret list above instead of assuming a name (save new keys with `set_secret` first   never paste key values into function code or frontend files).\n' +
@@ -1566,7 +1617,16 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // the large-file writes already suspected (unconfirmed) of hitting this
       // ceiling. Extra room costs nothing unless actually used.
       const outputLimit = pName === 'deepseek' ? 8192 : pName === 'anthropic' ? 32768 : 16384;
-      return streamText({
+      return traceSpan(
+        'agent.llm_completion',
+        {
+          projectId,
+          modelId,
+          providerName: pName,
+          attempt,
+        },
+        async () => {
+          return streamText({
         model: provider,
         system: buildSystemMessagesFor(pName),
         messages: conversationMessages,
@@ -1731,7 +1791,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // times in a row (auth-login, auth-signup, get-cards, get-mystery-cases,
           // get-shops, process-payment) and was killed by this exact check.
           const STATE_MODIFYING_TOOLS = new Set([
-            'write_file', 'edit_file', 'write_edge_function', 'delete_edge_function', 'delete_file', 'rename_file', 'place_asset',
+            'write_file', 'edit_file', 'write_edge_function', 'confirm_edge_function_deploy',
+            'confirm_database_change', 'delete_edge_function', 'delete_file', 'rename_file', 'place_asset',
           ]);
           // DIAGNOSTIC (2026-07-21): three consecutive Anthropic runs showed
           // write_file steps that looked successful in the log yet never reset
@@ -1777,6 +1838,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           if (hadSuccessfulWriteThisStep) {
             stepsSinceLastWrite = 0;
             anySuccessfulWriteThisRun = true;
+            // Invalidate any prior "healthy" verification: it was true of the
+            // code as it stood BEFORE this write. A stale ctx.lastBuildErrorsHealthy
+            // === true from an earlier get_build_errors call must not let a LATER
+            // resolution claim skip verification just because the run checked out
+            // healthy at some earlier point before more edits landed. This is what
+            // closes the closure-claim gate below over silently-stale verification;
+            // see that gate's comment for the full reasoning.
+            ctx.lastBuildErrorsHealthy = undefined;
             // A successful write proves the model isn't stuck — any nudge fired
             // during an earlier, now-resolved investigation phase shouldn't count
             // against a later, unrelated one. Without this reset, a run that
@@ -2035,10 +2104,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
               if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
             }).catch(() => {});
-            abortController.abort();
           }
         },
       });
+        }
+      );
     };
 
     const consumeResultStream = async (stream: ReturnType<typeof streamText>): Promise<{ text: string; err: any | null }> => {
@@ -2324,6 +2394,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // fixed a bug" framing, so the check would false-positive on normal build
     // narration ("I've added the cart drawer").
     //
+    // Also requires anySuccessfulWriteThisRun: a fix-tier turn that never wrote
+    // any file (pure diagnosis-and-explain, or a conversational answer with no
+    // code change) has nothing for get_build_errors to verify   forcing a build
+    // check on a turn that touched no code would just make the model call the
+    // tool for no reason. ctx.lastBuildErrorsHealthy is also invalidated back to
+    // undefined on every successful write (see hadSuccessfulWriteThisStep above)
+    // so a get_build_errors call from BEFORE a later edit can no longer satisfy
+    // this gate   the verification has to be fresh, i.e. actually happen after
+    // the write it's supposed to be confirming, not just at some earlier point
+    // in the same run.
+    //
     // Stress-tested 2026-08-06 against paraphrases a model under repair
     // pressure actually uses instead of repeating the same flagged string
     // ("all set now", "that takes care of it", "good to go", "no more
@@ -2358,6 +2439,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     while (
       !ctx.thrashEscalated &&
       _tier === 'fix' &&
+      anySuccessfulWriteThisRun &&
       RESOLUTION_CLAIM_RE.test(accumulatedText) &&
       ctx.lastBuildErrorsHealthy !== true &&
       (MAX_STEPS - stepCount) >= 2 &&
@@ -2406,6 +2488,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     if (
       !ctx.thrashEscalated &&
       _tier === 'fix' &&
+      anySuccessfulWriteThisRun &&
       RESOLUTION_CLAIM_RE.test(accumulatedText) &&
       ctx.lastBuildErrorsHealthy !== true &&
       closureVerifyAttempts >= MAX_CLOSURE_VERIFY_ATTEMPTS
@@ -2416,6 +2499,112 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         `is actually healthy after ${closureVerifyAttempts} verification attempts. I don't want to tell you it's fixed ` +
         `without that confirmation. Please check the preview yourself, or ask me to try again and I'll re-diagnose from ` +
         `the current state rather than repeating the same claim.`;
+    }
+
+    // ─── Anon-fetch-without-policy closure gate (2026-08 audit follow-up) ─────
+    // Live repro that caught this: an agent building a public product catalog
+    // correctly created the table (RLS auto-enabled, zero policies   exactly
+    // as designed) and correctly wrote a direct `fetch()` to it via the anon
+    // key, but never issued a CREATE POLICY. Its closing summary said "Created
+    // products table and Shop page with direct DB fetch" with zero caveat.
+    // Verified directly against Postgres: the anon role got 0 rows. The build
+    // compiles fine (get_build_errors would pass clean)   this is a runtime/
+    // data-completeness gap the RESOLUTION_CLAIM_RE gate above structurally
+    // cannot see, since nothing is syntactically or type-wrong, AND that gate
+    // is scoped to tier==='fix' + "I fixed a bug" phrasing, neither of which
+    // this scenario carries (it's a tier==='build' run with plain "Created X"
+    // narration, not a resolution claim). So this check is deliberately NOT
+    // gated on RESOLUTION_CLAIM_RE matching   it fires whenever a run that
+    // wrote files is about to conclude while still carrying an unresolved
+    // anon-fetch/no-policy gap, regardless of exact closing phrasing.
+    //
+    // Gap = tables write_file/edit_file detected being fetched directly via
+    // the anon key this run (ctx.anonFetchTables), minus tables that got an
+    // actually-EXECUTED CREATE POLICY targeting an anon/public role this run
+    // (ctx.anonPolicyTables). Most tables should have NO anon policy (private
+    // user data)   correctly leaving them policy-less is the secure default,
+    // which is exactly why this only fires on tables the run's OWN generated
+    // frontend code proves it's trying to read directly and unauthenticated,
+    // never on "any table missing a policy."
+    //
+    // KNOWN LIMITATION (accepted, not attempted): a pre-existing table from a
+    // prior run/session that already has an anon policy from that earlier
+    // run, newly wired to a direct fetch in THIS run, will false-positive
+    // here   ctx.anonPolicyTables only tracks policies executed in the
+    // CURRENT run, not a live `pg_policies` check. Closing that gap needs a
+    // live DB lookup at closure time, a heavier lift than this-run tracking;
+    // flagged rather than silently expanded into scope.
+    const anonFetchGapTables = (): string[] => {
+      if (!ctx.anonFetchTables || ctx.anonFetchTables.size === 0) return [];
+      return [...ctx.anonFetchTables.keys()].filter((t) => !ctx.anonPolicyTables?.has(t));
+    };
+    const MAX_ANON_POLICY_VERIFY_ATTEMPTS = 2;
+    let anonPolicyVerifyAttempts = 0;
+    while (
+      !ctx.thrashEscalated &&
+      anySuccessfulWriteThisRun &&
+      anonFetchGapTables().length > 0 &&
+      (MAX_STEPS - stepCount) >= 2 &&
+      !abortController.signal.aborted &&
+      anonPolicyVerifyAttempts < MAX_ANON_POLICY_VERIFY_ATTEMPTS
+    ) {
+      anonPolicyVerifyAttempts++;
+      const gapTables = anonFetchGapTables();
+      const gapDetail = gapTables
+        .map((t) => `  • "${t}" (fetched directly in ${ctx.anonFetchTables!.get(t)})`)
+        .join('\n');
+      console.warn(`[AgentLoop] Anon-fetch-without-policy gap detected (attempt ${anonPolicyVerifyAttempts}/${MAX_ANON_POLICY_VERIFY_ATTEMPTS}, tables: ${gapTables.join(', ')})   forcing corrective continuation. user=${userId ?? 'unknown'}`);
+      generateStatus(projectId, { kind: 'lifecycle', phase: 'post-gen-verify' }).then((s) => {
+        if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
+      }).catch(() => {});
+
+      conversationMessages = [
+        ...conversationMessages,
+        { role: 'assistant' as const, content: accumulatedText },
+        {
+          role: 'user' as const,
+          content:
+            `Your frontend code fetches the following table(s) directly with the anon key, but no read policy ` +
+            `for the anon role was created for them this run:\n${gapDetail}\n\n` +
+            `As written, those fetches will silently return an empty array/no rows to every visitor   the anon ` +
+            `role has no SELECT grant on a table with RLS enabled and zero policies. You must do ONE of these ` +
+            `before finishing:\n` +
+            `  1. If the data is genuinely meant to be public, call query_database with ` +
+            `\`CREATE POLICY <name> ON <schema>.<table> FOR SELECT TO <schema>_anon USING (<condition, e.g. true>);\` ` +
+            `then confirm it via confirm_database_change.\n` +
+            `  2. If the data should NOT be public, remove the direct fetch and move it into an edge function via ` +
+            `write_edge_function instead.\n` +
+            `Do not restate your closing summary until you've done one of these for every table listed above.`,
+        },
+      ];
+
+      try {
+        const anonVerifyStream = await attemptStream(streamingProvider, 0, providerName);
+        const anonVerifyConsume = await consumeResultStream(anonVerifyStream);
+        if (!anonVerifyConsume.err && anonVerifyConsume.text) {
+          accumulatedText = anonVerifyConsume.text;
+        } else if (anonVerifyConsume.err) {
+          console.warn('[AgentLoop] Anon-fetch-policy corrective continuation errored (non-fatal):', anonVerifyConsume.err?.message ?? anonVerifyConsume.err);
+          break;
+        }
+      } catch (anonVerifyErr: any) {
+        console.warn('[AgentLoop] Anon-fetch-policy corrective continuation failed (non-fatal):', anonVerifyErr?.message ?? anonVerifyErr);
+        break;
+      }
+    }
+    // Cap exhausted and the gap is still open: don't let the closing message
+    // stand uncaveated   append an explicit, honest note instead of silently
+    // shipping a summary that implies the feature works end-to-end.
+    {
+      const remainingGapTables = anonFetchGapTables();
+      if (!ctx.thrashEscalated && anySuccessfulWriteThisRun && remainingGapTables.length > 0) {
+        console.warn(`[AgentLoop] Anon-fetch-without-policy gap still open after ${anonPolicyVerifyAttempts} corrective attempts (tables: ${remainingGapTables.join(', ')})   appending caveat. user=${userId ?? 'unknown'}`);
+        accumulatedText +=
+          `\n\n(Note: the frontend fetches ${remainingGapTables.map((t) => `"${t}"`).join(', ')} directly with the anon key, ` +
+          `but no read policy exists for the anon role yet, so those fetches will currently return no rows. Add a ` +
+          `\`CREATE POLICY ... FOR SELECT TO <schema>_anon\` for genuinely public data, or move the fetch into an edge ` +
+          `function if it shouldn't be public.)`;
+      }
     }
 
     // ─── Asset-replacement completeness claim check (root cause #2 of the ────
@@ -3675,7 +3864,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     if (agentTimeoutId) clearTimeout(agentTimeoutId);
     clearInterval(heartbeatId);
-    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed, needsAutoContinue, continuationPrompt, stuckAborted: Boolean(stuckAnalysisAbortReason) };
+    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed, stepCount, needsAutoContinue, continuationPrompt, stuckAborted: Boolean(stuckAnalysisAbortReason) };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     if (agentTimeoutId) clearTimeout(agentTimeoutId);

@@ -8,6 +8,7 @@ import { OrganizationProvider } from "./contexts/OrganizationContext";
 import { SubscriptionProvider } from "./contexts/SubscriptionContext";
 import { UsageProvider } from "./contexts/UsageContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import RouteLoadingFallback from "./components/RouteLoadingFallback";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
@@ -116,37 +117,37 @@ const App = () => (
                 <Route path="/" element={<Index />} />
                 {/* Other landing routes still use shared Header/Footer */}
                 <Route element={<LandingLayout />}>
-                  <Route path="/product" element={<Suspense fallback={null}><Product /></Suspense>} />
-                  <Route path="/china" element={<Suspense fallback={null}><China /></Suspense>} />
-                  <Route path="/features" element={<Suspense fallback={null}><Features /></Suspense>} />
-                  <Route path="/agents" element={<Suspense fallback={null}><Agents /></Suspense>} />
-                  <Route path="/pricing" element={<Suspense fallback={null}><Pricing /></Suspense>} />
-                  <Route path="/contact" element={<Suspense fallback={null}><Contact /></Suspense>} />
-                  <Route path="/privacy" element={<Suspense fallback={null}><PrivacyPolicy /></Suspense>} />
-                  <Route path="/terms" element={<Suspense fallback={null}><TermsOfService /></Suspense>} />
+                  <Route path="/product" element={<Suspense fallback={<RouteLoadingFallback />}><Product /></Suspense>} />
+                  <Route path="/china" element={<Suspense fallback={<RouteLoadingFallback />}><China /></Suspense>} />
+                  <Route path="/features" element={<Suspense fallback={<RouteLoadingFallback />}><Features /></Suspense>} />
+                  <Route path="/agents" element={<Suspense fallback={<RouteLoadingFallback />}><Agents /></Suspense>} />
+                  <Route path="/pricing" element={<Suspense fallback={<RouteLoadingFallback />}><Pricing /></Suspense>} />
+                  <Route path="/contact" element={<Suspense fallback={<RouteLoadingFallback />}><Contact /></Suspense>} />
+                  <Route path="/privacy" element={<Suspense fallback={<RouteLoadingFallback />}><PrivacyPolicy /></Suspense>} />
+                  <Route path="/terms" element={<Suspense fallback={<RouteLoadingFallback />}><TermsOfService /></Suspense>} />
                 </Route>
                 <Route path="/auth" element={<Auth />} />
                 <Route path="/auth/callback" element={<AuthCallback />} />
                 <Route path="/project/:projectId" element={<RequireAuth><Editor /></RequireAuth>} />
                 <Route path="/editor/:projectId" element={<RequireAuth><Editor /></RequireAuth>} />
-                <Route path="/project/:projectId/settings" element={<RequireAuth><Suspense fallback={null}><ProjectSettings /></Suspense></RequireAuth>} />
-                <Route path="/project/:projectId/seo" element={<RequireAuth><Suspense fallback={null}><SeoManager /></Suspense></RequireAuth>} />
+                <Route path="/project/:projectId/settings" element={<RequireAuth><Suspense fallback={<RouteLoadingFallback />}><ProjectSettings /></Suspense></RequireAuth>} />
+                <Route path="/project/:projectId/seo" element={<RequireAuth><Suspense fallback={<RouteLoadingFallback />}><SeoManager /></Suspense></RequireAuth>} />
                 <Route path="/dashboard" element={<RequireAuth><DashboardLayout /></RequireAuth>}>
-                  <Route index element={<Suspense fallback={null}><DashboardHome /></Suspense>} />
-                  <Route path="organizations" element={<Suspense fallback={null}><WorkspaceSettings /></Suspense>} />
-                  <Route path="projects" element={<Suspense fallback={null}><DashboardProjects /></Suspense>} />
-                  <Route path="designs" element={<Suspense fallback={null}><DashboardDesigns /></Suspense>} />
-                  <Route path="ecg-agents" element={<Suspense fallback={null}><EcgAgentsPage /></Suspense>} />
+                  <Route index element={<Suspense fallback={<RouteLoadingFallback />}><DashboardHome /></Suspense>} />
+                  <Route path="organizations" element={<Suspense fallback={<RouteLoadingFallback />}><WorkspaceSettings /></Suspense>} />
+                  <Route path="projects" element={<Suspense fallback={<RouteLoadingFallback />}><DashboardProjects /></Suspense>} />
+                  <Route path="designs" element={<Suspense fallback={<RouteLoadingFallback />}><DashboardDesigns /></Suspense>} />
+                  <Route path="ecg-agents" element={<Suspense fallback={<RouteLoadingFallback />}><EcgAgentsPage /></Suspense>} />
                   <Route path="profile" element={<Navigate to="/dashboard/settings" replace />} />
                   <Route path="team" element={<Navigate to="/dashboard/organizations" replace />} />
-                  <Route path="settings" element={<Suspense fallback={null}><DashboardSettings /></Suspense>} />
+                  <Route path="settings" element={<Suspense fallback={<RouteLoadingFallback />}><DashboardSettings /></Suspense>} />
                 </Route>
-                <Route path="/admin/login" element={<Suspense fallback={null}><AdminLogin /></Suspense>} />
+                <Route path="/admin/login" element={<Suspense fallback={<RouteLoadingFallback />}><AdminLogin /></Suspense>} />
                 {/* AdminApp mounts once with sidebar layout; handles auth + all /admin/* sub-routes */}
-                <Route path="/admin/*" element={<Suspense fallback={null}><AdminApp /></Suspense>} />
-                <Route path="/batch-validate" element={<Suspense fallback={null}><BatchValidate /></Suspense>} />
-                <Route path="/invite/:token" element={<Suspense fallback={null}><AcceptInvite /></Suspense>} />
-                <Route path="/project-invite/:token" element={<Suspense fallback={null}><AcceptProjectInvite /></Suspense>} />
+                <Route path="/admin/*" element={<Suspense fallback={<RouteLoadingFallback />}><AdminApp /></Suspense>} />
+                <Route path="/batch-validate" element={<Suspense fallback={<RouteLoadingFallback />}><BatchValidate /></Suspense>} />
+                <Route path="/invite/:token" element={<Suspense fallback={<RouteLoadingFallback />}><AcceptInvite /></Suspense>} />
+                <Route path="/project-invite/:token" element={<Suspense fallback={<RouteLoadingFallback />}><AcceptProjectInvite /></Suspense>} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

@@ -59,7 +59,7 @@ const DashboardSidebar = ({
     { title: t('dashboard.home'), url: '/dashboard', icon: Home, end: true },
     { title: 'Workspace Settings', url: '/dashboard/organizations', icon: Building2 },
     { title: t('dashboard.projects'), url: '/dashboard/projects', icon: FolderKanban },
-    { title: 'Designs', url: '/dashboard/designs', icon: Sparkles },
+    { title: 'Templates', url: '/dashboard/designs', icon: Sparkles },
     { title: t('dashboard.settings'), url: '/dashboard/settings', icon: Settings },
   ];
 

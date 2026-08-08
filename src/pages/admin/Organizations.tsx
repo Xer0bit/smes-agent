@@ -7,6 +7,11 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
+import { buttonVariants } from '@/components/ui/button';
+import {
   Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext,
 } from '@/components/ui/pagination';
 import { Search, Pencil, Trash2, Plus, Building2, RotateCcw } from 'lucide-react';
@@ -43,6 +48,14 @@ export default function Organizations() {
   const [formMaxUsers, setFormMaxUsers] = useState('10');
   const [formEcoLimit, setFormEcoLimit] = useState('10');
   const [formEcoUsed, setFormEcoUsed] = useState('0');
+
+  // Delete org
+  const [deleteOrgId, setDeleteOrgId] = useState<string | null>(null);
+  const [deletingOrg, setDeletingOrg] = useState(false);
+
+  // Reset eco usage
+  const [resetUsageOrg, setResetUsageOrg] = useState<Organization | null>(null);
+  const [resettingUsage, setResettingUsage] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -140,7 +153,7 @@ export default function Organizations() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this organization? This cannot be undone.')) return;
+    setDeletingOrg(true);
     try {
       const { error } = await supabase.from('organizations').delete().eq('id', id);
       if (error) throw error;
@@ -148,6 +161,26 @@ export default function Organizations() {
       loadOrganizations();
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete');
+    } finally {
+      setDeletingOrg(false);
+      setDeleteOrgId(null);
+    }
+  };
+
+  const handleResetUsage = async (org: Organization) => {
+    setResettingUsage(true);
+    try {
+      const { error } = await supabase.from('organizations')
+        .update({ ai_gens_used: 0, ai_gens_reset_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() })
+        .eq('id', org.id);
+      if (error) throw error;
+      toast.success(`Eco usage reset for ${org.name}`);
+      loadOrganizations();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to reset eco');
+    } finally {
+      setResettingUsage(false);
+      setResetUsageOrg(null);
     }
   };
 
@@ -268,26 +301,14 @@ export default function Organizations() {
                       variant="ghost" size="sm"
                       className="h-7 w-7 p-0 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10"
                       title="Reset eco usage to 0"
-                      onClick={async () => {
-                        if (!confirm(`Reset eco usage for "${org.name}" to 0?`)) return;
-                        try {
-                          const { error } = await supabase.from('organizations')
-                            .update({ ai_gens_used: 0, ai_gens_reset_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() })
-                            .eq('id', org.id);
-                          if (error) throw error;
-                          toast.success(`Eco usage reset for ${org.name}`);
-                          loadOrganizations();
-                        } catch (err: any) {
-                          toast.error(err.message || 'Failed to reset eco');
-                        }
-                      }}
+                      onClick={() => setResetUsageOrg(org)}
                     >
                       <RotateCcw className="h-3.5 w-3.5" />
                     </Button>
                     <Button variant="ghost" size="sm" className={`h-7 px-2 text-[11px] ${org.status === 'active' ? 'text-amber-400 hover:bg-amber-500/10' : 'text-emerald-400 hover:bg-emerald-500/10'}`} onClick={() => handleToggleStatus(org)}>
                       {org.status === 'active' ? 'Suspend' : 'Activate'}
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-gray-400 hover:text-red-400 hover:bg-red-500/10" onClick={() => handleDelete(org.id)}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-gray-400 hover:text-red-400 hover:bg-red-500/10" onClick={() => setDeleteOrgId(org.id)}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -330,7 +351,7 @@ export default function Organizations() {
 
       {/* Create / Edit Dialog */}
       <Dialog open={showCreate || !!editOrg} onOpenChange={() => { setShowCreate(false); setEditOrg(null); }}>
-        <DialogContent className="bg-[#111318] border-white/10 text-white">
+        <DialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
           <DialogHeader>
             <DialogTitle className="text-white">{editOrg ? 'Edit Organization' : 'New Organization'}</DialogTitle>
           </DialogHeader>
@@ -380,6 +401,54 @@ export default function Organizations() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Organization Confirmation */}
+      <AlertDialog open={!!deleteOrgId} onOpenChange={(open) => { if (!open) setDeleteOrgId(null); }}>
+        <AlertDialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Delete this organization?</AlertDialogTitle>
+            <AlertDialogDescription className="text-gray-400">
+              This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingOrg} className="bg-transparent border-white/10 text-gray-300 hover:bg-white/10 hover:text-white">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deletingOrg}
+              onClick={(e) => { e.preventDefault(); if (deleteOrgId) handleDelete(deleteOrgId); }}
+              className={buttonVariants({ variant: 'destructive' })}
+            >
+              {deletingOrg ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Reset Eco Usage Confirmation */}
+      <AlertDialog open={!!resetUsageOrg} onOpenChange={(open) => { if (!open) setResetUsageOrg(null); }}>
+        <AlertDialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Reset eco usage?</AlertDialogTitle>
+            <AlertDialogDescription className="text-gray-400">
+              Reset eco usage for "{resetUsageOrg?.name}" to 0?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resettingUsage} className="bg-transparent border-white/10 text-gray-300 hover:bg-white/10 hover:text-white">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={resettingUsage}
+              onClick={(e) => { e.preventDefault(); if (resetUsageOrg) handleResetUsage(resetUsageOrg); }}
+              className={buttonVariants({ variant: 'destructive' })}
+            >
+              {resettingUsage ? 'Resetting…' : 'Reset'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

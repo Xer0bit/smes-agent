@@ -3263,7 +3263,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             }
           }}
         >
-          <DialogContent className="w-[min(24rem,calc(100vw-2rem))] max-w-sm p-0 overflow-hidden" style={{ background: '#111318', borderColor: 'rgba(255,255,255,0.08)' }}>
+          <DialogContent className="w-[min(24rem,calc(100vw-2rem))] max-w-sm p-0 overflow-hidden" style={{ background: 'hsl(var(--admin-surface-dialog))', borderColor: 'rgba(255,255,255,0.08)' }}>
             {/* Header */}
             <div className="flex items-center px-5 pt-5 pb-3">
               <DialogTitle className="text-white text-base font-semibold">{publishedUrl || project?.published_url ? 'Update Site' : 'Publish'}</DialogTitle>

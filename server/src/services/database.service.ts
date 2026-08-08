@@ -339,6 +339,74 @@ export async function buildProjectEnvSecrets(userId: string, projectId: string):
 }
 
 // ---------------------------------------------------------------------------
+// RLS enforcement   deny-all by default on every new tenant table.
+//
+// 2026-08 security fix (Critical #1): every tenant table previously got a
+// flat `ALTER DEFAULT PRIVILEGES ... GRANT SELECT ... TO anon` (see step 5b
+// in provision() below) with Row Level Security never enabled anywhere. The
+// anon key is shipped client-side in every generated app's JS bundle BY
+// DESIGN (public, like a Supabase anon key) and cloud.ecomgear.app/PostgREST
+// enforces nothing beyond that JWT + these Postgres GRANTs   so anyone who
+// pulled the anon key out of a generated app's bundle could SELECT any table
+// in that tenant's schema directly. Confirmed live, internet-reachable.
+//
+// Fix: after every service-role DDL batch (the agent's query_database tool
+// and executeTransactionalMigration()   the only two code paths that execute
+// agent-authored SQL against a tenant schema, per the 2026-08 audit trace),
+// scan pg_class for tables in this schema with relrowsecurity = false and
+// ENABLE ROW LEVEL SECURITY on each, INSIDE the same transaction as the DDL
+// that created them, before COMMIT. With RLS enabled and zero policies
+// defined, the table is unreadable/unwritable via the anon (or service) role
+// until a policy is explicitly added -- deny-all by default, per policy
+// decision. The role that just CREATEd the table is its owner, and table
+// owners bypass RLS by default, so the agent's own service-role session is
+// unaffected; only non-owner roles (anon, and service on tables it doesn't
+// own) are denied.
+//
+// Deliberately NOT a regex/string scan for "CREATE TABLE" in the agent's SQL
+// text (fragile -- CREATE TABLE AS, SELECT INTO, quoted/schema-qualified
+// names, etc. would slip through). This is catalog introspection instead:
+// it does not care what DDL shape produced the table, only that a table
+// without RLS now exists in this schema. It also does not require any
+// elevated Postgres privilege beyond what the creating role already has
+// (ALTER TABLE ... ENABLE ROW LEVEL SECURITY only needs table ownership) --
+// unlike a `CREATE EVENT TRIGGER`, which needs superuser or the
+// pg_create_event_trigger role and can't be confirmed available to
+// TENANT_DB_SUPERUSER on this managed instance, and would fail this fix
+// silently if it isn't.
+//
+// A pre-existing table from BEFORE this fix that isn't owned by the role
+// running this batch would hit `insufficient_privilege` on the ALTER --
+// caught and skipped (best-effort) so it can't roll back an unrelated
+// migration; retroactive remediation of already-provisioned tenant tables is
+// a separate, explicit backfill, out of scope here.
+async function enableRlsOnNewTables(client: import('pg').PoolClient, schemaName: string): Promise<void> {
+  // schemaName always comes from schemaId()'s validated output (see comment
+  // there), never raw user input -- safe to interpolate into this literal.
+  await client.query(`
+    DO $ecg_rls$
+    DECLARE r record;
+    BEGIN
+      FOR r IN
+        SELECT c.relname
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = '${schemaName}' AND c.relkind = 'r' AND NOT c.relrowsecurity
+      LOOP
+        BEGIN
+          EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY', '${schemaName}', r.relname);
+        EXCEPTION WHEN insufficient_privilege THEN
+          -- not owned by the role running this batch (pre-existing table);
+          -- not this migration's table to fix, skip it.
+          NULL;
+        END;
+      END LOOP;
+    END
+    $ecg_rls$;
+  `);
+}
+
+// ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 export const databaseService = {
@@ -959,6 +1027,11 @@ export const databaseService = {
       ? splitSqlStatements(trimmed)
       : [trimmed];
 
+    // Computed before execution (not just for the reload/audit steps below):
+    // gates the RLS-enforcement scan too, so it only runs when this batch
+    // could plausibly have created a table.
+    const ranDdl = statements.some(s => /^\s*(create|alter|drop)\s/i.test(s));
+
     const c = await pg.connect();
     try {
       await c.query(`SET ROLE "${schemaRole}"`);
@@ -971,10 +1044,19 @@ export const databaseService = {
         lastResult = await c.query(stmt);
       }
 
+      // Deny-all by default: any table this batch just created still has RLS
+      // disabled until this runs. Must happen INSIDE this transaction, before
+      // COMMIT   see enableRlsOnNewTables() for why. Runs even for role ===
+      // 'anon' technically never reaches here (anon can't run DDL, blocked
+      // above), so this only ever fires for the service role's own tables.
+      if (ranDdl) {
+        await enableRlsOnNewTables(c, record.schema_name);
+      }
+
       await c.query('COMMIT');
 
       // DDL run through here (agent's query_database tool creating/altering
-      // tables) changes the schema but PostgREST caches its schema at startup  
+      // tables) changes the schema but PostgREST caches its schema at startup
       // without a reload, the new table 404s with PGRST205 "not in schema
       // cache" on every REST call until something unrelated (a provision/
       // deprovision elsewhere) happens to trigger a reload. Only provision()/
@@ -982,7 +1064,6 @@ export const databaseService = {
       // Awaited (not fire-and-forget): the agent's very next step often reads
       // the table it just created via the REST API, so the reload needs to
       // land before this tool call returns, not sometime after.
-      const ranDdl = statements.some(s => /^\s*(create|alter|drop)\s/i.test(s));
       if (ranDdl) {
         try {
           await this._reloadPostgREST();
@@ -1050,4 +1131,126 @@ export const databaseService = {
     }
     throw new Error(`PostgREST reload failed after 3 attempts: ${(lastErr as Error)?.message ?? lastErr}`);
   },
+
+  // ── Transactional DDL/DML Migration Execution ──────────────────────────────
+  executeTransactionalMigration(userId: string, projectId: string, statements: string[]): Promise<MigrationResult> {
+    return executeTransactionalMigration(userId, projectId, statements);
+  },
 };
+
+export interface MigrationResult {
+  success: boolean;
+  statementsRun: number;
+  error?: string;
+}
+
+/**
+ * Execute an array of DDL/DML migration statements inside a strict, isolated PostgreSQL
+ * transaction block (BEGIN ... COMMIT/ROLLBACK).
+ * If any statement fails, the transaction is immediately rolled back and a detailed diagnostic
+ * payload (containing Postgres error code, position, detail, hint, and failing SQL statement)
+ * is returned to enable autonomous LLM error resolution.
+ */
+export async function executeTransactionalMigration(
+  userId: string,
+  projectId: string,
+  statements: string[]
+): Promise<MigrationResult> {
+  const status = await databaseService.getStatus(userId, projectId);
+  if (!status || status.status !== 'active') {
+    return {
+      success: false,
+      statementsRun: 0,
+      error: `[PostgreSQL DDL Migration Error] Database is not provisioned or active for project "${projectId}".`,
+    };
+  }
+
+  const pg = await pool();
+  const client = await pg.connect();
+  const schemaRole = `${status.schema_name}_service`;
+  let statementsRun = 0;
+
+  try {
+    await client.query(`SET ROLE "${schemaRole}"`);
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL search_path TO "${status.schema_name}"`);
+    await client.query(`SET LOCAL statement_timeout TO 30000`);
+
+    for (let i = 0; i < statements.length; i++) {
+      const stmt = statements[i].trim();
+      if (!stmt) continue;
+      await client.query(stmt);
+      statementsRun++;
+    }
+
+    // Deny-all by default: same enforcement as runQuery()'s service-role
+    // branch, see enableRlsOnNewTables() above for the full rationale. Must
+    // run before COMMIT so it's part of the same atomic migration.
+    const hasDdl = statements.some((s) => /^\s*(create|alter|drop)\s/i.test(s));
+    if (hasDdl) {
+      await enableRlsOnNewTables(client, status.schema_name);
+    }
+
+    await client.query('COMMIT');
+
+    // Reload PostgREST schema cache if any statement was DDL
+    if (hasDdl) {
+      try {
+        await databaseService._reloadPostgREST();
+      } catch (reloadErr) {
+        logger.warn('[executeTransactionalMigration] PostgREST reload warning', reloadErr);
+      }
+
+      // Record in audit table
+      supabase.from('tenant_schema_migrations').insert({
+        schema_name: status.schema_name,
+        project_id: projectId,
+        user_id: userId,
+        sql_text: statements.join(';\n'),
+        statement_count: statementsRun,
+      }).then(({ error }) => {
+        if (error) logger.warn('[executeTransactionalMigration] failed to record audit row', error);
+      });
+    }
+
+    return {
+      success: true,
+      statementsRun,
+    };
+  } catch (err: any) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      /* ignore rollback failure if connection died */
+    }
+
+    const pgCode = err.code ? String(err.code) : 'UNKNOWN';
+    const position = err.position ? `Position ${err.position}` : 'Position unknown';
+    const detail = err.detail ? `\nDetail: ${err.detail}` : '';
+    const hint = err.hint ? `\nHint: ${err.hint}` : '';
+    const constraint = err.constraint ? `\nConstraint: ${err.constraint}` : '';
+    const where = err.where ? `\nContext: ${err.where}` : '';
+    const failingStmt = statements[statementsRun] ? `\nFailing Statement: "${statements[statementsRun]}"` : '';
+    const message = err.message ?? String(err);
+
+    const detailedError =
+      `[PostgreSQL DDL Migration Error] Transaction rolled back cleanly.\n` +
+      `ErrorCode [${pgCode}]: ${message}\n` +
+      `Location: ${position}${failingStmt}${detail}${constraint}${hint}${where}\n` +
+      `Executed ${statementsRun} of ${statements.length} statements before failure.`;
+
+    return {
+      success: false,
+      statementsRun,
+      error: detailedError,
+    };
+  } finally {
+    try {
+      await client.query('RESET ROLE');
+    } catch {
+      /* ignore reset role error */
+    }
+    client.release();
+  }
+}
+

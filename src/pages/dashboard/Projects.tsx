@@ -435,8 +435,17 @@ export default function DashboardProjects() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
+      <div className="p-6 sm:p-8">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="overflow-hidden rounded-xl border border-border/60 bg-card/40">
+              <div className="h-48 animate-pulse bg-card/60" />
+              <div className="flex items-center gap-3 p-4">
+                <div className="h-4 w-2/3 animate-pulse rounded bg-card/60" />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

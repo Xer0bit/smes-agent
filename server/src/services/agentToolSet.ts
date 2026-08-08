@@ -20,8 +20,10 @@ import { runCommandTool } from '../agent-tools/run_command.js';
 import { thinkTool } from '../agent-tools/think.js';
 import { getDatabaseSchemaTool } from '../agent-tools/get_database_schema.js';
 import { queryDatabaseTool } from '../agent-tools/query_database.js';
+import { confirmDatabaseChangeTool } from '../agent-tools/confirm_database_change.js';
 import { provisionDatabaseTool } from '../agent-tools/provision_database.js';
 import { writeEdgeFunctionTool } from '../agent-tools/write_edge_function.js';
+import { confirmEdgeFunctionDeployTool } from '../agent-tools/confirm_edge_function_deploy.js';
 import { deleteEdgeFunctionTool } from '../agent-tools/delete_edge_function.js';
 import { setSecretTool } from '../agent-tools/set_secret.js';
 import { listSecretsTool } from '../agent-tools/list_secrets.js';
@@ -38,8 +40,8 @@ import { checkTsSyntaxInLoop } from './agentContextCompaction.js';
 // task this narrowly; scoping the tool list to match is the same idea applied to
 // the request payload, not just the instructions.
 const MICRO_EXCLUDED_TOOLS = new Set([
-  'run_command', 'get_database_schema', 'query_database', 'provision_database',
-  'write_edge_function', 'delete_edge_function', 'set_secret', 'list_secrets',
+  'run_command', 'get_database_schema', 'query_database', 'confirm_database_change', 'provision_database',
+  'write_edge_function', 'confirm_edge_function_deploy', 'delete_edge_function', 'set_secret', 'list_secrets',
   'push_to_github', 'publish_site',
 ]);
 
@@ -63,8 +65,10 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
     runCommandTool, // npm install/uninstall only   whitelist enforced inside the tool
     getDatabaseSchemaTool,
     queryDatabaseTool,
+    confirmDatabaseChangeTool,
     provisionDatabaseTool,
     writeEdgeFunctionTool,
+    confirmEdgeFunctionDeployTool,
     deleteEdgeFunctionTool,
     setSecretTool,
     listSecretsTool,

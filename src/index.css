@@ -94,6 +94,11 @@
      */
     --workspace-surface: 240 9% 6%;          /* card/panel bg   was #0f0f12 */
     --workspace-surface-recessed: 240 13% 4%; /* input/nested bg   was #0a0a0d */
+
+    /* Admin panel surfaces: consolidated from 2 hardcoded hex values duplicated
+     * across AIMetrics.tsx, Usage.tsx, Projects.tsx, Users.tsx (11 uses total). */
+    --admin-surface: 222.9 21.2% 6.5%;        /* admin card bg   was #0d0f14 */
+    --admin-surface-dialog: 222.9 17.1% 8%;   /* admin dialog bg   was #111318 */
   }
 }
 
@@ -130,14 +135,14 @@
 
   /* ── Selection ──────────────────────────────────────────────────────────── */
   ::selection {
-    background: rgba(99,102,241,0.28);
+    background: hsl(var(--primary) / 0.28);
     color: #fff;
   }
 
   /* ── Focus ring ─────────────────────────────────────────────────────────── */
   :focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px rgba(99,102,241,0.5);
+    box-shadow: 0 0 0 2px hsl(var(--ring) / 0.5);
     border-radius: 4px;
   }
 

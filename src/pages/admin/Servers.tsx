@@ -339,7 +339,7 @@ export default function AdminServers() {
 
       {/* ── Add Server Dialog ────────────────────────────────────────────── */}
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
-        <DialogContent className="sm:max-w-lg bg-[#0d0f14] border-white/10">
+        <DialogContent className="sm:max-w-lg bg-[hsl(var(--admin-surface))] border-white/10">
           <DialogHeader>
             <DialogTitle className="text-white">Add Hosting Server</DialogTitle>
             <DialogDescription className="text-gray-400">
@@ -371,7 +371,7 @@ export default function AdminServers() {
                   <SelectTrigger className="bg-white/[0.03] border-white/10 text-white">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="bg-[#0d0f14] border-white/10">
+                  <SelectContent className="bg-[hsl(var(--admin-surface))] border-white/10">
                     {REGIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -407,7 +407,7 @@ export default function AdminServers() {
 
       {/* ── Remove Confirmation Dialog ───────────────────────────────────── */}
       <Dialog open={!!confirmRemove} onOpenChange={() => setConfirmRemove(null)}>
-        <DialogContent className="sm:max-w-md bg-[#0d0f14] border-white/10">
+        <DialogContent className="sm:max-w-md bg-[hsl(var(--admin-surface))] border-white/10">
           <DialogHeader>
             <DialogTitle className="text-white">Remove Server</DialogTitle>
             <DialogDescription className="text-gray-400">
