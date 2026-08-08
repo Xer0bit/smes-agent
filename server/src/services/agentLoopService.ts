@@ -8,43 +8,10 @@ import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import type { AgentContext } from '../agent-tools/types.js';
 import { safeJoin } from '../agent-tools/types.js';
-import { traceSpan } from '../utils/telemetry.js';
 import { EDGE_FUNCTIONS_DIR } from '../agent-tools/write_edge_function.js';
 import { sanitizeFileContent, sanitizeConfigFile } from '../agent-tools/sanitize.js';
 import ts from 'typescript';
-import { buildSystemMessagesFor, type PromptMessage } from './agentPromptBuilder.js';
-import { AgentMetrics, type StepMetrics } from './agentMetricsCollector.js';
-import {
-  getAppBuilderBuildSystemPrompt,
-  getAppBuilderSystemPrompt,
-  MICRO_SYSTEM_PROMPT,
-  getFixSystemPrompt,
-  getEditSystemPrompt,
-} from '../prompts/app-builder.prompt.js';
-
-export interface ToolCallPayload {
-  toolName: string;
-  args?: Record<string, unknown>;
-  executionId?: string;
-}
-
-export interface ToolOutputPayload {
-  toolName?: string;
-  path?: string;
-  content?: string;
-  files?: Array<{ path: string; content: string }>;
-  status?: string;
-  xml?: string;
-}
-
-export function isToolCallPayload(payload: unknown): payload is ToolCallPayload {
-  return typeof payload === 'object' && payload !== null && ('toolName' in payload || 'name' in payload);
-}
-
-export function isToolOutputPayload(payload: unknown): payload is ToolOutputPayload {
-  return typeof payload === 'object' && payload !== null;
-}
-
+import { getAppBuilderBuildSystemPrompt, getAppBuilderSystemPrompt, MICRO_SYSTEM_PROMPT, getFixSystemPrompt, getEditSystemPrompt } from '../prompts/app-builder.prompt.js';
 import { PRE_INSTALLED_PACKAGES } from './baseTemplateService.js';
 import { RunStateLedger } from './runStateLedger.js';
 import { canonicalizeModelId, DEFAULT_PRIMARY_MODEL, DEFAULT_FALLBACK_MODEL } from '../config/models.js';
@@ -239,8 +206,6 @@ export interface AgentRunResult {
   costUsd: number;
   /** Eco credits charged for this run, see computeEcoCost() */
   ecoUsed: number;
-  /** Number of steps executed in this run */
-  stepCount?: number;
   /** True when the run hit the budget cap mid-task but made real progress   safe to auto-continue */
   needsAutoContinue?: boolean;
   /** Ready-to-send prompt for the auto-continuation turn, set only when needsAutoContinue is true */
@@ -250,25 +215,13 @@ export interface AgentRunResult {
 }
 
 export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResult> {
-  const { projectId, promptIntent } = params;
-  const requestTier = promptIntent?.requestTier ?? 'unknown';
+  const { projectId } = params;
 
   // ── Per-project mutex: prevent interleaved file writes from concurrent runs ──
   const lock = acquireProjectLock(projectId);
   await lock.ready;
   try {
-    return await traceSpan(
-      'agent.run_loop',
-      { projectId, requestTier },
-      async (span) => {
-        const result = await _runAgentLoopInner(params);
-        span.setAttributes({
-          totalCostUsd: result.costUsd ?? 0,
-          totalSteps: result.stepCount ?? 0,
-        });
-        return result;
-      }
-    );
+  return await _runAgentLoopInner(params);
   } finally {
     lock.release();
     endNarration(projectId);
@@ -1617,16 +1570,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // the large-file writes already suspected (unconfirmed) of hitting this
       // ceiling. Extra room costs nothing unless actually used.
       const outputLimit = pName === 'deepseek' ? 8192 : pName === 'anthropic' ? 32768 : 16384;
-      return traceSpan(
-        'agent.llm_completion',
-        {
-          projectId,
-          modelId,
-          providerName: pName,
-          attempt,
-        },
-        async () => {
-          return streamText({
+      return streamText({
         model: provider,
         system: buildSystemMessagesFor(pName),
         messages: conversationMessages,
@@ -2104,11 +2048,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
               if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
             }).catch(() => {});
+            abortController.abort();
           }
         },
       });
-        }
-      );
     };
 
     const consumeResultStream = async (stream: ReturnType<typeof streamText>): Promise<{ text: string; err: any | null }> => {
@@ -3864,7 +3807,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     if (agentTimeoutId) clearTimeout(agentTimeoutId);
     clearInterval(heartbeatId);
-    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed, stepCount, needsAutoContinue, continuationPrompt, stuckAborted: Boolean(stuckAnalysisAbortReason) };
+    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed, needsAutoContinue, continuationPrompt, stuckAborted: Boolean(stuckAnalysisAbortReason) };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     if (agentTimeoutId) clearTimeout(agentTimeoutId);
