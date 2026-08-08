@@ -33,7 +33,6 @@ const FEATURE_LIST: { key: keyof TierFeatures; label: string; description: strin
     { key: 'auto_pilot',      label: 'AutoPilot',           description: 'Scheduled content generation' },
     { key: 'ali_cloud',       label: 'AliCloud Migration',  description: 'Migrate to Alibaba Cloud' },
     { key: 'ecomgear_cloud',  label: 'eComGear Cloud',      description: 'Managed cloud with custom domain' },
-    { key: 'premium_templates', label: 'Design Templates',  description: 'Create websites from the branded design template gallery' },
     { key: 'client_markup',   label: 'Client Markup',       description: 'Charge clients with markup fees' },
     { key: 'priority_support',label: 'Priority Support',    description: '24/7 priority customer support' },
     { key: 'sso',             label: 'SSO',                 description: 'Single Sign-On via SAML/OIDC' },

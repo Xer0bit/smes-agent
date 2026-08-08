@@ -16,7 +16,6 @@ export interface TierFeatures {
   auto_pilot: boolean;
   client_markup: boolean;
   priority_support: boolean;
-  premium_templates: boolean;
   sso: boolean;
   sla: boolean;
 }
@@ -50,7 +49,6 @@ const DEFAULT_CONFIG: TierConfig = {
       invite_clients: false, ai_agent: true, hosting: true,
       ali_cloud: false, ecomgear_cloud: false, integration_app: false,
       auto_pilot: false, client_markup: false, priority_support: false,
-      premium_templates: true,
       sso: false, sla: false,
     },
     pro: {
@@ -59,7 +57,6 @@ const DEFAULT_CONFIG: TierConfig = {
       invite_clients: false, ai_agent: true, hosting: true,
       ali_cloud: true, ecomgear_cloud: true, integration_app: true,
       auto_pilot: true, client_markup: false, priority_support: false,
-      premium_templates: true,
       sso: false, sla: false,
     },
     agency: {
@@ -68,7 +65,6 @@ const DEFAULT_CONFIG: TierConfig = {
       invite_clients: true, ai_agent: true, hosting: true,
       ali_cloud: true, ecomgear_cloud: true, integration_app: true,
       auto_pilot: true, client_markup: true, priority_support: true,
-      premium_templates: true,
       sso: true, sla: true,
     },
   },

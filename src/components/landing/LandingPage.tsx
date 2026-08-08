@@ -6,7 +6,6 @@ import { HeroSection } from "./HeroSection";
 import { LandingMarquee } from "./LandingMarquee";
 import { GlobalReach } from "./GlobalReach";
 import { DualPublish } from "./DualPublish";
-import { TemplateGallery } from "./TemplateGallery";
 import { Capabilities } from "./Capabilities";
 import { FaqSection } from "./FaqSection";
 
@@ -24,7 +23,6 @@ export function LandingPage({ onLaunch }: LandingPageProps) {
       <LandingMarquee />
       <GlobalReach />
       <DualPublish />
-      <TemplateGallery />
       <Capabilities />
       <FaqSection />
       <Footer />

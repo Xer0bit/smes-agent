@@ -22,7 +22,6 @@ const PRODUCTS = [
       "One-click deploy to Global + China CDN",
       "Role-based workspace with team permissions",
       "AI agents for content, SEO, and operations",
-      "Template gallery with bilingual storefronts",
       "Real-time collaborative editor",
     ],
     accent: "var(--ecg-accent)",

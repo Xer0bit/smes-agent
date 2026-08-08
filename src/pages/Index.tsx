@@ -9,8 +9,6 @@ import { LoginDialog } from "@/components/LoginDialog";
 import { LandingPage } from "@/components/landing/LandingPage";
 import { canCreateProject, showLimitToast, trackUsage } from "@/services/subscriptionService";
 import { useGuestSession } from "@/hooks/useGuestSession";
-import { TemplateQuestionnaire } from "@/components/TemplateQuestionnaire";
-import { type DesignTemplate, buildTemplatePrompt } from "@/data/designTemplates";
 
 // Key for storing pending prompt when redirecting to login
 const PENDING_PROMPT_KEY = 'ecomgear_pending_prompt';
@@ -32,8 +30,6 @@ const Index = () => {
   const navigate = useNavigate();
   const prevUserIdRef = useRef<string | null>(null);
   const { canRequest, requestsRemaining, getFingerprint } = useGuestSession();
-  const [pendingTemplate, setPendingTemplate] = useState<DesignTemplate | null>(null);
-  const [questionnaireOpen, setQuestionnaireOpen] = useState(false);
 
   // Auth subscription   mirrors LandingLayout pattern
   useEffect(() => {
@@ -242,38 +238,10 @@ const Index = () => {
     }
   }, [user, navigate]);
 
-  const handleUseTemplate = useCallback((template: DesignTemplate) => {
-    setPendingTemplate(template);
-    setQuestionnaireOpen(true);
-  }, []);
-
-  const handleQuestionnaireSubmit = useCallback((template: DesignTemplate, answers: Record<string, string>) => {
-    setQuestionnaireOpen(false);
-
-    const enhancedPrompt = buildTemplatePrompt(template, answers);
-
-    if (user) {
-      handleCreateProject(enhancedPrompt);
-    } else {
-      localStorage.setItem(PENDING_PROMPT_KEY, JSON.stringify({
-        prompt: enhancedPrompt,
-        timestamp: Date.now(),
-      } satisfies PendingPrompt));
-      setIsLoginOpen(true);
-    }
-    setPendingTemplate(null);
-  }, [user, handleCreateProject]);
-
   return (
-    <LandingContext.Provider value={{ user, onLoginClick: () => setIsLoginOpen(true), onUseTemplate: handleUseTemplate }}>
+    <LandingContext.Provider value={{ user, onLoginClick: () => setIsLoginOpen(true) }}>
       <LandingPage onLaunch={handleLaunch} />
       <LoginDialog open={isLoginOpen} onOpenChange={setIsLoginOpen} />
-      <TemplateQuestionnaire
-        template={pendingTemplate}
-        open={questionnaireOpen}
-        onOpenChange={setQuestionnaireOpen}
-        onSubmit={handleQuestionnaireSubmit}
-      />
     </LandingContext.Provider>
   );
 };

@@ -17,7 +17,6 @@ export interface TierFeatures {
   auto_pilot: boolean;
   client_markup: boolean;
   priority_support: boolean;
-  premium_templates: boolean;
   sso: boolean;
   sla: boolean;
 }

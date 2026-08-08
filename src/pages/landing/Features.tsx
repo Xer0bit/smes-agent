@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { Capabilities } from "@/components/landing/Capabilities";
 import { DualPublish } from "@/components/landing/DualPublish";
 import { LandingMarquee } from "@/components/landing/LandingMarquee";
-import { TemplateGallery } from "@/components/landing/TemplateGallery";
 
 export default function Features() {
   return (
@@ -21,7 +20,7 @@ export default function Features() {
             <span className="hero__title-line hero__title-line--accent">needs to operate.</span>
           </h1>
           <p className="hero__sub">
-            The same agent-led design language from the new home page now carries through the product story: templates, cross-border publishing, localization, and the operational backend that keeps brands shipping.
+            The same agent-led design language from the new home page now carries through the product story: cross-border publishing, localization, and the operational backend that keeps brands shipping.
           </p>
           <div className="hero__cta">
             <Link to="/" className="btn btn--primary">
@@ -34,7 +33,6 @@ export default function Features() {
       </section>
       <LandingMarquee />
       <DualPublish />
-      <TemplateGallery />
       <Capabilities />
     </>
   );
