@@ -89,24 +89,52 @@ case "$TARGET" in
         ;;
 esac
 
+# ── Committed-only deploy stage ────────────────────────────────────────────────
+# Every deploy payload is exported from git HEAD (git archive) into
+# .deploy-stage/ and shipped FROM THERE -- never from the working directory.
+# Root cause this exists for: the old rsync-the-working-dir deploy shipped
+# untracked WIP straight to production (billing.service.ts reached prod
+# unfinished and unfailingly errored on every agent request until it was
+# guarded, 2026-08-10). git archive HEAD excludes untracked files by
+# construction and needs no remote/push -- it is purely local.
+STAGE_DIR="$PROJECT_DIR/.deploy-stage"
+build_deploy_stage() {
+    step "Exporting committed tree (git archive HEAD) to .deploy-stage/..."
+    rm -rf "$STAGE_DIR"
+    mkdir -p "$STAGE_DIR"
+    git -C "$PROJECT_DIR" archive HEAD | tar -x -C "$STAGE_DIR"
+    # Root node_modules is symlinked so the Vite SPA build works inside the
+    # stage without a full npm ci. SAFE only because nothing runs npm ci at
+    # the stage ROOT (the api-gateway build below does its own real npm ci in
+    # its own directory -- never through a symlink).
+    ln -s "$PROJECT_DIR/node_modules" "$STAGE_DIR/node_modules"
+    local tracked staged
+    tracked=$(git -C "$PROJECT_DIR" ls-files | wc -l)
+    staged=$(find "$STAGE_DIR" -type f | wc -l)
+    info "Stage: $staged files exported ($tracked tracked in HEAD $(git -C "$PROJECT_DIR" rev-parse --short HEAD))"
+    # Loud honesty: modified-but-uncommitted tracked files are NOT deployed.
+    if ! git -C "$PROJECT_DIR" diff --quiet 2>/dev/null || \
+       ! git -C "$PROJECT_DIR" diff --staged --quiet 2>/dev/null; then
+        echo -e "${YELLOW}  ⚠ Working tree differs from HEAD. Deploy ships HEAD ONLY -- these local changes will NOT deploy until committed:${NC}"
+        git -C "$PROJECT_DIR" status --short 2>/dev/null | grep -v '^??' | head -10
+    fi
+    if git -C "$PROJECT_DIR" status --short 2>/dev/null | grep -q '^??'; then
+        info "Untracked files present -- excluded from this deploy by design."
+    fi
+}
+
 # ── Pre-deploy checks ──────────────────────────────────────────────────────────
 preflight_checks() {
     step "Pre-deploy checks..."
-
-    # Warn on uncommitted changes (don't block   developer may intend this)
-    if ! git -C "$PROJECT_DIR" diff --quiet 2>/dev/null || \
-       ! git -C "$PROJECT_DIR" diff --staged --quiet 2>/dev/null; then
-        echo -e "${YELLOW}  ⚠ Uncommitted changes detected. Deploy will use local files as-is.${NC}"
-        git -C "$PROJECT_DIR" status --short 2>/dev/null | head -10
-    fi
+    build_deploy_stage
 
     # Server TypeScript must compile cleanly (VPS3 only needs this, but catch early)
     if [[ "$TARGET" == "vps3" || "$TARGET" == "all" ]]; then
-        if [ -f "$PROJECT_DIR/apps/api-gateway/src/index.ts" ]; then
-            echo "  Checking server TypeScript..."
-            cd "$PROJECT_DIR/apps/api-gateway" && npm run build --silent 2>&1 | tail -5
+        if [ -f "$STAGE_DIR/apps/api-gateway/src/index.ts" ]; then
+            echo "  Checking server TypeScript (committed tree)..."
+            cd "$STAGE_DIR/apps/api-gateway" && npm ci --silent >/dev/null 2>&1 && npm run build --silent 2>&1 | tail -5
             cd "$PROJECT_DIR"
-            success "Server TypeScript OK"
+            success "Server TypeScript OK (built in stage)"
         fi
     fi
 
@@ -175,7 +203,7 @@ deploy_vps1() {
     # here guarantees these vars are always correct for a VPS1 build
     # regardless of what's sitting in .env/.env.local.
     step "Writing production env overrides (.env.production.local)..."
-    PROD_ENV_OVERRIDE="$PROJECT_DIR/.env.production.local"
+    PROD_ENV_OVERRIDE="$STAGE_DIR/.env.production.local"
     cat > "$PROD_ENV_OVERRIDE" <<EOF
 VITE_SUPABASE_URL=https://api.ecomgear.dev
 VITE_API_URL=https://api.ecomgear.dev
@@ -193,12 +221,13 @@ VITE_HOSTING_SERVICE_URL=https://hosting.ecomgear.app
 EOF
     trap 'rm -f "$PROD_ENV_OVERRIDE"' EXIT
 
-    step "Building React SPA..."
-    cd "$PROJECT_DIR"
+    step "Building React SPA (from committed stage)..."
+    cd "$STAGE_DIR"
     npm run build
+    cd "$PROJECT_DIR"
     rm -f "$PROD_ENV_OVERRIDE"
     trap - EXIT
-    success "Build complete (dist/)"
+    success "Build complete ($STAGE_DIR/dist/)"
 
     # ── Apply DB migrations ──────────────────────────────────────────────────
     # Uploads and applies any .sql migration files to the Supabase DB on VPS1.
@@ -206,7 +235,7 @@ EOF
     # runs once even if deploy is re-run.
     step "Applying DB migrations on VPS1..."
     ssh_vps1 "mkdir -p /tmp/supabase-migrations"
-    scp_vps1 "$PROJECT_DIR/supabase/migrations/" "$VPS1_USER@$VPS1_IP:/tmp/supabase-migrations/"
+    scp_vps1 "$STAGE_DIR/supabase/migrations/" "$VPS1_USER@$VPS1_IP:/tmp/supabase-migrations/"
     ssh_vps1 'bash -s' << 'MIGRATIONS'
 set -e
 DB_CONTAINER="supabase_db_zurneeqpussrefamhtoq"
@@ -244,11 +273,11 @@ MIGRATIONS
 
     step "Uploading dist/ to VPS1 (staging → dist.new)..."
     ssh_vps1 "mkdir -p $DEPLOY_PATH/dist.new"
-    scp_vps1 "$PROJECT_DIR/dist/" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/dist.new/"
+    scp_vps1 "$STAGE_DIR/dist/" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/dist.new/"
     step "Uploading nginx configs..."
-    scp_vps1 "$PROJECT_DIR/infrastructure/nginx/vps1-ecomgear.dev.conf" \
+    scp_vps1 "$STAGE_DIR/infrastructure/nginx/vps1-ecomgear.dev.conf" \
              "$VPS1_USER@$VPS1_IP:/etc/nginx/sites-available/ecomgear"
-    scp_vps1 "$PROJECT_DIR/infrastructure/nginx/vps1-1000.ecomgear.dev.conf" \
+    scp_vps1 "$STAGE_DIR/infrastructure/nginx/vps1-1000.ecomgear.dev.conf" \
              "$VPS1_USER@$VPS1_IP:/etc/nginx/sites-available/1000.ecomgear.dev"
     step "Remote: atomic swap dist.new → dist + nginx reload..."
     ssh_vps1 "bash -s" << 'REMOTE'
@@ -272,20 +301,20 @@ REMOTE
     # Rebuilt independently of deploy_vps3's server build since either function
     # can run alone (single-target deploys)   a little duplicate CI time, but
     # keeps the two VPS deploys decoupled instead of depending on run order.
-    if [ -f "$PROJECT_DIR/apps/api-gateway/src/index.ts" ]; then
-        step "Building server TypeScript (for VPS1 API)..."
-        cd "$PROJECT_DIR/apps/api-gateway"
+    if [ -f "$STAGE_DIR/apps/api-gateway/src/index.ts" ]; then
+        step "Building server TypeScript in committed stage (for VPS1 API)..."
+        cd "$STAGE_DIR/apps/api-gateway"
         npm ci
         npm run build
         cd "$PROJECT_DIR"
-        success "Server built (apps/api-gateway/dist/)"
+        success "Server built ($STAGE_DIR/apps/api-gateway/dist/)"
     fi
     step "Uploading server to VPS1 (staging dir)..."
     ssh_vps1 "mkdir -p $DEPLOY_PATH/server.staging $DEPLOY_PATH/logs"
-    [ -d "$PROJECT_DIR/apps/api-gateway/dist" ] && \
+    [ -d "$STAGE_DIR/apps/api-gateway/dist" ] && \
         scp_vps1 --exclude='.env' --exclude='.env.*' --exclude='node_modules' \
-            "$PROJECT_DIR/apps/api-gateway/" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/server.staging/"
-    scp_vps1 "$PROJECT_DIR/infrastructure/ecosystem.config.cjs" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/"
+            "$STAGE_DIR/apps/api-gateway/" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/server.staging/"
+    scp_vps1 "$STAGE_DIR/infrastructure/ecosystem.config.cjs" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/"
     step "Writing ecomgear-api env to VPS1..."
     if [[ -n "${ECG_AUTH_BASE_URL:-}" && ( -z "${ECG_AUTH_ADMIN_USERNAME:-}" || -z "${ECG_AUTH_ADMIN_PASSWORD:-}" ) ]]; then
         echo -e "${YELLOW}  ⚠ ECG_AUTH_ADMIN_USERNAME/PASSWORD not set   eCG Auth is configured but the AR-0006 cross-app identity lookup (apps/api-gateway/scripts/migrate-existing-users-to-ecg-auth.ts, and the login-time background-migration path) will silently no-op on production.${NC}"
@@ -463,6 +492,12 @@ console.log(added.length + (added.length ? ':' + added.join(',') : ''));
         # ship, and stays in sync for the NEXT deploy's npm ci.
         step "Updating preview-service package-lock.json for the merged package(s)..."
         (cd "$PROJECT_DIR/apps/preview-service" && npm install --omit=dev --package-lock-only)
+        # The merge above edits the WORKING-TREE package.json (so it can be
+        # committed later). The deploy ships from the committed stage, so copy
+        # the merged manifests in -- otherwise runtime-installed packages would
+        # be dropped by this very deploy, recreating the bug the merge fixes.
+        cp "$PROJECT_DIR/apps/preview-service/package.json" "$STAGE_DIR/apps/preview-service/package.json"
+        cp "$PROJECT_DIR/apps/preview-service/package-lock.json" "$STAGE_DIR/apps/preview-service/package-lock.json" 2>/dev/null || true
     fi
 
     # node_modules is NOT shipped over the network. It used to be either
@@ -480,11 +515,11 @@ console.log(added.length + (added.length ? ':' + added.join(',') : ''));
     step "Uploading preview-service to VPS2 (staging dir)..."
     ssh_vps2 "mkdir -p $DEPLOY_PATH/preview-service.staging/projects $DEPLOY_PATH/logs"
     scp_vps2 --exclude='.git' --exclude='projects/' --exclude='node_modules' \
-             "$PROJECT_DIR/apps/preview-service/" \
+             "$STAGE_DIR/apps/preview-service/" \
              "$VPS2_USER@$VPS2_IP:$DEPLOY_PATH/preview-service.staging/"
-    scp_vps2 "$PROJECT_DIR/infrastructure/ecosystem.config.cjs" "$VPS2_USER@$VPS2_IP:$DEPLOY_PATH/"
+    scp_vps2 "$STAGE_DIR/infrastructure/ecosystem.config.cjs" "$VPS2_USER@$VPS2_IP:$DEPLOY_PATH/"
     step "Uploading nginx config..."
-    scp_vps2 "$PROJECT_DIR/infrastructure/nginx/vps2-preview.ecomgear.app.conf" \
+    scp_vps2 "$STAGE_DIR/infrastructure/nginx/vps2-preview.ecomgear.app.conf" \
              "$VPS2_USER@$VPS2_IP:/etc/nginx/sites-available/ecomgear-preview"
     step "Writing preview-service env to VPS2..."
     SK="${SUPABASE_SERVICE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
@@ -574,9 +609,9 @@ deploy_vps3() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  VPS3   Server / Agent Runner → $VPS3_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    if [ -f "$PROJECT_DIR/apps/api-gateway/src/index.ts" ]; then
-        step "Building server TypeScript..."
-        cd "$PROJECT_DIR/apps/api-gateway"
+    if [ -f "$STAGE_DIR/apps/api-gateway/src/index.ts" ]; then
+        step "Building server TypeScript in committed stage..."
+        cd "$STAGE_DIR/apps/api-gateway"
         npm ci
         npm run build
         cd "$PROJECT_DIR"
@@ -591,15 +626,15 @@ deploy_vps3() {
     # dragging every deploy out to 10+ minutes for no benefit: the CI-built
     # copy still needs prod-only deps and the wrong platform's native builds
     # would follow it there anyway.
-    [ -d "$PROJECT_DIR/apps/api-gateway/dist" ] && \
+    [ -d "$STAGE_DIR/apps/api-gateway/dist" ] && \
         scp_vps3 --exclude='.env' --exclude='.env.*' --exclude='node_modules' \
-            "$PROJECT_DIR/apps/api-gateway/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/server.staging/"
+            "$STAGE_DIR/apps/api-gateway/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/server.staging/"
     step "Uploading supabase functions + migrations..."
-    scp_vps3 "$PROJECT_DIR/supabase/functions/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/supabase/functions/"
-    scp_vps3 "$PROJECT_DIR/supabase/migrations/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/supabase/migrations/"
-    scp_vps3 "$PROJECT_DIR/infrastructure/ecosystem.config.cjs" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/"
+    scp_vps3 "$STAGE_DIR/supabase/functions/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/supabase/functions/"
+    scp_vps3 "$STAGE_DIR/supabase/migrations/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/supabase/migrations/"
+    scp_vps3 "$STAGE_DIR/infrastructure/ecosystem.config.cjs" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/"
     step "Uploading nginx config..."
-    scp_vps3 "$PROJECT_DIR/infrastructure/nginx/vps3-gen.ecomgear.dev.conf" \
+    scp_vps3 "$STAGE_DIR/infrastructure/nginx/vps3-gen.ecomgear.dev.conf" \
              "$VPS3_USER@$VPS3_IP:/etc/nginx/sites-available/ecomgear-gen"
     step "Remote: atomic swap + clean PM2 restart..."
     SK="${SUPABASE_SERVICE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"; SAK="${SUPABASE_ANON_KEY:-}"
@@ -873,7 +908,7 @@ deploy_vps4() {
     echo "  VPS4   Enterprise Hosting Service → $VPS4_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    if [ ! -d "$PROJECT_DIR/apps/hosting-service" ]; then
+    if [ ! -d "$STAGE_DIR/apps/hosting-service" ]; then
         err "apps/hosting-service/ directory not found in repo   nothing to deploy"
     fi
 
@@ -901,7 +936,7 @@ REMOTE
 
     step "Uploading apps/hosting-service/ to VPS4 (staging dir)..."
     scp_vps4 --delete --exclude='node_modules' --exclude='.git' --exclude='*.log' \
-        "$PROJECT_DIR/apps/hosting-service/" "$VPS4_USER@$VPS4_IP:/opt/ecomgear/hosting-service.staging/"
+        "$STAGE_DIR/apps/hosting-service/" "$VPS4_USER@$VPS4_IP:/opt/ecomgear/hosting-service.staging/"
 
     step "Remote: install deps, atomic swap, Caddy + PM2 restart..."
     # Real incident: this read HOSTING_DEPLOY_SECRET, but .deploy.env (and
