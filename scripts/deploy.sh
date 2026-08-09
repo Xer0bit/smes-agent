@@ -668,6 +668,14 @@ ECG_SERVICE_KEY=${ECG_SERVICE_KEY}
 ECOMGEAR_SERVER_URL=${ECOMGEAR_SERVER_URL}
 DASHBOARD_ACCESS_SECRET=${DASHBOARD_ACCESS_SECRET:-}
 FUNCTIONS_INTERNAL_SECRET=${FUNCTIONS_INTERNAL_SECRET:-}
+# Redis for the Redlock project lock (agentProjectLock.ts). Localhost-only on
+# VPS3 (bind 127.0.0.1, protected-mode on, port 6379 confirmed unreachable
+# externally 2026-08-10). Before this, no Redis existed anywhere and the lock
+# always ran on its per-process in-memory fallback -- which does NOT serialize
+# across the 2 PM2 cluster workers, so two same-project runs could interleave
+# disk writes and preview pushes. If Redis is down the code degrades back to
+# that fallback by design (agentProjectLock.ts) rather than failing closed.
+REDIS_URL=redis://127.0.0.1:6379
 # LLM API keys are managed via the Admin panel   stored in Supabase, not here.
 ENV
 
