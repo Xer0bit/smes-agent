@@ -67,10 +67,11 @@ const schema = z.object({
     'that writes data, or reads something RLS would otherwise block (most functions).'
   ),
   isPublic: z.boolean().optional().describe(
-    'Defaults to true (invocable with the project\'s public anon/service key, same as every other ' +
-    'function). Set to FALSE for admin-only operations (e.g. deleting other users\' data, financial ' +
-    'operations) that must only run for the project OWNER\'s own authenticated session -- an anon ' +
-    'key holder (any visitor to the generated app) will be rejected.'
+    'Defaults to FALSE (private -- only the project OWNER\'s own authenticated session may invoke it, ' +
+    'an anon key holder is rejected). Set to TRUE only for functions the app\'s own frontend needs to ' +
+    'call with the public anon/service key (e.g. the get-* read functions a generated storefront ' +
+    'fetches from). Leave false for admin-only operations (deleting other users\' data, financial ' +
+    'operations, anything not called from the generated app\'s own frontend).'
   ),
 });
 

@@ -89,7 +89,12 @@ export const confirmEdgeFunctionDeployTool: ToolDefinition<z.infer<typeof schema
             code,
             is_active: true,
             requires_service_role: requiresServiceRole ?? true,
-            is_public: isPublic ?? true,
+            // Default flipped to private-by-default 2026-08-09 (see
+            // 20260809150000_edge_functions_default_private.sql) -- 82/82
+            // live functions were public, including ones never meant to be
+            // (e.g. ecg-dev-agent.routes.ts's server-side-only starter
+            // function). A function must now explicitly opt into public.
+            is_public: isPublic ?? false,
           },
           { onConflict: 'project_id,name' }
         )

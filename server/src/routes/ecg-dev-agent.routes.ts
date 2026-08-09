@@ -200,6 +200,14 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
             "return { agents, stats, generatedAt: new Date().toISOString() };",
           ].join('\n'),
           is_active: true,
+          // Explicit, not relying on the default: this dashboard's own
+          // frontend fetches agent/publishing stats via the standard anon-key
+          // invoke pattern (the dashboard's password gate is a separate
+          // client-side check, not a change of Postgres/edge-function role).
+          // Set explicitly so intent survives regardless of what is_public's
+          // column default is at write time -- see
+          // 20260809150000_edge_functions_default_private.sql.
+          is_public: true,
         },
         { onConflict: 'project_id,name' },
       );
