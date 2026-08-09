@@ -3,12 +3,12 @@
 # setup-local-secrets.sh
 # Generates a shared PREVIEW_UPDATE_SECRET for local dev and writes it into:
 #   - .env.local          (frontend  → VITE_PREVIEW_UPDATE_SECRET)
-#   - server/.env         (gen server → PREVIEW_UPDATE_SECRET)
+#   - apps/api-gateway/.env (gen server → PREVIEW_UPDATE_SECRET)
 # The preview-service Docker container reads the secret from the host env
-# via docker-compose.dev.yml (PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}).
+# via infrastructure/docker-compose.dev.yml (PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}).
 #
 # Run once: bash scripts/setup-local-secrets.sh
-# Then start normally: ./start-dev.sh && cd server && npm run dev
+# Then start normally: scripts/start-dev.sh && cd apps/api-gateway && npm run dev
 # =============================================================================
 set -euo pipefail
 
@@ -39,8 +39,8 @@ upsert_env() {
 # ── 1. Frontend .env.local ────────────────────────────────────────────────────
 upsert_env "$ROOT/.env.local" "VITE_PREVIEW_UPDATE_SECRET" "$SECRET"
 
-# ── 2. Gen server server/.env ─────────────────────────────────────────────────
-upsert_env "$ROOT/server/.env" "PREVIEW_UPDATE_SECRET" "$SECRET"
+# ── 2. Gen server apps/api-gateway/.env ───────────────────────────────────────
+upsert_env "$ROOT/apps/api-gateway/.env" "PREVIEW_UPDATE_SECRET" "$SECRET"
 
 # ── 3. Export for current shell + docker-compose ─────────────────────────────
 export PREVIEW_UPDATE_SECRET="$SECRET"
@@ -52,4 +52,4 @@ echo ""
 echo "Or add it to your shell profile (~/.zshrc / ~/.bashrc):"
 echo "  echo 'export PREVIEW_UPDATE_SECRET=\"$SECRET\"' >> ~/.zshrc"
 echo ""
-echo "Then run:  ./start-dev.sh"
+echo "Then run:  scripts/start-dev.sh"

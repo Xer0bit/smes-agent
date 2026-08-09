@@ -379,11 +379,11 @@ deploy_vps2() {
     mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/ecomgear/preview-service /var/www/html
   " "$VPS2_SSH_PORT"
 
-  # ── 2. Upload preview-service/ ───────────────────────────
-  log "Uploading preview-service/ → VPS2..."
-  rsync_preview_service "$ROOT_DIR/preview-service/" "/var/www/ecomgear/preview-service/" \
+  # ── 2. Upload apps/preview-service/ ───────────────────────────
+  log "Uploading apps/preview-service/ → VPS2..."
+  rsync_preview_service "$ROOT_DIR/apps/preview-service/" "/var/www/ecomgear/preview-service/" \
     "$VPS2_HOST" "$VPS2_USER" "$VPS2_PASS" "$VPS2_SSH_PORT"
-  rsync_file "$ROOT_DIR/ecosystem.config.cjs" "/var/www/ecomgear/ecosystem.config.cjs" \
+  rsync_file "$ROOT_DIR/infrastructure/ecosystem.config.cjs" "/var/www/ecomgear/ecosystem.config.cjs" \
     "$VPS2_HOST" "$VPS2_USER" "$VPS2_PASS" "$VPS2_SSH_PORT"
 
   # ── 3. Write local HTTP-only nginx config ─────────────────
@@ -628,24 +628,24 @@ deploy_vps3() {
 
   # ── 2. Build TypeScript ───────────────────────────────────
   log "Building TypeScript server..."
-  cd "$ROOT_DIR/server"
+  cd "$ROOT_DIR/apps/api-gateway"
   npm ci
   npx tsc --project tsconfig.json
   cd "$ROOT_DIR"
   ok "Server compiled"
 
   # ── 3. Upload files (source only, no node_modules) ───────
-  log "Uploading server/ → VPS3..."
+  log "Uploading apps/api-gateway/ → VPS3..."
   # Upload server source (except node_modules   npm ci runs on remote)
   # shellcheck disable=SC2086
   sshpass -p "$VPS3_PASS" rsync -avz --delete \
     --filter='P logs/***' \
     --exclude='node_modules' --exclude='.git' --exclude='*.log' \
     -e "ssh $SSH_OPTS" \
-    "$ROOT_DIR/server/" "${VPS3_USER}@${VPS3_HOST}:/var/www/ecomgear/server/"
+    "$ROOT_DIR/apps/api-gateway/" "${VPS3_USER}@${VPS3_HOST}:/var/www/ecomgear/server/"
   rsync_to "$ROOT_DIR/supabase/functions/" "/var/www/ecomgear/supabase/functions/" \
     "$VPS3_HOST" "$VPS3_USER" "$VPS3_PASS"
-  rsync_file "$ROOT_DIR/ecosystem.config.cjs" "/var/www/ecomgear/ecosystem.config.cjs" \
+  rsync_file "$ROOT_DIR/infrastructure/ecosystem.config.cjs" "/var/www/ecomgear/ecosystem.config.cjs" \
     "$VPS3_HOST" "$VPS3_USER" "$VPS3_PASS"
 
   # ── 4. Write local nginx config ───────────────────────────
@@ -859,15 +859,15 @@ deploy_vps4() {
     ufw allow 443/tcp 2>/dev/null || true
   "
 
-  # ── 2. Upload hosting-service/ ───────────────────────────
-  log "Uploading hosting-service/ → VPS4..."
+  # ── 2. Upload apps/hosting-service/ ───────────────────────────
+  log "Uploading apps/hosting-service/ → VPS4..."
   sshpass -p "$VPS4_PASS" rsync -avz --delete \
     --exclude='node_modules' --exclude='.git' --exclude='*.log' \
     -e "ssh $SSH_OPTS" \
-    "$ROOT_DIR/hosting-service/" "${VPS4_USER}@${VPS4_HOST}:/opt/ecomgear/hosting-service/"
+    "$ROOT_DIR/apps/hosting-service/" "${VPS4_USER}@${VPS4_HOST}:/opt/ecomgear/hosting-service/"
 
   # ── 3. Upload Caddyfile ──────────────────────────────────
-  rsync_file "$ROOT_DIR/hosting-service/Caddyfile" "/etc/caddy/Caddyfile" \
+  rsync_file "$ROOT_DIR/apps/hosting-service/Caddyfile" "/etc/caddy/Caddyfile" \
     "$VPS4_HOST" "$VPS4_USER" "$VPS4_PASS"
 
   # ── 4. npm ci + start services ───────────────────────────

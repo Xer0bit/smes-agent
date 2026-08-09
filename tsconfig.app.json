@@ -25,9 +25,9 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./apps/web-client/*"]
     }
   },
-  "include": ["src"],
-  "exclude": ["src/templates"]
+  "include": ["apps/web-client"],
+  "exclude": ["apps/web-client/templates"]
 }

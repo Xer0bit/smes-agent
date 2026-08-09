@@ -19,13 +19,13 @@ dist-ssr
 .env.production
 *.env
 supabase/functions/.env
-server/.env
-server/.llm-control.json
+apps/api-gateway/.env
+apps/api-gateway/.llm-control.json
 .deploy.env
 # .env.example / server/.env.example ARE tracked   they're safe templates
 # with no real values. See ENVIRONMENTS.md for what goes where.
 !.env.example
-!server/.env.example
+!apps/api-gateway/.env.example
 
 # Editor directories and files
 .vscode/*
@@ -41,15 +41,20 @@ server/.llm-control.json
 /preview-data
 # scripts/
 
-preview-service/projects/
+apps/preview-service/projects/
 .claude
-server/.claude-flow
+apps/api-gateway/.claude-flow
 .agents/skills
 # Added by code-review-graph
 .code-review-graph/
-server/.agents/*
+apps/api-gateway/.agents/*
 
-# src/base-example is a reference-only project kept for template guidance;
+# apps/web-client/base-example is a reference-only project kept for template guidance;
 # its own env file has no bearing on this app and shouldn't be committed.
-src/base-example/.env
+apps/web-client/base-example/.env
 .gstack/
+
+
+.claude
+.claude-flow
+.scratch

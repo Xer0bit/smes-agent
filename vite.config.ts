@@ -27,16 +27,16 @@ export default defineConfig(({ mode }) => ({
       host: 'localhost',
       port: 8080,
     },
-    // Generated per-project sandboxes (preview-data/, preview-service/projects/,
+    // Generated per-project sandboxes (preview-data/, apps/preview-service/projects/,
     // agent-template*/) are runtime data, not part of this app  watching them
     // floods HMR and their own broken/half-written files must never affect
     // the root dev server.
     watch: {
       ignored: [
         "**/preview-data/**",
-        "**/preview-service/projects/**",
-        "**/server/agent-template/**",
-        "**/server/agent-template-preview.local/**",
+        "**/apps/preview-service/projects/**",
+        "**/apps/api-gateway/agent-template/**",
+        "**/apps/api-gateway/agent-template-preview.local/**",
       ],
     },
   },
@@ -44,7 +44,7 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     dedupe: ["react", "react-dom"],
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(__dirname, "./apps/web-client"),
       react: path.resolve(__dirname, "./node_modules/react"),
       "react-dom": path.resolve(__dirname, "./node_modules/react-dom"),
       "react/jsx-runtime": path.resolve(__dirname, "./node_modules/react/jsx-runtime.js"),
@@ -54,8 +54,8 @@ export default defineConfig(({ mode }) => ({
   optimizeDeps: {
     // Explicit entry restricts esbuild's dependency-scan crawl to the real
     // app. Without this, Vite globs every index.html under the repo root
-    // including preview-data/**, preview-service/projects/**, and
-    // server/agent-template*/**  generated per-project sandboxes whose
+    // including preview-data/**, apps/preview-service/projects/**, and
+    // apps/api-gateway/agent-template*/**  generated per-project sandboxes whose
     // source files are user/agent-written and routinely syntactically
     // invalid. A single broken file in any of them used to fatally crash
     // the ROOT dev server's dependency scan before it could even boot.
@@ -65,7 +65,7 @@ export default defineConfig(({ mode }) => ({
   test: {
     globals: true,
     environment: 'jsdom',
-    setupFiles: './src/__tests__/setup.ts',
+    setupFiles: './apps/web-client/__tests__/setup.ts',
     css: true,
   },
   build: {

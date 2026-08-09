@@ -114,9 +114,9 @@ echo "Deploying hosting-service code..."
 HOSTING_DIR="/opt/ecomgear/hosting-service"
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-scp -r "${SCRIPT_DIR}/hosting-service/server.js" \
-       "${SCRIPT_DIR}/hosting-service/package.json" \
-       "${SCRIPT_DIR}/hosting-service/lib/" \
+scp -r "${SCRIPT_DIR}/apps/hosting-service/server.js" \
+       "${SCRIPT_DIR}/apps/hosting-service/package.json" \
+       "${SCRIPT_DIR}/apps/hosting-service/lib/" \
        "${SSH_USER}@${VPS_IP}:${HOSTING_DIR}/"
 
 echo "Installing hosting-service dependencies on remote..."

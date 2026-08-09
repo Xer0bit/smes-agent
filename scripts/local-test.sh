@@ -45,13 +45,13 @@ echo ""
 
 # ── 1. Server: typecheck + build ──────────────────────────────────────────────
 info "Type-checking + building server..."
-if (cd server && npx tsc --noEmit -p tsconfig.json) 2>&1 | tail -30; then
+if (cd apps/api-gateway && npx tsc --noEmit -p tsconfig.json) 2>&1 | tail -30; then
     success "Server type-check OK"
 else
     fail "Server type-check FAILED"
     FAILURES=$((FAILURES+1))
 fi
-if (cd server && npm run build) 2>&1 | tail -10; then
+if (cd apps/api-gateway && npm run build) 2>&1 | tail -10; then
     success "Server build OK"
 else
     fail "Server build FAILED"
@@ -75,7 +75,7 @@ fi
 
 # ── 3. preview-service: syntax check ──────────────────────────────────────────
 info "Syntax-checking preview-service..."
-if node --check preview-service/server.js; then
+if node --check apps/preview-service/server.js; then
     success "preview-service syntax OK"
 else
     fail "preview-service syntax FAILED"
@@ -90,12 +90,12 @@ if $BUILD_ONLY; then
 fi
 
 # ── 4. Boot gen server locally, wait for /health ──────────────────────────────
-if [[ ! -f server/.env ]]; then
-    fail "server/.env not found   run scripts/dev-setup.sh first. Skipping boot test."
+if [[ ! -f apps/api-gateway/.env ]]; then
+    fail "apps/api-gateway/.env not found   run scripts/dev-setup.sh first. Skipping boot test."
     FAILURES=$((FAILURES+1))
 else
     info "Booting gen server (port 5001)..."
-    (cd server && node dist/index.js > /tmp/local-test-gen.log 2>&1) &
+    (cd apps/api-gateway && node dist/index.js > /tmp/local-test-gen.log 2>&1) &
     GEN_PID=$!
     GEN_OK=0
     for i in $(seq 1 20); do
@@ -116,7 +116,7 @@ fi
 
 # ── 5. Boot preview-service locally, wait for /health ─────────────────────────
 info "Booting preview-service (port 3001)..."
-(cd preview-service && node --no-deprecation server.js > /tmp/local-test-preview.log 2>&1) &
+(cd apps/preview-service && node --no-deprecation server.js > /tmp/local-test-preview.log 2>&1) &
 PREVIEW_PID=$!
 PREVIEW_OK=0
 for i in $(seq 1 20); do

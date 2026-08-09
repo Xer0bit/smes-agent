@@ -37,9 +37,9 @@ cd .. && npm run dev
 
 ### Or use the all-in-one script:
 ```bash
-./start-dev.sh
+scripts/start-dev.sh --all
 ```
-This starts Supabase, Preview Service, Hosting Service, and Frontend together.
+This starts Supabase, Preview Service, Backend, and Frontend together. Stop everything with `scripts/start-dev.sh --stop`.
 
 ### Local Dev Mode Behavior
 

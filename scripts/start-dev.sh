@@ -124,7 +124,7 @@ if [ "$START_FRONTEND" -eq 1 ]; then
         # --mode production makes Vite load .env.production (already committed
         # with the real prod URLs) instead of .env/.env.local, and flips
         # import.meta.env.PROD so every VITE_*_URL fallback in
-        # src/config/external-api.ts resolves to the production host too --
+        # apps/web-client/config/external-api.ts resolves to the production host too --
         # same mechanism a real `vite build` uses, just kept in dev/serve mode.
         (cd "$ROOT" && nohup npx vite --port "$FRONTEND_PORT" --mode production > "$LOG_DIR/frontend.log" 2>&1 &)
     else
@@ -156,14 +156,14 @@ if [ "$START_BACKEND" -eq 1 ]; then
     # tsx watch, not plain tsx: code edits must hot-reload. A plain-tsx backend
     # kept serving stale agent-loop code after a bug fix landed on disk, and the
     # retry burned $1.34 re-hitting the already-fixed bug (2026-07-21).
-    (cd "$ROOT/server" && nohup npx tsx watch src/index.ts > "$LOG_DIR/backend.log" 2>&1 &)
+    (cd "$ROOT/apps/api-gateway" && nohup npx tsx watch src/index.ts > "$LOG_DIR/backend.log" 2>&1 &)
 fi
 
 # ── Preview service ───────────────────────────────────────────────────────────
 if [ "$START_PREVIEW" -eq 1 ]; then
     free_port "$PREVIEW_PORT" "preview-service"
     info "Starting preview service on :$PREVIEW_PORT..."
-    (cd "$ROOT/preview-service" && nohup node --no-deprecation server.js > "$LOG_DIR/preview.log" 2>&1 &)
+    (cd "$ROOT/apps/preview-service" && nohup node --no-deprecation server.js > "$LOG_DIR/preview.log" 2>&1 &)
 fi
 
 # ── Wait + report ─────────────────────────────────────────────────────────────
@@ -188,7 +188,7 @@ if [ "$START_FRONTEND" -eq 1 ] && [ "$START_BACKEND" -eq 1 ] && [ "$PROD_BACKEND
     FE_URL="$([ -n "$FE_PID" ] && tr '\0' '\n' < "/proc/$FE_PID/environ" 2>/dev/null | sed -n 's/^VITE_SUPABASE_URL=//p')"
     BE_URL="$([ -n "$BE_PID" ] && tr '\0' '\n' < "/proc/$BE_PID/environ" 2>/dev/null | sed -n 's/^SUPABASE_URL=//p')"
     if [ -n "$FE_URL" ] && [ -n "$BE_URL" ] && [ "$FE_URL" != "$BE_URL" ]; then
-        warn "Frontend Supabase ($FE_URL) != Backend Supabase ($BE_URL) -- agent-generated files WILL silently fail to save. Check server/.env's SUPABASE_URL."
+        warn "Frontend Supabase ($FE_URL) != Backend Supabase ($BE_URL) -- agent-generated files WILL silently fail to save. Check apps/api-gateway/.env's SUPABASE_URL."
     fi
 fi
 echo ""

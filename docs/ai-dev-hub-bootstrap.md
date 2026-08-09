@@ -11,7 +11,7 @@ This is the initial implementation baseline for your migration to VPS3-centric d
 - Manual deploy script now supports SSH key auth:
   - scripts/deploy.sh
 - PM2 port config is now environment-driven:
-  - ecosystem.config.cjs
+  - infrastructure/ecosystem.config.cjs
 - New operational scripts:
   - scripts/harden-ssh-auth.sh
   - scripts/setup-tailscale.sh

@@ -1,0 +1,66 @@
+version: '3.8'
+# =============================================================================
+# docker-compose.prod.yml   VPS2 (72.62.126.99, Indonesia)
+# =============================================================================
+# VPS2 (72.62.126.99, Indonesia)   Preview Service
+# Domain: preview.ecomgear.app  *.preview.ecomgear.app
+# =============================================================================
+services:
+  preview-service:
+    build:
+      context: ../apps/preview-service
+      dockerfile: Dockerfile
+    container_name: ecomgear-preview
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - preview-projects:/app/projects
+      - preview-logs:/app/logs
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - ALLOWED_ORIGINS=https://ecomgear.dev,https://www.ecomgear.dev,https://ecomgear.app,https://www.ecomgear.app
+      # HMR connects through nginx wildcard subdomain on VPS2
+      - VITE_HMR_HOST=preview.ecomgear.app
+      - VITE_HMR_PORT=443
+      - VITE_HMR_PROTOCOL=wss
+    networks:
+      - ecomgear-network
+    deploy:
+      resources:
+        limits:
+          memory: 1500M
+          cpus: '1.5'
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  preview-projects:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/www/ecomgear/preview-service/projects
+
+  preview-logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/www/ecomgear/logs
+
+networks:
+  ecomgear-network:
+    driver: bridge

@@ -102,9 +102,9 @@ preflight_checks() {
 
     # Server TypeScript must compile cleanly (VPS3 only needs this, but catch early)
     if [[ "$TARGET" == "vps3" || "$TARGET" == "all" ]]; then
-        if [ -f "$PROJECT_DIR/server/src/index.ts" ]; then
+        if [ -f "$PROJECT_DIR/apps/api-gateway/src/index.ts" ]; then
             echo "  Checking server TypeScript..."
-            cd "$PROJECT_DIR/server" && npm run build --silent 2>&1 | tail -5
+            cd "$PROJECT_DIR/apps/api-gateway" && npm run build --silent 2>&1 | tail -5
             cd "$PROJECT_DIR"
             success "Server TypeScript OK"
         fi
@@ -268,27 +268,27 @@ nginx -t && systemctl reload nginx && echo 'nginx reloaded'
 echo "Backup preserved at dist.old for rollback"
 REMOTE
 
-    # ── ecomgear-api (server/, SERVICE_ROLE=api)   everything except LLM gen ──
+    # ── ecomgear-api (apps/api-gateway/, SERVICE_ROLE=api)   everything except LLM gen ──
     # Rebuilt independently of deploy_vps3's server build since either function
     # can run alone (single-target deploys)   a little duplicate CI time, but
     # keeps the two VPS deploys decoupled instead of depending on run order.
-    if [ -f "$PROJECT_DIR/server/src/index.ts" ]; then
+    if [ -f "$PROJECT_DIR/apps/api-gateway/src/index.ts" ]; then
         step "Building server TypeScript (for VPS1 API)..."
-        cd "$PROJECT_DIR/server"
+        cd "$PROJECT_DIR/apps/api-gateway"
         npm ci
         npm run build
         cd "$PROJECT_DIR"
-        success "Server built (server/dist/)"
+        success "Server built (apps/api-gateway/dist/)"
     fi
     step "Uploading server to VPS1 (staging dir)..."
     ssh_vps1 "mkdir -p $DEPLOY_PATH/server.staging $DEPLOY_PATH/logs"
-    [ -d "$PROJECT_DIR/server/dist" ] && \
+    [ -d "$PROJECT_DIR/apps/api-gateway/dist" ] && \
         scp_vps1 --exclude='.env' --exclude='.env.*' --exclude='node_modules' \
-            "$PROJECT_DIR/server/" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/server.staging/"
-    scp_vps1 "$PROJECT_DIR/ecosystem.config.cjs" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/"
+            "$PROJECT_DIR/apps/api-gateway/" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/server.staging/"
+    scp_vps1 "$PROJECT_DIR/infrastructure/ecosystem.config.cjs" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/"
     step "Writing ecomgear-api env to VPS1..."
     if [[ -n "${ECG_AUTH_BASE_URL:-}" && ( -z "${ECG_AUTH_ADMIN_USERNAME:-}" || -z "${ECG_AUTH_ADMIN_PASSWORD:-}" ) ]]; then
-        echo -e "${YELLOW}  ⚠ ECG_AUTH_ADMIN_USERNAME/PASSWORD not set   eCG Auth is configured but the AR-0006 cross-app identity lookup (server/scripts/migrate-existing-users-to-ecg-auth.ts, and the login-time background-migration path) will silently no-op on production.${NC}"
+        echo -e "${YELLOW}  ⚠ ECG_AUTH_ADMIN_USERNAME/PASSWORD not set   eCG Auth is configured but the AR-0006 cross-app identity lookup (apps/api-gateway/scripts/migrate-existing-users-to-ecg-auth.ts, and the login-time background-migration path) will silently no-op on production.${NC}"
     fi
     SK="${SUPABASE_SERVICE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
     ssh_vps1 "bash -s" << ENVREMOTE
@@ -412,7 +412,7 @@ deploy_vps2() {
     echo "  VPS2   Preview Service → $VPS2_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     step "Checking for packages the agent installed at runtime since the last deploy..."
-    # /packages/install (preview-service/server.js) lets the agent's run_command
+    # /packages/install (apps/preview-service/server.js) lets the agent's run_command
     # tool add a dependency straight into the LIVE server's package.json via
     # `npm install <pkg>` in its own directory   but that change only exists on
     # VPS2, never in this repo. The next deploy used to run `npm ci` from this
@@ -425,7 +425,7 @@ deploy_vps2() {
     if [ -n "$REMOTE_PKG_JSON" ]; then
         MERGE_RESULT=$(node -e "
 const fs = require('fs');
-const path = '$PROJECT_DIR/preview-service/package.json';
+const path = '$PROJECT_DIR/apps/preview-service/package.json';
 const local = JSON.parse(fs.readFileSync(path, 'utf8'));
 let remote;
 try { remote = JSON.parse(process.argv[1]); } catch { console.log('0'); process.exit(0); }
@@ -462,7 +462,7 @@ console.log(added.length + (added.length ? ':' + added.join(',') : ''));
         # entry) so this repo's committed lockfile matches what's about to
         # ship, and stays in sync for the NEXT deploy's npm ci.
         step "Updating preview-service package-lock.json for the merged package(s)..."
-        (cd "$PROJECT_DIR/preview-service" && npm install --omit=dev --package-lock-only)
+        (cd "$PROJECT_DIR/apps/preview-service" && npm install --omit=dev --package-lock-only)
     fi
 
     # node_modules is NOT shipped over the network. It used to be either
@@ -480,9 +480,9 @@ console.log(added.length + (added.length ? ':' + added.join(',') : ''));
     step "Uploading preview-service to VPS2 (staging dir)..."
     ssh_vps2 "mkdir -p $DEPLOY_PATH/preview-service.staging/projects $DEPLOY_PATH/logs"
     scp_vps2 --exclude='.git' --exclude='projects/' --exclude='node_modules' \
-             "$PROJECT_DIR/preview-service/" \
+             "$PROJECT_DIR/apps/preview-service/" \
              "$VPS2_USER@$VPS2_IP:$DEPLOY_PATH/preview-service.staging/"
-    scp_vps2 "$PROJECT_DIR/ecosystem.config.cjs" "$VPS2_USER@$VPS2_IP:$DEPLOY_PATH/"
+    scp_vps2 "$PROJECT_DIR/infrastructure/ecosystem.config.cjs" "$VPS2_USER@$VPS2_IP:$DEPLOY_PATH/"
     step "Uploading nginx config..."
     scp_vps2 "$PROJECT_DIR/infrastructure/nginx/vps2-preview.ecomgear.app.conf" \
              "$VPS2_USER@$VPS2_IP:/etc/nginx/sites-available/ecomgear-preview"
@@ -574,15 +574,15 @@ deploy_vps3() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  VPS3   Server / Agent Runner → $VPS3_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    if [ -f "$PROJECT_DIR/server/src/index.ts" ]; then
+    if [ -f "$PROJECT_DIR/apps/api-gateway/src/index.ts" ]; then
         step "Building server TypeScript..."
-        cd "$PROJECT_DIR/server"
+        cd "$PROJECT_DIR/apps/api-gateway"
         npm ci
         npm run build
         cd "$PROJECT_DIR"
-        success "Server built (server/dist/)"
+        success "Server built (apps/api-gateway/dist/)"
     else
-        info "No server/src/index.ts   skipping server build"
+        info "No apps/api-gateway/src/index.ts   skipping server build"
     fi
     step "Uploading server to VPS3 (staging dir)..."
     ssh_vps3 "mkdir -p $DEPLOY_PATH/server.staging $DEPLOY_PATH/logs $DEPLOY_PATH/backups"
@@ -591,13 +591,13 @@ deploy_vps3() {
     # dragging every deploy out to 10+ minutes for no benefit: the CI-built
     # copy still needs prod-only deps and the wrong platform's native builds
     # would follow it there anyway.
-    [ -d "$PROJECT_DIR/server/dist" ] && \
+    [ -d "$PROJECT_DIR/apps/api-gateway/dist" ] && \
         scp_vps3 --exclude='.env' --exclude='.env.*' --exclude='node_modules' \
-            "$PROJECT_DIR/server/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/server.staging/"
+            "$PROJECT_DIR/apps/api-gateway/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/server.staging/"
     step "Uploading supabase functions + migrations..."
     scp_vps3 "$PROJECT_DIR/supabase/functions/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/supabase/functions/"
     scp_vps3 "$PROJECT_DIR/supabase/migrations/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/supabase/migrations/"
-    scp_vps3 "$PROJECT_DIR/ecosystem.config.cjs" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/"
+    scp_vps3 "$PROJECT_DIR/infrastructure/ecosystem.config.cjs" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/"
     step "Uploading nginx config..."
     scp_vps3 "$PROJECT_DIR/infrastructure/nginx/vps3-gen.ecomgear.dev.conf" \
              "$VPS3_USER@$VPS3_IP:/etc/nginx/sites-available/ecomgear-gen"
@@ -865,8 +865,8 @@ deploy_vps4() {
     echo "  VPS4   Enterprise Hosting Service → $VPS4_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    if [ ! -d "$PROJECT_DIR/hosting-service" ]; then
-        err "hosting-service/ directory not found in repo   nothing to deploy"
+    if [ ! -d "$PROJECT_DIR/apps/hosting-service" ]; then
+        err "apps/hosting-service/ directory not found in repo   nothing to deploy"
     fi
 
     step "Bootstrapping VPS4 (Node 20 + Caddy + PM2 if missing)..."
@@ -891,9 +891,9 @@ ufw allow 80/tcp 2>/dev/null || true
 ufw allow 443/tcp 2>/dev/null || true
 REMOTE
 
-    step "Uploading hosting-service/ to VPS4 (staging dir)..."
+    step "Uploading apps/hosting-service/ to VPS4 (staging dir)..."
     scp_vps4 --delete --exclude='node_modules' --exclude='.git' --exclude='*.log' \
-        "$PROJECT_DIR/hosting-service/" "$VPS4_USER@$VPS4_IP:/opt/ecomgear/hosting-service.staging/"
+        "$PROJECT_DIR/apps/hosting-service/" "$VPS4_USER@$VPS4_IP:/opt/ecomgear/hosting-service.staging/"
 
     step "Remote: install deps, atomic swap, Caddy + PM2 restart..."
     # Real incident: this read HOSTING_DEPLOY_SECRET, but .deploy.env (and

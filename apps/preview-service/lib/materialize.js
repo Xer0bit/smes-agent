@@ -1,0 +1,1092 @@
+const fs = require('fs');
+const path = require('path');
+const { activeServers } = require('./previewState');
+const { validateSourceFile, repairMalformedDefaultStringParams, trimTrailingOrphanClosers } = require('./validation');
+const { sendFullReload } = require('./instanceOps');
+
+// Base Tailwind + shadcn CSS — plain CSS vars, no @apply color-tokens
+const TAILWIND_CSS_BASE = `@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+    --radius: 0.5rem;
+  }
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+  }
+  /* Plain CSS — avoids @apply errors when tailwind.config lacks color tokens */
+  * { border-color: hsl(var(--border, 214.3 31.8% 91.4%)); }
+  body { background-color: hsl(var(--background, 0 0% 100%)); color: hsl(var(--foreground, 222.2 84% 4.9%)); }
+}
+`;
+
+// ============================================================
+// FILE VALIDATION & AUTO-FIX UTILITIES
+// Catches common issues before they reach Vite
+// ============================================================
+
+/**
+ * Fix common syntax issues in files before writing them
+ */
+function preprocessFile(filePath, content) {
+    // Skip Supabase edge function files -- Deno backend, not React source
+    if (filePath.startsWith('supabase/') || filePath.includes('/supabase/')) {
+        return { content: content ?? '', issues: [] };
+    }
+    let fixed = content;
+    const issues = [];
+
+    // CSS files: ensure @tailwind directives + fix @apply color-token directives
+    if (filePath.endsWith('.css')) {
+        const isIndexCss = filePath === 'src/index.css' || filePath.endsWith('/src/index.css') || filePath === 'index.css';
+
+        // Fix: @import rules must precede all other statements in CSS.
+        // AI often places @import after @tailwind directives which causes a Vite
+        // "[vite:css] @import must precede all other statements" error and prevents
+        // the CSS from loading (blank page).
+        // Move all @import lines to the very top of the file.
+        if (isIndexCss && fixed.includes('@import') && fixed.includes('@tailwind')) {
+            const lines = fixed.split('\n');
+            const importLines = [];
+            const otherLines = [];
+            for (const line of lines) {
+                if (/^\s*@import\s/.test(line)) {
+                    importLines.push(line);
+                } else {
+                    otherLines.push(line);
+                }
+            }
+            if (importLines.length > 0) {
+                const reordered = [...importLines, '', ...otherLines].join('\n');
+                if (reordered !== fixed) {
+                    fixed = reordered;
+                    issues.push('Moved @import rules before @tailwind directives');
+                }
+            }
+        }
+
+        if (isIndexCss && !fixed.includes('@tailwind')) {
+            fixed = TAILWIND_CSS_BASE + '\n' + fixed;
+            issues.push('Prepended @tailwind directives');
+        }
+        // Strip @apply color-token directives that require matching tailwind.config keys
+        const applyFixes = [
+            [/@apply\s+(?=[^;]*bg-gradient-to-br)(?=[^;]*from-slate-50)(?=[^;]*via-blue-50)(?=[^;]*to-purple-50)(?=[^;]*text-foreground)(?=[^;]*min-h-screen)[^;]*;/g, 'background-image: linear-gradient(135deg, #f8fafc 0%, #eff6ff 48%, #f5f3ff 100%); color: hsl(var(--foreground, 222.2 84% 4.9%)); min-height: 100vh;'],
+            [/@apply\s+border-border\s*;/g, 'border-color: hsl(var(--border, 214.3 31.8% 91.4%));'],
+            [/@apply\s+bg-background\s+text-foreground\s*;/g, 'background-color: hsl(var(--background, 0 0% 100%)); color: hsl(var(--foreground, 222.2 84% 4.9%));'],
+            [/@apply\s+bg-background\s*;/g, 'background-color: hsl(var(--background, 0 0% 100%));'],
+            [/@apply\s+text-foreground\s*;/g, 'color: hsl(var(--foreground, 222.2 84% 4.9%));'],
+        ];
+        for (const [pattern, replacement] of applyFixes) {
+            if (pattern.test(fixed)) {
+                fixed = fixed.replace(pattern, replacement);
+                issues.push('Replaced @apply color-token with plain CSS');
+            }
+        }
+
+        // Generic safety net: convert remaining @apply with custom color tokens to plain CSS.
+        // Catches patterns like @apply bg-muted, @apply text-accent-foreground, etc.
+        const COLOR_TOKENS = {
+            background: '0 0% 100%', foreground: '222.2 84% 4.9%',
+            primary: '222.2 47.4% 11.2%', 'primary-foreground': '210 40% 98%',
+            secondary: '210 40% 96.1%', 'secondary-foreground': '222.2 47.4% 11.2%',
+            muted: '210 40% 96.1%', 'muted-foreground': '215.4 16.3% 46.9%',
+            accent: '210 40% 96.1%', 'accent-foreground': '222.2 47.4% 11.2%',
+            destructive: '0 84.2% 60.2%', 'destructive-foreground': '210 40% 98%',
+            popover: '0 0% 100%', 'popover-foreground': '222.2 84% 4.9%',
+            card: '0 0% 100%', 'card-foreground': '222.2 84% 4.9%',
+            border: '214.3 31.8% 91.4%', input: '214.3 31.8% 91.4%', ring: '222.2 84% 4.9%',
+        };
+        const tokenNames = Object.keys(COLOR_TOKENS).sort((a, b) => b.length - a.length).join('|');
+        const genericApplyRe = new RegExp(
+            `@apply\\s+(?:bg|text|border|ring)-(${tokenNames})\\s*;`, 'g'
+        );
+        fixed = fixed.replace(genericApplyRe, (match, token) => {
+            const fallback = COLOR_TOKENS[token];
+            const varName = `--${token}`;
+            if (match.startsWith('@apply bg-')) {
+                issues.push(`Replaced @apply bg-${token} with plain CSS`);
+                return `background-color: hsl(var(${varName}, ${fallback}));`;
+            } else if (match.startsWith('@apply text-')) {
+                issues.push(`Replaced @apply text-${token} with plain CSS`);
+                return `color: hsl(var(${varName}, ${fallback}));`;
+            } else if (match.startsWith('@apply border-')) {
+                issues.push(`Replaced @apply border-${token} with plain CSS`);
+                return `border-color: hsl(var(${varName}, ${fallback}));`;
+            } else if (match.startsWith('@apply ring-')) {
+                issues.push(`Replaced @apply ring-${token} with plain CSS`);
+                return `--tw-ring-color: hsl(var(${varName}, ${fallback}));`;
+            }
+            return match;
+        });
+
+        return { content: fixed, issues };
+    }
+
+    // Only process TypeScript/JavaScript files
+    if (!filePath.match(/\.(tsx?|jsx?|mjs)$/)) {
+        return { content: fixed, issues };
+    }
+
+    // Fix 1: Remove .tsx/.ts/.jsx/.js extensions from imports
+    const extPatterns = [
+        { pattern: /from\s+['"]([^'"]+)\.tsx['"]/g, ext: '.tsx' },
+        { pattern: /from\s+['"]([^'"]+)\.ts['"]/g, ext: '.ts' },
+        { pattern: /from\s+['"]([^'"]+)\.jsx['"]/g, ext: '.jsx' },
+        { pattern: /from\s+['"]([^'"]+)\.js['"]/g, ext: '.js' },
+    ];
+    extPatterns.forEach(({ pattern, ext }) => {
+        if (pattern.test(fixed)) {
+            fixed = fixed.replace(pattern, 'from "$1"');
+            issues.push(`Removed ${ext} extension from imports`);
+        }
+    });
+
+    // Fix 2: React import injection intentionally removed.
+    // The project uses @vitejs/plugin-react with "jsx": "react-jsx" (automatic transform).
+    // React is injected by the compiler — explicit `import React` is not needed and
+    // causes duplicate-identifier errors when files also import React hooks.
+
+    // Fix 3: Replace class= with className= in JSX
+    if ((filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) && / class=/i.test(fixed)) {
+        fixed = fixed.replace(/ class=/gi, ' className=');
+        issues.push('Fixed class -> className');
+    }
+
+    // Fix 3.1: Repair dangling empty string literals in assignment/property contexts only.
+    // Examples:
+    // - suffix = ',    -> suffix = '',
+    // - prefix: ",    -> prefix: "",
+    // Keep this narrowly scoped to avoid mutating valid string syntax in other contexts.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        fixed = fixed.replace(/(\b[a-zA-Z_$][\w$]*\s*=\s*)(['"])(?=\s*[,}\]])/g, '$1$2$2');
+        fixed = fixed.replace(/(\b[a-zA-Z_$][\w$]*\s*:\s*)(['"])(?=\s*[,}\]])/g, '$1$2$2');
+        if (fixed !== before) {
+            issues.push('Fixed dangling empty string literal');
+        }
+    }
+
+    // Fix 3.13: Repair malformed default-string params in destructuring/signatures.
+    // Examples:
+    // - suffix = ', prefix = ''
+    // - title = ", subtitle = ""
+    // This specifically targets a quote right after `=` when the next token is
+    // another parameter assignment, and normalizes it to an empty string literal.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        fixed = fixed.replace(/(\b[a-zA-Z_$][\w$]*\s*=\s*)'(?=\s*,\s*[a-zA-Z_$][\w$]*\s*=)/g, "$1''");
+        fixed = fixed.replace(/(\b[a-zA-Z_$][\w$]*\s*=\s*)"(?=\s*,\s*[a-zA-Z_$][\w$]*\s*=)/g, '$1""');
+        if (fixed !== before) {
+            issues.push('Fixed malformed default string parameter');
+        }
+    }
+
+    // Fix 3.12: Normalize bare App imports.
+    // Some generated outputs use `from "App"`, which breaks module resolution in preview.
+    if (/(^|\/)src\/.*\.(tsx|jsx|ts|js)$/.test(filePath)) {
+        const before = fixed;
+        fixed = fixed.replace(/from\s+['"]App['"]/g, "from '@/App'");
+        if (fixed !== before) {
+            issues.push('Normalized bare App import path');
+        }
+    }
+
+    // Fix 3.2: Repair doubled quote typo in function arguments only.
+    // Example: console.error('Error:'', err) -> console.error('Error:', err)
+    // Require at least one char inside the first string so valid empty literals
+    // like '' are not accidentally collapsed back to a single quote.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        fixed = fixed.replace(/('(?:[^'\\\n\r]|\\.)+?)''(?=\s*,)/g, '$1\'');
+        fixed = fixed.replace(/("(?:[^"\\\n\r]|\\.)+?)""(?=\s*,)/g, '$1"');
+        if (fixed !== before) {
+            issues.push('Fixed doubled quote typo in function arguments');
+        }
+    }
+
+    // Fix 3.3: Repair malformed empty-string argument placeholders.
+    // Examples:
+    // - window.history.replaceState({}, ', window.location.pathname)
+    // - someFn(a, ", b)
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        fixed = fixed.replace(/,\s*'\s*,/g, ", '',");
+        fixed = fixed.replace(/,\s*"\s*,/g, ', "",');
+        if (fixed !== before) {
+            issues.push('Fixed malformed empty-string argument');
+        }
+    }
+
+    // Fix 3.35: Repair malformed empty-string object values (LLM truncation artifact).
+    // Scope this to object-property assignments only so valid string literals
+    // like console.error('Error: ', err) are never mutated.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        const malformedPropEmptyStringPattern = /([,{]\s*(?:[A-Za-z_$][\w$]*|['"][^'"]+['"])\s*:\s*)'\s*(?=[,}])/g;
+        const malformedPropEmptyDoublePattern = /([,{]\s*(?:[A-Za-z_$][\w$]*|['"][^'"]+['"])\s*:\s*)"\s*(?=[,}])/g;
+        const malformedPropSmartQuotePattern = /([,{]\s*(?:[A-Za-z_$][\w$]*|['"][^'"]+['"])\s*:\s*)[‘’]\s*(?=[,}])/g;
+
+        fixed = fixed
+            .replace(malformedPropEmptyStringPattern, "$1''")
+            .replace(malformedPropEmptyDoublePattern, '$1""')
+            .replace(malformedPropSmartQuotePattern, "$1''");
+
+        if (fixed !== before) {
+            issues.push('Repaired malformed empty-string object values');
+        }
+    }
+
+    // Fix 3.4: Repair malformed History API title arg.
+    // Example: window.history.replaceState({}, ', window.location.pathname)
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        fixed = fixed.replace(/(replaceState\(\s*\{\s*\}\s*,\s*)'(?=\s*,)/g, "$1''");
+        fixed = fixed.replace(/(replaceState\(\s*\{\s*\}\s*,\s*)"(?=\s*,)/g, '$1""');
+        if (fixed !== before) {
+            issues.push('Fixed malformed History API title argument');
+        }
+    }
+
+    // Fix 3.45: Repair dropped `import.meta.env.VITE_*` references in the
+    // standard edge-function invoke pattern (app-builder.prompt.ts documents
+    // `fetch(\`${import.meta.env.VITE_FUNCTIONS_API_URL}/<name>/invoke\`, {
+    // headers: { apikey: import.meta.env.VITE_DB_ANON_KEY } })`   generation
+    // has produced the literal JS keyword `undefined` in both slots instead
+    // (a real incident: every login/signup call silently became a same-origin
+    // relative fetch to ".../undefined/<name>/invoke", 404ing with no signal
+    // pointing at the actual cause). `${undefined}` in a template literal
+    // always renders as the string "undefined"   no legitimate code wants
+    // that, so this is safe to auto-repair rather than just flag.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        fixed = fixed.replace(/\$\{undefined\}(?=\/[\w-]+\/invoke)/g, '${import.meta.env.VITE_FUNCTIONS_API_URL}');
+        fixed = fixed.replace(/(['"]?apikey['"]?\s*:\s*)undefined(?=\s*[,}])/gi, '$1import.meta.env.VITE_DB_ANON_KEY');
+        if (fixed !== before) {
+            issues.push('Repaired dropped VITE_FUNCTIONS_API_URL/VITE_DB_ANON_KEY env references');
+        }
+    }
+
+    // Fix 3.46: Same generation defect as Fix 3.45, different shape -- a whole
+    // `const x = undefined;` DECLARATION instead of just the template-literal
+    // slot. Real incident (CardPro, 2026-08-08): src/lib/supabase.tsx shipped
+    // with `const supabaseUrl = undefined; const supabaseAnonKey = undefined;`,
+    // silently disabling auth ("Auth service is not configured") with zero
+    // signal pointing at the cause -- Fix 3.45's regexes don't match this
+    // shape at all. Only repairs an EXACT `= undefined;` initializer for a
+    // fixed, known set of variable names (never touches legitimate
+    // `import.meta.env.*` text itself, unlike the removed Fix 5 above) --
+    // narrow and unambiguous on purpose: a bare `undefined` initializer for
+    // a variable named exactly one of these is never intentional.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        const KNOWN_ENV_VAR_NAMES = {
+            supabaseUrl: 'VITE_SUPABASE_URL',
+            supabaseAnonKey: 'VITE_SUPABASE_ANON_KEY',
+            apiUrl: 'VITE_FUNCTIONS_API_URL',
+            functionsApiUrl: 'VITE_FUNCTIONS_API_URL',
+            anonKey: 'VITE_DB_ANON_KEY',
+            dbApiUrl: 'VITE_DB_API_URL',
+            dbAnonKey: 'VITE_DB_ANON_KEY',
+            dbSchema: 'VITE_DB_SCHEMA',
+        };
+        for (const [varName, envName] of Object.entries(KNOWN_ENV_VAR_NAMES)) {
+            const re = new RegExp(`\\b(const\\s+${varName}\\s*=\\s*)undefined(\\s*;)`, 'g');
+            fixed = fixed.replace(re, `$1import.meta.env.${envName}$2`);
+        }
+        if (fixed !== before) {
+            issues.push('Repaired dropped VITE_* env reference(s) in const declarations');
+        }
+    }
+
+    // Fix 3.5: Fix common event handler casing
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
+        const events = ['onclick', 'onchange', 'onsubmit', 'onkeydown', 'onkeyup', 'onmouseenter', 'onmouseleave'];
+        events.forEach(event => {
+            const regex = new RegExp(` ${event}=`, 'gi');
+            const proper = ` ${event.slice(0, 2)}${event.charAt(2).toUpperCase()}${event.slice(3)}=`;
+            if (regex.test(fixed)) {
+                fixed = fixed.replace(regex, proper);
+                issues.push(`Fixed ${event} -> ${proper.trim()}`);
+            }
+        });
+    }
+
+    // Fix 3.6: Convert BrowserRouter / createBrowserRouter → Hash equivalents.
+    // BrowserRouter requires a `basename` prop to work under sub-path hosting and
+    // causes parse errors when the agent forgets the space before `basename=`.
+    // HashRouter / createHashRouter works out-of-the-box in the preview environment.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts')) {
+        if (fixed.includes('BrowserRouter') || fixed.includes('createBrowserRouter')) {
+            const before = fixed;
+            // Step 1: repair missing space (e.g. <BrowserRouterbasename= → <BrowserRouter basename=)
+            fixed = fixed.replace(/<BrowserRouter([a-z])/g, '<BrowserRouter $1');
+            // Step 2: replace createBrowserRouter → createHashRouter (must be before BrowserRouter rename)
+            fixed = fixed.replace(/\bcreateStaticRouter\b/g, '__STATIC_ROUTER_KEEP__'); // protect unrelated
+            fixed = fixed.replace(/\bcreateBrowserRouter\b/g, 'createHashRouter');
+            fixed = fixed.replace(/__STATIC_ROUTER_KEEP__/g, 'createStaticRouter');
+            // Step 3: replace <BrowserRouter> component and its import name
+            fixed = fixed.replace(/\bBrowserRouter\b/g, 'HashRouter');
+            // Step 4: strip any basename prop from the resulting HashRouter tag
+            fixed = fixed.replace(/<HashRouter([^>]*)\bbasename=(?:\{[^}]*\}|"[^"]*"|'[^']*')([^>]*)>/g, (m, pre, post) => {
+                const attrs = (pre + post).trim();
+                return attrs ? `<HashRouter ${attrs}>` : '<HashRouter>';
+            });
+            // Step 5: strip basename option from createHashRouter({ basename: ... }) call
+            fixed = fixed.replace(/createHashRouter\((\[[^\]]*\])\s*,\s*\{[^}]*\bbasename\b[^}]*\}\)/gs,
+                (m, routes) => `createHashRouter(${routes})`);
+            if (fixed !== before) {
+                issues.push('Converted BrowserRouter/createBrowserRouter → HashRouter/createHashRouter');
+            }
+        }
+    }
+
+    // Fix 3.6b: Remove <Navigate to="/home"> redirect and promote /home route to /
+    // Agents often generate: <Route path="/" element={<Navigate to="/home" replace />} />
+    //                         <Route path="/home" element={<HomePage />} />
+    // This causes the preview to always redirect to /#/home, which then gets stored
+    // as the current route and breaks on any subsequent build that lacks a /home route.
+    if ((filePath === 'src/App.tsx' || filePath.endsWith('/App.tsx')) &&
+        /Navigate\s+to=["']\/home["']/.test(fixed) &&
+        /path=["']\/home["']/.test(fixed)) {
+        const before = fixed;
+        // Remove the Navigate redirect line entirely
+        fixed = fixed.replace(
+            /[ \t]*<Route[^>]*path=["']\/["'][^>]*element=\{[^}]*Navigate[^}]*to=["']\/home["'][^}]*\}[^/]*(\/?>|\/>)\s*\n?/g,
+            ''
+        );
+        // Also remove self-closing variant
+        fixed = fixed.replace(
+            /[ \t]*<Route[^/]*\/>[^\n]*Navigate[^\n]*\/home[^\n]*\n?/g,
+            ''
+        );
+        // Promote /home route to /
+        fixed = fixed.replace(
+            /path=["']\/home["']/g,
+            'path="/"'
+        );
+        if (fixed !== before) {
+            issues.push('Promoted /home route to / and removed Navigate redirect');
+        }
+    }
+
+    // Fix 3.7: Repair common router closing-tag mismatches (e.g. <HashRouter> ... </Router>)
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
+        const before = fixed;
+        if (fixed.includes('<HashRouter') && fixed.includes('</Router>') && !fixed.includes('<Router')) {
+            fixed = fixed.replace(/<\/Router>/g, '</HashRouter>');
+        }
+        if (fixed !== before) {
+            issues.push('Fixed router closing-tag mismatch');
+        }
+    }
+
+    // Fix 3.8: Encode raw " inside url('...') → %22 to prevent Babel JSX parse errors
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
+        const before = fixed;
+        fixed = fixed.replace(/url\((['"])(.*?)\1\)/gs, (m, q, inner) => `url(${q}${inner.replace(/"/g, '%22')}${q})`);
+        fixed = fixed.replace(/url\(([^'"()\s][^()]*)\)/gs, (m, inner) => inner.includes('"') ? `url(${inner.replace(/"/g, '%22')})` : m);
+        if (fixed !== before) {
+            issues.push('Encoded raw quotes in url()');
+        }
+    }
+
+    // Fix 3.9: Ensure App.tsx and component files have export default
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
+        // Check for named function/const components without export
+        const componentMatch = fixed.match(/(?:^|\n)(function|const)\s+([A-Z][a-zA-Z0-9]*)\s*(?:=|[(\s])/);
+        if (componentMatch) {
+            const componentName = componentMatch[2];
+            const hasExportDefault = new RegExp(`export\\s+default\\s+${componentName}\\b`).test(fixed) ||
+                                     new RegExp(`export\\s+default\\s+function\\s+${componentName}\\b`).test(fixed);
+            if (!hasExportDefault && !fixed.includes('export default')) {
+                fixed = fixed.trimEnd() + `\n\nexport default ${componentName};\n`;
+                issues.push(`Added missing export default for ${componentName}`);
+            }
+        }
+    }
+
+    // Fix 3.10: Repair unmatched JSX fragment shorthand (<> without </>)
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
+        const fragmentOpenCount = (fixed.match(/<>/g) || []).length;
+        const fragmentCloseCount = (fixed.match(/<\/>/g) || []).length;
+
+        if (fragmentOpenCount > fragmentCloseCount) {
+            const before = fixed;
+
+            // Common failure mode: return ( <> <Router>...</Router> );
+            fixed = fixed.replace(/return\s*\(\s*<>\s*/m, 'return (\n    ');
+
+            // Fallback: if no replacement happened, append missing closers before final `);`
+            if (fixed === before) {
+                const missing = fragmentOpenCount - fragmentCloseCount;
+                if (missing > 0) {
+                    fixed = fixed.replace(/\n\s*\);\s*$/, `\n${'  '.repeat(2)}${'</>\n'.repeat(missing)}  );`);
+                }
+            }
+
+            if (fixed !== before) {
+                issues.push('Fixed unmatched JSX fragment shorthand');
+            }
+        }
+    }
+
+    // Fix 3.11: Repair common truncated empty-string calls from streamed generation
+    // Examples:
+    // - num.toString().split(').map(...)   -> split('')
+    // - useState(');                       -> useState('')
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+
+        // string.split(').map(...) => string.split('').map(...)
+        fixed = fixed.replace(/\.split\(\s*'\s*\)(?=\s*\.map\s*\()/g, ".split('')");
+        fixed = fixed.replace(/\.split\(\s*"\s*\)(?=\s*\.map\s*\()/g, '.split("")');
+
+        // useState('); / useState("); => useState('') / useState("")
+        fixed = fixed.replace(/useState\(\s*'\s*\)(?=\s*[;,\)])/g, "useState('')");
+        fixed = fixed.replace(/useState\(\s*"\s*\)(?=\s*[;,\)])/g, 'useState("")');
+
+        if (fixed !== before) {
+            issues.push('Fixed truncated empty-string calls');
+        }
+    }
+
+    // Fix 4: Ensure main.tsx has CSS import
+    if (filePath.endsWith('/main.tsx') || filePath === 'src/main.tsx') {
+        if (!fixed.includes("import './index.css'") && !fixed.includes('import "./index.css"')) {
+            const reactImportMatch = fixed.match(/(import.*from.*['"]react['"];?\s*\n)/);
+            if (reactImportMatch) {
+                fixed = fixed.replace(
+                    reactImportMatch[0],
+                    reactImportMatch[0] + "import './index.css';\n"
+                );
+                issues.push('Added CSS import to main.tsx');
+            }
+        }
+
+        // Fix 4b: Repair truncated render() — replace whole file if parens unbalanced
+        // Handles both `ReactDOM.createRoot(...)` and named-import `createRoot(...)` patterns.
+        if (fixed.includes('createRoot') && fixed.includes('.render(')) {
+            const renderIdx = fixed.indexOf('.render(');
+            if (renderIdx !== -1) {
+                const afterRender = fixed.slice(renderIdx + 8);
+                let depth = 1, balanced = false;
+                for (const ch of afterRender) {
+                    if (ch === '(') depth++;
+                    else if (ch === ')') { depth--; if (depth === 0) { balanced = true; break; } }
+                }
+                if (!balanced) {
+                    const appImport = (fixed.match(/import\s+App\s+from\s+['"]([^'"]+)['"]/) || [])[1] || './App';
+                    fixed = `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from '${appImport}'\nimport './index.css'\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n)\n`;
+                    issues.push('Replaced truncated main.tsx');
+                }
+            }
+        }
+
+        // Fix 4c: Replace near-empty main.tsx
+        if (!fixed.includes('createRoot') && fixed.trim().length < 100) {
+            fixed = `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App'\nimport './index.css'\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n)\n`;
+            issues.push('Replaced empty main.tsx');
+        }
+    }
+
+    // Fix 5 used to blanket-replace every import.meta.env.X (except BASE_URL) with a
+    // literal ""   including VITE_DB_API_URL/VITE_DB_ANON_KEY/VITE_SUPABASE_URL/etc.
+    // Vite's dev server already provides DEV/PROD/MODE/BASE_URL correctly at runtime,
+    // and real project secrets are written to a per-project .env.local file (see the
+    // /preview/:projectId/secrets endpoint below) which Vite loads natively — so this
+    // file must NOT touch import.meta.env.* text at all. Doing so silently nuked every
+    // hosted-database/auth/edge-function call in every preview, unconditionally.
+
+    // Fix 5.5: Remove orphaned closing delimiters after export statements.
+    // Common streamed-generation artifact:
+    //   export default Component;
+    //   }
+    //   )}
+    // or
+    //   export { useToast, toast }
+    //   }
+    //   }
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        // After `export default X` (semicolon optional), strip trailing lines made only of closers.
+        fixed = fixed.replace(/(\nexport\s+default\s+[A-Za-z_$][\w$]*\s*;?)\n((?:\s*[\)\}\];,]+\s*\n)+)/g, '$1\n');
+        // After `export { ... }` (semicolon optional), strip same artifacts.
+        fixed = fixed.replace(/(\nexport\s*\{[^\n]*\}\s*;?)\n((?:\s*[\)\}\];,]+\s*\n)+)/g, '$1\n');
+        // Same-line variant: `export default X; )}`
+        fixed = fixed.replace(/(\nexport\s+default\s+[A-Za-z_$][\w$]*\s*;?)\s*[\)\}\];,]+\s*(\n|$)/g, '$1$2');
+        fixed = fixed.replace(/(\nexport\s*\{[^\n]*\}\s*;?)\s*[\)\}\];,]+\s*(\n|$)/g, '$1$2');
+        if (fixed !== before) {
+            issues.push('Removed orphaned closing delimiters after export');
+        }
+    }
+
+    // Fix 6: Trim trailing orphan closers like standalone ")" or "}" lines.
+    // This specifically targets streamed truncation artifacts that trigger
+    // "Declaration or statement expected" at EOF.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const trimmed = trimTrailingOrphanClosers(fixed);
+        if (trimmed.removed > 0 && trimmed.content !== fixed) {
+            fixed = trimmed.content;
+            issues.push(`Removed ${trimmed.removed} trailing orphan closer line(s)`);
+        }
+    }
+
+    // Fix 7: Repair edge-function invoke response unwrap. The server always
+    // wraps a function's result as { result, logs, durationMs } (see
+    // vps5-functions-runner/runEdgeFunction.js) -- a helper that fetches
+    // .../invoke, parses the JSON, and returns it raw silently breaks every
+    // caller expecting the unwrapped value (an array to .map(), an object
+    // to read fields from). Confirmed live twice in different projects:
+    // the model wrote its own custom invoke wrapper instead of following
+    // the documented `const { result, error } = await res.json()` pattern
+    // and forgot to unwrap. Self-heal it here instead of hand-patching each
+    // occurrence -- a manual fix gets silently reverted the next time an
+    // agent run rewrites the same file.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+        const before = fixed;
+        fixed = fixed.replace(
+            /(\/invoke[\s\S]{0,600}?(?:const|let)\s+(\w+)\s*=\s*await\s+[\w.]+\.json\(\)\s*;(?:(?!\breturn\b)[\s\S]){0,300}?)\breturn\s+\2\s*;/g,
+            (_match, prefix, varName) => `${prefix}return ${varName}.result;`
+        );
+        if (fixed !== before) {
+            issues.push('Unwrapped edge-function invoke response (.result)');
+        }
+    }
+
+    return { content: fixed, issues };
+}
+
+/**
+ * Ensure essential files exist for a valid React project
+ */
+function ensureEssentialFiles(projectRoot, userFiles) {
+    const userFilePaths = new Set(userFiles.map(f => f.path.replace(/^\//, '')));
+
+    // Repair corrupt JSON config files that would crash Vite
+    const jsonConfigs = ['tsconfig.json', 'tsconfig.node.json', 'package.json', 'components.json'];
+    const JSON_SCAFFOLD = {
+        'tsconfig.json': JSON.stringify({
+            compilerOptions: {
+                target: 'ES2020', useDefineForClassFields: true,
+                lib: ['ES2020', 'DOM', 'DOM.Iterable'], module: 'ESNext',
+                skipLibCheck: true, moduleResolution: 'bundler',
+                allowImportingTsExtensions: true, resolveJsonModule: true,
+                isolatedModules: true, noEmit: true, jsx: 'react-jsx',
+                strict: true, noUnusedLocals: false, noUnusedParameters: false,
+                noFallthroughCasesInSwitch: true, baseUrl: '.', paths: { '@/*': ['./src/*'] },
+            },
+            include: ['src'], references: [],
+        }, null, 2),
+        'tsconfig.node.json': JSON.stringify({
+            compilerOptions: {
+                composite: true, skipLibCheck: true, module: 'ESNext',
+                moduleResolution: 'bundler', allowSyntheticDefaultImports: true,
+                strict: true, noEmit: true,
+            },
+            include: ['vite.config.ts'],
+        }, null, 2),
+    };
+    for (const configFile of jsonConfigs) {
+        const configPath = path.join(projectRoot, configFile);
+        if (fs.existsSync(configPath)) {
+            try {
+                JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+            } catch {
+                const fallback = JSON_SCAFFOLD[configFile];
+                if (fallback) {
+                    fs.writeFileSync(configPath, fallback);
+                    console.warn(`[${path.basename(projectRoot)}] Repaired corrupt ${configFile} with scaffold default`);
+                }
+            }
+        }
+    }
+
+    // Linux is case-sensitive: generated projects sometimes create src/app.tsx while
+    // main.tsx imports ./App. Create a tiny bridge to avoid boot failures.
+    const appPascalTsx = path.join(projectRoot, 'src', 'App.tsx');
+    const appPascalJsx = path.join(projectRoot, 'src', 'App.jsx');
+    const appLowerTsx = path.join(projectRoot, 'src', 'app.tsx');
+    const appLowerJsx = path.join(projectRoot, 'src', 'app.jsx');
+
+    if (!fs.existsSync(appPascalTsx) && !fs.existsSync(appPascalJsx)) {
+        if (fs.existsSync(appLowerTsx)) {
+            fs.writeFileSync(appPascalTsx, `export { default } from './app';\n`);
+            console.log(`[${path.basename(projectRoot)}] Created App.tsx bridge to ./app`);
+        } else if (fs.existsSync(appLowerJsx)) {
+            fs.writeFileSync(appPascalJsx, `export { default } from './app';\n`);
+            console.log(`[${path.basename(projectRoot)}] Created App.jsx bridge to ./app`);
+        }
+    }
+
+    // Check if user provided an index.css
+    if (!userFilePaths.has('src/index.css')) {
+        const indexCssPath = path.join(projectRoot, 'src', 'index.css');
+        if (!fs.existsSync(indexCssPath)) {
+            fs.writeFileSync(indexCssPath, TAILWIND_CSS_BASE);
+            console.log(`[${path.basename(projectRoot)}] Created default index.css`);
+        } else {
+            // Repair existing index.css if @tailwind directives are missing
+            const existing = fs.readFileSync(indexCssPath, 'utf-8');
+            if (!existing.includes('@tailwind')) {
+                fs.writeFileSync(indexCssPath, TAILWIND_CSS_BASE + existing);
+                console.log(`[${path.basename(projectRoot)}] Repaired index.css (added @tailwind)`);
+            }
+        }
+    }
+
+    // Check if user provided App.tsx
+    if (!userFilePaths.has('src/App.tsx') && !userFilePaths.has('src/App.jsx')) {
+        // If no App provided, check if there's an alternative entry
+        const hasIndex = userFilePaths.has('src/index.tsx') || userFilePaths.has('index.tsx');
+        if (!hasIndex) {
+            const appPath = path.join(projectRoot, 'src', 'App.tsx');
+            if (!fs.existsSync(appPath)) {
+                fs.writeFileSync(appPath, `function App() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="text-center p-8">
+        <h1 className="text-2xl font-bold text-gray-900">Preview Ready</h1>
+        <p className="text-gray-600 mt-2">Your app files have been loaded.</p>
+      </div>
+    </div>
+  );
+}
+
+export default App;
+`);
+                console.log(`[${path.basename(projectRoot)}] Created default App.tsx`);
+            }
+        }
+    }
+
+        // If generated files import the shadcn dialog primitive but omit the file,
+        // provide a minimal compatible fallback so preview builds don't fail.
+        const importsDialog = userFiles.some((f) =>
+                typeof f.content === 'string' && /@\/components\/ui\/dialog/.test(f.content)
+        );
+        if (importsDialog) {
+                const dialogPath = path.join(projectRoot, 'src', 'components', 'ui', 'dialog.tsx');
+                if (!fs.existsSync(dialogPath)) {
+                        const dialogDir = path.dirname(dialogPath);
+                        if (!fs.existsSync(dialogDir)) fs.mkdirSync(dialogDir, { recursive: true });
+                        fs.writeFileSync(dialogPath, `import * as React from 'react';
+
+type DialogContextValue = {
+    open: boolean;
+    onOpenChange?: (open: boolean) => void;
+};
+
+const DialogContext = React.createContext<DialogContextValue>({ open: true });
+
+interface DialogProps {
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+    children: React.ReactNode;
+}
+
+function Dialog({ open = true, onOpenChange, children }: DialogProps) {
+    return <DialogContext.Provider value={{ open, onOpenChange }}>{children}</DialogContext.Provider>;
+}
+
+function DialogContent({ className = '', children }: { className?: string; children: React.ReactNode }) {
+    const { open } = React.useContext(DialogContext);
+    if (!open) return null;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className={\`w-full max-w-lg rounded-lg bg-background p-6 shadow-xl \${className}\`.trim()}>{children}</div>
+        </div>
+    );
+}
+
+function DialogHeader({ className = '', children }: { className?: string; children: React.ReactNode }) {
+    return <div className={\`mb-4 space-y-1 \${className}\`.trim()}>{children}</div>;
+}
+
+function DialogTitle({ className = '', children }: { className?: string; children: React.ReactNode }) {
+    return <h2 className={\`text-lg font-semibold \${className}\`.trim()}>{children}</h2>;
+}
+
+function DialogDescription({ className = '', children }: { className?: string; children: React.ReactNode }) {
+    return <p className={\`text-sm text-muted-foreground \${className}\`.trim()}>{children}</p>;
+}
+
+export { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription };
+`);
+                        console.log(`[${path.basename(projectRoot)}] Created fallback src/components/ui/dialog.tsx`);
+                }
+        }
+}
+
+// Returns true when a project directory contains only the blank scaffold written by
+// initProject() — i.e. no real user-generated files exist yet (or were pruned).
+function isScaffoldOnly(projectRoot) {
+    const srcDir = path.join(projectRoot, 'src');
+    if (!fs.existsSync(srcDir)) return true;
+    const files = fs.readdirSync(srcDir);
+    if (files.length > 3) return false;
+    // initProject creates exactly: main.tsx, App.tsx, index.css
+    const scaffoldNames = new Set(['main.tsx', 'App.tsx', 'index.css']);
+    return files.every(f => scaffoldNames.has(f));
+}
+
+async function materializeProjectFiles(projectId, projectRoot, files, { dryRun = false } = {}) {
+    const userFilePaths = new Set(files.map((file) => file.path.replace(/^\/+/, '')));
+    const allFixedIssues = [];
+    const validationErrors = [];
+    const preparedFiles = [];
+    const binaryWroteFiles = [];
+    const configFiles = new Set(['vite.config.ts', 'tsconfig.json', 'tsconfig.node.json', 'package.json', 'postcss.config.js', 'tailwind.config.js', 'components.json']);
+
+    // Known-good scaffold defaults for JSON config files
+    const SCAFFOLD_JSON_DEFAULTS = {
+        'tsconfig.json': JSON.stringify({
+            compilerOptions: {
+                target: 'ES2020', useDefineForClassFields: true,
+                lib: ['ES2020', 'DOM', 'DOM.Iterable'], module: 'ESNext',
+                skipLibCheck: true, moduleResolution: 'bundler',
+                allowImportingTsExtensions: true, resolveJsonModule: true,
+                isolatedModules: true, noEmit: true, jsx: 'react-jsx',
+                strict: true, noUnusedLocals: false, noUnusedParameters: false,
+                noFallthroughCasesInSwitch: true, baseUrl: '.', paths: { '@/*': ['./src/*'] },
+            },
+            include: ['src'], references: [],
+        }, null, 2),
+        'tsconfig.node.json': JSON.stringify({
+            compilerOptions: {
+                composite: true, skipLibCheck: true, module: 'ESNext',
+                moduleResolution: 'bundler', allowSyntheticDefaultImports: true,
+                strict: true, noEmit: true,
+            },
+            include: ['vite.config.ts'],
+        }, null, 2),
+    };
+
+    for (const file of files) {
+        if (file.content == null) {
+            console.warn('[Materialize] Skipping file with null/undefined content:', file.path);
+            continue;
+        }
+        const safePath = file.path.replace(/^\/+/, '');
+        const filePath = path.join(projectRoot, safePath);
+
+        // Security: reject any path that escapes the project root (path traversal).
+        // path.join() alone does NOT prevent ../ sequences — must resolve & compare.
+        const resolvedFilePath = path.resolve(filePath);
+        const resolvedProjectRoot = path.resolve(projectRoot);
+        if (!resolvedFilePath.startsWith(resolvedProjectRoot + path.sep) && resolvedFilePath !== resolvedProjectRoot) {
+            console.warn(`[Security] Path traversal blocked: "${file.path}" resolved to "${resolvedFilePath}"`);
+            continue;
+        }
+
+        // Security: block writes to sensitive directories that must never be
+        // overwritten by agent-generated files.
+        const topSegment = safePath.split('/')[0];
+        if (['node_modules', '.git', 'dist', '.cache', '.vite-cache', '.src-snapshot'].includes(topSegment)) {
+            console.warn(`[Security] Write to protected directory blocked: "${safePath}"`);
+            continue;
+        }
+
+        if (/\.json$/i.test(safePath) && !safePath.startsWith('node_modules')) {
+            try {
+                JSON.parse(file.content);
+            } catch {
+                const fallback = SCAFFOLD_JSON_DEFAULTS[safePath];
+                if (fallback) {
+                    console.warn(`[Materialize] ${safePath}: invalid JSON — replacing with scaffold default`);
+                    file.content = fallback;
+                    allFixedIssues.push(`${safePath}: Replaced corrupt JSON with scaffold default`);
+                } else if (fs.existsSync(filePath)) {
+                    // Keep existing file on disk rather than overwriting with garbage
+                    console.warn(`[Materialize] ${safePath}: invalid JSON — keeping existing file`);
+                    allFixedIssues.push(`${safePath}: Kept existing file (new content was invalid JSON)`);
+                    continue;
+                }
+            }
+        }
+        const dir = path.dirname(filePath);
+        if (!dryRun && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+        // Binary files arrive as base64-encoded strings from the agent sync.
+        // Decode and write them directly — no preprocessing or validation needed.
+        if (file.content && file.content.startsWith('__ECOMGEAR_BIN64__')) {
+            if (!dryRun) {
+                const buf = Buffer.from(file.content.slice('__ECOMGEAR_BIN64__'.length), 'base64');
+                fs.writeFileSync(filePath, buf);
+                binaryWroteFiles.push(filePath);
+            }
+            continue;
+        }
+
+        // __edge_functions__/*.js mirrors (see write_edge_function.ts) are raw
+        // sandbox function bodies — no imports, bare top-level statements,
+        // undeclared free variables (secrets/params/db) injected by the runner.
+        // They are NOT React/TS app code and must never go through preprocessFile
+        // or validateSourceFile, both built for component files: doing so both
+        // corrupted a function's syntax (the same false-positive "autoFix"
+        // pattern seen on regular files) AND surfaced its "errors" as blocking
+        // /status failures for the whole app, even though this directory is
+        // never bundled or executed client-side at all.
+        if (safePath.startsWith('__edge_functions__/')) {
+            if (!dryRun) {
+                fs.writeFileSync(filePath, file.content);
+                binaryWroteFiles.push(filePath);
+            }
+            continue;
+        }
+
+        const { content: preprocessedContent, issues } = preprocessFile(safePath, file.content);
+        allFixedIssues.push(...issues.map((issue) => `${safePath}: ${issue}`));
+
+        let contentToWrite = preprocessedContent;
+        if (safePath === 'index.html') {
+            contentToWrite = contentToWrite
+                .replace(/src="\/src\//g, 'src="./src/')
+                .replace(/href="\/src\//g, 'href="./src/');
+        }
+
+        if (safePath === 'package.json') {
+            contentToWrite = harmonizePackageJson(contentToWrite, files);
+        }
+
+        let fileValidationErrors = await validateSourceFile(safePath, contentToWrite);
+
+        // Validation fallback: attempt one more surgical repair for malformed default
+        // string parameters before declaring the file invalid.
+        if (fileValidationErrors.length > 0 && /\.(tsx?|jsx?)$/.test(safePath)) {
+            const repaired = repairMalformedDefaultStringParams(contentToWrite);
+            if (repaired !== contentToWrite) {
+                const repairedValidationErrors = await validateSourceFile(safePath, repaired);
+                if (repairedValidationErrors.length === 0) {
+                    contentToWrite = repaired;
+                    allFixedIssues.push(`${safePath}: Fixed malformed default string parameter (validation fallback)`);
+                    fileValidationErrors = [];
+                }
+            }
+        }
+
+        validationErrors.push(...fileValidationErrors);
+
+        preparedFiles.push({
+            safePath,
+            filePath,
+            contentToWrite,
+            shouldSkipWrite: configFiles.has(safePath) && fs.existsSync(filePath) && fs.readFileSync(filePath, 'utf-8') === contentToWrite,
+        });
+    }
+
+    if (allFixedIssues.length > 0) {
+        const uniqueFilePaths = new Set(allFixedIssues.map((issue) => issue.split(':')[0])).size;
+        const uniqueIssues = [...new Set(allFixedIssues)];
+        const sample = uniqueIssues.slice(0, 6).join(' | ');
+        console.log(
+            `[Preprocess] Applied ${allFixedIssues.length} fix(es) across ${uniqueFilePaths} file(s)` +
+            (sample ? `: ${sample}${uniqueIssues.length > 6 ? ' | ...' : ''}` : '')
+        );
+    }
+
+    // Validation errors are treated as non-blocking warnings — files are written
+    // and Vite HMR surfaces them as browser overlays, consistent with esbuild and
+    // cross-file import handling. Hard-rejecting (422) blocks the AI agent loop.
+    if (validationErrors.length > 0) {
+        const sample = validationErrors.slice(0, 3).map((e) => e.summary).join(' | ');
+        console.warn(`[Validate] ${validationErrors.length} warning(s) — writing files anyway: ${sample}`);
+    }
+
+    const wroteFiles = [...binaryWroteFiles];
+    if (!dryRun) {
+        for (const prepared of preparedFiles) {
+            if (prepared.shouldSkipWrite) {
+                continue;
+            }
+
+            fs.writeFileSync(prepared.filePath, prepared.contentToWrite);
+            wroteFiles.push(prepared.filePath);
+        }
+
+        const projectIdInstance = activeServers.get(projectId);
+        if (projectIdInstance) {
+            // Batch write complete: invalidate the whole module graph ONCE and send
+            // a SINGLE full-reload to the browser (works for both a legacy
+            // in-process instance and a child-process instance, see instanceOps.js).
+            // Emitting one watcher 'change' event PER FILE caused N separate Vite HMR
+            // processing cycles — each .tsx file without a self-accepting HMR boundary
+            // triggered its own 'full-reload' WebSocket message (26 files = 26
+            // 'page reload' log entries). The Vite client debounces but the module
+            // graph ends in a partially-stale state causing cascading re-requests.
+            sendFullReload(projectIdInstance, projectId);
+        }
+    }
+    // dryRun (used by /preview/:projectId/check): validation above already ran
+    // in full against the same content; we just never touch disk or the live
+    // Vite instance, so the user-visible preview stays untouched until the
+    // real end-of-run /update push. See get_build_errors.ts.
+
+    return { userFilePaths, allFixedIssues, validationErrors, wroteFiles };
+}
+
+function pruneProjectFiles(projectRoot, userFilePaths) {
+    const removed = [];
+    const protectedTopLevel = new Set(['node_modules', '.vite-cache', '.git', '.cache', '.src-snapshot']);
+
+    function walk(dir) {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            const absPath = path.join(dir, entry.name);
+            const relPath = path.relative(projectRoot, absPath).replace(/\\/g, '/');
+
+            if (!relPath) continue;
+
+            // Protect critical top-level paths whether they are real directories
+            // OR symlinks (node_modules is always a symlink to the shared install).
+            // Without this guard, fullSync pruning deleted the node_modules symlink,
+            // causing Vite to fail resolving any import until the next initProject call.
+            if (protectedTopLevel.has(relPath.split('/')[0])) continue;
+
+            // .env.local (and any .env* file) is written by the /secrets endpoint,
+            // NOT by the agent — it never appears in userFilePaths since the agent
+            // doesn't "own" it. Without this guard, the very next fullSync (which
+            // runs at the end of EVERY agent turn) deleted it as a "stale" file,
+            // silently wiping VITE_DB_API_URL/VITE_SUPABASE_URL/etc. moments after
+            // they were synced — the running Vite server kept them in memory until
+            // its next restart, but any restart (secrets re-sync, redeploy, crash)
+            // came back up with no env file at all ("Database API URL is not
+            // configured" / import.meta.env.VITE_* all undefined).
+            if (/^\.env(\..+)?$/.test(entry.name)) continue;
+
+            if (entry.isDirectory()) {
+                walk(absPath);
+                try {
+                    const remaining = fs.readdirSync(absPath);
+                    if (remaining.length === 0) {
+                        fs.rmSync(absPath, { recursive: true, force: true });
+                    }
+                } catch { /* dir may have been removed or repopulated */ }
+                continue;
+            }
+
+            // Binary files now travel in the payload as base64, so they appear
+            // in userFilePaths like any other file. The normal check below
+            // handles pruning stale binaries correctly.
+            if (!userFilePaths.has(relPath)) {
+                try {
+                    fs.rmSync(absPath, { force: true });
+                    removed.push(relPath);
+                } catch { /* file may be locked by Vite */ }
+            }
+        }
+    }
+
+    walk(projectRoot);
+    return removed;
+}
+
+function collectReferencedPackages(files) {
+    const referencedPackages = new Set();
+
+    for (const file of files) {
+        const safePath = file.path.replace(/^\/+/, '');
+        if (!/\.(tsx?|jsx?)$/.test(safePath)) {
+            continue;
+        }
+
+        const importMatches = file.content.matchAll(/from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"]/g);
+        for (const match of importMatches) {
+            const specifier = match[1] || match[2];
+            if (!specifier || specifier.startsWith('.') || specifier.startsWith('/')) {
+                continue;
+            }
+
+            if (specifier.startsWith('@')) {
+                const scoped = specifier.split('/').slice(0, 2).join('/');
+                referencedPackages.add(scoped);
+                continue;
+            }
+
+            referencedPackages.add(specifier.split('/')[0]);
+        }
+    }
+
+    return referencedPackages;
+}
+
+function harmonizePackageJson(packageJsonContent, files) {
+    try {
+        const parsed = JSON.parse(packageJsonContent);
+        const referencedPackages = collectReferencedPackages(files);
+        if (referencedPackages.size === 0) {
+            return packageJsonContent;
+        }
+
+        const previewPackageJsonPath = path.join(__dirname, '..', 'package.json');
+        const previewPackageJson = JSON.parse(fs.readFileSync(previewPackageJsonPath, 'utf-8'));
+        const availableDeps = {
+            ...(previewPackageJson.dependencies || {}),
+            ...(previewPackageJson.devDependencies || {}),
+        };
+
+        parsed.dependencies = parsed.dependencies || {};
+
+        for (const pkg of referencedPackages) {
+            if (!parsed.dependencies[pkg] && availableDeps[pkg]) {
+                parsed.dependencies[pkg] = availableDeps[pkg];
+            }
+        }
+
+        return JSON.stringify(parsed, null, 2);
+    } catch (error) {
+        console.warn('Failed to harmonize package.json:', error);
+        return packageJsonContent;
+    }
+}
+
+module.exports = {
+    TAILWIND_CSS_BASE,
+    preprocessFile,
+    ensureEssentialFiles,
+    isScaffoldOnly,
+    materializeProjectFiles,
+    pruneProjectFiles,
+    collectReferencedPackages,
+    harmonizePackageJson,
+};
