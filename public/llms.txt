@@ -1,0 +1,58 @@
+# eComGear AI IDE
+
+> Autonomous AI-Powered IDE & Sandboxed MicroVM Coding Engine
+
+eComGear is a next-generation AI IDE that enables developers and AI builders to generate, refactor, execute, and deploy full-stack web applications. Built on multi-modal LLM streaming, Firecracker MicroVM execution sandboxes, and automated deployment pipelines.
+
+---
+
+## Technical Overview
+
+- **Core Stack**: React 18, Vite, TypeScript, Tailwind CSS, Monaco Editor
+- **Backend Infrastructure**: Node.js, Express, Supabase PostgreSQL, Redis
+- **AI Streaming Engine**: Server-Sent Events (SSE) agent loop supporting Claude 3.5 Sonnet, GPT-4o, and Gemini 1.5 Pro
+- **Sandboxing**: Isolated Firecracker MicroVMs with hot-module replacement and AST safeguard enforcement
+- **Edge Deployment**: One-click Vercel REST API v13 deployment integration
+- **Version Control**: Programmatic GitHub repository export via Octokit REST API
+
+---
+
+## Core API Reference
+
+### 1. AI Agent Stream
+`POST /api/v1/ai/agent-stream`
+- Streams real-time code generation, tool calls, and AST file tree mutations via SSE.
+- Supports multi-modal image attachments (wireframes, screenshots, visual assets).
+
+### 2. Vercel Deployment
+`POST /api/v1/deploy/:projectId`
+- Fetches the latest code revision from Supabase (`revisions` table).
+- Bundles Vite/React project files and deploys to Vercel production edge URLs.
+
+### 3. GitHub Export
+`POST /api/v1/github/export/:projectId`
+- Accepts `{ githubToken, repoName, isPrivate }`.
+- Programmatically creates a repository on the user's GitHub account and commits all sandboxed project files.
+
+### 4. Billing & Quota Enforcement
+`POST /api/v1/billing/webhook`
+- Handles Stripe subscription events (`checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`).
+- Enforces monthly token and generation quotas across Free and Pro tiers.
+
+---
+
+## Page Route Map
+
+- `/` — Public marketing & product landing page
+- `/auth` — Supabase authentication screen (OAuth & Email/Password)
+- `/dashboard` — User workspace command center
+- `/editor/:projectId` — Interactive AI IDE workspace with Monaco code editor, live MicroVM preview, and agent chat panel
+- `/billing` — Subscription plan management and usage quota metrics
+
+---
+
+## Documentation & Repository Links
+
+- **Main Website**: https://ecomgear.dev
+- **Documentation**: https://ecomgear.dev/features
+- **GitHub Repository**: https://github.com/ecomgear/ecomgear

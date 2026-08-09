@@ -19,6 +19,21 @@ brand — start at `docs/architecture.md`, which links the rest. Every claim in
 these traces to a real file at time of writing; re-verify before relying on a
 specific detail in a fast-changing area.
 
+### VPS5 tenant database access — audit/diagnostic work
+
+VPS5 hosts live customer tenant databases. For audit or diagnostic work (schema
+checks, drift detection, incident tracing — not the product's own DB console
+feature at `database.routes.ts` `/query`, which is a legitimate owner-facing
+tool and out of scope here):
+
+- Schema-shape inspection only: `information_schema` queries, `\d`/`\dt`
+  equivalents, or the existing `listTables()` tool path (`database.service.ts`,
+  used by `get_database_schema.ts` and `database.routes.ts`).
+- **Never** run a query that reads, counts, or samples actual tenant DATA ROWS
+  — including something as innocuous-seeming as `SELECT count(*)` — without
+  explicit, scoped, per-query user authorization naming that specific target.
+  "Spot-check the schema" does not authorize a data-row query; ask first.
+
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
 
