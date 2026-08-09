@@ -16,6 +16,7 @@ import { getAppBuilderBuildSystemPrompt, getAppBuilderSystemPrompt, MICRO_SYSTEM
 import { PRE_INSTALLED_PACKAGES } from './baseTemplateService.js';
 import { RunStateLedger } from './runStateLedger.js';
 import { canonicalizeModelId, DEFAULT_PRIMARY_MODEL, DEFAULT_FALLBACK_MODEL } from '../config/models.js';
+import { runPreviewSmokeCheck } from './previewSmokeCheck.service.js';
 import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols } from '../knowledgebase/index.js';
 import { captureThumbnail } from './thumbnailService.js';
 import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
@@ -3839,6 +3840,35 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
       const finalCost = runCostUsd > 0 ? runCostUsd : calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens);
 
+      // Orchestration Phase 2b (2026-08-09): first real DOM/browser check.
+      // Everything before this only proves the code compiles (esbuild, then
+      // real type-checking as of Phase 2a) -- neither one loads the actual
+      // page, so a runtime-only failure (bad hook order, null deref only
+      // reachable once mounted) had zero signal reaching anywhere. Runs here
+      // (background, post-response) so it never adds latency to what the
+      // user sees. Deliberately observability-only for this pass: records
+      // the result to agent_runs.preview_errors (an existing column, never
+      // populated before now) rather than wiring it to trigger another
+      // repair cycle inside the already-deep, already-many-branched repair
+      // loop above -- that's the natural next step once real false-positive
+      // rates are known from this data, not a change to make blind.
+      // Gated to feature/build tiers (their step budgets are the ones sized
+      // for this) and only when the push already looked healthy and code
+      // actually changed -- no point checking a run that wrote nothing.
+      let previewSmokeErrors: string | null = null;
+      if (previewPushOk && doneFilesToWrite.length > 0 && (_tier === 'feature' || _tier === 'build')) {
+        try {
+          const smokeCheckPreviewBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
+          const smokeResult = await runPreviewSmokeCheck(`${smokeCheckPreviewBase}/preview/${projectId}`);
+          if (!smokeResult.skipped && !smokeResult.ok) {
+            previewSmokeErrors = smokeResult.errors.join('; ').slice(0, 2000);
+            console.warn(`[AgentLoop] Preview smoke check failed for project=${projectId}: ${previewSmokeErrors}`);
+          }
+        } catch (smokeErr) {
+          console.warn(`[AgentLoop] Preview smoke check errored (non-fatal) for project=${projectId}:`, smokeErr);
+        }
+      }
+
       if (tokensUsed > 0) {
         sink.emit('usage', {
           tokensUsed,
@@ -3856,6 +3886,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       if (supabase && agentRunId) {
         supabase.from('agent_runs').update({
           status: 'completed',
+          preview_errors: previewSmokeErrors,
           steps_taken: stepCount,
           files_written: doneFilesToWrite.length,
           files_deleted: doneFilesToDelete.length,

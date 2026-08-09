@@ -20,7 +20,7 @@ const CHROMIUM_CANDIDATES = [
 const BUCKET = 'thumbnails';
 const VIEWPORT = { width: 1280, height: 800 };
 
-async function findChromium(): Promise<string | null> {
+export async function findChromium(): Promise<string | null> {
   const { access, constants } = await import('node:fs/promises');
   for (const p of CHROMIUM_CANDIDATES) {
     try { await access(p, constants.X_OK); return p; } catch { /* try next */ }
