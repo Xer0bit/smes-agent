@@ -18,6 +18,7 @@ import { RunStateLedger } from './runStateLedger.js';
 import { canonicalizeModelId, DEFAULT_PRIMARY_MODEL, DEFAULT_FALLBACK_MODEL } from '../config/models.js';
 import { runPreviewSmokeCheck } from './previewSmokeCheck.service.js';
 import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols } from '../knowledgebase/index.js';
+import { persistAgentRevision } from './agentRevisionPersist.service.js';
 import { captureThumbnail } from './thumbnailService.js';
 import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
 import { beginRun as beginNarration, updateThought, endRun as endNarration, generateStatus, getNarrationCost, type LifecyclePhase } from './narration.service.js';
@@ -4010,6 +4011,30 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           ({ error }) => { if (error) console.warn(`[AgentLoop] agent_runs update failed: ${error.message}`); },
           (e: any) => console.warn('[AgentLoop] agent_runs update rejected:', e?.message)
         );
+      }
+
+      // Server-side revision persistence (2026-08-10). The durable record of
+      // this run's output must be written HERE, by the run itself -- not
+      // delegated to the browser's fire-and-forget saveWorkspaceToDb(), whose
+      // silent client-side failure left revisions describing pre-run state
+      // and let a later Editor preview sync revert the agent's work (CardPro
+      // logo, 2026-08-09). Awaited deliberately: a couple of seconds of
+      // dedup-aware uploads at run-end buys a durability guarantee; failures
+      // log server-side where they are actually observable.
+      if (supabase && userId && doneFilesToWrite.length > 0) {
+        try {
+          const persistResult = await persistAgentRevision(
+            projectId, userId, doneFilesToWrite,
+            summary || `Agent run: ${stepCount} step(s)`, prompt,
+          );
+          if (persistResult.ok) {
+            console.log(`[AgentLoop] Revision persisted server-side: ${persistResult.revisionId} (${doneFilesToWrite.length} files in manifest)`);
+          } else {
+            console.warn(`[AgentLoop] Server-side revision persist FAILED: ${persistResult.error} -- durable state may lag the live preview until the next successful save.`);
+          }
+        } catch (persistErr: any) {
+          console.warn('[AgentLoop] Server-side revision persist threw:', persistErr?.message);
+        }
       }
 
       // If no code changed (ghost run or plan), delete the snapshot dir we pre-created
