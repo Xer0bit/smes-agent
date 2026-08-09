@@ -124,13 +124,29 @@ function buildFileTouchMap(msgs: any[], stepStartIdx: number, totalPairs: number
  * fully intact. Older steps have verbose tool args/results truncated.
  * Brain memories are injected as a user note before recent steps.
  */
+// Early-write-stub threshold: write_file args at or above this size get their
+// content stubbed as soon as the write is >=1 completed step old, WITHOUT
+// waiting for the KEEP_RECENT_STEPS window. The content is on disk (the tool
+// succeeded) and re-readable via read_file; re-sending it with every
+// subsequent request is pure cost. Confirmed live 2026-08-09 (logo run,
+// runId 929b1ec3): a 6k-token index.html written at step 10 rode along fully
+// in steps 11-12's context, and step 11 happened to be a Gemini
+// implicit-cache miss -- the echo was re-billed at full input price.
+// Trade-off, deliberately accepted: stubbing an already-sent message breaks
+// the byte-identical cache prefix ONCE at the step where the stub first
+// applies, in exchange for permanently removing >=1k tokens from every
+// subsequent step and shrinking the miss surface. The high threshold keeps
+// small writes (the common case) from churning the prefix at all.
+const EARLY_WRITE_STUB_MIN_CHARS = 4000;
+const EARLY_WRITE_STUB_FROM_STEP = 3;
+
 export function compactStepMessages(
   messages: Array<any>,
   stepNumber: number,
   brainMemory: string[],
 ): Array<any> {
   // No compaction needed for early steps
-  if (stepNumber < COMPACT_AFTER_STEP && brainMemory.length === 0) return messages;
+  if (stepNumber < Math.min(COMPACT_AFTER_STEP, EARLY_WRITE_STUB_FROM_STEP) && brainMemory.length === 0) return messages;
 
   // Deep clone to avoid mutating SDK internal state
   const msgs: Array<any> = structuredClone(messages);
@@ -227,6 +243,37 @@ export function compactStepMessages(
 
     const compactedTokensEst = Math.ceil(JSON.stringify(msgs).length / 3.5);
     console.log(`[Brain] Step ${stepNumber}: compacted ${compactUpTo} older steps, ~${compactedTokensEst} tokens est.`);
+  }
+
+  // ── Early stub of LARGE write echoes inside the recent window ────────────
+  // Applies to every completed step pair EXCEPT the most recent one (the
+  // model keeps full sight of its immediately-preceding action). Deterministic
+  // per step and idempotent (a stubbed arg is short, so it never re-matches
+  // the size threshold), which keeps the message bytes stable across
+  // subsequent prepareStep calls -- required for prompt-cache prefix reuse.
+  if (stepNumber >= EARLY_WRITE_STUB_FROM_STEP) {
+    let stubStartIdx = 0;
+    for (let i = 0; i < msgs.length; i++) {
+      if (msgs[i].role === 'assistant' && Array.isArray(msgs[i].content)) { stubStartIdx = i; break; }
+    }
+    if (stubStartIdx > 0 || (msgs.length > 0 && msgs[0].role === 'assistant')) {
+      const pairCount = Math.floor((msgs.length - stubStartIdx) / 2);
+      for (let pairIdx = 0; pairIdx < pairCount - 1; pairIdx++) {
+        const aMsg = msgs[stubStartIdx + pairIdx * 2];
+        if (!aMsg || aMsg.role !== 'assistant' || !Array.isArray(aMsg.content)) continue;
+        for (const part of aMsg.content) {
+          if (
+            part.type === 'tool-call' &&
+            part.toolName === 'write_file' &&
+            typeof part.args?.content === 'string' &&
+            part.args.content.length >= EARLY_WRITE_STUB_MIN_CHARS
+          ) {
+            const lines = part.args.content.split('\n').length;
+            part.args.content = `[compacted early: large write] ${lines} lines written to ${part.args.path ?? 'file'} -- content is on disk, use read_file to view`;
+          }
+        }
+      }
+    }
   }
 
   // Inject brain memories as context before recent steps

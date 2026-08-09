@@ -3964,13 +3964,24 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         });
       }
 
+      // files_written must be the DISTINCT files the agent actually wrote or
+      // edited this run (same tracked set the sanitize pass scopes to above),
+      // NOT doneFilesToWrite.length -- that is mergedWrites, the fullSync
+      // preview payload built from a whole-project-dir walk, so it reads as
+      // "entire project" (~180+) on every run that writes anything. That fake
+      // number derailed two separate runaway-edit investigations on 2026-08-09
+      // before the metric itself was found to be the bug.
+      const distinctAgentEditCount = (runtimeMode === 'plan' || !agentWroteFiles)
+        ? 0
+        : new Set<string>([...filesToWrite.map((f) => f.path), ...filesEdited]).size;
+
       // Update agent_runs with all completion data (status + token count + snapshot_id)
       if (supabase && agentRunId) {
         supabase.from('agent_runs').update({
           status: 'completed',
           preview_errors: previewSmokeErrors,
           steps_taken: stepCount,
-          files_written: doneFilesToWrite.length,
+          files_written: distinctAgentEditCount,
           files_deleted: doneFilesToDelete.length,
           dependencies: doneDependencies,
           summary,

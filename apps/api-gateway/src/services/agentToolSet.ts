@@ -1,5 +1,6 @@
 import { ToolSet, jsonSchema } from 'ai';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import type { AgentContext } from '../agent-tools/types.js';
 import { safeJoin } from '../agent-tools/types.js';
 import { writeFileTool } from '../agent-tools/write_file.js';
@@ -81,12 +82,139 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
     ...(ctx.ecgMcp ? [searchOrgKnowledgeTool] : []),
   ].filter((def) => tier !== 'micro' || !MICRO_EXCLUDED_TOOLS.has(def.name));
 
+  // ── Per-run routing/budget state (buildToolSet is called once per run) ──
+  // Serial-edit detector (2026-08-09 logo incident): the agent replaced one
+  // asset path across 5 files via grep + serial per-file edit_file round-trips
+  // -- ~3x the cost of the purpose-built replace_asset_references tool it
+  // never called. Track each edit_file call's SEARCH strings; when the same
+  // needle shows up across enough distinct files, route to the bulk tool
+  // (hard redirect only when a real bulk tool exists for the pattern).
+  const priorEditSearches: Array<{ path: string; norm: string }> = [];
+  const SERIAL_EDIT_DISTINCT_PATHS = 2; // block the 3rd distinct file
+  const ASSET_NEEDLE_RE = /\.(png|jpe?g|gif|svg|webp|ico|mp4|mp3|woff2?)\b|assets\//i;
+  const normalizeSearch = (s: string) => s.replace(/\s+/g, ' ').trim();
+  let serialEditAdvisoryShown = false;
+  // Serial-read nudge: 3+ consecutive single-file read_file calls with no
+  // intervening non-read tool call -> tip toward the batch read_files tool.
+  // Advisory only (never blocks: the content is needed either way, and a
+  // block would just burn a round-trip -- see the 2026-07-21 prefer-edit
+  // guard incident above for why bounced-paid-work blocks are a last resort).
+  let consecutiveSingleReads = 0;
+  let readBatchTipShown = false;
+  // Rename-shape advisory: write_file(newPath, X) followed by delete_file of a
+  // file whose on-disk content is identical to X was a rename done the
+  // expensive way (full content resent through the model). Advisory only --
+  // by delete time the cost is already sunk, this teaches the cheaper path.
+  const writeHashToPath = new Map<string, string>();
+  const sha1 = (s: string) => crypto.createHash('sha1').update(s).digest('hex');
+  // Tier budget backstop (2026-08-09): cap DISTINCT files written/edited per
+  // run by tier. PREVENTATIVE RUNAWAY GUARD ONLY -- explicitly NOT a cost
+  // mechanism (the confirmed cost drivers are serial-edit routing and
+  // transcript size, handled separately). Mirrors the DDL confirm-gate shape:
+  // blocked-with-instructions, not a hard kill; feature/build stay uncapped.
+  const TIER_FILE_CAPS: Record<string, number> = { micro: 3, edit: 10, fix: 10 };
+  const tierFileCap = tier ? TIER_FILE_CAPS[tier] : undefined;
+  const editedPathsThisRun = new Set<string>();
+
   const toolSet: ToolSet = {};
   for (const def of defs) {
     toolSet[def.name] = {
       description: def.description,
       inputSchema: def.inputSchema,
       execute: async (args: any) => {
+        // Advisory (non-blocking) routing note to append to a successful result.
+        let pendingRoutingAdvisory: string | null = null;
+
+        // ── Serial-read tracking (for the read_files batch nudge below) ──────
+        if (def.name === 'read_file') {
+          consecutiveSingleReads++;
+          if (consecutiveSingleReads >= 3 && !readBatchTipShown) {
+            readBatchTipShown = true;
+            pendingRoutingAdvisory =
+              `TIP: this is your ${consecutiveSingleReads}th consecutive single-file read. ` +
+              `read_files([path1, path2, ...]) reads multiple files in ONE step -- batch your remaining reads.`;
+          }
+        } else {
+          consecutiveSingleReads = 0;
+        }
+
+        // ── Tier file-budget backstop ────────────────────────────────────────
+        // Preventative runaway guard, NOT a cost fix. Counts distinct paths
+        // this run has written/edited; at the cap, further NEW files are
+        // staged behind an explicit user go-ahead (existing-file re-edits
+        // stay allowed so in-flight work on already-touched files finishes).
+        if (
+          tierFileCap !== undefined &&
+          (def.name === 'write_file' || def.name === 'edit_file' || def.name === 'place_asset') &&
+          typeof (args.path ?? args.destName) === 'string'
+        ) {
+          const budgetPath: string = args.path ?? args.destName;
+          if (!editedPathsThisRun.has(budgetPath) && editedPathsThisRun.size >= tierFileCap) {
+            return (
+              `BLOCKED (tier file budget): this ${tier} run has already modified ${editedPathsThisRun.size} distinct ` +
+              `files -- the cap for a ${tier}-tier task. Touching "${budgetPath}" would expand scope further. ` +
+              `Finish up: summarize what is done, list the remaining files you would still change and WHY, and ask ` +
+              `the user to confirm before continuing. If this task genuinely needs broad changes, tell the user to ` +
+              `re-run it phrased as a feature/build request so it routes to an uncapped tier.`
+            );
+          }
+        }
+
+        // ── Serial-edit → bulk-tool routing ──────────────────────────────────
+        // Same-needle SEARCH blocks across distinct files = a find-and-replace
+        // being done one LLM round-trip at a time. Asset-path needles get a
+        // hard redirect (replace_asset_references does the whole job in one
+        // call); non-asset needles get an advisory on the executed result
+        // only, because no true multi-file replace tool exists to point at
+        // and bouncing already-generated work is proven waste (2026-07-21).
+        if (def.name === 'edit_file' && typeof args.path === 'string' && typeof args.diff === 'string') {
+          const searches = [...args.diff.matchAll(/<<<<<<< SEARCH\n([\s\S]*?)\n=======/g)]
+            .map((m) => normalizeSearch(m[1]))
+            .filter((s) => s.length >= 8);
+          for (const norm of searches) {
+            const priorPaths = new Set(
+              priorEditSearches.filter((e) => e.norm === norm && e.path !== args.path).map((e) => e.path),
+            );
+            if (priorPaths.size >= SERIAL_EDIT_DISTINCT_PATHS && ASSET_NEEDLE_RE.test(norm)) {
+              return (
+                `BLOCKED (serial-edit detected): you are replacing the same asset reference ` +
+                `("${norm.slice(0, 80)}") file-by-file -- this is your ${priorPaths.size + 1}th file with the ` +
+                `identical SEARCH text. Call replace_asset_references(oldAssetPath, newAssetPath) instead: it ` +
+                `rewrites EVERY reference (img src, CSS url(), <link>/<meta> tags, manifest icons, JS imports) ` +
+                `across the whole project in ONE pass and reports exactly what it changed. Then verify with grep.`
+              );
+            }
+            if (priorPaths.size >= SERIAL_EDIT_DISTINCT_PATHS && !ASSET_NEEDLE_RE.test(norm) && !serialEditAdvisoryShown) {
+              serialEditAdvisoryShown = true;
+              pendingRoutingAdvisory =
+                `NOTE: this is your ${priorPaths.size + 1}th file applying the same replacement ` +
+                `("${norm.slice(0, 60)}"). If more files need it, use grep to list ALL remaining occurrences ` +
+                `first, then edit them in as few steps as possible instead of one file per step.`;
+            }
+          }
+          for (const norm of searches) priorEditSearches.push({ path: args.path, norm });
+        }
+
+        // ── Rename-shape advisory (delete after identical-content write) ─────
+        if (def.name === 'delete_file' && typeof args.path === 'string') {
+          try {
+            const fullPath = safeJoin(ctx.appPath, args.path);
+            if (fs.existsSync(fullPath)) {
+              const stat = fs.statSync(fullPath);
+              if (stat.size < 1024 * 1024) {
+                const newPath = writeHashToPath.get(sha1(fs.readFileSync(fullPath, 'utf8')));
+                if (newPath && newPath !== args.path) {
+                  pendingRoutingAdvisory =
+                    `NOTE: you wrote "${newPath}" with content identical to the file you just deleted -- that was ` +
+                    `a rename done the expensive way (full content resent). Next time call ` +
+                    `rename_file("${args.path}", "${newPath}") -- one step, no content round-trip, and imports ` +
+                    `get updated for you.`;
+                }
+              }
+            }
+          } catch { /* advisory only -- never interfere with the delete */ }
+        }
+
         // ── Pre-flight AST Reflection Interceptor ─────────────────────────────
         if ((def.name === 'write_file' || def.name === 'edit_file') && typeof args.path === 'string') {
           let contentToValidate: string | null = null;
@@ -318,11 +446,31 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
         }
 
         try {
-          const result = await def.execute(args, ctx);
+          let result = await def.execute(args, ctx);
           // ── Track successful reads ─────────────────────────────────────────
           // Mark file as read so subsequent write_file/edit_file calls are allowed.
           if (def.name === 'read_file' && typeof args.path === 'string' && ctx.readFiles) {
             ctx.readFiles.add(args.path);
+          }
+          // ── Track distinct files modified (tier file-budget accounting) ────
+          if (
+            (def.name === 'write_file' || def.name === 'edit_file' || def.name === 'place_asset') &&
+            typeof (args.path ?? args.destName) === 'string' &&
+            typeof result === 'string' &&
+            !result.startsWith('ERROR') && !result.startsWith('BLOCKED') && !result.startsWith('[AST')
+          ) {
+            editedPathsThisRun.add(args.path ?? args.destName);
+            if (def.name === 'write_file' && typeof args.content === 'string' && args.content.length < 1024 * 1024) {
+              writeHashToPath.set(sha1(args.content), args.path);
+            }
+          }
+          // ── Append routing advisory (batch-read tip / serial-edit note) ────
+          if (
+            pendingRoutingAdvisory &&
+            typeof result === 'string' &&
+            !result.startsWith('ERROR') && !result.startsWith('BLOCKED')
+          ) {
+            result = `${result}\n\n${pendingRoutingAdvisory}`;
           }
           // ── In-loop TS syntax feedback ───────────────────────────────────────
           // Check the file the model JUST wrote/edited, with hot context still
