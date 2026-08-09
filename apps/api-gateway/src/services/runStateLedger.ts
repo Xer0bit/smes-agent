@@ -24,6 +24,10 @@ export class RunStateLedger {
     this.currentStep = n;
   }
 
+  getStep(): number {
+    return this.currentStep;
+  }
+
   recordRead(path: string, lineCount: number): void {
     this.entries.push({
       step: this.currentStep,

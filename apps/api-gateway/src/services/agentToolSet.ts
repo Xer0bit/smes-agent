@@ -50,6 +50,8 @@ const MICRO_EXCLUDED_TOOLS = new Set([
 ]);
 
 export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: string): ToolSet {
+  // Expose the tier to tools (read_file's truncated-view-first gating needs it).
+  ctx.tier = tier;
   const defs = [
     thinkTool,
     proposePlanTool,
@@ -101,6 +103,20 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
   // guard incident above for why bounced-paid-work blocks are a last resort).
   let consecutiveSingleReads = 0;
   let readBatchTipShown = false;
+  // Redundant-re-read block: a FULL read of a file that is still un-compacted
+  // in context (read within the last 4 steps = compaction's KEEP_RECENT
+  // window) and unmodified since is pure duplicate context. Truncated-view
+  // reads are never blocked (re-reading after the outline IS the designed
+  // escalation), nor are ranged reads or reads after an edit.
+  const fullReadStepByPath = new Map<string, number>();
+  const REREAD_BLOCK_WINDOW_STEPS = 4;
+  // Think cap (2026-08-10): think was the single most-called tool across
+  // 1,238 measured runs (2,853 calls), each one a full-context billed
+  // request. Capped on the SMALL tiers only -- fix-tier diagnosis and
+  // build-tier planning legitimately think more, and the root-cause-lock
+  // feature depends on think calls, so those tiers stay uncapped.
+  const THINK_CAP_TIERS: Record<string, number> = { micro: 2, edit: 3 };
+  let thinkCallsThisRun = 0;
   // Rename-shape advisory: write_file(newPath, X) followed by delete_file of a
   // file whose on-disk content is identical to X was a rename done the
   // expensive way (full content resent through the model). Advisory only --
@@ -124,6 +140,38 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
       execute: async (args: any) => {
         // Advisory (non-blocking) routing note to append to a successful result.
         let pendingRoutingAdvisory: string | null = null;
+
+        // ── Think cap (small tiers only) ─────────────────────────────────────
+        if (def.name === 'think' && tier && THINK_CAP_TIERS[tier] !== undefined) {
+          thinkCallsThisRun++;
+          if (thinkCallsThisRun > THINK_CAP_TIERS[tier]) {
+            return (
+              `Think budget for this ${tier} task is used up (${THINK_CAP_TIERS[tier]} calls). Act now: make the ` +
+              `edit, or if something genuinely blocks you, say exactly what it is in your response text instead of ` +
+              `thinking further.`
+            );
+          }
+        }
+
+        // ── Redundant-re-read block ──────────────────────────────────────────
+        if (
+          def.name === 'read_file' && typeof args.path === 'string' &&
+          args.full !== true &&
+          args.start_line_one_indexed == null && args.end_line_one_indexed_inclusive == null
+        ) {
+          const lastFullRead = fullReadStepByPath.get(args.path);
+          const nowStep = ctx.ledger?.getStep?.() ?? 0;
+          if (
+            lastFullRead !== undefined &&
+            nowStep - lastFullRead <= REREAD_BLOCK_WINDOW_STEPS &&
+            !editedPathsThisRun.has(args.path)
+          ) {
+            return (
+              `Already in context: you read "${args.path}" in full at step ${lastFullRead} and it has not been ` +
+              `modified since -- the content above is still current. Do not re-read; work from what you have.`
+            );
+          }
+        }
 
         // ── Serial-read tracking (for the read_files batch nudge below) ──────
         if (def.name === 'read_file') {
@@ -451,6 +499,13 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
           // Mark file as read so subsequent write_file/edit_file calls are allowed.
           if (def.name === 'read_file' && typeof args.path === 'string' && ctx.readFiles) {
             ctx.readFiles.add(args.path);
+            // Track FULL (untruncated, unranged) reads for the re-read block.
+            if (
+              typeof result === 'string' && !result.startsWith('[TRUNCATED VIEW]') && !result.startsWith('Error') &&
+              args.start_line_one_indexed == null && args.end_line_one_indexed_inclusive == null
+            ) {
+              fullReadStepByPath.set(args.path, ctx.ledger?.getStep?.() ?? 0);
+            }
           }
           // ── Track distinct files modified (tier file-budget accounting) ────
           if (

@@ -30,6 +30,8 @@ export interface AgentContext {
   readFiles?: Set<string>;
   /** Per-run change journal   records every read/write/edit for journal injection into prepareStep. */
   ledger?: RunStateLedger;
+  /** Cost-routing tier for this run (micro/edit/fix/feature/build) -- set by buildToolSet so tools can tier-gate behavior. */
+  tier?: string;
   /**
    * Reverse import graph: for each file path, the set of files that import it.
    * Used by write_file / edit_file to warn the agent about downstream breakage risk.
