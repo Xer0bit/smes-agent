@@ -68,15 +68,51 @@ export interface ProjectLockHandle {
   release: () => Promise<void>;
 }
 
+// How long a second run will queue behind a lock-holder before failing loudly.
+// Queueing (like the local fallback's promise chain) is the correct semantic;
+// proceeding in parallel is never acceptable -- that silently interleaves two
+// runs' disk writes and preview pushes on the same project.
+const MAX_QUEUE_WAIT_MS = 10 * 60 * 1000;
+const CONTENTION_RETRY_MS = 1000;
+
 /**
  * Acquire a distributed lock for a project using Redlock on `locks:project:${projectId}`.
- * Safely falls back to local in-memory mutex if Redis connection is unavailable.
+ *
+ * Contention vs outage are handled DIFFERENTLY (2026-08-10 -- verified live
+ * that the old code conflated them): if Redis is healthy but the lock is
+ * held, we keep waiting (queue semantics, up to MAX_QUEUE_WAIT_MS, then
+ * reject loudly). Only a genuine Redis outage degrades to the per-process
+ * in-memory fallback. The old catch-all fallback meant a second same-project
+ * run waited ~2s of Redlock retries and then proceeded IN PARALLEL via its
+ * own process's empty local map -- defeating the lock exactly when it
+ * mattered; reproduced with two processes before this fix.
+ *
+ * The held lock is auto-extended every ttlMs/2 while the run is in flight:
+ * redlock.acquire()'s manual API never self-extends, so the default 45s TTL
+ * silently expired under any multi-minute run. If the process crashes, the
+ * TTL lapses within ttlMs and the next run proceeds -- extension only
+ * happens while we're alive to do it.
  */
 export function acquireProjectLock(projectId: string, ttlMs: number = 45000): ProjectLockHandle {
   const resourceKey = `locks:project:${projectId}`;
 
   let redlockLock: Lock | null = null;
   let localRelease: (() => void) | null = null;
+  let extendTimer: NodeJS.Timeout | null = null;
+  let released = false;
+
+  const startExtending = () => {
+    extendTimer = setInterval(async () => {
+      if (released || !redlockLock) return;
+      try {
+        redlockLock = await redlockLock.extend(ttlMs);
+      } catch {
+        // Extension failed (Redis blip or lock expired). Don't crash the run;
+        // the worst case is the pre-fix behavior (lock lapses at TTL).
+      }
+    }, Math.max(1000, Math.floor(ttlMs / 2)));
+    extendTimer.unref?.();
+  };
 
   const readyPromise = (async () => {
     // Attempt lazy connect if status is wait
@@ -90,16 +126,29 @@ export function acquireProjectLock(projectId: string, ttlMs: number = 45000): Pr
     }
 
     if (isRedisConnected && redisClient.status === 'ready') {
-      try {
-        redlockLock = await redlock.acquire([resourceKey], ttlMs);
-        return;
-      } catch {
-        // Redlock acquisition failed (e.g. timeout or lock contention exception)
-        // Fall back to local locking mechanism
+      const deadline = Date.now() + MAX_QUEUE_WAIT_MS;
+      while (true) {
+        try {
+          redlockLock = await redlock.acquire([resourceKey], ttlMs);
+          startExtending();
+          return;
+        } catch {
+          if (redisClient.status !== 'ready') {
+            // Genuine Redis outage mid-wait -> degrade to local fallback below.
+            break;
+          }
+          if (Date.now() >= deadline) {
+            throw new Error(
+              `Project ${projectId} is locked by another in-flight run and did not free up within ${MAX_QUEUE_WAIT_MS / 60000} minutes. ` +
+              `Not proceeding in parallel -- retry once the other run finishes.`,
+            );
+          }
+          await new Promise((r) => setTimeout(r, CONTENTION_RETRY_MS + Math.floor(Math.random() * 250)));
+        }
       }
     }
 
-    // Fallback to local in-memory lock
+    // Fallback to local in-memory lock (Redis unavailable only -- never contention)
     const local = acquireLocalLock(projectId);
     localRelease = local.release;
     await local.ready;
@@ -108,6 +157,8 @@ export function acquireProjectLock(projectId: string, ttlMs: number = 45000): Pr
   return {
     ready: readyPromise,
     release: async () => {
+      released = true;
+      if (extendTimer) clearInterval(extendTimer);
       if (redlockLock) {
         try {
           await redlockLock.release();
