@@ -2576,6 +2576,88 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         `the current state rather than repeating the same claim.`;
     }
 
+    // ─── Unfulfilled-promise closure gate (orchestration audit, 2026-08-09) ──
+    // Live repro that caught this: user asked an opinion-soliciting question
+    // ("don't you think the admin panel should be separate?"). The model
+    // agreed and said "I will separate the admin section from the main
+    // user-facing site" -- then the run ended. Zero tool calls, zero files
+    // written, status='completed', no error. This happened on BOTH the
+    // cheap-first model AND the escalated full model for the same prompt,
+    // back to back. The system prompt already forbids this exact pattern
+    // ("STRICTLY FORBIDDEN... future-tense promise... unless you IMMEDIATELY
+    // follow it with actual file writes") but that's prompt text the model
+    // can (and did) ignore -- nothing mechanical caught it.
+    //
+    // Fires when a build/edit/feature run is about to conclude having made
+    // NO file changes at all while its own closing text promises one. The
+    // corrective turn gives the model exactly two honest outs: act now, or
+    // -- since Phase 1 (2026-08-09) gave plan mode's propose_plan tool to
+    // this run's toolset too (see buildToolSet) -- stage a real plan and
+    // explicitly ask the user to confirm, instead of a bare unactioned promise.
+    const UNFULFILLED_PROMISE_RE =
+      /\b(I('|')ll|I will|let me|I('|')m going to|I am going to|going to (go ahead and|now))\s+(build|implement|create|add|rebuild|separate|update|change|fix|write|make|set up|refactor|restructure)\b/i;
+    const MAX_PROMISE_VERIFY_ATTEMPTS = 1;
+    let promiseVerifyAttempts = 0;
+    while (
+      !ctx.thrashEscalated &&
+      !anySuccessfulWriteThisRun &&
+      (_tier === 'build' || _tier === 'edit' || _tier === 'feature') &&
+      UNFULFILLED_PROMISE_RE.test(accumulatedText) &&
+      (MAX_STEPS - stepCount) >= 2 &&
+      !abortController.signal.aborted &&
+      promiseVerifyAttempts < MAX_PROMISE_VERIFY_ATTEMPTS
+    ) {
+      promiseVerifyAttempts++;
+      console.warn(`[AgentLoop] Unfulfilled-promise detected (attempt ${promiseVerifyAttempts}/${MAX_PROMISE_VERIFY_ATTEMPTS})   forcing corrective continuation. user=${userId ?? 'unknown'}`);
+      generateStatus(projectId, { kind: 'lifecycle', phase: 'post-gen-verify' }).then((s) => {
+        if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
+      }).catch(() => {});
+
+      conversationMessages = [
+        ...conversationMessages,
+        { role: 'assistant' as const, content: accumulatedText },
+        {
+          role: 'user' as const,
+          content:
+            `You just said you would take an action, but you made zero tool calls and wrote zero files -- nothing was ` +
+            `actually done. Pick exactly ONE of these now, don't just restate the same promise:\n` +
+            `  1. If you're confident this is what the user wants, do it now: call your tools and make the actual ` +
+            `changes in this same turn.\n` +
+            `  2. If it's a bigger or ambiguous change worth confirming first, call propose_plan with a concrete, ` +
+            `ordered list of steps, then tell the user their plan is ready and ask them to confirm before you build it.\n` +
+            `Do not end this turn with only a description of what you would do.`,
+        },
+      ];
+
+      try {
+        const promiseVerifyStream = await attemptStream(streamingProvider, 0, providerName);
+        const promiseVerifyConsume = await consumeResultStream(promiseVerifyStream);
+        if (!promiseVerifyConsume.err && promiseVerifyConsume.text) {
+          accumulatedText = promiseVerifyConsume.text;
+        } else if (promiseVerifyConsume.err) {
+          console.warn('[AgentLoop] Unfulfilled-promise corrective continuation errored (non-fatal):', promiseVerifyConsume.err?.message ?? promiseVerifyConsume.err);
+          break;
+        }
+      } catch (promiseVerifyErr: any) {
+        console.warn('[AgentLoop] Unfulfilled-promise corrective continuation failed (non-fatal):', promiseVerifyErr?.message ?? promiseVerifyErr);
+        break;
+      }
+    }
+    // Cap exhausted (or a plan was staged, which is a legitimate outcome --
+    // propose_plan doesn't set anySuccessfulWriteThisRun since it writes to
+    // agent_plans, not project files) and still no action taken: be honest
+    // about it instead of letting an unfulfilled promise stand as the final word.
+    if (
+      !ctx.thrashEscalated &&
+      !anySuccessfulWriteThisRun &&
+      promiseVerifyAttempts > 0 &&
+      UNFULFILLED_PROMISE_RE.test(accumulatedText)
+    ) {
+      console.warn(`[AgentLoop] Unfulfilled-promise still unresolved after ${promiseVerifyAttempts} corrective attempt(s)   appending honest note. user=${userId ?? 'unknown'}`);
+      accumulatedText +=
+        `\n\n(Note: I described a change above but haven't actually made it yet. Let me know if you'd like me to go ahead.)`;
+    }
+
     // ─── Anon-fetch-without-policy closure gate (2026-08 audit follow-up) ─────
     // Live repro that caught this: an agent building a public product catalog
     // correctly created the table (RLS auto-enabled, zero policies   exactly
