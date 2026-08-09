@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import type { AgentContext } from '../agent-tools/types.js';
 import { safeJoin } from '../agent-tools/types.js';
+import { scanForDeadDangerousEdgeFunctions } from './edgeFunctionSecurityScan.js';
 import { EDGE_FUNCTIONS_DIR } from '../agent-tools/write_edge_function.js';
 import { sanitizeFileContent, sanitizeConfigFile } from '../agent-tools/sanitize.js';
 import ts from 'typescript';
@@ -221,7 +222,12 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
   const lock = acquireProjectLock(projectId);
   await lock.ready;
   try {
-  return await _runAgentLoopInner(params);
+    const result = await _runAgentLoopInner(params);
+    // End-of-turn dead-but-dangerous scan (auth/password edge functions
+    // deployed but unreferenced by the frontend). Non-fatal on its own,
+    // never blocks or fails the turn -- see edgeFunctionSecurityScan.ts.
+    await scanForDeadDangerousEdgeFunctions(projectId, params.appPath);
+    return result;
   } finally {
     lock.release();
     endNarration(projectId);
