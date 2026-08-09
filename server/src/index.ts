@@ -14,6 +14,7 @@ import app from './app.js';
 import { logger } from './utils/logger.js';
 import { ensureBaseTemplate } from './services/baseTemplateService.js';
 import { testAndAutoDisableProviders, startLlmHealthLoop } from './services/llm-health.service.js';
+import { startAgentRunWatchdog } from './services/agentRunWatchdog.service.js';
 import { getLlmControlState } from './services/llm-control.service.js';
 import { probeEmbeddingProvider } from './knowledgebase/index.js';
 import { releaseAllLocksForThisProcess } from './routes/ai.routes.js';
@@ -53,6 +54,11 @@ const server: Server = app.listen(PORT, () => {
     // Then keep re-checking hourly so mid-uptime credit/quota exhaustion is
     // detected by ops before users hit it.
     startLlmHealthLoop();
+
+    // Sweep agent_runs rows abandoned in status='running' (a hung run that
+    // never reaches any of its own completion/failure update sites) so the
+    // column stays trustworthy instead of lying forever.
+    startAgentRunWatchdog();
 
     // Warm up the golden template in the background with retry.
     retryAsync(() => ensureBaseTemplate(), 3, 2000).catch((err) =>
