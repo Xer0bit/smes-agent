@@ -688,6 +688,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             type: string;
             category: 'image' | 'document';
             tempPath: string;
+            publicUrl?: string;
         }>;
         fingerprint?: string;
     };

@@ -662,6 +662,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               type: a.type,
               category: a.category,
               tempPath: a.tempPath,
+              // Durable fallback source if the ephemeral /tmp copy (1hr TTL)
+              // has already expired by the time the agent processes this --
+              // see agentLoopService.ts's attachment self-heal.
+              publicUrl: a.publicUrl,
             }))
           : undefined,
         callbacks: {

@@ -128,6 +128,8 @@ export async function streamAgentGeneration(params: {
     type: string;
     category: 'image' | 'document';
     tempPath: string;
+    /** Durable fallback if tempPath's /tmp copy has expired (1hr TTL). */
+    publicUrl?: string;
   }>;
   /** Guest fingerprint   when set, auth token is optional */
   fingerprint?: string;

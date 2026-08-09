@@ -192,6 +192,17 @@ export interface AgentRunParams {
     type: string;
     category: 'image' | 'document';
     tempPath: string;
+    /**
+     * Durable Supabase Storage signed URL (5-year expiry, see
+     * chatAttachmentService.ts), separate from tempPath's /tmp copy (cleaned
+     * up after 1 hour). Used to re-materialize the file if tempPath has
+     * already expired by the time this attachment is processed -- confirmed
+     * 2026-08-09 as a real race: users see the image rendered in chat (via
+     * this durable URL) long after the ephemeral /tmp copy is gone, then ask
+     * the agent to place it and hit a genuine "expired" error with no
+     * recovery path other than re-uploading.
+     */
+    publicUrl?: string;
   }>;
   /** Project knowledge from KnowledgeSettings (custom system prompt + context notes) */
   projectKnowledge?: {
@@ -883,8 +894,36 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     const parts: string[] = [];
     for (const att of attachments) {
       // Validate tempPath exists and is under /tmp to prevent path traversal
-      const resolvedPath = path.resolve(att.tempPath);
-      if (!resolvedPath.startsWith(os.tmpdir()) || !fs.existsSync(resolvedPath)) {
+      let resolvedPath = path.resolve(att.tempPath);
+      let tempPathValid = resolvedPath.startsWith(os.tmpdir()) && fs.existsSync(resolvedPath);
+
+      // Self-heal from the durable Supabase Storage copy (publicUrl) if the
+      // ephemeral /tmp file (cleaned up after 1 hour) is already gone. Writes
+      // to a FRESH path under the same trusted UPLOAD_BASE directory, so
+      // everything downstream (vision analysis, the place_asset instruction
+      // text below, place_asset's own tmpPath validation) just sees a valid
+      // path with zero protocol change -- the model never needs to know a
+      // fallback happened.
+      if (!tempPathValid && att.publicUrl) {
+        try {
+          const uploadBase = path.join(os.tmpdir(), 'ecomgear-chat-uploads');
+          await fs.promises.mkdir(uploadBase, { recursive: true });
+          const safeRefetchName = `refetched-${Date.now()}-${att.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          const refetchPath = path.join(uploadBase, safeRefetchName);
+          const resp = await fetch(att.publicUrl, { signal: AbortSignal.timeout(15_000) });
+          if (resp.ok) {
+            const buf = Buffer.from(await resp.arrayBuffer());
+            await fs.promises.writeFile(refetchPath, buf);
+            resolvedPath = refetchPath;
+            tempPathValid = true;
+            console.log(`[AgentLoop] Re-materialized expired attachment "${att.name}" from durable storage (${buf.length} bytes)`);
+          }
+        } catch (refetchErr) {
+          console.warn(`[AgentLoop] Failed to re-materialize expired attachment "${att.name}" from publicUrl:`, refetchErr);
+        }
+      }
+
+      if (!tempPathValid) {
         parts.push(`- **${att.name}**   file not found or access denied`);
         continue;
       }
