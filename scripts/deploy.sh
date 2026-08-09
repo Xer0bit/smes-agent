@@ -168,9 +168,36 @@ deploy_vps1() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  VPS1   Frontend + Supabase Edge → $VPS1_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    # .env / .env.local on this machine are dev-machine files: a mix of
+    # correct-for-prod and localhost-pointing values with no clean separation
+    # (confirmed 2026-08-08 after two prod outages from values baked in wrong).
+    # .env.production.local has the highest Vite precedence, so writing it
+    # here guarantees these vars are always correct for a VPS1 build
+    # regardless of what's sitting in .env/.env.local.
+    step "Writing production env overrides (.env.production.local)..."
+    PROD_ENV_OVERRIDE="$PROJECT_DIR/.env.production.local"
+    cat > "$PROD_ENV_OVERRIDE" <<EOF
+VITE_SUPABASE_URL=https://api.ecomgear.dev
+VITE_API_URL=https://api.ecomgear.dev
+VITE_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY not set (check .deploy.env)}
+VITE_SUPABASE_PUBLISHABLE_KEY=${SUPABASE_ANON_KEY}
+VITE_PREVIEW_SERVICE_URL=https://preview.ecomgear.app
+VITE_PREVIEW_URL=https://preview.ecomgear.app
+VITE_APP_URL=https://ecomgear.dev
+VITE_SITE_URL=https://ecomgear.dev
+VITE_GEN_URL=https://gen.ecomgear.dev
+VITE_AGENT_URL=https://gen.ecomgear.dev
+VITE_GEN_SERVER_URL=https://gen.ecomgear.dev
+VITE_AGENT_SERVER_URL=https://gen.ecomgear.dev
+VITE_HOSTING_SERVICE_URL=https://hosting.ecomgear.app
+EOF
+    trap 'rm -f "$PROD_ENV_OVERRIDE"' EXIT
+
     step "Building React SPA..."
     cd "$PROJECT_DIR"
     npm run build
+    rm -f "$PROD_ENV_OVERRIDE"
+    trap - EXIT
     success "Build complete (dist/)"
 
     # ── Apply DB migrations ──────────────────────────────────────────────────
@@ -467,6 +494,7 @@ cat > /var/www/ecomgear/preview-service.staging/.env.production << ENV
 NODE_ENV=production
 SUPABASE_URL=https://api.ecomgear.dev
 SUPABASE_SERVICE_ROLE_KEY=${SK}
+PREVIEW_CHILD_PROCESS_MODE=${PREVIEW_CHILD_PROCESS_MODE:-off}
 ENV
 ENVREMOTE
     step "Remote: installing node_modules on VPS2 (npm ci, not shipped over the network)..."
