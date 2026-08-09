@@ -202,6 +202,93 @@ export function validateEdgeFunctionCode(code: string): ValidationIssue[] {
           "extensions.crypt(input_password, password_hash) = password_hash via pgcrypto, not a plain !== / === check.",
       });
     },
+    // `db.*` call-shape validation (orchestration audit, 2026-08-09): the db
+    // helper's API is deliberately similar-looking to Supabase's real client
+    // (db.select/insert/update/delete/count/rpc) but is NOT chainable and
+    // does NOT accept a Supabase/Prisma-style options object -- confirmed
+    // live across 3 separate real incidents in one night (admin-auth,
+    // admin-login used Supabase-style `.eq().single()` chaining; get-latest-
+    // posts then invented a THIRD wrong shape, a `{ columns, order, limit }`
+    // options object, on its very next "fix" attempt for the same function).
+    // The model defaults to far more common training-data patterns (real
+    // Supabase client, generic ORM options objects) unless something
+    // mechanically stops it -- prompt text alone did not, three times.
+    CallExpression(node: acorn.CallExpression) {
+      const DB_METHODS = new Set(['select', 'insert', 'update', 'delete', 'count', 'rpc']);
+      // Real Promise prototype methods -- db.* returns a Promise (per its own
+      // documented contract), so `.then()/.catch()/.finally()` chained onto
+      // an UN-awaited call is completely legitimate (confirmed: this exact
+      // fire-and-forget pattern, `db.update(...).catch(err => ...)`, is
+      // already live in this codebase's own real functions). Only a
+      // query-builder-shaped method name (.eq, .from, .single, .order, .in,
+      // .select-after-insert, etc) is the actual tell.
+      const PROMISE_METHODS = new Set(['then', 'catch', 'finally']);
+      // Case 1: any further method call chained directly onto a db.* call's
+      // result (`db.select(...).eq(...)`, `.from(...)`, `.single()`, etc).
+      // 100% reliable, zero ambiguity: db.* always returns a plain array/
+      // object/promise, never a chainable query builder, so ANY non-Promise
+      // call chained onto one is categorically invalid regardless of name.
+      if (
+        node.callee.type === 'MemberExpression' &&
+        !node.callee.computed &&
+        !(node.callee.property.type === 'Identifier' && PROMISE_METHODS.has(node.callee.property.name))
+      ) {
+        const inner = node.callee.object;
+        if (
+          inner.type === 'CallExpression' &&
+          inner.callee.type === 'MemberExpression' &&
+          !inner.callee.computed &&
+          inner.callee.object.type === 'Identifier' &&
+          inner.callee.object.name === 'db' &&
+          inner.callee.property.type === 'Identifier' &&
+          DB_METHODS.has(inner.callee.property.name)
+        ) {
+          const chainedMethod = node.callee.property.type === 'Identifier' ? node.callee.property.name : '(computed)';
+          issues.push({
+            message: `db.${inner.callee.property.name}(...).${chainedMethod}(...) is not valid -- db.* calls are NOT ` +
+              `chainable (they return a plain array/object/promise directly, never a query builder). This looks like ` +
+              `real Supabase client syntax, but this platform's db helper has a different signature: ` +
+              `db.select(table, columns?, filter?, extraOps?), db.insert(table, data), db.update(table, patch, filter), ` +
+              `db.delete(table, filter), db.count(table, filter?), db.rpc(fnName, args). Pass filtering/sorting/limits ` +
+              `as arguments to the call itself, not as chained methods.`,
+          });
+        }
+      }
+      // Case 2: db.select(table, { columns: [...], order: {...}, limit: N })
+      // -- a Prisma/generic-ORM-shaped options object where none of those
+      // keys are valid. db.select's real 2nd arg is EITHER an array of
+      // column names OR a filter object whose keys are actual column names
+      // for equality matching -- "columns"/"order"/"limit"/"sort" as literal
+      // keys is the tell that a filter object is standing in for an options
+      // object that doesn't exist in this API.
+      if (
+        node.callee.type === 'MemberExpression' &&
+        !node.callee.computed &&
+        node.callee.object.type === 'Identifier' &&
+        node.callee.object.name === 'db' &&
+        node.callee.property.type === 'Identifier' &&
+        node.callee.property.name === 'select' &&
+        node.arguments.length === 2 &&
+        node.arguments[1].type === 'ObjectExpression'
+      ) {
+        const RESERVED_OPTION_KEYS = new Set(['columns', 'order', 'limit', 'sort', 'orderby', 'select']);
+        const objArg = node.arguments[1] as acorn.ObjectExpression;
+        const suspiciousKeys = objArg.properties
+          .map((p) => (p.type === 'Property' ? propertyKeyName(p) : null))
+          .filter((k): k is string => k !== null && RESERVED_OPTION_KEYS.has(k.toLowerCase()));
+        if (suspiciousKeys.length > 0) {
+          issues.push({
+            message: `db.select's 2nd argument here uses key(s) [${suspiciousKeys.join(', ')}] that look like an ` +
+              `options object (columns/order/limit), but db.select does not accept one -- its real signature is ` +
+              `db.select(table, filter?) OR db.select(table, columns, filter?, extraOps?) as SEPARATE positional ` +
+              `arguments: columns is an array of column names (2nd arg), filter is a plain equality object keyed by ` +
+              `actual column names (3rd arg, or 2nd if no columns array), and sort/limit go in extraOps (4th arg, ` +
+              `per-column: { ascending: false }). A filter object's keys must be real column names, never the ` +
+              `literal words "columns"/"order"/"limit".`,
+          });
+        }
+      }
+    },
   });
 
   return issues;
