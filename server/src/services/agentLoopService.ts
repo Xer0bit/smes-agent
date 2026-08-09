@@ -50,6 +50,26 @@ const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabase
 
 const SUPPRESS_RECOVERY_UI = (process.env.AGENT_SUPPRESS_RECOVERY_UI ?? '1') !== '0';
 
+// ── Binary-file handling, shared by every path that reads appPath off disk ──
+// Hoisted to module scope (was previously two independent local copies: one
+// used by the end-of-turn write-collection path, one implicitly absent from
+// the pre-agent snapshot path below). The snapshot path's lack of this
+// encoding, plus a directory scope that never covered public/, silently
+// deleted or corrupted every uploaded image/logo the next time a revert/
+// restore/salvage fullSync push went out built from that snapshot -- confirmed
+// 2026-08-09 as the cause of "my logo disappears when I deploy".
+const BINARY_EXTS_SET = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.webp', '.mp4', '.mp3', '.pdf', '.zip']);
+const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+
+/** Read a file for a disk snapshot/write-collection payload, base64-encoding binaries with BINARY_SENTINEL so they survive the JSON sync payload intact (mirrors preview-service's own BINARY_EXTS handling on the receiving end). */
+function readFileForSync(fullPath: string): string {
+  const ext = path.extname(fullPath).toLowerCase();
+  if (BINARY_EXTS_SET.has(ext)) {
+    return `${BINARY_SENTINEL}${fs.readFileSync(fullPath).toString('base64')}`;
+  }
+  return fs.readFileSync(fullPath, 'utf8');
+}
+
 // Self-healing backfill for projects that had edge functions written before
 // the __edge_functions__/ mirror existed. Runs once at the start of every
 // agent run   cheap (single query, early-exits when nothing's missing) and
@@ -554,6 +574,30 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const preAgentDiskSnapshot = new Map<string, string>();
   const promptLower = prompt.toLowerCase();
 
+  // Binary assets (uploaded images/fonts/etc, see place_asset.ts) are always
+  // captured in full regardless of tier, with binary-safe encoding
+  // (readFileForSync). Neither tier's text-file scan below covers this on its
+  // own: micro's targeted scan never leaves src/, and even the full-tier scan
+  // used to read every file as utf8 with no binary handling at all. Both gaps
+  // meant a revert/restore/salvage fullSync push built from this snapshot
+  // silently deleted (micro: absent from the push, pruned by the receiving
+  // preview-service) or corrupted (full-tier: utf8-mangled bytes) every
+  // uploaded image the next time an agent turn hit that path -- confirmed
+  // 2026-08-09 as the cause of "my logo disappears when I deploy".
+  const collectBinaryAssets = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) { collectBinaryAssets(fullPath); continue; }
+      if (!BINARY_EXTS_SET.has(path.extname(entry.name).toLowerCase())) continue;
+      const relPath = path.relative(appPath, fullPath);
+      try { preAgentDiskSnapshot.set(relPath, readFileForSync(fullPath)); } catch {}
+    }
+  };
+  try { collectBinaryAssets(appPath); } catch {}
+
   if (_tier === 'micro') {
     // ── MICRO FAST PATH ──────────────────────────────────────────────────────
     // A color/text/spacing change touches exactly one file. Find it with a
@@ -566,10 +610,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         if (SKIP_DIRS.has(entry.name)) continue;
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) { findMentioned(fullPath); continue; }
+        if (BINARY_EXTS_SET.has(path.extname(entry.name).toLowerCase())) continue; // already collected above
         const relPath = path.relative(appPath, fullPath);
         const fname = entry.name.toLowerCase().replace(/\.(tsx?|jsx?|css)$/, '');
         if (fname && promptWords.some(w => fname.includes(w) || w.includes(fname))) {
-          try { preAgentDiskSnapshot.set(relPath, fs.readFileSync(fullPath, 'utf8')); } catch {}
+          try { preAgentDiskSnapshot.set(relPath, readFileForSync(fullPath)); } catch {}
         }
       }
     };
@@ -579,7 +624,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       const appTsx = path.join(appPath, 'src', 'App.tsx');
       try {
         const rel = path.relative(appPath, appTsx);
-        preAgentDiskSnapshot.set(rel, fs.readFileSync(appTsx, 'utf8'));
+        preAgentDiskSnapshot.set(rel, readFileForSync(appTsx));
       } catch {}
     }
   } else {
@@ -593,8 +638,9 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) { snapDisk(fullPath); }
         else {
+          if (BINARY_EXTS_SET.has(path.extname(entry.name).toLowerCase())) continue; // already collected above
           const relPath = path.relative(appPath, fullPath);
-          try { preAgentDiskSnapshot.set(relPath, fs.readFileSync(fullPath, 'utf8')); } catch {}
+          try { preAgentDiskSnapshot.set(relPath, readFileForSync(fullPath)); } catch {}
         }
       }
     };
@@ -2762,11 +2808,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     }
     // ─── End App.tsx validation ─────────────────────────────────────────────────
 
-    // Constants for binary handling   declared before use in agentWrittenFiles filter.
+    // BINARY_EXTS_SET / BINARY_SENTINEL are module-level now, shared with the
+    // pre-agent snapshot path above   see readFileForSync.
     const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.tmp', 'coverage']);
     const SKIP_FILES = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
-    const BINARY_EXTS_SET = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.webp', '.mp4', '.mp3', '.pdf', '.zip']);
-    const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
 
     // Keep only files explicitly written by tool calls and refresh their content from disk.
     const latestWriteByPath = new Map<string, string>();
@@ -3077,7 +3122,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                   if (preContent != null) {
                     try {
                       const fullFilePath = safeJoin(appPath, brokenPath);
-                      fs.writeFileSync(fullFilePath, preContent, 'utf8');
+                      // See the pre-agent-restore loop below for why binary
+                      // content (BINARY_SENTINEL-prefixed) can't be written as 'utf8'.
+                      if (preContent.startsWith(BINARY_SENTINEL)) {
+                        fs.writeFileSync(fullFilePath, Buffer.from(preContent.slice(BINARY_SENTINEL.length), 'base64'));
+                      } else {
+                        fs.writeFileSync(fullFilePath, preContent, 'utf8');
+                      }
                     } catch { /* best-effort disk revert */ }
                   } else {
                     // New file created by agent   delete from disk
@@ -3520,7 +3571,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               try {
                 const fullFilePath = safeJoin(appPath, relPath);
                 fs.mkdirSync(path.dirname(fullFilePath), { recursive: true });
-                fs.writeFileSync(fullFilePath, preContent, 'utf8');
+                // Binary content is BINARY_SENTINEL-prefixed base64 (see
+                // readFileForSync) -- writing it as 'utf8' text would corrupt
+                // the actual image/font bytes on disk. Decode back to a Buffer.
+                if (preContent.startsWith(BINARY_SENTINEL)) {
+                  fs.writeFileSync(fullFilePath, Buffer.from(preContent.slice(BINARY_SENTINEL.length), 'base64'));
+                } else {
+                  fs.writeFileSync(fullFilePath, preContent, 'utf8');
+                }
               } catch (diskErr) {
                 diskRestoreFailures++;
                 console.error(`[AgentLoop] Pre-agent disk restore FAILED for ${relPath}   this server's own copy may still hold broken content`, diskErr);
