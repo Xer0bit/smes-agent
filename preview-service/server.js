@@ -1989,10 +1989,36 @@ export default App;
             // referencing `localDb`/`localAuth` that was never imported) actually
             // mark the preview unhealthy instead of being reported as clean.
             const buildCheck = await quickViteBuildCheck(projectId, projectRoot);
-            const combinedErrorSummaries = [
+            const fastCheckErrors = [
                 ...validationErrors.map((e) => e.summary),
                 ...(buildCheck.ok ? [] : buildCheck.errors.map((e) => e.summary)),
             ];
+
+            // Orchestration Phase 2a (2026-08-09): quickViteBuildCheck above is
+            // esbuild-only (syntax, not semantics) -- it parses fine even for
+            // `supabase.auth.getSession()` with zero import of `supabase`
+            // anywhere. typeCheckProject (real ts.createProgram + preEmit
+            // diagnostics) already exists and is used by the mid-run /check
+            // route for exactly this -- it was just never called on the path
+            // that actually promotes files to the live preview. Same gating
+            // discipline /check already uses: only pay for the real
+            // whole-program check once the cheap checks are clean, since this
+            // is a meaningfully slower cross-file build, not a per-file
+            // transform, and every agent push hits this route.
+            let typeCheckErrors = [];
+            if (fastCheckErrors.length === 0) {
+                try {
+                    const overlay = Object.fromEntries(files.map((f) => [f.path, f.content]));
+                    const typeResult = typeCheckProject(projectRoot, overlay);
+                    typeCheckErrors = typeResult.errors.map((e) => e.summary);
+                } catch (typeCheckErr) {
+                    // Never let a bug in the type-checker itself block a real
+                    // file promotion -- degrade to "no additional errors found".
+                    console.error(`[${projectId}] Post-write type-check failed (non-fatal):`, typeCheckErr);
+                }
+            }
+
+            const combinedErrorSummaries = [...fastCheckErrors, ...typeCheckErrors];
             if (combinedErrorSummaries.length > 0) {
                 console.warn(`[${projectId}] Build/type errors: ${combinedErrorSummaries.length} issue(s)   agent will repair`);
                 setProjectErrors(projectId, combinedErrorSummaries, 'build');
