@@ -914,6 +914,44 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         const effectiveMode = resolveAgentMode(prompt, mode);
         logger.info(`[agent-stream] Mode resolved: ${effectiveMode} (clientMode=${mode ?? 'auto'})`);
 
+        // Orchestration Phase 1 (2026-08-09): if a prior plan-mode session
+        // left a draft plan for this project, a build run picks it up --
+        // marks it approved (superseding any earlier approved plan, same
+        // silent-supersede behavior propose_plan.ts already uses), and its
+        // steps get injected into the build system prompt. Best-effort: a
+        // lookup failure must never block the build run itself.
+        let approvedPlanSteps: string[] | undefined;
+        if (effectiveMode === 'build') {
+            try {
+                const { data: draftPlan } = await supabase
+                    .from('agent_plans')
+                    .select('id, steps')
+                    .eq('project_id', projectId)
+                    .eq('status', 'draft')
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+                if (draftPlan) {
+                    await supabase
+                        .from('agent_plans')
+                        .update({ status: 'superseded' })
+                        .eq('project_id', projectId)
+                        .eq('status', 'approved');
+                    await supabase
+                        .from('agent_plans')
+                        .update({ status: 'approved', approved_at: new Date().toISOString() })
+                        .eq('id', (draftPlan as any).id);
+                    const steps = (draftPlan as any).steps;
+                    if (Array.isArray(steps) && steps.length > 0) {
+                        approvedPlanSteps = steps;
+                    }
+                }
+            } catch (planLookupErr) {
+                logger.warn(`[agent-stream] approved-plan lookup failed for project=${projectId} (non-fatal)`, planLookupErr);
+            }
+        }
+
+
         const projectServerPath = typeof (projectRecord as any).server_path === 'string'
             ? (projectRecord as any).server_path
             : '';
@@ -1169,6 +1207,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             appPath,
             model,
             mode: effectiveMode,
+            approvedPlanSteps,
             existingFiles: Array.isArray(existingFiles) ? existingFiles : [],
             history: (() => {
               if (!Array.isArray(history)) return [];

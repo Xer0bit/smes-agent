@@ -166,6 +166,13 @@ export interface AgentRunParams {
   model?: string;
   /** Runtime mode selected by backend orchestration */
   mode?: 'build' | 'plan';
+  /**
+   * Ordered steps from an approved agent_plans row for this project, if one
+   * exists when a build run starts (see ai.routes.ts's build-mode trigger).
+   * Injected as a checklist into the build system prompt -- the loop still
+   * executes reactively per step, this isn't a rigid script.
+   */
+  approvedPlanSteps?: string[];
   /** Existing files to provide as context */
   existingFiles?: Array<{ path: string; content: string }>;
   /**
@@ -268,7 +275,7 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
 }
 
 async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResult> {
-  const { prompt, projectId, appPath, model, mode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, sink, userId, abortSignal, agentLockToken } = params;
+  const { prompt, projectId, appPath, model, mode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, sink, userId, abortSignal, agentLockToken, approvedPlanSteps } = params;
 
   // Start a narration context for this run so the narrator can ground its
   // real-time descriptions in the agent's think() reasoning + user intent.
@@ -1154,6 +1161,14 @@ You are operating in **PLAN MODE**. You are a strategic planning assistant   you
 - Produce structured plans, site maps, or feature lists when helpful.
 - Be concise   bullet points over paragraphs where possible.
 
+## Saving the plan
+You have exactly one tool: \`propose_plan\`. Once the discussion has enough detail that the user could
+react to a concrete plan, call it ONCE with a summary and an ordered list of concrete implementation steps.
+This does not touch any files   it persists the plan so that when the user says "build it" (or similar),
+the build run picks up these exact steps instead of starting cold. Don't call it prematurely on a vague
+one-line idea; keep discussing until there's enough to make the steps concrete and actionable. If the plan
+changes significantly later in the conversation, call it again   the new plan replaces the old one automatically.
+
 ## If the user asks you to make changes or implement something
 Respond briefly. Acknowledge what they want, then say:
 > "I'm in **Plan mode**   I can only plan and advise here. Switch to **Build mode** to implement this."
@@ -1171,6 +1186,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       '4. End by asking the user to confirm or adjust the plan.\n' +
       '5. When the user confirms in the NEXT message, you will receive BUILD mode and should execute immediately.'
     : '\n\n# Runtime Mode Instruction\n\nMode is locked to BUILD by backend policy. Do not self-switch modes.\n\nHard requirements:\n- Execute now: use tools and produce real file changes immediately.\n- Do NOT ask for confirmation to start coding (unless the user\'s intent is genuinely unclear   see EXCEPTION below).\n- Do NOT end with planning-only instructions.\n- PHASED BUILD: If the conversation history contains a phase plan (look for "## Phases" and "Phase N  " lines), you are in phased build mode. Count how many "Phase N done ✓" messages already appear in the history to determine which phase is current. Build ONLY the files for that phase   do NOT build files from future phases. When all files for the current phase are written and verified, end your final message with exactly: "Phase N done ✓   ready to build Phase N+1 ([one-line description])? Reply **continue** to proceed." If this is the last phase, write instead: "All phases complete ✓   your app is ready." IMPORTANT: In phased mode the rule below about writing ALL files is scoped to the current phase only.\n- NON-PHASED BUILD: You MUST write ALL files the app needs before finishing   pages, components, utilities, AND src/App.tsx. Never stop after writing just a few files. A partial build = broken preview.\n- STRICTLY FORBIDDEN: Never say "I didn\'t make any changes", "I haven\'t changed anything", "no changes were made", or any equivalent. If you ran without writing files, you failed   do not announce it, just start writing.\n- ALSO FORBIDDEN: Never output a future-tense promise like "Let me do this", "I\'ll implement that", "I will go ahead and", "I\'m going to build" unless you IMMEDIATELY follow it with actual file writes in the same response. If you say it and then stop with no files written   that is a failure. Either write files right away or ask what the user wants.\n- EXCEPTION (greetings only): If the user\'s message is EXCLUSIVELY a greeting ("hi", "hello", "hey", "how are you") or an identity question ("who are you", "what are you") with NO build request attached   respond with a short text answer only and do NOT call tools. This exception does NOT apply to any message that contains a feature request, a page name, a description, a confirmation ("ok", "yes", "go", "proceed", "build it", "do it"), or ANY reference to the project.\n- EXCEPTION (ambiguous statement): If the user\'s message is a vague statement with NO specific build content (no feature name, page, component, or change described) AND you cannot identify a pending plan in the conversation history to execute   ask ONE short clarifying question about what they\'d like you to build or change. Do NOT invent a task. Do NOT write files for a made-up goal.\n- If the user confirmed a plan you already presented (e.g. "ok", "yes", "go ahead", "looks good", "build it")   that IS a build command. Execute immediately.\n- BRAIN MEMORY: Your older tool call history is automatically compacted to save tokens. Use `save_memory` after your initial `think` to persist key architecture decisions, file purposes, and user requirements so they survive compaction.';
+
+  // Approved plan checklist (Phase 1 of the orchestration plan, 2026-08-09):
+  // when a prior plan-mode session produced a persisted plan (agent_plans)
+  // and the user just triggered build mode, ai.routes.ts looks it up, marks
+  // it approved, and passes its steps here. Injected as a checklist, not a
+  // rigid script -- the loop below still executes reactively per step.
+  const approvedPlanInstruction = (runtimeMode === 'build' && approvedPlanSteps && approvedPlanSteps.length > 0)
+    ? '\n\n# Approved Plan\nThe user approved this plan in an earlier planning discussion. Use it as your checklist, ' +
+      'but still verify each step against the actual current file tree -- adapt if something has changed since ' +
+      'the plan was made.\n' + approvedPlanSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')
+    : '';
 
   // Efficiency instruction   scope it to the tier so micro/fix stay fast but edit
   // still verifies imports (skipping that check is the #1 source of build errors).
@@ -1349,6 +1375,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     knowledgeBlock +
     secretsBlock +
     effectiveModeInstruction +
+    approvedPlanInstruction +
     tierInstruction +
     (boundedOlderSummary
       ? `\n\n# Earlier Conversation Summary\n\nThis is a summary of older messages in this conversation. Use it to maintain continuity:\n\n${boundedOlderSummary}`
@@ -1379,7 +1406,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // Per-run brain memory   survives context compaction across steps.
   // Hoisted above the Gemini cache block because buildToolSet needs it.
   const brainMemory: string[] = [];
-  const toolSet = runtimeMode === 'plan' ? undefined : buildToolSet(ctx, brainMemory, _tier);
+  // Plan mode gets exactly one tool: propose_plan. Reuses buildToolSet's full
+  // construction (its write_file/edit_file-specific guards are no-ops for a
+  // tool with a different name) then narrows to just propose_plan, so plan
+  // mode's output becomes a persisted artifact instead of throwaway chat text
+  // -- see propose_plan.ts and agent_plans (20260809183149_agent_plans.sql).
+  const toolSet = runtimeMode === 'plan'
+    ? (() => {
+        const full = buildToolSet(ctx, brainMemory, _tier);
+        return full.propose_plan ? { propose_plan: full.propose_plan } : undefined;
+      })()
+    : buildToolSet(ctx, brainMemory, _tier);
 
   // ── Gemini run-level context cache ───────────────────────────────────────
   // Plan mode has no tools   cache just the system prompt (createGeminiRunCache).
@@ -1405,9 +1442,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // this exact 400 in production. Reusing a cache correctly requires routing
   // dynamic content through `messages` instead of `system`, which is a real
   // rework, not a hotfix   disabling the tool-cache path entirely until that
-  // lands. Plan mode is unaffected (never sends tools, so no conflict there).
+  // lands. Gated on `!toolSet` now, not just runtimeMode === 'plan': plan mode
+  // gained one real tool (propose_plan, see toolSet above) so "plan mode never
+  // sends tools" is no longer true, and sending tools alongside cachedContent
+  // hits the exact same 400 this comment describes.
   const geminiToolCacheName: string | null = null;
-  if (providerName === 'gemini' && runtimeMode === 'plan') {
+  if (providerName === 'gemini' && runtimeMode === 'plan' && !toolSet) {
     const geminiKey = process.env.GEMINI_API_KEY;
     if (geminiKey) {
       geminiRunCacheName = await createGeminiRunCache(systemPrompt, modelId, geminiKey);

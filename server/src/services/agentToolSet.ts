@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import type { AgentContext } from '../agent-tools/types.js';
 import { safeJoin } from '../agent-tools/types.js';
 import { writeFileTool } from '../agent-tools/write_file.js';
+import { proposePlanTool } from '../agent-tools/propose_plan.js';
 import { placeAssetTool } from '../agent-tools/place_asset.js';
 import { replaceAssetReferencesTool } from '../agent-tools/replace_asset_references.js';
 import { readFileTool } from '../agent-tools/read_file.js';
@@ -48,6 +49,7 @@ const MICRO_EXCLUDED_TOOLS = new Set([
 export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: string): ToolSet {
   const defs = [
     thinkTool,
+    proposePlanTool,
     getBuildErrorsTool,
     writeFileTool,
     readFileTool,
