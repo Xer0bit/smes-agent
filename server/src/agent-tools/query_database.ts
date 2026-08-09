@@ -30,6 +30,27 @@ export function isSchemaMutatingSql(sql: string): boolean {
   return DDL_RE.test(sql);
 }
 
+// Unqualified DELETE/UPDATE (no WHERE clause) previously ran IMMEDIATELY,
+// with zero staging -- unlike DDL, which was already gated above. A model
+// forgetting a WHERE clause on a DELETE wipes an entire table with no
+// confirm step at all, which is at least as dangerous as a DROP TABLE
+// (arguably worse: DROP TABLE is at least visually alarming in a diff,
+// `DELETE FROM users;` looks routine). Confirmed 2026-08-09 core-loop audit:
+// this was the one DML shape structurally as risky as DDL and NOT staged.
+// Deliberately simple per-statement check (split on top-level ';', same
+// looseness as DDL_RE above) -- a false positive on a DELETE/UPDATE that
+// legitimately has no WHERE (rare, e.g. clearing a whole scratch table)
+// just costs one extra confirm round-trip, which is safe.
+const UNQUALIFIED_MUTATION_RE = /(^|;)\s*(DELETE\s+FROM|UPDATE)\s+[^;]*?(?=;|$)/gi;
+
+export function isUnqualifiedMutation(sql: string): boolean {
+  const matches = sql.matchAll(UNQUALIFIED_MUTATION_RE);
+  for (const m of matches) {
+    if (!/\bWHERE\b/i.test(m[0])) return true;
+  }
+  return false;
+}
+
 // Table-name capture for CREATE POLICY   `ON [schema.]table`, quotes optional.
 // The policy name itself is commonly a quoted multi-word string (e.g.
 // `CREATE POLICY "public read products" ON ...`)   matched as `"[^"]+"` first
@@ -99,8 +120,9 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
     "ALWAYS call get_database_schema first when you're unsure what tables exist. " +
     "SCHEMA-MUTATING SQL (CREATE/ALTER/DROP/TRUNCATE/GRANT/REVOKE) is NOT executed immediately: this call " +
     "stages it and returns a confirmationId   you MUST call confirm_database_change with that id as a " +
-    "separate tool call before the change actually runs against the live database. Plain data statements " +
-    "(SELECT/INSERT/UPDATE/DELETE) run immediately as usual. " +
+    "separate tool call before the change actually runs against the live database. The same staging applies " +
+    "to a DELETE or UPDATE with no WHERE clause (affects every row, as risky as a schema change). Plain, " +
+    "row-scoped data statements (SELECT/INSERT, or UPDATE/DELETE with a WHERE clause) run immediately as usual. " +
     "If no database is provisioned, tell the user to provision one from Settings → Hosted Database.",
   inputSchema: schema,
   getConsentPreview: (args) => `Run SQL: ${args.sql.slice(0, 120)}${args.sql.length > 120 ? '…' : ''}`,
@@ -121,6 +143,21 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
         `PENDING CONFIRMATION   this SQL was NOT executed yet. It contains a schema-mutating statement ` +
         `(CREATE/ALTER/DROP/TRUNCATE/GRANT/REVOKE), which changes the live database for real users, so it ` +
         `requires one extra confirmation step.\n\n` +
+        `SQL to run:\n${args.sql}\n\n` +
+        `To actually execute it, call confirm_database_change with confirmationId: "${confirmationId}". ` +
+        `If you decide NOT to run it (e.g. after reconsidering), simply don't call confirm   nothing happens.`
+      );
+    }
+
+    if (isUnqualifiedMutation(args.sql)) {
+      if (!ctx.pendingDbChanges) ctx.pendingDbChanges = new Map();
+      const confirmationId = crypto.randomUUID();
+      ctx.pendingDbChanges.set(confirmationId, { sql: args.sql, createdAt: Date.now() });
+      return (
+        `PENDING CONFIRMATION   this SQL was NOT executed yet. It contains a DELETE or UPDATE with no WHERE ` +
+        `clause, which would affect every row in the table -- this is at least as risky as a schema change, so it ` +
+        `requires the same one extra confirmation step. If this was intentional (e.g. clearing a scratch table), ` +
+        `just confirm it. If you meant to target specific rows, add a WHERE clause and call query_database again instead.\n\n` +
         `SQL to run:\n${args.sql}\n\n` +
         `To actually execute it, call confirm_database_change with confirmationId: "${confirmationId}". ` +
         `If you decide NOT to run it (e.g. after reconsidering), simply don't call confirm   nothing happens.`
