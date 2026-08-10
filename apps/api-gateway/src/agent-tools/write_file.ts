@@ -13,6 +13,7 @@ import { sanitizeFileContent, checkSyntaxBalance } from './sanitize.js';
 // These are always correct in a fresh project; skip silently if already on disk.
 const PRE_BUILT_SCAFFOLD_PATHS = new Set([
   'src/lib/utils.ts',
+  'src/lib/api.ts',
   'src/main.tsx',
   'src/index.css',
   'src/components/ErrorBoundary.tsx',
