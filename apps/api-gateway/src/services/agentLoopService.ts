@@ -514,6 +514,13 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // different reasoning text per step, since it's looking at different code).
   let lastThinkThought: string | null = null;
   let consecutiveSimilarThinkSteps = 0;
+  // Phantom-action narration: build-mode steps with ZERO tool calls whose
+  // text claims completed work ("I've created the page", "changes have been
+  // saved"). Confirmed live 2026-08-10 (user transcript: an entire run of
+  // past-tense completion claims + apologies, no tools; CardPro step 13
+  // "tools: none" same signature). One legit closing summary is fine; a
+  // streak of claims with no tools is always a lying run.
+  let consecutivePhantomClaimSteps = 0;
   let stuckAnalysisNoteFiredAt = -1; // step number of last firing, so it can re-fire later in a long run
   // A soft nudge alone isn't enough   a real incident (2026-07-12) showed the
   // model ignore it 3 times in a row (fired at steps 6, 12, 18) and burn the
@@ -1961,6 +1968,27 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               `don't re-derive the same conclusion again. If you genuinely need to keep exploring across several ` +
               `steps, call \`save_memory\` with the key facts now so you don't have to re-think them next step.`;
             circuitBreakerNote = circuitBreakerNote ? `${circuitBreakerNote}\n\n${thinkStreakNote}` : thinkStreakNote;
+          }
+
+          // ── Phantom-action narration breaker ─────────────────────────────────
+          const PHANTOM_CLAIM_RE = /\b(I(?:'ve| have)\s+(?:now\s+)?(?:created|updated|added|removed|changed|implemented|fixed|applied|completed|secured|written|wired)|ha(?:s|ve)\s+been\s+(?:created|updated|added|removed|applied|saved|completed|secured))\b/i;
+          if (runtimeMode === 'build' && stepToolNames.length === 0 && typeof text === 'string' && PHANTOM_CLAIM_RE.test(text)) {
+            consecutivePhantomClaimSteps++;
+            if (consecutivePhantomClaimSteps >= 3) {
+              console.warn(`[AgentLoop] project=${projectId} aborting: ${consecutivePhantomClaimSteps} consecutive no-tool steps claiming completed work (phantom narration)`);
+              budgetAbortReason = 'phantom narration: 3 consecutive steps claimed completed work without calling any tools';
+              abortController.abort();
+            } else {
+              const phantomNote =
+                `STOP: your last message claimed completed work ("I've created/updated...") but you called ZERO tools ` +
+                `this step. Nothing was created, updated, or saved -- files only change through write_file/edit_file/` +
+                `delete_file calls. Do not describe the work again and do not apologize. In your NEXT step, output the ` +
+                `tool calls that actually perform it. Announce intent in one short line at most ("Doing: X, Y"), and ` +
+                `never use past tense before the tools have run.`;
+              circuitBreakerNote = circuitBreakerNote ? `${circuitBreakerNote}\n\n${phantomNote}` : phantomNote;
+            }
+          } else if (stepToolNames.length > 0) {
+            consecutivePhantomClaimSteps = 0;
           }
 
           // ── Root-cause-lock (fix tier only) ──────────────────────────────────
