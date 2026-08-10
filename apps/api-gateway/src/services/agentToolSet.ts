@@ -480,6 +480,26 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
             );
           }
 
+          // ── Root-relative /api/* fetch guard ───────────────────────────────────
+          // Generated apps have NO Express backend: the preview service and the
+          // production host serve static files only, so every fetch to a
+          // root-relative "/api/..." path 404s (blank data, "request failed",
+          // broken login screens -- the recurring "API GET hook conflict"
+          // client reports). The prompt bans this pattern (rule 3, "NEVER call
+          // /api/*"); this makes it mechanical. Composed platform URLs like
+          // `${VITE_DB_API_URL}/...` never match: the match requires the quote
+          // to sit immediately before "/api/".
+          const rootRelativeApiFetch = newContent.match(/\b(?:fetch|axios(?:\.\w+)?)\(\s*(['"`])\/api\//);
+          if (rootRelativeApiFetch) {
+            return (
+              `BLOCKED: "${args.path}" calls a root-relative "/api/..." URL. There is NO backend server behind ` +
+              `this app -- previews and published sites serve static files only, so every "/api/*" request 404s. ` +
+              `Use the real integrations instead: auth via the client from VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY, ` +
+              `app data via PostgREST on VITE_DB_API_URL, and custom server logic as an edge function invoked with ` +
+              '`fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/<function-name>/invoke`, ...)`. Rewrite and retry.'
+            );
+          }
+
           // ── Hardcoded-undefined auth/DB config guard ───────────────────────────
           // Confirmed live incident (2026-08-06 audit, 3 separate projects): an
           // agent turn wrote `const supabaseUrl = undefined;` / `const

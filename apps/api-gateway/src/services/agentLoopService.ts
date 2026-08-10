@@ -23,7 +23,7 @@ import { captureThumbnail } from './thumbnailService.js';
 import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
 import { beginRun as beginNarration, updateThought, endRun as endNarration, generateStatus, getNarrationCost, type LifecyclePhase } from './narration.service.js';
 import { lookupFailureFix, storeFailureFix } from './failureMemory.service.js';
-import { databaseService } from './database.service.js';
+import { databaseService, buildProjectEnvSecrets } from './database.service.js';
 import {
   isBillingCircuitOpen, tripBillingCircuit, extractCacheUsage,
   isRetryableError, isRateLimitError, sanitizeErrorMessage, isAuthOrBillingError,
@@ -3229,6 +3229,27 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       const diskBeforeRepair = new Map<string, string>();
       for (const f of mergedWrites) {
         diskBeforeRepair.set(f.path, f.content);
+      }
+
+      // Self-heal preview env before pushing files. Secrets previously reached
+      // the preview's .env.local only on database provisioning, the manual
+      // Sync button, or the ecg-dev-agent flow -- a project that added auth
+      // without ever provisioning a hosted DB ran with VITE_SUPABASE_URL
+      // undefined, so createClient() threw at boot (blank page + every login
+      // "failure" the clients keep reporting). Best-effort: a failed sync
+      // never blocks the file push.
+      if (userId) {
+        try {
+          const envSecrets = await buildProjectEnvSecrets(userId, projectId);
+          if (envSecrets.length > 0) {
+            const envRes = await httpPost(`${previewServiceUrl}/preview/${projectId}/secrets`, JSON.stringify({ secrets: envSecrets }));
+            if (envRes.status !== 200) {
+              console.warn(`[AgentLoop] preview env-secrets sync returned ${envRes.status}: ${envRes.body.slice(0, 200)}`);
+            }
+          }
+        } catch (envErr) {
+          console.warn('[AgentLoop] preview env-secrets sync failed (continuing):', envErr);
+        }
       }
 
       // First attempt: normal push
