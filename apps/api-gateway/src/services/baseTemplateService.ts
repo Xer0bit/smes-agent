@@ -333,12 +333,67 @@ export default {
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.tsx';
+import ErrorBoundary from './components/ErrorBoundary.tsx';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );
+`,
+  // A render-time throw anywhere in the tree unmounts React and leaves a blank
+  // white page with nothing but a console error. This turns that into a visible
+  // message plus the actual error text, so a broken build is diagnosable.
+  'src/components/ErrorBoundary.tsx': `import { Component, type ErrorInfo, type ReactNode } from 'react';
+
+interface Props {
+  children: ReactNode;
+}
+
+interface State {
+  error: Error | null;
+}
+
+export default class ErrorBoundary extends Component<Props, State> {
+  state: State = { error: null };
+
+  static getDerivedStateFromError(error: Error): State {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('Uncaught error:', error, info.componentStack);
+  }
+
+  render() {
+    const { error } = this.state;
+    if (!error) return this.props.children;
+
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 bg-background text-foreground">
+        <div className="max-w-lg w-full space-y-4">
+          <h1 className="text-2xl font-bold">Something went wrong</h1>
+          <p className="text-muted-foreground">
+            This page hit an unexpected error. Try reloading. If it keeps happening, the
+            details below say why.
+          </p>
+          <pre className="text-xs whitespace-pre-wrap break-words rounded-md border border-border p-3 overflow-auto max-h-64">
+            {error.message}
+          </pre>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium"
+          >
+            Reload
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
 `,
   'src/App.tsx': `import { HashRouter, Routes, Route } from 'react-router-dom';
 

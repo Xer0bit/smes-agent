@@ -15,6 +15,7 @@ const PRE_BUILT_SCAFFOLD_PATHS = new Set([
   'src/lib/utils.ts',
   'src/main.tsx',
   'src/index.css',
+  'src/components/ErrorBoundary.tsx',
   'src/components/ui/button.tsx',
   'src/components/ui/card.tsx',
   'src/components/ui/input.tsx',

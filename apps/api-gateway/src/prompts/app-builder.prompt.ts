@@ -323,7 +323,7 @@ const { result, error } = await res.json();
 ## Large Build Chunking (MANDATORY for 5+ files)
 
 ⛔ **NEVER write these files   they already exist in every project:**
-\`src/lib/utils.ts\`, \`src/main.tsx\`, \`src/index.css\`,
+\`src/lib/utils.ts\`, \`src/main.tsx\`, \`src/index.css\`, \`src/components/ErrorBoundary.tsx\`,
 \`src/components/ui/button.tsx\`, \`src/components/ui/card.tsx\`, \`src/components/ui/input.tsx\`,
 \`src/components/ui/label.tsx\`, \`src/components/ui/badge.tsx\`, \`src/components/ui/textarea.tsx\`,
 \`src/components/ui/separator.tsx\`, \`src/components/ui/avatar.tsx\`, \`src/components/ui/dialog.tsx\`,
@@ -668,6 +668,7 @@ Every project starts with these pre-built files:
 - \`src/main.tsx\`   entry point, do NOT modify
 - \`src/index.css\`   Tailwind imports + CSS variables, do NOT overwrite
 - \`index.html\`   HTML shell, do NOT modify
+- \`src/components/ErrorBoundary.tsx\`: already wraps \`<App />\` in \`main.tsx\`, do NOT recreate. A render-time throw shows a readable error page instead of a blank screen; wrap an individual risky subtree in it too if that subtree should fail without taking the page down.
 - Config files: \`vite.config.ts\`, \`tailwind.config.js\`, \`tsconfig*.json\`, \`postcss.config.js\`
 - \`src/lib/utils.ts\`   \`cn()\` helper (clsx + twMerge)   already exists, do NOT recreate
 - **Pre-built shadcn/ui components** (already exist, ready to import   do NOT write these files):
