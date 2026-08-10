@@ -1,0 +1,100 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 230 50% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 230 50% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 230 50% 15%;
+
+    --primary: 234 60% 25%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 230 30% 95%;
+    --secondary-foreground: 230 50% 15%;
+
+    --muted: 230 20% 96%;
+    --muted-foreground: 230 15% 45%;
+
+    --accent: 234 60% 25%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 230 20% 90%;
+    --input: 230 20% 90%;
+    --ring: 234 60% 25%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 234 60% 25%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 234 60% 25%;
+    --sidebar-accent: 234 50% 30%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 234 40% 35%;
+    --sidebar-ring: 0 0% 100%;
+
+    --navy: 234 60% 25%;
+    --navy-light: 234 40% 35%;
+    --surface-elevated: 230 30% 97%;
+
+    font-family: 'DM Sans', sans-serif;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Space Grotesk', sans-serif;
+  }
+}
+
+@layer utilities {
+  .text-gradient-navy {
+    background: linear-gradient(135deg, hsl(234 60% 25%), hsl(234 40% 40%));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .text-gradient-gold {
+    background: linear-gradient(135deg, hsl(234 60% 25%), hsl(234 40% 40%));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .bg-gradient-navy {
+    background: linear-gradient(135deg, hsl(234 60% 25%), hsl(234 40% 35%));
+  }
+
+  .bg-surface-elevated {
+    background: hsl(230 30% 97%);
+  }
+
+  .border-glow {
+    border-color: hsl(234 60% 25% / 0.15);
+  }
+
+  .shadow-gold {
+    box-shadow: 0 8px 32px -8px hsl(234 60% 25% / 0.15);
+  }
+}

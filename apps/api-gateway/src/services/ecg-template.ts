@@ -17,8 +17,22 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // of seedEcgTemplate/ecgConfigTs's hardcoded single path.
 const TEMPLATE_REGISTRY: Record<string, string> = {
   social: path.resolve(__dirname, '../../agent-template'),
+  // social-v2: tenant-Supabase-native agency dashboard (imported from
+  // /codebase 2026-08-10). Becomes the 'social' default only after the
+  // end-to-end verification gate in .scratch/social-template-v2/spec.md.
+  'social-v2': path.resolve(__dirname, '../../social-template'),
 };
 const DEFAULT_AGENT_TYPE = 'social';
+
+// Non-template dirs excluded from every template walk (seed AND version
+// hash). The hash walk previously had no exclusions, so a local
+// node_modules under a template dir skewed the local hash away from the
+// deployed one (deploys are git-archive, no node_modules).
+// 'edge-functions' holds a template's server-side function SOURCE (deployed
+// as edge_functions DB rows by seedTemplateEdgeFunctions below, not bundled
+// into the built app) -- excluded from the app-file walk for the same
+// reason node_modules is.
+const WALK_EXCLUDE = new Set(['node_modules', '.git', 'dist', 'coverage', 'edge-functions']);
 
 function resolveTemplateDir(agentType?: string): string {
   return TEMPLATE_REGISTRY[agentType ?? DEFAULT_AGENT_TYPE] ?? TEMPLATE_REGISTRY[DEFAULT_AGENT_TYPE];
@@ -44,7 +58,7 @@ export function getCurrentTemplateHash(agentType?: string): string {
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
         const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) { walk(full); continue; }
+        if (entry.isDirectory()) { if (!WALK_EXCLUDE.has(entry.name)) walk(full); continue; }
         hash.update(path.relative(templateDir, full));
         hash.update(fs.readFileSync(full));
       }
@@ -386,18 +400,19 @@ export function seedEcgTemplate(
   const templateDir = resolveTemplateDir(opts.agentType);
   const files: Record<string, string> = {};
 
-  // Walk template directory
-  // agent-template/ gained its own package.json + node_modules for its
-  // vitest suite (T8) -- exclude those (and other non-template dirs) from
-  // the walk, which previously assumed templateDir only ever contained
-  // source files.
-  const WALK_EXCLUDE = new Set(['node_modules', '.git', 'dist', 'coverage']);
+  // Walk template directory (WALK_EXCLUDE at module scope, shared with the
+  // version-hash walk).
   function walk(dir: string) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.isDirectory() && WALK_EXCLUDE.has(entry.name)) continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) { walk(full); continue; }
       if (/\.test\.[jt]sx?$/.test(entry.name)) continue;
+      // Binary assets can't survive the utf8 read below — a favicon.ico read
+      // as utf8 produces null bytes Postgres rejects ("unsupported Unicode
+      // escape sequence") when the seeded file map is stored. Skip them; the
+      // scaffolded project supplies its own favicon.
+      if (/\.(ico|png|jpe?g|gif|webp|avif|woff2?|ttf|eot|otf|mp[34])$/i.test(entry.name)) continue;
       const rel  = path.relative(templateDir, full);
       let content = fs.readFileSync(full, 'utf8');
       // Substitute placeholders
@@ -431,4 +446,23 @@ export function seedEcgTemplate(
   }
 
   return files;
+}
+
+// Reads a template's edge-functions/*.js -- server-side function SOURCE,
+// deployed as edge_functions DB rows (see ecg-dev-agent.routes.ts's seed
+// step), never bundled into the built app. Returns {} for templates with no
+// edge-functions dir (e.g. 'social' today).
+export function loadTemplateEdgeFunctions(agentType?: string): Record<string, string> {
+  const dir = path.join(resolveTemplateDir(agentType), 'edge-functions');
+  const out: Record<string, string> = {};
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir).filter((f) => f.endsWith('.js'));
+  } catch {
+    return out;
+  }
+  for (const file of entries) {
+    out[file.replace(/\.js$/, '')] = fs.readFileSync(path.join(dir, file), 'utf8');
+  }
+  return out;
 }

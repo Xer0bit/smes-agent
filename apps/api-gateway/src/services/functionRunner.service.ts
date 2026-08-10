@@ -26,6 +26,10 @@ export interface EcgContext {
   llmApiKey?: string;
   llmModel?: string;
   llmProvider?: string;
+  // This function's own project id -- needed for ecg.portal()'s internal
+  // bridge call below, distinct from portalToken (the Agent Portal's org
+  // API key, a different credential for a different host).
+  projectId?: string;
 }
 
 export interface InvokeResult {
@@ -254,6 +258,34 @@ function buildEcgDispatch(ctx: EcgContext) {
     delete: (path: string) => call('DELETE', path),
   };
 
+  // ecg.portal(): bridges to THIS gateway's own /api/v1/ecg-proxy (this
+  // server's REST-to-MCP translation layer), not the Agent Portal directly
+  // like get/post/patch/delete above. That layer supports actions the
+  // Portal's own /v1/ecg surface deliberately doesn't (creating a Buffer
+  // connector, creating a post) -- see ecg-proxy.routes.ts's mapToMcpTool.
+  // Authenticated as a trusted internal caller via FUNCTIONS_INTERNAL_SECRET
+  // (ecg-proxy.routes.ts's resolveAuth), not a user session -- this function
+  // has already verified the real caller itself before reaching here.
+  if (ctx.projectId && process.env.FUNCTIONS_INTERNAL_SECRET) {
+    const gatewayBase = (process.env.ECOMGEAR_SERVER_URL || `http://localhost:${process.env.PORT || 5001}`).replace(/\/$/, '');
+    const projectId = ctx.projectId;
+    dispatch.portal = async (method: string, path: string, body?: unknown) => {
+      const res = await fetch(`${gatewayBase}/api/v1/ecg-proxy${path}?projectId=${encodeURIComponent(projectId)}`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Internal-Secret': process.env.FUNCTIONS_INTERNAL_SECRET!,
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS),
+      });
+      const text = await res.text();
+      const parsed = text ? JSON.parse(text) : null;
+      if (!res.ok) throw new Error(`ecg.portal failed: ${res.status} ${parsed?.error ?? text}`);
+      return parsed;
+    };
+  }
+
   if (ctx.llmApiKey) {
     dispatch.llm = async (messages: unknown[], systemPrompt?: string) => {
       const provider = ctx.llmProvider || 'openai';
@@ -340,6 +372,7 @@ const ecg = __hasEcg ? {
   patch:  (path, body) => __call('ecg.patch', [path, body]),
   delete: (path) => __call('ecg.delete', [path]),
   ...(__hasEcgLlm ? { llm: (messages, systemPrompt) => __call('ecg.llm', [messages, systemPrompt]) } : {}),
+  ...(__hasEcgPortal ? { portal: (method, path, body) => __call('ecg.portal', [method, path, body]) } : {}),
 } : null;
 
 async function fetch(url, init) {
@@ -451,6 +484,7 @@ export async function runEdgeFunction(
     await jail.set('__hasDb', Boolean(dbCtx));
     await jail.set('__hasEcg', Boolean(ecgCtx));
     await jail.set('__hasEcgLlm', Boolean(ecgCtx?.llmApiKey));
+    await jail.set('__hasEcgPortal', Boolean(ecgCtx?.projectId && process.env.FUNCTIONS_INTERNAL_SECRET));
     await jail.set('__params', new ivmRuntime.ExternalCopy(params ?? null).copyInto());
     await jail.set('__secrets', new ivmRuntime.ExternalCopy(Object.freeze({ ...(secrets ?? {}) })).copyInto());
 

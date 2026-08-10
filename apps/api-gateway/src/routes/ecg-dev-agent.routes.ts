@@ -30,7 +30,7 @@ import { projectService, getProjectServerPath } from '../services/project.servic
 import { initProjectFromTemplate } from '../services/baseTemplateService.js';
 import { databaseService, buildProjectEnvSecrets } from '../services/database.service.js';
 import { discoverEcgOrg } from '../services/ecgMcpClient.service.js';
-import { seedEcgTemplate } from '../services/ecg-template.js';
+import { seedEcgTemplate, loadTemplateEdgeFunctions } from '../services/ecg-template.js';
 import { saveEcgRevision, syncEcgPreviewService } from './ecg-connect.routes.js';
 import { captureThumbnail } from '../services/thumbnailService.js';
 import { logger } from '../utils/logger.js';
@@ -99,9 +99,15 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
       // gets today's behavior.
       selectedAgentIds?: string[];
       agentNames?: Record<string, string>;
+      // Which registered dashboard template to seed (TEMPLATE_REGISTRY in
+      // ecg-template.ts). Omitted -> 'social' (today's default). 'social-v2'
+      // is the tenant-Supabase agency template (spec:
+      // .scratch/social-template-v2/spec.md).
+      agentType?: string;
     };
     const dashConfig  = config && typeof config === 'object' ? config : {};
     const dashModules = Array.isArray(modules) ? modules.filter((m): m is string => typeof m === 'string') : [];
+    const agentType   = typeof req.body.agentType === 'string' ? req.body.agentType : undefined;
     if (!apiKey) {
       sseWrite(res, 'error', { message: 'apiKey is required' });
       res.end();
@@ -183,7 +189,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
     // credentials never reach the browser. The dev agent extends this file
     // instead of inventing frontend fetches (see its eCG prompt rules). ──
     try {
-      await supabase.from('edge_functions').upsert(
+      const { error: overviewErr } = await supabase.from('edge_functions').upsert(
         {
           user_id: req.user!.id,
           project_id: project.id,
@@ -211,10 +217,50 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
         },
         { onConflict: 'project_id,name' },
       );
+      // supabase-js resolves {data, error} rather than rejecting on a query
+      // error -- an unchecked .error here previously made this whole seed
+      // step silently no-op (confirmed live: the ON CONFLICT target didn't
+      // match the (project_id, name) partial index until
+      // 20260810160000_edge_functions_fix_upsert_conflict_target.sql).
+      if (overviewErr) throw overviewErr;
       sseWrite(res, 'step', { id: 'edge_function_created', status: 'done' });
     } catch (err) {
       logger.warn('[ecg-dev-agent] starter edge function seed failed (non-fatal)', err);
       sseWrite(res, 'step', { id: 'edge_function_created', status: 'skipped' });
+    }
+
+    // ── Template-owned edge functions (e.g. social-v2's auth-context/clients/
+    // content/files/brand-assets/social) -- this is the ONLY data-access path
+    // the template's own frontend uses (src/lib/tenant.ts), so these must
+    // exist before the seeded app can do anything. is_public: true because
+    // the frontend invokes them directly with the DB anon key (each verifies
+    // the REAL caller itself against cloud auth, not relying on that key).
+    // requires_service_role: true (also the column default) because
+    // authorization is enforced in the function's own code, not via RLS --
+    // see the migration's header comment. ──
+    try {
+      const templateFns = loadTemplateEdgeFunctions(agentType);
+      const names = Object.keys(templateFns);
+      if (names.length > 0) {
+        const { error: fnsErr } = await supabase.from('edge_functions').upsert(
+          names.map((name) => ({
+            user_id: req.user!.id,
+            project_id: project.id,
+            name,
+            description: `Template-owned function (${name}.js) -- part of this dashboard's data layer, see src/lib/tenant.ts.`,
+            code: templateFns[name],
+            is_active: true,
+            is_public: true,
+            requires_service_role: true,
+          })),
+          { onConflict: 'project_id,name' },
+        );
+        if (fnsErr) throw fnsErr;
+      }
+      sseWrite(res, 'step', { id: 'template_functions_deployed', status: names.length > 0 ? 'done' : 'skipped', count: names.length });
+    } catch (err) {
+      logger.warn('[ecg-dev-agent] template edge function seed failed', err);
+      sseWrite(res, 'step', { id: 'template_functions_deployed', status: 'failed' });
     }
 
     // Push every secret (platform auth + hosted DB, if provisioned) to the live preview.
@@ -253,6 +299,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
       config: dashConfig,
       projectId: project.id,
       proxyUrl: ECOMGEAR_SERVER_URL,
+      agentType,
     });
     sseWrite(res, 'step', { id: 'template_seeded', status: 'done', pages: Object.keys(templateFiles).filter((f) => f.startsWith('src/pages/')).length });
 
@@ -270,7 +317,12 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
     const seededPages = Object.keys(templateFiles)
       .filter((f) => f.startsWith('src/pages/'))
       .map((f) => f.replace('src/pages/', '').replace(/\.tsx?$/, ''));
-    const contextNotes = [
+    const contextNotes = agentType === 'social-v2' ? [
+      `This is a Social Agency dashboard seeded from social-template/ (social-v2): a tenant-Supabase app (clients, leads, press releases, social posting) whose social publishing goes through the Agent Portal's Buffer connector via src/lib/ecgClient.ts.`,
+      `Existing pages (extend these, don't recreate them): ${seededPages.join(', ')}.`,
+      `Data access: this app talks to its own tenant Supabase via src/integrations/supabase/client.ts for all local data, and to the Agent Portal ONLY through ecgApi (src/lib/ecgClient.ts) for connectors and publishing. Never paste social credentials into this app; they live portal-side.`,
+      `src/ecg-config.ts is generated at seed time -- never edit it by hand.`,
+    ].join('\n\n') : [
       `This is an eCG Agent dashboard: a social-media agent management UI seeded from server/agent-template/, connected to a live eCG Agents org via MCP.`,
       `Existing pages (extend these, don't recreate them): ${seededPages.join(', ')}.`,
       `Shared components already exist: Layout.tsx (sidebar/topnav/minimal shell), TopBar.tsx (search + notifications), components/ui.tsx (PageHeader, Card, EmptyState, Spinner, SkeletonRows, platformMeta, relTime), StatusBadge.tsx. Use these instead of hand-rolling equivalents.`,

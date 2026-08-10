@@ -256,6 +256,7 @@ async function resolveFunctionBundle(
         llmApiKey:    ecgMap['ECG_LLM_API_KEY'],
         llmModel:     ecgMap['ECG_LLM_MODEL'],
         llmProvider:  ecgMap['ECG_LLM_PROVIDER'],
+        projectId:    invokeProjectId,
       };
     }
   }

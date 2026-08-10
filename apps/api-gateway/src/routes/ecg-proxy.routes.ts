@@ -298,9 +298,31 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
 }
 
 // Tries the dashboard-access token first (anonymous visitor to a deployed
-// dashboard); falls back to the eComGear owner Supabase session otherwise.
+// dashboard); then a trusted internal caller (an edge function running the
+// project's OWN code, already having verified the real caller against cloud
+// auth itself -- see functionRunner.service.ts's ecg.portal()); falls back to
+// the eComGear owner Supabase session otherwise.
+//
+// Why the internal-secret branch exists: a social-v2-style dashboard's own
+// end users authenticate against this platform's central auth service (the
+// SAME issuer authMiddleware verifies -- see docs on eCG cloud auth), but
+// they are never `projects.user_id` (they're a customer of the agency that
+// built the dashboard, not the EcomGear account that built it), so they can
+// never satisfy the owner-session branch below. Their own edge functions
+// verify identity themselves (fetching /auth/v1/user with the caller's
+// token, then checking the project's own hosted-DB role table) and only
+// THEN reach here, carrying FUNCTIONS_INTERNAL_SECRET -- an existing,
+// already-deployed gateway-internal secret (see docs/edge-functions.md),
+// not a new trust boundary. No browser call can carry this header directly;
+// only this process's own functionRunner sets it.
 function resolveAuth(req: AuthenticatedRequest, res: ExpressResponse, next: NextFunction): void {
   const projectId = (req.query.projectId ?? req.headers['x-project-id']) as string | undefined;
+  const internalSecret = process.env.FUNCTIONS_INTERNAL_SECRET;
+  if (internalSecret && req.headers['x-internal-secret'] === internalSecret && projectId) {
+    req.dashboardAccessProjectId = projectId;
+    next();
+    return;
+  }
   dashboardAccessMiddleware(req, res, () => {
     if (req.dashboardAccessProjectId && req.dashboardAccessProjectId === projectId) {
       next();

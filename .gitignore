@@ -59,3 +59,4 @@ apps/web-client/base-example/.env
 .claude-flow
 .scratch
 .deploy-stage/
+codebase
