@@ -53,7 +53,15 @@ const DashboardSidebar = ({
   onCreateWorkspace,
 }: DashboardSidebarProps) => {
   const { t } = useTranslation();
-  const collapsed = collapsedPref;
+  // Hovering a collapsed sidebar temporarily expands it; the saved preference
+  // is untouched, so it collapses again on mouse-out. The workspace Select
+  // renders its menu in a portal OUTSIDE the aside, so moving the mouse into
+  // it fires mouseleave and would collapse the sidebar mid-interaction,
+  // unmounting the open Select ({!collapsed && ...}) -- hold the sidebar open
+  // while the Select is open.
+  const [hoverOpen, setHoverOpen] = useState(false);
+  const [orgSelectOpen, setOrgSelectOpen] = useState(false);
+  const collapsed = collapsedPref && !hoverOpen && !orgSelectOpen;
 
   const menuItems = [
     { title: t('dashboard.home'), url: '/dashboard', icon: Home, end: true },
@@ -109,6 +117,8 @@ const DashboardSidebar = ({
 
   return (
     <aside
+      onMouseEnter={() => setHoverOpen(true)}
+      onMouseLeave={() => setHoverOpen(false)}
       className={`border-b border-border/60 bg-card md:fixed md:left-0 md:top-0 md:z-20 md:h-screen md:border-b-0 md:border-r md:overflow-hidden transition-[width] duration-300 ease-in-out ${collapsed ? 'md:w-[60px]' : 'md:w-64'}`}
     >
       <div className="flex h-full flex-col">
@@ -125,6 +135,7 @@ const DashboardSidebar = ({
           {!collapsed && (
             <Select
               value={currentOrganizationId || undefined}
+              onOpenChange={setOrgSelectOpen}
               onValueChange={(value) => {
                 if (value === CREATE_WORKSPACE_VALUE) onCreateWorkspace();
                 else setCurrentOrganizationId(value);
