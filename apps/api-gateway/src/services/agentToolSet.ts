@@ -461,6 +461,25 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
             );
           }
 
+          // ── Wrong-shape edge-function invoke path guard ────────────────────────
+          // Confirmed live (CardPro, 2026-08-10): the agent wrote
+          // `${VITE_FUNCTIONS_API_URL}/api/v1/functions/<name>/invoke` into 4
+          // frontend files -- the exact shape the prompt explicitly bans
+          // (VITE_FUNCTIONS_API_URL already ends in /functions; the invoke
+          // path is FLAT: `/<name>/invoke`). Every such call 404s, and the
+          // user saw it as "external api error". Prompt-only enforcement
+          // failed again; this makes it mechanical.
+          const wrongInvokePath = newContent.match(/api\/v1\/functions/);
+          if (wrongInvokePath) {
+            return (
+              `BLOCKED: "${args.path}" builds an edge-function URL with "/api/v1/functions/" -- that path shape is ` +
+              `this platform's INTERNAL API and always 404s from a generated app. VITE_FUNCTIONS_API_URL already ` +
+              `ends in "/functions"; the correct call is FLAT: ` +
+              '`fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/<function-name>/invoke`, ...)` -- ' +
+              `no "/api/v1", no extra "/functions". Rewrite the URL and retry.`
+            );
+          }
+
           // ── Hardcoded-undefined auth/DB config guard ───────────────────────────
           // Confirmed live incident (2026-08-06 audit, 3 separate projects): an
           // agent turn wrote `const supabaseUrl = undefined;` / `const
