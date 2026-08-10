@@ -71,6 +71,8 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { promptService } from "@/eCG/UserPrompt";
+import type { AgentAttachment } from "@/eCG/UserPrompt/types";
+import { uploadChatAttachment, isAllowedFile } from "@/services/chatAttachmentService";
 import { messageService } from "@/eCG/UserPrompt/messageService";
 import { generatePreview } from "@/eCG/Preview/previewGenerator";
 import { checkPreviewHealth, updateDockerPreview, getPreviewUrl, handlePreviewSessionExpired, createPreviewSession } from "@/services/previewHealthService";
@@ -783,7 +785,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
       // Defer by one tick so React can flush the setPrompt update first.
       const timerId = setTimeout(() => {
-        handleGenerateWithContext(state.initialPrompt, state.fileContext);
+        handleGenerateWithContext(state.initialPrompt, state.fileContext, state.attachments);
       }, 100);
       return () => clearTimeout(timerId);
     }
@@ -1342,7 +1344,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     toast.success(`Previewing ${file.path}`);
   };
 
-  const handleGenerateWithContext = async (promptText: string, fileContext?: string) => {
+  const handleGenerateWithContext = async (promptText: string, fileContext?: string, attachments?: AgentAttachment[]) => {
     if (!promptText.trim()) {
       toast.error("Please enter a prompt");
       return;
@@ -1366,6 +1368,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
           currentUser,
           organizationId: currentOrganizationId,
           fileContext,
+          attachments,
           existingFiles: generatedFiles,
           hasRealApp:
             generatedFiles.length > 1 ||
@@ -1486,36 +1489,37 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     }
 
     let fileContext = "";
+    const attachments: AgentAttachment[] = [];
 
     try {
-      console.log('[Editor] Checking for attached files:', attachedFiles.length);
-
-      // Parse files if any
+      // Upload attachments through the agent pipeline (images get vision +
+      // place_asset server-side); parse-file is only the fallback for types
+      // the attachment service doesn't accept.
       if (attachedFiles && attachedFiles.length > 0) {
         toast.info("Processing attached files...");
-        for (let i = 0; i < attachedFiles.length; i++) {
-          const file = attachedFiles[i];
-          console.log('[Editor] Parsing file:', file.name);
-
+        for (const file of attachedFiles) {
+          if (isAllowedFile(file).ok && currentUser?.id && projectId) {
+            try {
+              const att = await uploadChatAttachment(file, currentUser.id, projectId);
+              attachments.push({ name: att.name, type: att.type, category: att.category, tempPath: att.tempPath, publicUrl: att.publicUrl });
+              continue;
+            } catch (err) {
+              console.error('Attachment upload failed, falling back to parse-file:', err);
+            }
+          }
           const formData = new FormData();
           formData.append('file', file);
-
-          const { data: parseData, error: parseError } = await supabase.functions.invoke('parse-file', {
-            body: formData
-          });
-
+          const { data: parseData, error: parseError } = await supabase.functions.invoke('parse-file', { body: formData });
           if (parseError) {
             console.error('Error parsing file:', parseError);
             toast.error(`Failed to parse ${file.name}`);
           } else if (parseData?.extractedText) {
             fileContext += `\n\n${parseData.extractedText}`;
-            console.log('[Editor] File parsed successfully:', file.name);
           }
         }
       }
 
-      console.log('[Editor] About to call handleGenerateWithContext');
-      await handleGenerateWithContext(prompt, fileContext);
+      await handleGenerateWithContext(prompt, fileContext, attachments.length > 0 ? attachments : undefined);
     } catch (error) {
       console.error("Error in handleGenerate:", error);
       toast.error("Failed to start generation: " + (error instanceof Error ? error.message : 'Unknown error'));

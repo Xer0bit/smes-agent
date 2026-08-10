@@ -84,6 +84,7 @@ export const promptService = {
       currentUser,
       organizationId,
       fileContext,
+      attachments,
       existingFiles,
       hasRealApp,
       fingerprint
@@ -157,6 +158,7 @@ export const promptService = {
         projectId,
         orgId: organizationId,
         existingFiles: hasRealApp ? existingFiles : [],
+        attachments,
         fingerprint,
         callbacks: {
           onTextDelta: (text) => {

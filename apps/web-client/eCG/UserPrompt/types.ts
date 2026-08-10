@@ -20,6 +20,16 @@ export interface GenerationStageResult {
   summary?: string;
 }
 
+/** Uploaded chat attachment metadata forwarded to the agent loop (see chatAttachmentService). */
+export interface AgentAttachment {
+  name: string;
+  type: string;
+  category: 'image' | 'document';
+  tempPath: string;
+  /** Durable fallback if tempPath's /tmp copy has expired (1hr TTL). */
+  publicUrl?: string;
+}
+
 export interface PromptHandlerParams {
   promptText: string;
   projectId: string;
@@ -27,6 +37,8 @@ export interface PromptHandlerParams {
   currentUser: any;
   organizationId?: string | null;
   fileContext?: string;
+  /** Files uploaded with this prompt   images get vision + place_asset server-side. */
+  attachments?: AgentAttachment[];
   existingFiles: GeneratedFile[];
   hasRealApp: boolean;
   /** Guest fingerprint   when set, the user is not authenticated */

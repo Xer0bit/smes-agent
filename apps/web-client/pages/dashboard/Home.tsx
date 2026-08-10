@@ -38,6 +38,8 @@ import { useSubscription } from '@/contexts/SubscriptionContext';
 import { getUsageColor, getProgressColor } from '@/hooks/useUsage';
 import { ProjectThumbnail } from '@/components/dashboard/ProjectThumbnail';
 import { toast } from 'sonner';
+import { uploadChatAttachment, isAllowedFile } from '@/services/chatAttachmentService';
+import type { AgentAttachment } from '@/eCG/UserPrompt/types';
 
 type PendingProjectInvitation = {
   id: string;
@@ -292,13 +294,23 @@ export default function DashboardHome() {
 
       if (orgId) setCurrentOrganizationId(orgId);
 
-      // Extract text from any attached documents so the agent can see them
-      // on its first generation   same parse-file function the in-project
-      // chat uses.
+      // Upload attachments through the agent pipeline so images actually
+      // reach the model (vision + place_asset server-side). parse-file is
+      // only the fallback for types the attachment service doesn't accept.
       let fileContext = '';
+      const attachments: AgentAttachment[] = [];
       if (attachedFiles.length > 0) {
         toast.info('Processing attached files…');
         for (const file of attachedFiles) {
+          if (isAllowedFile(file).ok) {
+            try {
+              const att = await uploadChatAttachment(file, user.id, newProject.id);
+              attachments.push({ name: att.name, type: att.type, category: att.category, tempPath: att.tempPath, publicUrl: att.publicUrl });
+              continue;
+            } catch (err) {
+              console.error('Attachment upload failed, falling back to parse-file:', err);
+            }
+          }
           const formData = new FormData();
           formData.append('file', file);
           const { data: parseData, error: parseError } = await supabase.functions.invoke('parse-file', { body: formData });
@@ -310,7 +322,7 @@ export default function DashboardHome() {
         }
       }
 
-      navigate(`/project/${newProject.id}`, { state: { initialPrompt: prompt, shouldGenerate: true, fileContext } });
+      navigate(`/project/${newProject.id}`, { state: { initialPrompt: prompt, shouldGenerate: true, fileContext, attachments: attachments.length > 0 ? attachments : undefined } });
     } catch (error: any) {
       console.error('Failed to launch project from prompt:', error);
       toast.error(error?.message || 'Failed to start a new project');
