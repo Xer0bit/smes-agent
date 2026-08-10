@@ -11,7 +11,7 @@ interface FileNode {
 }
 
 interface FileTreeProps {
-  files: Array<{ path: string; content: string }>;
+  files: Array<{ path: string; content: string | null }>;
   selectedFile: string | null;
   onFileSelect: (path: string) => void;
 }

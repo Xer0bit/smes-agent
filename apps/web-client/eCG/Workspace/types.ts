@@ -46,7 +46,8 @@ export interface WorkspaceActions {
     getHistory: () => FileChange[];
 
     // Sync
-    saveToDatabase: () => Promise<void>;
+    /** carryPaths: never-downloaded file paths whose previous-manifest entries carry forward verbatim (lazy editor). */
+    saveToDatabase: (carryPaths?: Set<string>) => Promise<void>;
     /** Returns true if files were actually loaded (from Storage or legacy migration), false if the project is genuinely empty. */
     loadFromDatabase: () => Promise<boolean>;
 }

@@ -18,7 +18,8 @@ import { buttonVariants } from '@/components/ui/button';
 
 interface WorkspaceFile {
     path: string;
-    content: string;
+    /** null = not yet downloaded (lazy editor) -- selecting it triggers onFileOpen */
+    content: string | null;
 }
 
 interface CodeEditorPanelProps {
@@ -26,6 +27,8 @@ interface CodeEditorPanelProps {
     onFileChange?: (path: string, content: string) => void;
     onFileCreate?: (path: string, content: string) => void;
     onFileDelete?: (path: string) => void;
+    /** Called when a file with content === null is selected; the parent fetches and updates `files`. */
+    onFileOpen?: (path: string) => void;
     onSave?: () => void;
     readOnly?: boolean;
     canExport?: boolean;
@@ -45,6 +48,7 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
     onFileChange,
     onFileCreate,
     onFileDelete,
+    onFileOpen,
     onSave,
     readOnly = false,
     canExport = true,
@@ -86,10 +90,13 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
     }, [files]);
 
     const selectedFile = normalizedFiles.find(f => f.path === selectedFilePath) || null;
+    const selectedIsLoading = selectedFile != null && selectedFile.content === null;
 
     const handleFileSelect = useCallback((path: string) => {
         setSelectedFilePath(path);
-    }, []);
+        const f = files.find(x => x.path === path);
+        if (f && f.content === null) onFileOpen?.(path);
+    }, [files, onFileOpen]);
 
     const handleContentChange = useCallback((content: string) => {
         const path = selectedFilePathRef.current;
@@ -167,7 +174,7 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
             toast.error(exportLockedReason);
             return;
         }
-        if (!selectedFile) return;
+        if (!selectedFile || selectedFile.content === null) return;
 
         const blob = new Blob([selectedFile.content], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
@@ -186,8 +193,16 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
         }
         try {
             const zip = new JSZip();
+            const unloaded = normalizedFiles.filter(f => f.content === null);
+            if (unloaded.length > 0) {
+                // Lazy editor: some files were never downloaded. Ask the parent
+                // to complete the set first (background fetch-all normally
+                // finishes within seconds of open).
+                toast.error(`${unloaded.length} file(s) still loading -- try again in a moment`);
+                return;
+            }
             normalizedFiles.forEach(file => {
-                zip.file(file.path, file.content);
+                zip.file(file.path, file.content as string);
             });
 
             const blob = await zip.generateAsync({ type: 'blob' });
@@ -364,13 +379,20 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
 
                 <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
                     <div className="flex-1 min-h-0 overflow-hidden">
-                        <MonacoCodeEditor
-                            file={selectedFile}
-                            onChange={handleContentChange}
-                            readOnly={readOnly}
-                            showHeader={false}
-                            fontSize={fontSize}
-                        />
+                        {selectedIsLoading ? (
+                            <div className="flex h-full items-center justify-center gap-2 text-xs text-white/40">
+                                <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-white/60" />
+                                Loading {selectedFilePath?.split('/').pop()}…
+                            </div>
+                        ) : (
+                            <MonacoCodeEditor
+                                file={selectedFile as { path: string; content: string } | null}
+                                onChange={handleContentChange}
+                                readOnly={readOnly}
+                                showHeader={false}
+                                fontSize={fontSize}
+                            />
+                        )}
                     </div>
 
                     {/* Agent streaming panel */}

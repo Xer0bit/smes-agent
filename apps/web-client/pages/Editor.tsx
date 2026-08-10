@@ -126,6 +126,22 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant', content: string }>>([]);
   const [generatedCode, setGeneratedCode] = useState("");
   const [generatedFiles, setGeneratedFiles] = useState<Array<{ path: string; content: string }>>([]);
+  // Lazy editor (2026-08-10): on open, only the revision MANIFEST (paths +
+  // hashes) is fetched -- the file tree renders instantly and a file's body
+  // downloads when its tab is opened. The full fetch still runs in the
+  // background because the preview open-push below needs every body until
+  // (b1) gives the preview its own freshness path. pendingLazyPaths = paths
+  // whose content has not arrived yet; saves during that window carry these
+  // entries verbatim from the previous manifest (see createRevision).
+  const [pendingLazyPaths, setPendingLazyPaths] = useState<Set<string>>(new Set());
+  const pendingLazyPathsRef = useRef<Set<string>>(new Set());
+  const lazyManifestRef = useRef<import('@/services/revisionService').RevisionManifest | null>(null);
+  /** Paths deleted while the background full-load was in flight -- the load must not resurrect them. */
+  const deletedDuringLazyRef = useRef<Set<string>>(new Set());
+  const setPendingLazy = useCallback((next: Set<string>) => {
+    pendingLazyPathsRef.current = next;
+    setPendingLazyPaths(next);
+  }, []);
   const lastAgentEcoRef = useRef(0);
   const [isLoading, setIsLoading] = useState(false);
   const [workflowComplete, setWorkflowComplete] = useState(false);
@@ -586,7 +602,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   const githubLink = githubLinkData?.link ?? null;
 
   const effectivePreviewUrl = previewUrl || latestPreviewUrl || fallbackPreviewUrl || null;
-  const hasLoadedCode = workspaceFiles.size > 0 || generatedFiles.length > 0 || generatedCode.trim().length > 0;
+  const hasLoadedCode = workspaceFiles.size > 0 || generatedFiles.length > 0 || generatedCode.trim().length > 0 || pendingLazyPaths.size > 0;
   const hasRenderablePreview = Boolean(
     effectivePreviewUrl ||
     localPreviewHtml ||
@@ -675,15 +691,44 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     }
   };
 
+  // Lazy per-file fetch: a tab opened before the background full-load
+  // completes downloads just that one file from storage.
+  const handleLazyFileOpen = useCallback(async (path: string) => {
+    const manifest = lazyManifestRef.current;
+    if (!manifest || !projectId) return;
+    if (!pendingLazyPathsRef.current.has(path)) return; // already loaded
+    try {
+      const { revisionService } = await import('@/services/revisionService');
+      const content = await revisionService.getRevisionFile(projectId, manifest, path);
+      // The background full-load may have finished (and cleared pending) while
+      // this fetch was in flight -- its content is at least as fresh, don't clobber.
+      if (content === null || !pendingLazyPathsRef.current.has(path)) return;
+      writeFileWorkspace(path, content, 'ai');
+      const next = new Set(pendingLazyPathsRef.current);
+      next.delete(path);
+      setPendingLazy(next);
+    } catch (err) {
+      console.warn(`[Editor] Lazy file fetch failed for ${path}:`, err);
+    }
+  }, [projectId, writeFileWorkspace, setPendingLazy]);
+
+  // Every save must pass the still-unloaded lazy paths so their manifest
+  // entries carry forward -- a save fired mid-load would otherwise create a
+  // revision missing every file the user never opened.
+  const saveWorkspaceWithCarry = useCallback(() => {
+    const pending = pendingLazyPathsRef.current;
+    return saveWorkspaceToDb(pending.size > 0 ? new Set(pending) : undefined);
+  }, [saveWorkspaceToDb]);
+
   const scheduleWorkspaceSave = useCallback(() => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
-      saveWorkspaceToDb().catch((error) => {
+      saveWorkspaceWithCarry().catch((error) => {
         console.error('[Editor] Workspace autosave failed:', error);
         toast.error('Failed to save workspace changes');
       });
     }, 1000);
-  }, [saveWorkspaceToDb]);
+  }, [saveWorkspaceWithCarry]);
 
   const enqueuePreviewSync = useCallback(async (
     reason: string,
@@ -923,12 +968,15 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
           setLatestPreviewUrl(latestRevision.preview_url);
         }
 
-        // Full file content is fetched on demand for just this one revision  
-        // getRevisions() above intentionally omits generated_files/generated_code
-        // (can be tens of MB per row) since list callers only need metadata.
-        const latestFiles = await revisionService.getRevisionFiles(projectId!, latestRevision.id);
-
-        if (latestFiles.length > 0) {
+        // Shared by the lazy background load and the legacy blocking path:
+        // filter/normalize the full file set, populate state + workspace, and
+        // re-sync the preview (unchanged open-push behavior).
+        // preferWorkspace (background mode): anything already in the workspace
+        // arrived from a FRESHER source than this revision fetch -- an agent
+        // run finishing mid-load, or a lazy per-tab fetch of the same content.
+        // Its content wins over the fetched body, and paths deleted mid-load
+        // stay deleted, so a slow background load can never clobber newer work.
+        const applyRevisionFiles = async (rev: any, latestFiles: Array<{ path: string; content: string }>, preferWorkspace = false) => {
           console.log('[Editor] Loading revision with JSONB files:', latestFiles.length);
           let files = latestFiles.map((file: any) => ({
             path: file.path,
@@ -936,6 +984,14 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             type: file.type,
             operation: file.operation,
           }));
+
+          if (preferWorkspace) {
+            const { getWorkspaceManager } = await import('@/eCG/Workspace/WorkspaceManager');
+            const current = new Map(getWorkspaceManager(projectId!).listFiles().map((f) => [f.path, f.content]));
+            files = files
+              .filter((f: any) => !deletedDuringLazyRef.current.has(f.path))
+              .map((f: any) => (current.has(f.path) ? { ...f, content: current.get(f.path)! } : f));
+          }
 
           // Drop obviously corrupt source files (e.g., .tsx containing markdown/config content)
           files = files.filter((f: any) => {
@@ -958,12 +1014,9 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
           setGeneratedCode(htmlFile?.content || '');
 
           // Sync to workspace for local preview
-
           files.forEach((file: any) => {
             writeFileWorkspace(file.path, file.content, 'ai');
           });
-
-
 
           // Always re-sync revision files into preview service.
           // A stale preview URL can still return HTTP 200 while only serving
@@ -996,17 +1049,54 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             console.warn('[Editor] Preview sync from latest revision failed:', syncError);
 
             // Fallback to previously saved URL if available, otherwise fallback build path.
-            if (latestRevision.preview_url) {
-              setPreviewUrl(latestRevision.preview_url);
-              transitionPreviewStatus(latestRevision.preview_status || 'pending');
+            if (rev.preview_url) {
+              setPreviewUrl(rev.preview_url);
+              transitionPreviewStatus(rev.preview_status || 'pending');
             } else {
               // Pass filesToUpdate explicitly to avoid stale workspaceFiles/generatedFiles closure.
-              // At this point React state updates from writeFileWorkspace haven't flushed yet,
-              // so reading workspaceFiles or generatedFiles from the closure returns old values.
               const filesToUpdate = files.map((f: any) => ({ path: f.path, content: f.content }));
               await buildPreviewNow(filesToUpdate);
             }
           }
+        };
+
+        // ── Lazy open (manifest-first) ─────────────────────────────────────
+        // Fetch ONLY the manifest (paths + hashes, tens of KB): the file tree
+        // renders instantly and each tab-open fetches just that file. The full
+        // body download still runs -- in the BACKGROUND -- because the preview
+        // re-sync push below needs every body until (b1) gives the preview its
+        // own freshness path. Legacy revisions (no manifest) keep the old
+        // blocking full-load path unchanged.
+        const manifest = await revisionService.getRevisionManifest(latestRevision.id);
+        if (manifest && manifest.files.length > 0) {
+          lazyManifestRef.current = manifest;
+          setPendingLazy(new Set(manifest.files.map((f) => f.path)));
+          console.log(`[Editor] Lazy open: manifest with ${manifest.files.length} paths, bodies deferred`);
+
+          deletedDuringLazyRef.current = new Set();
+          void (async () => {
+            try {
+              const fullFiles = await revisionService.getRevisionFiles(projectId!, latestRevision.id);
+              if (fullFiles.length > 0) {
+                await applyRevisionFiles(latestRevision, fullFiles, true);
+              }
+            } catch (bgErr) {
+              console.error('[Editor] Background full-load failed (files remain fetchable per-tab):', bgErr);
+            } finally {
+              // Whatever happened, per-tab fetching stays available via the manifest.
+              setPendingLazy(new Set());
+            }
+          })();
+          return true;
+        }
+
+        // Full file content is fetched on demand for just this one revision
+        // getRevisions() above intentionally omits generated_files/generated_code
+        // (can be tens of MB per row) since list callers only need metadata.
+        const latestFiles = await revisionService.getRevisionFiles(projectId!, latestRevision.id);
+
+        if (latestFiles.length > 0) {
+          await applyRevisionFiles(latestRevision, latestFiles);
         } else {
           // Fallback to old format
           const code = await revisionService.getLegacyGeneratedCode(latestRevision.id);
@@ -2189,9 +2279,12 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                           const htmlFile = normalizedFiles.find(f => f.path === 'index.html' || f.path.endsWith('.html')) || normalizedFiles[0];
                           if (htmlFile) setGeneratedCode(htmlFile.content);
                         }
-                        deletedSet.forEach((deletedPath) => deleteFileWorkspace(deletedPath, 'ai'));
+                        deletedSet.forEach((deletedPath) => {
+                          deleteFileWorkspace(deletedPath, 'ai');
+                          if (pendingLazyPathsRef.current.size > 0) deletedDuringLazyRef.current.add(deletedPath);
+                        });
                         normalizedFiles.forEach((file) => writeFileWorkspace(file.path, file.content, 'ai'));
-                        saveWorkspaceToDb().catch((err) => {
+                        saveWorkspaceWithCarry().catch((err) => {
                           console.error('[Editor] Failed to persist agent files:', err);
                           // Real incident (2026-08-04): this save silently failed for an
                           // env-mismatch reason (frontend Supabase URL != backend's), and
@@ -2375,6 +2468,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                 // Remove deleted files from workspace BEFORE writing new ones
                 deletedSet.forEach((deletedPath) => {
                   deleteFileWorkspace(deletedPath, 'ai');
+                  if (pendingLazyPathsRef.current.size > 0) deletedDuringLazyRef.current.add(deletedPath);
                 });
                 // Sync new/updated files to workspace
                 normalizedFiles.forEach((file) => {
@@ -2383,7 +2477,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                 // Save immediately after agent generation   do NOT rely on the debounced
                 // scheduleWorkspaceSave (1 s delay). If the user navigates away in under
                 // 1 s the debounced save never fires and files are lost on next reload.
-                saveWorkspaceToDb().catch((err) => {
+                saveWorkspaceWithCarry().catch((err) => {
                   console.error('[Editor] Failed to persist agent files:', err);
                   // Fall back to debounced save so at least something gets saved
                   scheduleWorkspaceSave();
@@ -3174,10 +3268,19 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               ) : showCodeViewer ? (
                 <div className="w-full h-full bg-[#111113] border border-white/[0.06] rounded-xl overflow-hidden shadow-2xl">
                   <CodeEditorPanel
-                    files={Array.from(workspaceFiles.values()).map(f => ({
-                      path: f.path,
-                      content: f.content,
-                    }))}
+                    files={(() => {
+                      const loaded: Array<{ path: string; content: string | null }> =
+                        Array.from(workspaceFiles.values()).map(f => ({ path: f.path, content: f.content }));
+                      if (pendingLazyPaths.size === 0) return loaded;
+                      // Lazy open: not-yet-downloaded files appear in the tree
+                      // as null-content stubs; selecting one triggers onFileOpen.
+                      const have = new Set(loaded.map(f => f.path));
+                      const stubs = Array.from(pendingLazyPaths)
+                        .filter(p => !have.has(p))
+                        .map(p => ({ path: p, content: null }));
+                      return [...loaded, ...stubs];
+                    })()}
+                    onFileOpen={handleLazyFileOpen}
                     onFileChange={(path, content) => {
                       writeFileWorkspace(path, content, 'user');
 
@@ -3205,6 +3308,17 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       scheduleCodeEditorPreviewSync();
                     }}
                     onFileDelete={(path) => {
+                      // A deleted file must NOT be carried forward from the
+                      // previous manifest by a lazy save, nor resurrected by
+                      // the in-flight background full-load.
+                      if (pendingLazyPathsRef.current.has(path)) {
+                        const next = new Set(pendingLazyPathsRef.current);
+                        next.delete(path);
+                        setPendingLazy(next);
+                      }
+                      if (pendingLazyPathsRef.current.size > 0 || lazyManifestRef.current) {
+                        deletedDuringLazyRef.current.add(path);
+                      }
                       deleteFileWorkspace(path, 'user');
 
                       const nextFiles = new Map(workspaceFiles);

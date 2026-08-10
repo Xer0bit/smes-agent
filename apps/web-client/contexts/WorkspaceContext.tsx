@@ -84,7 +84,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
     }, [manager]);
 
     // Persistence operations
-    const saveToDatabase = useCallback(async (): Promise<void> => {
+    const saveToDatabase = useCallback(async (carryPaths?: Set<string>): Promise<void> => {
         setIsLoading(true);
         try {
             const filesList = manager.listFiles();
@@ -120,6 +120,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
                 generated_code: '',
                 generated_files: { files: filesData },
                 user_id: user.id,
+                carry_paths: carryPaths,
             });
 
             // Also update project's latest_generated_code for backwards compatibility

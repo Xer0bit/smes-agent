@@ -6,7 +6,7 @@ export type Project = SharedProject;
 export type GeneratedFile = SharedGeneratedFile;
 
 /** Content-addressed manifest stored in generated_files JSONB (small metadata, no file content). */
-interface RevisionManifest {
+export interface RevisionManifest {
   format: 'manifest-v1';
   files: Array<{
     path: string;
@@ -114,6 +114,14 @@ export const revisionService = {
     git_commit_hash?: string;
     git_branch?: string;
     user_id?: string;
+    /**
+     * Lazy-editor support: paths whose content was never downloaded this
+     * session. Their previous-manifest entries (path + hash + source_revision)
+     * are carried into the new manifest VERBATIM -- no fetch, no re-hash, no
+     * re-upload. Only pass paths the user did NOT touch (an unloaded file the
+     * user deleted must be excluded by the caller, or it would resurrect).
+     */
+    carry_paths?: Set<string>;
   }): Promise<string> {
     console.log('[RevisionService] Creating revision for project:', params.project_id);
 
@@ -197,6 +205,25 @@ export const revisionService = {
         })
       );
 
+      // Manifest-carry: never-downloaded files keep their previous entry
+      // verbatim. Guard against double-entry when a carried path was somehow
+      // also provided with content (provided content wins).
+      if (params.carry_paths && params.carry_paths.size > 0) {
+        const providedPaths = new Set(newFiles.map((f) => f.path));
+        let carried = 0;
+        for (const carryPath of params.carry_paths) {
+          if (providedPaths.has(carryPath)) continue;
+          const prev = prevByPath.get(carryPath);
+          if (prev) {
+            manifest.files.push({ path: carryPath, hash: prev.hash, source_revision: prev.source_revision });
+            carried++;
+          } else {
+            console.warn(`[RevisionService] carry path "${carryPath}" missing from previous manifest -- dropped from new revision`);
+          }
+        }
+        if (carried > 0) console.log(`[RevisionService] Carried ${carried} unloaded file entries from previous manifest`);
+      }
+
       if (toUpload.length > 0) {
         console.log(`[RevisionService] Uploading ${toUpload.length}/${newFiles.length} changed files (${newFiles.length - toUpload.length} deduplicated)`);
         const { storageService } = await import('./storageService');
@@ -220,14 +247,14 @@ export const revisionService = {
       // converted, 16 rows over 1MB, one over 40MB served whole on every load).
       let manifestError = (await supabase
         .from('revisions')
-        .update({ generated_files: manifest as any, file_count: newFiles.length })
+        .update({ generated_files: manifest as any, file_count: manifest.files.length })
         .eq('id', data.id)).error;
 
       if (manifestError) {
         console.warn('[RevisionService] Manifest write failed, retrying once:', manifestError.message);
         manifestError = (await supabase
           .from('revisions')
-          .update({ generated_files: manifest as any, file_count: newFiles.length })
+          .update({ generated_files: manifest as any, file_count: manifest.files.length })
           .eq('id', data.id)).error;
       }
 
@@ -255,6 +282,44 @@ export const revisionService = {
    * fetching only the unique blobs needed (dedup-aware).
    * Falls back to direct storage listing for legacy revisions without a manifest.
    */
+  /**
+   * Fetch ONLY the manifest (paths + hashes, tens of KB) for a revision.
+   * Returns null for legacy revisions without a manifest -- callers fall back
+   * to the full getRevisionFiles() path.
+   */
+  async getRevisionManifest(revisionId: string): Promise<RevisionManifest | null> {
+    const { data, error } = await supabase
+      .from('revisions')
+      .select('generated_files')
+      .eq('id', revisionId)
+      .single();
+    if (error || !data) return null;
+    if ((data.generated_files as any)?.format === 'manifest-v1') {
+      return data.generated_files as unknown as RevisionManifest;
+    }
+    return null;
+  },
+
+  /**
+   * Fetch ONE file's content via the per-file storage layout
+   * (projects/{projectId}/{source_revision}/{path}). No new backend endpoint:
+   * this is the same authenticated download getRevisionFiles() already does
+   * per file, just for a single path.
+   */
+  async getRevisionFile(projectId: string, manifest: RevisionManifest, filePath: string): Promise<string | null> {
+    const entry = manifest.files.find((f) => f.path === filePath);
+    if (!entry) return null;
+    const storagePath = `projects/${projectId}/${entry.source_revision}/${filePath}`;
+    const { data: blob, error } = await supabase.storage
+      .from('user-projects-free')
+      .download(storagePath);
+    if (error || !blob) {
+      console.warn(`[RevisionService] Single-file download failed for ${storagePath}:`, error?.message);
+      return null;
+    }
+    return blob.text();
+  },
+
   async getRevisionFiles(projectId: string, revisionId: string): Promise<{ path: string; content: string }[]> {
     // Only fetch generated_files   generated_code is pulled separately by
     // getLegacyGeneratedCode() as an absolute last-resort fallback, so we
