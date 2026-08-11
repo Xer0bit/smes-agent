@@ -100,14 +100,20 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
       selectedAgentIds?: string[];
       agentNames?: Record<string, string>;
       // Which registered dashboard template to seed (TEMPLATE_REGISTRY in
-      // ecg-template.ts). Omitted -> 'social' (today's default). 'social-v2'
-      // is the tenant-Supabase agency template (spec:
-      // .scratch/social-template-v2/spec.md).
+      // ecg-template.ts). Omitted -> DEFAULT_AGENT_TYPE ('social-v2' as of
+      // 2026-08-11, see .scratch/social-template-v2/spec.md). 'social' (the
+      // original MCP-based template) still resolves for callers that pass it
+      // explicitly, but is no longer offered by the wizard.
       agentType?: string;
     };
     const dashConfig  = config && typeof config === 'object' ? config : {};
     const dashModules = Array.isArray(modules) ? modules.filter((m): m is string => typeof m === 'string') : [];
-    const agentType   = typeof req.body.agentType === 'string' ? req.body.agentType : undefined;
+    // Resolved once, used everywhere below (context notes, edge-function
+    // loading, template seeding) so an omitted agentType and an explicit
+    // 'social-v2' behave identically -- seedEcgTemplate/loadTemplateEdgeFunctions
+    // already default internally, but the context_notes branch below needs a
+    // real value to check against, not undefined.
+    const agentType   = typeof req.body.agentType === 'string' ? req.body.agentType : 'social-v2';
     if (!apiKey) {
       sseWrite(res, 'error', { message: 'apiKey is required' });
       res.end();

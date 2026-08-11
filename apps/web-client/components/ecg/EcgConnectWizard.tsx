@@ -61,15 +61,11 @@ const PROVISION_STEPS: Array<{ id: string; label: string }> = [
   { id: 'template_import',      label: 'Setting up base app' },
   { id: 'database_provisioned', label: 'Provisioning hosted database' },
   { id: 'edge_function_created', label: 'Creating server functions' },
+  { id: 'template_functions_deployed', label: 'Deploying data functions' },
   { id: 'template_seeded',      label: 'Building your dashboard' },
   { id: 'revision_saved',       label: 'Saving dashboard' },
   { id: 'preview_synced',       label: 'Syncing live preview' },
 ];
-
-// Only the new-architecture template emits this extra SSE step
-// (ecg-dev-agent.routes.ts's template_functions_deployed) -- shown only when
-// selected so the checklist doesn't silently do an unlabeled extra step.
-const SOCIAL_V2_STEP = { id: 'template_functions_deployed', label: 'Deploying data functions' };
 
 export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }) {
   const navigate = useNavigate();
@@ -90,12 +86,6 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
   const [accent, setAccent] = useState('');
   const [modules, setModules] = useState<string[]>(ALL_MODULE_KEYS);
   const [setupType, setSetupType] = useState<SetupType>('advanced');
-  // Which dashboard template/data-layer generation to seed. 'social' (the
-  // MCP-based original) stays the default -- 'social-v2' (cloud auth + edge
-  // functions, see .scratch/social-template-v2/spec.md) is opt-in until its
-  // hosted-DB provisioning path has been verified end to end against a real
-  // deploy, not just locally.
-  const [agentType, setAgentType] = useState<'social' | 'social-v2'>('social');
   const [assistantEnabled, setAssistantEnabled] = useState(true);
   const [password, setPassword] = useState('');
 
@@ -149,9 +139,8 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
         body: JSON.stringify({
           apiKey: apiKey.trim(),
           password: password.trim() || undefined,
-          // Omitted for 'social' -- the server's own default keeps that path
-          // byte-identical to before this option existed.
-          ...(agentType === 'social-v2' ? { agentType } : {}),
+          // No agentType sent -- the server's own default (social-v2) is the
+          // only dashboard this wizard creates now.
           // Without this the project is created with no organization at all,
           // which silently breaks every org-scoped paid-plan check later
           // (hosted database requires a Pro/Agency org  the check reads the
@@ -411,25 +400,6 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
                 </p>
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground">Data & auth architecture</label>
-                <div className="mt-1.5 flex gap-2">
-                  <button type="button"
-                    onClick={() => setAgentType('social')}
-                    className={cn('flex-1 rounded-lg border px-3 py-2 text-left text-xs transition-colors',
-                      agentType === 'social' ? 'border-primary bg-primary/5 text-foreground' : 'border-border/60 text-muted-foreground hover:border-border')}>
-                    <span className="block font-medium text-foreground">Classic</span>
-                    The current, fully verified setup.
-                  </button>
-                  <button type="button"
-                    onClick={() => setAgentType('social-v2')}
-                    className={cn('flex-1 rounded-lg border px-3 py-2 text-left text-xs transition-colors',
-                      agentType === 'social-v2' ? 'border-primary bg-primary/5 text-foreground' : 'border-border/60 text-muted-foreground hover:border-border')}>
-                    <span className="block font-medium text-foreground">New architecture (beta)</span>
-                    Cloud auth + server functions. Newer, still being verified end to end.
-                  </button>
-                </div>
-              </div>
-              <div>
                 <label className="text-xs font-medium text-muted-foreground">Who is this dashboard for?</label>
                 <div className="mt-1.5 flex gap-2">
                   <button type="button"
@@ -499,15 +469,6 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
   }
 
   // ── Step 3: Provision ───────────────────────────────────────────────────────
-  // Insert the social-v2-only step where the server actually emits it
-  // (right after edge_function_created, before template_seeded).
-  const provisionSteps = agentType === 'social-v2'
-    ? [
-        ...PROVISION_STEPS.slice(0, PROVISION_STEPS.findIndex((s) => s.id === 'edge_function_created') + 1),
-        SOCIAL_V2_STEP,
-        ...PROVISION_STEPS.slice(PROVISION_STEPS.findIndex((s) => s.id === 'edge_function_created') + 1),
-      ]
-    : PROVISION_STEPS;
   return (
     <Card className="rounded-xl border-border/60 bg-card/40">
       <CardContent className="mx-auto max-w-md py-12">
@@ -515,7 +476,7 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
           {projectId ? 'Dashboard ready' : provisionError ? 'Something went wrong' : 'Building your dashboard…'}
         </h3>
         <div className="mt-6 space-y-2.5">
-          {provisionSteps.map((s) => {
+          {PROVISION_STEPS.map((s) => {
             const done = doneSteps.has(s.id);
             return (
               <div key={s.id} className="flex items-center gap-3 text-sm">

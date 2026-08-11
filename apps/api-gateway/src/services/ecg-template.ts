@@ -9,20 +9,21 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Which physical template directory backs each agent type. Only 'social' is
-// real today -- every other agent-portal category (bookkeeping, sales,
-// support, business-dev, email) is a DB placeholder with no dashboard
-// template built yet (see the Phase 2 plan). This registry exists so adding
-// a second real template later is a one-line addition here, not a rewrite
-// of seedEcgTemplate/ecgConfigTs's hardcoded single path.
+// Which physical template directory backs each agent type. 'social' (the
+// original MCP-based dashboard) is kept only so pre-existing dashboards of
+// that type keep resolving correctly -- new onboarding no longer offers it
+// (see EcgConnectWizard.tsx). 'social-v2' (cloud auth + edge functions,
+// .scratch/social-template-v2/spec.md) is the default as of 2026-08-11,
+// after its end-to-end verification gate passed on production (found and
+// fixed a real preview-service auto-repair bug in the process). This
+// registry exists so adding another real template later is a one-line
+// addition here, not a rewrite of seedEcgTemplate/ecgConfigTs's hardcoded
+// single path.
 const TEMPLATE_REGISTRY: Record<string, string> = {
   social: path.resolve(__dirname, '../../agent-template'),
-  // social-v2: tenant-Supabase-native agency dashboard (imported from
-  // /codebase 2026-08-10). Becomes the 'social' default only after the
-  // end-to-end verification gate in .scratch/social-template-v2/spec.md.
   'social-v2': path.resolve(__dirname, '../../social-template'),
 };
-const DEFAULT_AGENT_TYPE = 'social';
+const DEFAULT_AGENT_TYPE = 'social-v2';
 
 // Non-template dirs excluded from every template walk (seed AND version
 // hash). The hash walk previously had no exclusions, so a local
