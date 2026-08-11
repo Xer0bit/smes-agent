@@ -96,6 +96,20 @@ export interface AgentContext {
   rootCauseLockViolation?: boolean;
   rootCauseLockTriggerCount?: number;
   /**
+   * Declared-scope guard (harness redesign increment 2, 2026-08-11). Set by
+   * the declare_scope tool when the model opts in to naming which files/dirs
+   * a task will touch. Turn-scoped, never persisted   same shape as
+   * activeHypothesis above, not propose_plan's DB-backed agent_plans row.
+   * undefined (never declared) means the gate in agentToolSet.ts is a no-op;
+   * this is opt-in, not enforced by default. scopeViolationCount tracks how
+   * many write/edit/delete/rename calls this run have landed outside the
+   * declared set   past SCOPE_VIOLATION_TOLERANCE the gate hard-blocks
+   * instead of warning, so sustained wandering (tonight's incident shape) is
+   * caught without killing a single legitimate off-declaration touch.
+   */
+  declaredScope?: Set<string>;
+  scopeViolationCount?: number;
+  /**
    * Counts edit_file SEARCH-block misses and get_build_errors circuit-breaker
    * trips this run. Previously these only reached a console.warn   the
    * edit_file.ts comment admits the miss rate was "unmeasurable... zero grep

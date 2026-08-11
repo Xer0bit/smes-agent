@@ -5,6 +5,7 @@ import type { AgentContext } from '../agent-tools/types.js';
 import { safeJoin } from '../agent-tools/types.js';
 import { writeFileTool } from '../agent-tools/write_file.js';
 import { proposePlanTool } from '../agent-tools/propose_plan.js';
+import { declareScopeTool, pathMatchesScope } from '../agent-tools/declare_scope.js';
 import { placeAssetTool } from '../agent-tools/place_asset.js';
 import { replaceAssetReferencesTool } from '../agent-tools/replace_asset_references.js';
 import { readFileTool } from '../agent-tools/read_file.js';
@@ -55,6 +56,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
   const defs = [
     thinkTool,
     proposePlanTool,
+    declareScopeTool,
     getBuildErrorsTool,
     writeFileTool,
     readFileTool,
@@ -332,6 +334,50 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
             `abandoning it silently. Then retry this write.`
           );
         }
+        // ── Declared-scope guard (harness redesign increment 2, 2026-08-11) ──
+        // Root-cause audit finding: nothing restricted WHICH files a write/
+        // edit/delete/rename call could target, only how many. A "fix the
+        // logo" request could (and did) wander into unrelated pre-existing
+        // bugs across the whole codebase with nothing to stop it. Opt-in
+        // (ctx.declaredScope stays undefined, gate is a no-op, unless the
+        // model called declare_scope) and soft-warn-then-block, not a hard
+        // block on the first brush outside the declared set   tonight's
+        // incident was SUSTAINED wandering, not one edge-case touch; a
+        // tolerance-then-block pattern catches that shape without killing a
+        // legitimate multi-file dependency edit (e.g. a shared type used by
+        // several declared files).
+        const SCOPE_VIOLATION_TOLERANCE = 2;
+        if (
+          ctx.declaredScope &&
+          (def.name === 'write_file' || def.name === 'edit_file' || def.name === 'delete_file' || def.name === 'rename_file')
+        ) {
+          const targetPaths = def.name === 'rename_file'
+            ? [args.from, args.to].filter((p): p is string => typeof p === 'string')
+            : (typeof args.path === 'string' ? [args.path] : []);
+          const outOfScope = targetPaths.filter((p) => !pathMatchesScope(p, ctx.declaredScope!));
+          if (outOfScope.length > 0) {
+            ctx.scopeViolationCount = (ctx.scopeViolationCount ?? 0) + 1;
+            if (ctx.scopeViolationCount > SCOPE_VIOLATION_TOLERANCE) {
+              return (
+                `BLOCKED (out of declared scope): "${outOfScope.join('", "')}" ${outOfScope.length === 1 ? 'was' : 'were'} not in your ` +
+                `declare_scope call, and this is the ${ctx.scopeViolationCount}${ctx.scopeViolationCount === 3 ? 'rd' : 'th'} file outside it this run. ` +
+                `If the task genuinely requires touching more than you originally declared, call declare_scope again with the ` +
+                `wider set and explain why   otherwise stop and stay on the reported task.`
+              );
+            }
+            // Soft warning, tolerance not yet exceeded: let the write through
+            // (do NOT return/short-circuit here   that would block on the
+            // very first brush outside scope, exactly the false-positive risk
+            // this increment is designed to avoid) and attach the warning to
+            // the real result afterward, same pendingRoutingAdvisory pattern
+            // already used for the batch-read tip / serial-edit note below.
+            pendingRoutingAdvisory =
+              `WARNING (out of declared scope): "${outOfScope.join('", "')}" ${outOfScope.length === 1 ? 'was' : 'were'} not in your declare_scope ` +
+              `call. If this file genuinely needs to change to complete the task, explain why in your next message; ` +
+              `if not, stay focused on the files you declared.`;
+          }
+        }
+
         // ── Read-before-write guard ──────────────────────────────────────────
         // Copilot-style discipline: the agent must read an existing file before
         // overwriting it. This prevents clobbering unread content and forces the

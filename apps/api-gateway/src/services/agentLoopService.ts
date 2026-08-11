@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import type { AgentContext } from '../agent-tools/types.js';
 import { safeJoin } from '../agent-tools/types.js';
+import { normalizeScopePath } from '../agent-tools/declare_scope.js';
 import { scanForDeadDangerousEdgeFunctions } from './edgeFunctionSecurityScan.js';
 import { EDGE_FUNCTIONS_DIR } from '../agent-tools/write_edge_function.js';
 import { sanitizeFileContent, sanitizeConfigFile } from '../agent-tools/sanitize.js';
@@ -1639,14 +1640,106 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       snapshotProject(appPath, snapshotDir).catch(() => {});
     }
 
-    let currentUserContent: any = boundedPrompt;
+    // ── Diagnose-before-fix (harness redesign increment 3, Gap 3, 2026-08-11) ──
+    // Root-cause audit finding: fix-tier's only defense against chasing
+    // unrelated pre-existing errors was a prompt line ("stay on the reported
+    // problem") the model disregarded live (the "why did you remove the
+    // logos" incident -- burned its whole step budget across
+    // ProjectDetails.tsx/permissions/WorkflowControls, none of which the user
+    // reported). This runs a small, bounded, READ-ONLY pass before the main
+    // loop starts: investigate ONLY the reported issue, then seed
+    // ctx.declaredScope (increment 2's gate) with the file(s) actually
+    // implicated, so the main loop is scoped from its very first step instead
+    // of relying on prompt text alone.
+    //
+    // Best-effort: any failure, timeout, empty, or unusable result falls
+    // through to today's unchanged, unscoped behavior -- this must never
+    // block the turn. No write/edit/delete/rename tools are in this pass's
+    // toolset at all, so regardless of output quality it is structurally
+    // incapable of mutating anything -- unlike the prompt-only version of
+    // this discipline, a bug here can't make the diagnosis pass itself wander
+    // and edit the wrong file, because it has no tool that could.
+    let diagnosisContext = '';
+    if (_tier === 'fix' && runtimeMode === 'build') {
+      try {
+        const DIAGNOSIS_TOOL_NAMES = new Set(['read_file', 'read_files', 'grep', 'glob_files', 'list_files', 'get_build_errors', 'think']);
+        // Fresh, isolated AgentContext -- NOT the real `ctx` -- so this pass's
+        // read_file/get_build_errors calls don't consume the main run's own
+        // budgets (get_build_errors is capped at 5 calls/run via
+        // ctx.buildErrorCallCount; sharing ctx would silently eat into that).
+        // Same isolation pattern the existing post-run repair pass already
+        // uses (repairCtx/repairToolSet, ~3690 below), not a new one.
+        const diagnosisCtx: AgentContext = {
+          appPath,
+          projectId,
+          readFiles: new Set<string>(),
+          pendingPreviewFiles: new Map<string, string>(),
+          previewServiceUrl: ctx.previewServiceUrl,
+          onXmlComplete: () => {}, // read-only toolset never produces file-op XML
+        };
+        const diagnosisToolSet = Object.fromEntries(
+          Object.entries(buildToolSet(diagnosisCtx, [], 'fix')).filter(([name]) => DIAGNOSIS_TOOL_NAMES.has(name)),
+        );
+
+        const diagnosisResult = await generateText({
+          model: aiProvider,
+          system:
+            'You are a diagnosis-only agent. You have READ-ONLY tools -- no write/edit/delete/rename capability ' +
+            'exists in this pass, so do not attempt to fix anything. Your only job: investigate the SPECIFIC issue ' +
+            'the user reported and identify which file(s) are actually responsible for it. Do NOT go looking for ' +
+            'other problems elsewhere in the codebase, even if you notice them -- report only what is relevant to ' +
+            'this specific report. Call get_build_errors if it would help confirm the cause. End with a short final ' +
+            'message naming the implicated file(s) and stating the root cause in one sentence.',
+          messages: [{ role: 'user', content: `Diagnose this reported issue (do not fix it): "${prompt}"` }],
+          tools: diagnosisToolSet,
+          stopWhen: stepCountIs(8),
+          abortSignal: abortController.signal,
+        });
+
+        if (diagnosisResult.usage) {
+          runTokens.inputTokens  += diagnosisResult.usage.inputTokens ?? 0;
+          runTokens.outputTokens += diagnosisResult.usage.outputTokens ?? 0;
+        }
+
+        // Extract implicated files from actual tool-call arguments, not by
+        // parsing the model's prose -- more robust than trusting it followed
+        // an exact output format, the same lesson tonight's other fixes
+        // already learned the hard way.
+        const implicatedFiles = new Set<string>();
+        for (const step of diagnosisResult.steps ?? []) {
+          for (const tc of step.toolCalls ?? []) {
+            const input = tc.input as any;
+            if (tc.toolName === 'read_file' && typeof input?.path === 'string') implicatedFiles.add(input.path);
+            if (tc.toolName === 'read_files' && Array.isArray(input?.paths)) {
+              for (const p of input.paths) if (typeof p === 'string') implicatedFiles.add(p);
+            }
+          }
+        }
+
+        if (implicatedFiles.size > 0 && implicatedFiles.size <= 10 && diagnosisResult.text?.trim()) {
+          ctx.declaredScope = new Set([...implicatedFiles].map(normalizeScopePath));
+          diagnosisContext =
+            `# Diagnosis (pre-fix investigation pass)\n\n${diagnosisResult.text.trim()}\n\n` +
+            `Scope has been seeded with the file(s) above based on this investigation. Stay focused on resolving ` +
+            `the reported issue in these files; if the task genuinely requires touching others, call declare_scope ` +
+            `again with the wider set and say why.\n\n`;
+          console.log(`[AgentLoop] Diagnose-before-fix: implicated ${implicatedFiles.size} file(s), scope seeded`);
+        } else {
+          console.log(`[AgentLoop] Diagnose-before-fix: no usable result (${implicatedFiles.size} files implicated, text=${Boolean(diagnosisResult.text?.trim())}) -- falling through unscoped`);
+        }
+      } catch (diagnosisErr: any) {
+        console.warn('[AgentLoop] Diagnose-before-fix pass failed (non-fatal, falling through to unscoped behavior):', diagnosisErr?.message ?? diagnosisErr);
+      }
+    }
+
+    let currentUserContent: any = diagnosisContext ? `${diagnosisContext}${boundedPrompt}` : boundedPrompt;
     if (visionCapable && imageVisionData.length > 0) {
       const contentParts: any[] = imageVisionData.map(img => ({
         type: 'image',
         image: img.base64,
         mimeType: img.type,
       }));
-      contentParts.push({ type: 'text', text: boundedPrompt });
+      contentParts.push({ type: 'text', text: diagnosisContext ? `${diagnosisContext}${boundedPrompt}` : boundedPrompt });
       currentUserContent = contentParts;
     }
 
@@ -1974,9 +2067,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const PHANTOM_CLAIM_RE = /\b(I(?:'ve| have)\s+(?:now\s+)?(?:created|updated|added|removed|changed|implemented|fixed|applied|completed|secured|written|wired)|ha(?:s|ve)\s+been\s+(?:created|updated|added|removed|applied|saved|completed|secured))\b/i;
           if (runtimeMode === 'build' && stepToolNames.length === 0 && typeof text === 'string' && PHANTOM_CLAIM_RE.test(text)) {
             consecutivePhantomClaimSteps++;
-            if (consecutivePhantomClaimSteps >= 3) {
-              console.warn(`[AgentLoop] project=${projectId} aborting: ${consecutivePhantomClaimSteps} consecutive no-tool steps claiming completed work (phantom narration)`);
-              budgetAbortReason = 'phantom narration: 3 consecutive steps claimed completed work without calling any tools';
+            // Real-signal gating (harness redesign, increment 1): a build that
+            // get_build_errors has ALREADY confirmed broken this run, combined
+            // with the model narrating completed work while calling zero tools,
+            // is a stronger stuck signal than either alone -- don't wait for the
+            // full default streak when the code is already known not to work.
+            const phantomAbortThreshold = ctx.lastBuildErrorsHealthy === false ? 2 : 3;
+            if (consecutivePhantomClaimSteps >= phantomAbortThreshold) {
+              console.warn(`[AgentLoop] project=${projectId} aborting: ${consecutivePhantomClaimSteps} consecutive no-tool steps claiming completed work (phantom narration)${ctx.lastBuildErrorsHealthy === false ? ' -- build already confirmed broken' : ''}`);
+              budgetAbortReason = `phantom narration: ${phantomAbortThreshold} consecutive steps claimed completed work without calling any tools`;
               abortController.abort();
             } else {
               const phantomNote =
@@ -2079,9 +2178,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // false-positive on the legitimate case the threshold history above
           // was tuned to protect.
           const stuckAndContentRepeating = consecutiveSimilarThinkSteps >= 3;
+          // Real-signal gating (harness redesign, increment 1): get_build_errors
+          // has ALREADY confirmed this run's build is broken -- don't wait for
+          // 65% of the token budget to burn (stuckAndBudgetCritical's threshold)
+          // when we already know for a fact nothing is landing and the code
+          // doesn't work. This is tonight's incident shape: budget burning with
+          // no successful write while the build is confirmed unhealthy.
+          const stuckAndBuildKnownBroken =
+            stepsSinceLastWrite >= STUCK_ANALYSIS_THRESHOLD && ctx.lastBuildErrorsHealthy === false;
           if (
             stuckAndBudgetCritical ||
             stuckAndContentRepeating ||
+            stuckAndBuildKnownBroken ||
             (
               stepsSinceLastWrite >= STUCK_ANALYSIS_THRESHOLD &&
               stepCount - stuckAnalysisNoteFiredAt >= STUCK_ANALYSIS_THRESHOLD
@@ -2089,11 +2197,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           ) {
             stuckAnalysisFireCount++;
             stuckAnalysisNoteFiredAt = stepCount;
-            if (stuckAndBudgetCritical || stuckAndContentRepeating || stuckAnalysisFireCount >= STUCK_ANALYSIS_HARD_STOP_FIRINGS) {
-              console.warn(`[AgentLoop] Stuck-analysis hard stop: ${stepsSinceLastWrite} steps with no successful write/edit${stuckAndBudgetCritical ? ` (budget-critical: ${runTokens.total}/${RUN_TOKEN_CAP} tokens used)` : stuckAndContentRepeating ? ` (content-repeating: ${consecutiveSimilarThinkSteps} near-identical think calls)` : ` after ${stuckAnalysisFireCount - 1} ignored nudges`} (user=${userId ?? 'unknown'})`);
+            if (stuckAndBudgetCritical || stuckAndContentRepeating || stuckAndBuildKnownBroken || stuckAnalysisFireCount >= STUCK_ANALYSIS_HARD_STOP_FIRINGS) {
+              console.warn(`[AgentLoop] Stuck-analysis hard stop: ${stepsSinceLastWrite} steps with no successful write/edit${stuckAndBudgetCritical ? ` (budget-critical: ${runTokens.total}/${RUN_TOKEN_CAP} tokens used)` : stuckAndContentRepeating ? ` (content-repeating: ${consecutiveSimilarThinkSteps} near-identical think calls)` : stuckAndBuildKnownBroken ? ` (build already confirmed broken)` : ` after ${stuckAnalysisFireCount - 1} ignored nudges`} (user=${userId ?? 'unknown'})`);
               stuckAnalysisAbortReason = stuckAndContentRepeating
                 ? `stuck repeating near-identical reasoning for ${consecutiveSimilarThinkSteps} steps in a row`
-                : `stuck analyzing without making a change for ${stepsSinceLastWrite} steps`;
+                : stuckAndBuildKnownBroken
+                  ? `stuck analyzing without making a change for ${stepsSinceLastWrite} steps, and the build is confirmed broken`
+                  : `stuck analyzing without making a change for ${stepsSinceLastWrite} steps`;
               generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
                 if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
               }).catch(() => {});
@@ -2690,8 +2800,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       UNFULFILLED_PROMISE_RE.test(accumulatedText)
     ) {
       console.warn(`[AgentLoop] Unfulfilled-promise still unresolved after ${promiseVerifyAttempts} corrective attempt(s)   appending honest note. user=${userId ?? 'unknown'}`);
-      accumulatedText +=
-        `\n\n(Note: I described a change above but haven't actually made it yet. Let me know if you'd like me to go ahead.)`;
+      // Real-signal gating (harness redesign, increment 1): if get_build_errors
+      // already confirmed this run's build is broken, say so plainly instead of
+      // the generic note -- "let me know if you'd like me to go ahead" invites
+      // confirmation as if things are otherwise fine, when they're confirmed not to be.
+      accumulatedText += ctx.lastBuildErrorsHealthy === false
+        ? `\n\n(Note: I described a change above but haven't actually made it yet, and the last build check showed real errors. Tell me to go ahead and I'll pick this back up.)`
+        : `\n\n(Note: I described a change above but haven't actually made it yet. Let me know if you'd like me to go ahead.)`;
     }
 
     // ─── Anon-fetch-without-policy closure gate (2026-08 audit follow-up) ─────
