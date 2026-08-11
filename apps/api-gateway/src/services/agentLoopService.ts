@@ -3177,6 +3177,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     const agentWroteFiles = filesToWrite.length > 0 || filesEdited.length > 0 || filesToDelete.length > 0 || renames.length > 0;
 
+    // Paths whose content this run actually wrote/edited but that never made
+    // it into the live preview -- surgical-revert-removed new files, or
+    // everything undone by the pre-agent-restore fallback below. Previously
+    // both paths were logged as "(silent)" and the run still reported plain
+    // success, so a request like "add X" could appear to add X and then
+    // silently drop it with no visible explanation. Surfaced as a caveat
+    // after the push section resolves (see the text-delta emit below).
+    const droppedFiles: string[] = [];
+
     let previewPushOk = false;
     if (runtimeMode === 'build' && agentWroteFiles) {
       generateStatus(projectId, { kind: 'lifecycle', phase: 'preview-sync' }).then((s) => {
@@ -3280,8 +3289,21 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         }
       }
 
-      // First attempt: normal push
-      const firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true }));
+      // First attempt: normal push. Retry transport-level failures (network
+      // error/timeout/5xx -- status 0 or anything that isn't a real 200/422
+      // validation response) a few times with backoff before giving up --
+      // previously a single transient blip here (VPS2 mid-restart, a dropped
+      // connection) skipped BOTH the repair loop AND the pre-agent-restore
+      // fallback below (both gated on !pushWasTransportFailure), so the run
+      // reported success to the user while the live preview never actually
+      // received this run's work. The written content was never determined
+      // to be broken, so retry the same push rather than reverting anything.
+      let firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true }));
+      for (let pushRetry = 1; pushRetry <= 3 && firstAttempt.status !== 200 && firstAttempt.status !== 422; pushRetry++) {
+        console.warn(`[AgentLoop] Preview push transport failure (status ${firstAttempt.status}), retry ${pushRetry}/3...`);
+        await new Promise<void>((r) => setTimeout(r, pushRetry * 1000));
+        firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true }));
+      }
       if (firstAttempt.status === 200) {
         console.log(`[AgentLoop] Preview push OK: ${mergedWrites.length} files`);
         previewPushOk = true;
@@ -3325,6 +3347,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               const revertAttempt = await httpPost(updateUrl, JSON.stringify({ files: revertedMerged, fullSync: true }));
               if (revertAttempt.status === 200) {
                 console.log(`[AgentLoop] Surgical revert succeeded   preview is healthy`);
+                droppedFiles.push(...[...brokenFiles].filter((f) => !preAgentMap.has(f)));
                 // Update mergedWrites so 'done' sends the reverted set
                 mergedWrites.length = 0;
                 revertedMerged.forEach(f => mergedWrites.push(f));
@@ -3799,6 +3822,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             if (diskRestoreFailures > 0) {
               console.error(`[AgentLoop] Pre-agent disk restore: ${diskRestoreFailures}/${preAgentDiskSnapshot.size} file(s) failed to restore locally for project=${projectId}`);
             }
+            // Everything this run wrote that wasn't already on disk before the
+            // agent started is about to vanish along with the rest of the
+            // revert -- capture those paths for the caveat below before mergedWrites
+            // (this run's attempted final state) gets overwritten with the pre-agent set.
+            droppedFiles.push(...mergedWrites.filter((f) => !preAgentDiskSnapshot.has(f.path)).map((f) => f.path));
             const preAgentFiles = Array.from(preAgentDiskSnapshot.entries()).map(([p, c]) => ({ path: p, content: c }));
             mergedWrites.length = 0;
             preAgentFiles.forEach(f => mergedWrites.push(f));
@@ -3914,6 +3942,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // be installed via run_command by the agent. Show a mild warning for visibility.
       sink.emit('text-delta', {
         text: `\n> *Note: ${unsupportedPreviewDependencies.join(', ')} ${unsupportedPreviewDependencies.length === 1 ? 'was' : 'were'} declared via legacy <ecomgear-add-dependency>. In future runs, use \`run_command\` to install packages directly.*\n\n`,
+      });
+    }
+
+    if (droppedFiles.length > 0) {
+      // See droppedFiles' declaration above: this run wrote these but they
+      // failed preview validation and got silently dropped/reverted so the
+      // live preview stays healthy. Without this, the response above can
+      // read as "done" while part of the request quietly never landed.
+      const shown = [...new Set(droppedFiles)].slice(0, 5);
+      const more = droppedFiles.length - shown.length;
+      sink.emit('text-delta', {
+        text: `\n\n> ⚠️ ${shown.map((f) => `\`${f}\``).join(', ')}${more > 0 ? ` (+${more} more)` : ''} failed to build, so ${shown.length + more === 1 ? 'that change was' : 'those changes were'} left out to keep the live preview working. Tell me to try again if you still want ${shown.length + more === 1 ? 'it' : 'them'}.`,
       });
     }
 
