@@ -1834,7 +1834,14 @@ async function startMainServer() {
         if (!isValidProjectId(projectId)) {
             return res.status(400).json({ error: 'Invalid project ID' });
         }
-        const { files, fullSync = false } = req.body;
+        // revisionId: D-1 (sync-architecture audit) -- optional, caller-supplied
+        // identifier for the revision this file set corresponds to (e.g. the
+        // Postgres `revisions` row id). Not required, not validated, not used
+        // for anything server-side yet -- purely echoed back in the response so
+        // a caller that DOES track revisions has something to correlate against
+        // its own record once contentHash exists to compare. No existing caller
+        // sends this field today; its absence changes nothing.
+        const { files, fullSync = false, revisionId } = req.body;
         touchRuntime(projectId);
 
         if (!files || !Array.isArray(files)) {
@@ -1865,6 +1872,12 @@ async function startMainServer() {
                 deduped: true,
                 filesProcessed: files.length,
                 staleFilesPruned: 0,
+                // D-1: only present if the original (non-deduped) request that
+                // produced this fingerprint already finished materializing and
+                // backfilled it below -- absent (not a stale/wrong value) if a
+                // second identical request lands before the first one that far.
+                contentHash: recentFingerprint.contentHash,
+                revisionId: recentFingerprint.revisionId,
             });
         }
 
@@ -1893,7 +1906,18 @@ async function startMainServer() {
 
         try {
             const materialized = await materializeProjectFiles(projectId, projectRoot, files);
-            const { userFilePaths, allFixedIssues, validationErrors } = materialized;
+            const { userFilePaths, allFixedIssues, validationErrors, contentHash } = materialized;
+
+            // D-1: now that the actual materialized content (post preprocess/
+            // repair) is known, backfill it onto this update's dedupe-cache
+            // entry so a request that arrives inside UPDATE_DEDUPE_WINDOW_MS
+            // and gets short-circuited above still gets a real contentHash back
+            // instead of silently having no hash at all on that response.
+            const cachedFingerprint = recentUpdateFingerprints.get(projectId);
+            if (cachedFingerprint && cachedFingerprint.hash === fingerprint) {
+                cachedFingerprint.contentHash = contentHash;
+                cachedFingerprint.revisionId = revisionId;
+            }
             // validationErrors (real TS semantic errors   undefined names, etc.) are
             // merged with the post-write build check below into one real health
             // signal, rather than being filed here as a non-blocking 'warning'.
@@ -2029,12 +2053,20 @@ export default App;
             cleanupSnapshot(projectRoot);
 
             // Return success   files are promoted to live preview
-            res.json({ 
+            res.json({
                 success: true,
                 promoted: true,
                 filesProcessed: files.length,
                 staleFilesPruned: removedStaleFiles.length,
-                autoFixes: allFixedIssues.length > 0 ? allFixedIssues : undefined
+                autoFixes: allFixedIssues.length > 0 ? allFixedIssues : undefined,
+                // D-1 (sync-architecture audit, 2026-08-11): a deterministic hash
+                // of the file set this call actually materialized (post any
+                // auto-fix/repair), plus the caller's own revisionId if it sent
+                // one. Additive only -- nothing reads or enforces this yet
+                // (that's D-2/Option B); it exists so a caller CAN compare it
+                // against its own record of what it believes is current.
+                contentHash,
+                revisionId,
             });
         } catch (err) {
             // Rollback on any unexpected error

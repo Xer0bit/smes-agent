@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { activeServers } = require('./previewState');
 const { validateSourceFile, repairMalformedDefaultStringParams, trimTrailingOrphanClosers } = require('./validation');
 const { sendFullReload } = require('./instanceOps');
@@ -788,6 +789,14 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
     const preparedFiles = [];
     const binaryWroteFiles = [];
     const configFiles = new Set(['vite.config.ts', 'tsconfig.json', 'tsconfig.node.json', 'package.json', 'postcss.config.js', 'tailwind.config.js', 'components.json']);
+    // D-1 (sync-architecture audit, 2026-08-11): every file this call actually
+    // materializes, {path, content}, in the exact final form written to disk
+    // (post preprocess/repair for text files; the base64 payload as-is for
+    // binary — re-encoding would be redundant, the base64 string IS the
+    // content). Reduced to a single hash below and returned to the caller —
+    // the first piece of data ANY caller can compare against its own record
+    // of "what did I last push here." Nothing consumes this yet; that's D-2.
+    const hashedFiles = [];
 
     // Known-good scaffold defaults for JSON config files
     const SCAFFOLD_JSON_DEFAULTS = {
@@ -861,6 +870,7 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
         // Binary files arrive as base64-encoded strings from the agent sync.
         // Decode and write them directly — no preprocessing or validation needed.
         if (file.content && file.content.startsWith('__ECOMGEAR_BIN64__')) {
+            hashedFiles.push({ path: safePath, content: file.content });
             if (!dryRun) {
                 const buf = Buffer.from(file.content.slice('__ECOMGEAR_BIN64__'.length), 'base64');
                 fs.writeFileSync(filePath, buf);
@@ -879,6 +889,7 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
         // /status failures for the whole app, even though this directory is
         // never bundled or executed client-side at all.
         if (safePath.startsWith('__edge_functions__/')) {
+            hashedFiles.push({ path: safePath, content: file.content });
             if (!dryRun) {
                 fs.writeFileSync(filePath, file.content);
                 binaryWroteFiles.push(filePath);
@@ -918,6 +929,7 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
 
         validationErrors.push(...fileValidationErrors);
 
+        hashedFiles.push({ path: safePath, content: contentToWrite });
         preparedFiles.push({
             safePath,
             filePath,
@@ -973,7 +985,25 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
     // Vite instance, so the user-visible preview stays untouched until the
     // real end-of-run /update push. See get_build_errors.ts.
 
-    return { userFilePaths, allFixedIssues, validationErrors, wroteFiles };
+    const contentHash = hashFileSet(hashedFiles);
+
+    return { userFilePaths, allFixedIssues, validationErrors, wroteFiles, contentHash };
+}
+
+// D-1: deterministic content hash over a {path, content}[] set, order-
+// independent (sorted by path first) so the same file set hashes identically
+// regardless of what order the caller's array happened to list them in.
+// Path is included in each hashed segment, not just content, so a rename
+// (same content, different path) still changes the hash.
+function hashFileSet(files) {
+    const hash = crypto.createHash('sha256');
+    for (const f of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
+        hash.update(f.path);
+        hash.update('\0');
+        hash.update(f.content);
+        hash.update('\0');
+    }
+    return hash.digest('hex');
 }
 
 function pruneProjectFiles(projectRoot, userFilePaths) {
