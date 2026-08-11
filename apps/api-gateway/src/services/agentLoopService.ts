@@ -1215,7 +1215,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     : _tier === 'micro'
       ? '\n\n# Efficiency Mode\nDo NOT write any text before your first tool call. Call `think` once (≤40 words), read the file, make the change, done.\n\n**REQUIRED final message**   write exactly this format:\n"I\'ve [verb] [what] in [filename]. [One sentence on what the user will now see.]"\nExample: "I\'ve changed the button color to indigo in Header.tsx. The nav bar buttons now match the brand palette."\nFORBIDDEN: "Done.", "OK.", empty message, or any single-word reply.'
       : _tier === 'fix'
-        ? '\n\n# Fix Mode\nDo NOT write any text before your first tool call. Start with tools directly. Call `think` once   identify root cause, read the broken file, fix it, verify with `get_build_errors`.\n\n**Progress narration**   after each file you fix, write one short sentence like "Fixed the import error in Navbar.tsx   now checking the build." before moving to the next file.\n\n**REQUIRED final message**   AT LEAST 2 sentences:\n1. What the error was and which file it was in.\n2. What you changed to fix it.\nFORBIDDEN: "Done.", "Fixed.", "OK.", or any single-word reply.'
+        ? '\n\n# Fix Mode\nDo NOT write any text before your first tool call. Start with tools directly. Call `think` once   identify root cause, read the broken file, fix it, verify with `get_build_errors`.\n\n**SCOPE   stay on the reported problem.** `get_build_errors` reports every error in the WHOLE project, not just ones caused by this turn. If it returns errors in files you have not touched and that are unrelated to what the user described, LEAVE THEM ALONE   do not start fixing them, they are pre-existing and out of scope for this request. Only chase errors that are (a) in a file you just edited, or (b) directly block the specific thing the user reported. If unrelated errors exist, you may mention them in one sentence at the end, but do not act on them without being asked.\n\n**Progress narration**   after each file you fix, write one short sentence like "Fixed the import error in Navbar.tsx   now checking the build." before moving to the next file.\n\n**REQUIRED final message**   AT LEAST 2 sentences:\n1. What the error was and which file it was in.\n2. What you changed to fix it.\nFORBIDDEN: "Done.", "Fixed.", "OK.", or any single-word reply.'
         : _tier === 'edit'
           ? '\n\n# Edit Mode\nDo NOT write any text before your first tool call. Start with tool calls directly. Call `think` once   list the 1–3 files you will touch.\n\n**Progress narration (REQUIRED)**   after each file you write or edit, output one short sentence telling the user what you just did and what you\'re doing next. Examples:\n- "Updated the Navbar   now working on the hero section."\n- "Added the cart drawer to CartDrawer.tsx   updating the context next."\nThis keeps the user informed while you work.\n\n**HARD FILE LIMIT**   more than 5 files? STOP after the 5th, tell the user what changed and what remains.\n\n**REQUIRED final message**   AT LEAST 2 sentences: what changed and what the user will see differently.\nFORBIDDEN: "Done.", "OK.", any single word, or any message under 15 words.'
           : '\n\nDo NOT write any text before your first tool call. Start with tool calls directly.\n\n**Progress narration (REQUIRED)**   after each file you write or create, output one short sentence telling the user what you just did and what comes next. Keep it brief and specific. Examples:\n- "Built the Navbar with sticky positioning and a cart icon   now creating the hero banner."\n- "Added HeroBanner.tsx with a full-width gradient   moving on to the categories section."\n- "Categories grid done   now wiring up the product cards."\nThis narration shows the user the build is progressing in real time.\n\n**REQUIRED final message**   AT LEAST 3 sentences after ALL changes:\n1. What you built and in which files.\n2. How the feature works from the user\'s perspective.\n3. Any important decisions the user should know.\nFORBIDDEN: "Done.", "Complete.", or any response under 20 words.';
@@ -2617,20 +2617,27 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // follow it with actual file writes") but that's prompt text the model
     // can (and did) ignore -- nothing mechanical caught it.
     //
-    // Fires when a build/edit/feature run is about to conclude having made
-    // NO file changes at all while its own closing text promises one. The
-    // corrective turn gives the model exactly two honest outs: act now, or
-    // -- since Phase 1 (2026-08-09) gave plan mode's propose_plan tool to
+    // Fires when a build/edit/feature/fix run is about to conclude having
+    // made NO file changes at all while its own closing text promises one.
+    // The corrective turn gives the model exactly two honest outs: act now,
+    // or -- since Phase 1 (2026-08-09) gave plan mode's propose_plan tool to
     // this run's toolset too (see buildToolSet) -- stage a real plan and
     // explicitly ask the user to confirm, instead of a bare unactioned promise.
+    //
+    // 'fix' was originally left out of this list; live repro (2026-08-11,
+    // a "why did you remove the logos, fix them now" thread) showed that was
+    // backwards -- fix tier is where this exact pattern is MOST likely
+    // (long diagnostic detour, budget runs out, the model's last line is "I
+    // will restore them immediately" with zero tool calls that turn), and it
+    // was the one tier this gate didn't cover.
     const UNFULFILLED_PROMISE_RE =
-      /\b(I('|')ll|I will|let me|I('|')m going to|I am going to|going to (go ahead and|now))\s+(build|implement|create|add|rebuild|separate|update|change|fix|write|make|set up|refactor|restructure)\b/i;
+      /\b(I('|')ll|I will|let me|I('|')m going to|I am going to|going to (go ahead and|now))\s+(build|implement|create|add|rebuild|separate|update|change|fix|restore|write|make|set up|refactor|restructure)\b/i;
     const MAX_PROMISE_VERIFY_ATTEMPTS = 1;
     let promiseVerifyAttempts = 0;
     while (
       !ctx.thrashEscalated &&
       !anySuccessfulWriteThisRun &&
-      (_tier === 'build' || _tier === 'edit' || _tier === 'feature') &&
+      (_tier === 'build' || _tier === 'edit' || _tier === 'feature' || _tier === 'fix') &&
       UNFULFILLED_PROMISE_RE.test(accumulatedText) &&
       (MAX_STEPS - stepCount) >= 2 &&
       !abortController.signal.aborted &&
