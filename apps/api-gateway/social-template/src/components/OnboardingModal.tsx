@@ -5,11 +5,11 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Check, ArrowRight, Building2, Globe, Target, Rocket, Loader2 } from "lucide-react";
+import { Check, ArrowRight, Building2, Globe, Target, Rocket, Loader2, Linkedin, Instagram, Facebook, Twitter, Youtube } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import mediaBanner from "@/assets/media-banner.png";
-import mediaIcons from "@/assets/media-icons.png";
 import { toast } from "sonner";
+
+const PLATFORM_ICONS = [Linkedin, Instagram, Facebook, Twitter, Youtube];
 
 interface OnboardingModalProps {
   open: boolean;
@@ -116,7 +116,6 @@ const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) => {
               <div className="text-center mb-6">
                 <h2 className="font-display text-2xl font-bold">{t("modal.globalPress")}</h2>
                 <p className="text-muted-foreground text-sm mt-1 max-w-sm mx-auto">{t("modal.globalPressDesc")}</p>
-                <img src={mediaBanner} alt="Published in Forbes, NBC, AP, Fox News and more" className="mt-4 w-full max-w-md mx-auto opacity-80" />
               </div>
               <div className="space-y-4">
                 <div>
@@ -149,7 +148,13 @@ const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) => {
               <div className="text-center mb-4">
                 <h2 className="font-display text-2xl font-bold">{t("modal.globalBrandBuilding")}</h2>
                 <p className="text-muted-foreground text-sm mt-1 max-w-sm mx-auto">{t("modal.globalBrandDesc")}</p>
-                <img src={mediaIcons} alt="LinkedIn, Instagram, Facebook, X, YouTube" className="mt-4 w-full max-w-xs mx-auto" />
+                <div className="mt-4 flex items-center justify-center gap-3">
+                  {PLATFORM_ICONS.map((PlatformIcon, i) => (
+                    <div key={i} className="w-9 h-9 rounded-lg bg-card border border-border flex items-center justify-center">
+                      <PlatformIcon className="w-4 h-4 text-muted-foreground" />
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="border border-border rounded-xl p-5 space-y-3">
                 <ul className="space-y-2">

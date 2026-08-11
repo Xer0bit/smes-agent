@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import logo from "@/assets/fgv-logo-blue.png";
+import { Share2 } from "lucide-react";
 
 const HeroSection = () => {
   const { t } = useTranslation();
@@ -9,7 +9,9 @@ const HeroSection = () => {
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-primary/3 blur-[120px]" />
 
       <div className="relative z-10 max-w-5xl mx-auto text-center">
-        <img src={logo} alt="FGV Expo - FT30 Cross Border Media" className="w-24 h-24 mx-auto mb-8 object-contain" />
+        <div className="w-24 h-24 mx-auto mb-8 rounded-2xl bg-primary/10 flex items-center justify-center">
+          <Share2 className="w-10 h-10 text-primary" />
+        </div>
 
         <h1 className="font-display text-5xl md:text-7xl font-bold tracking-tight mb-6">
           <span className="text-gradient-gold">{t("hero.title1")}</span>{" "}

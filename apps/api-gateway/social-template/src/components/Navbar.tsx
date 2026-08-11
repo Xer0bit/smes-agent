@@ -1,9 +1,8 @@
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Globe } from "lucide-react";
+import { Globe, Share2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import logo from "@/assets/fgv-logo-blue.png";
 
 interface NavbarProps {
   onStartTrial?: () => void;
@@ -22,8 +21,10 @@ const Navbar = ({ onStartTrial }: NavbarProps) => {
     <nav className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border">
       <div className="max-w-6xl mx-auto flex items-center justify-between px-4 h-16">
         <div className="flex items-center gap-3">
-          <img src={logo} alt="FGV" className="w-8 h-8 object-contain" />
-          <span className="font-display font-bold text-lg">FT30 Media</span>
+          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <Share2 className="w-4 h-4 text-primary" />
+          </div>
+          <span className="font-display font-bold text-lg">Agency Dashboard</span>
         </div>
 
         <div className="hidden md:flex items-center gap-6">

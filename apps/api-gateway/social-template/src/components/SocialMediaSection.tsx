@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
-import { Calendar, BarChart3, Share2, Zap } from "lucide-react";
-import mediaIcons from "@/assets/media-icons.png";
+import { Calendar, BarChart3, Share2, Zap, Linkedin, Instagram, Facebook, Twitter, Youtube } from "lucide-react";
+
+const PLATFORM_ICONS = [Linkedin, Instagram, Facebook, Twitter, Youtube];
 
 const SocialMediaSection = () => {
   const { t } = useTranslation();
@@ -25,8 +26,12 @@ const SocialMediaSection = () => {
           </p>
         </div>
 
-        <div className="flex justify-center mb-12">
-          <img src={mediaIcons} alt="LinkedIn, Instagram, Facebook, X, YouTube" className="w-full max-w-md mx-auto" />
+        <div className="flex items-center justify-center gap-4 mb-12">
+          {PLATFORM_ICONS.map((PlatformIcon, i) => (
+            <div key={i} className="w-11 h-11 rounded-xl bg-card border border-border flex items-center justify-center">
+              <PlatformIcon className="w-5 h-5 text-muted-foreground" />
+            </div>
+          ))}
         </div>
 
         <div className="grid md:grid-cols-2 gap-6">
