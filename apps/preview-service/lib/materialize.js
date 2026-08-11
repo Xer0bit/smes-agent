@@ -235,10 +235,21 @@ function preprocessFile(filePath, content) {
     // Example: console.error('Error:'', err) -> console.error('Error:', err)
     // Require at least one char inside the first string so valid empty literals
     // like '' are not accidentally collapsed back to a single quote.
+    //
+    // Bug found live 2026-08-11: with no guard on what precedes the opening
+    // quote, this misfired on two ADJACENT empty-string literals a few chars
+    // apart (e.g. a ternary `cols[i] || "" : "",`) -- it read the closing
+    // quote of the FIRST empty string as if it were the opening quote of a
+    // new one, treated the text in between as that "string"'s content, and
+    // ate one of the two quotes around the second empty string, producing
+    // invalid code ("Unterminated string literal") from perfectly valid
+    // input. The (?<!['"]) guard rejects starting a match immediately after
+    // another quote of the same kind, which is exactly the signal that the
+    // "opening" quote we're looking at is actually somebody else's closer.
     if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
         const before = fixed;
-        fixed = fixed.replace(/('(?:[^'\\\n\r]|\\.)+?)''(?=\s*,)/g, '$1\'');
-        fixed = fixed.replace(/("(?:[^"\\\n\r]|\\.)+?)""(?=\s*,)/g, '$1"');
+        fixed = fixed.replace(/(?<!')('(?:[^'\\\n\r]|\\.)+?)''(?=\s*,)/g, '$1\'');
+        fixed = fixed.replace(/(?<!")("(?:[^"\\\n\r]|\\.)+?)""(?=\s*,)/g, '$1"');
         if (fixed !== before) {
             issues.push('Fixed doubled quote typo in function arguments');
         }
