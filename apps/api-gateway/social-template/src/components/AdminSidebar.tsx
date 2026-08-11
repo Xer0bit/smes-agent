@@ -4,6 +4,7 @@ import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
+import logoDark from "@/assets/fgv-logo.png";
 import {
   Sidebar,
   SidebarContent,
@@ -50,10 +51,8 @@ export function AdminSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <div className="flex items-center gap-2 px-2 py-3">
-            <div className="w-7 h-7 rounded-lg bg-sidebar-primary/10 flex items-center justify-center shrink-0">
-              <Share2 className="w-3.5 h-3.5 text-sidebar-primary" />
-            </div>
-            {!collapsed && <span className="font-display font-bold text-sm text-sidebar-foreground">Agency Dashboard</span>}
+            <img src={logoDark} alt="FT30" className="w-7 h-7 object-contain shrink-0" />
+            {!collapsed && <span className="font-display font-bold text-sm text-sidebar-foreground">FT30 Media</span>}
           </div>
         </SidebarGroup>
 

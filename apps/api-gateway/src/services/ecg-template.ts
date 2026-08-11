@@ -35,6 +35,17 @@ const DEFAULT_AGENT_TYPE = 'social-v2';
 // reason node_modules is.
 const WALK_EXCLUDE = new Set(['node_modules', '.git', 'dist', 'coverage', 'edge-functions']);
 
+// Binary assets (logos, banners, icons) can't survive a plain utf8 read --
+// mirrors agentLoopService.ts's readFileForSync/BINARY_SENTINEL, the
+// established fix for "images vanish/corrupt in transit" (see that file's
+// 2026-08-09 fix note). Base64-encode with this sentinel prefix; preview-
+// service's materialize.js and the browser's revisionService already decode
+// it on the read side, and saveEcgRevision below uploads the sentinel string
+// as-is (plain text, no Postgres Unicode issue) -- no other pipeline change
+// needed.
+const BINARY_EXTS = new Set(['.ico', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.mp3', '.mp4']);
+const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+
 function resolveTemplateDir(agentType?: string): string {
   return TEMPLATE_REGISTRY[agentType ?? DEFAULT_AGENT_TYPE] ?? TEMPLATE_REGISTRY[DEFAULT_AGENT_TYPE];
 }
@@ -409,12 +420,11 @@ export function seedEcgTemplate(
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) { walk(full); continue; }
       if (/\.test\.[jt]sx?$/.test(entry.name)) continue;
-      // Binary assets can't survive the utf8 read below — a favicon.ico read
-      // as utf8 produces null bytes Postgres rejects ("unsupported Unicode
-      // escape sequence") when the seeded file map is stored. Skip them; the
-      // scaffolded project supplies its own favicon.
-      if (/\.(ico|png|jpe?g|gif|webp|avif|woff2?|ttf|eot|otf|mp[34])$/i.test(entry.name)) continue;
       const rel  = path.relative(templateDir, full);
+      if (BINARY_EXTS.has(path.extname(entry.name).toLowerCase())) {
+        files[rel] = `${BINARY_SENTINEL}${fs.readFileSync(full).toString('base64')}`;
+        continue;
+      }
       let content = fs.readFileSync(full, 'utf8');
       // Substitute placeholders
       content = content.replace('{{CSS_VARS}}', vars);

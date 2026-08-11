@@ -5,7 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Share2 } from "lucide-react";
+import logo from "@/assets/fgv-logo-blue.png";
 import { toast } from "sonner";
 
 const Login = () => {
@@ -33,9 +33,9 @@ const Login = () => {
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-primary/10 flex items-center justify-center">
-            <Share2 className="w-6 h-6 text-primary" />
-          </div>
+          <a href="https://ft30.fgvexpo.com" className="inline-block">
+            <img src={logo} alt="FT30 Media" className="w-12 h-12 mx-auto mb-4 object-contain" />
+          </a>
           <h1 className="font-display text-2xl font-bold text-foreground">{t("loginPage.title")}</h1>
           <p className="text-muted-foreground text-sm font-body mt-1">{t("loginPage.subtitle")}</p>
         </div>

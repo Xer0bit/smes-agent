@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import mediaBanner from "@/assets/media-banner.png";
 import { Globe, Newspaper, TrendingUp } from "lucide-react";
 
 const MediaReachSection = () => {
@@ -21,6 +22,11 @@ const MediaReachSection = () => {
           <p className="text-muted-foreground text-lg max-w-2xl mx-auto font-body">
             {t("mediaReach.subtitle")}
           </p>
+        </div>
+
+        <div className="bg-card border border-glow rounded-2xl p-8 mb-12">
+          <p className="text-muted-foreground text-sm text-center mb-6 font-body uppercase tracking-wider">{t("mediaReach.featuredIn")}</p>
+          <img src={mediaBanner} alt="Media reach including Forbes, NBC, AP, Fox News, Digital Journal and more" className="w-full max-w-4xl mx-auto object-contain opacity-70" />
         </div>
 
         <div className="grid md:grid-cols-3 gap-6">
