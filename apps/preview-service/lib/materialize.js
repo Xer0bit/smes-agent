@@ -60,6 +60,77 @@ const TAILWIND_CSS_BASE = `@tailwind base;
 }
 `;
 
+// A render-time throw anywhere in the tree unmounts React and leaves a blank
+// white page with nothing but a console error — this is the "base template
+// is just white screen" failure mode. Every project's main.tsx must wrap
+// <App /> with this so a broken component shows a visible message instead of
+// nothing. See ensureEssentialFiles (writes the file) and preprocessFile's
+// main.tsx Fix 4d (ensures every main.tsx actually wraps with it).
+const ERROR_BOUNDARY_TSX = `import { Component, type ErrorInfo, type ReactNode } from 'react';
+
+interface Props {
+  children: ReactNode;
+}
+
+interface State {
+  error: Error | null;
+}
+
+export default class ErrorBoundary extends Component<Props, State> {
+  state: State = { error: null };
+
+  static getDerivedStateFromError(error: Error): State {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('Uncaught error:', error, info.componentStack);
+  }
+
+  render() {
+    const { error } = this.state;
+    if (!error) return this.props.children;
+
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 bg-background text-foreground">
+        <div className="max-w-lg w-full space-y-4">
+          <h1 className="text-2xl font-bold">Something went wrong</h1>
+          <p className="text-muted-foreground">
+            This page hit an unexpected error. Try reloading. If it keeps happening, the
+            details below say why.
+          </p>
+          <pre className="text-xs whitespace-pre-wrap break-words rounded-md border border-border p-3 overflow-auto max-h-64">
+            {error.message}
+          </pre>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium"
+          >
+            Reload
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+`;
+
+// Wraps a bare `<App />` in main.tsx source with <ErrorBoundary>, adding the
+// import if needed. Best-effort (only handles the self-closing-tag case
+// every scaffold/repair template here produces) — returns the input
+// unchanged if already wrapped or if the pattern isn't found. Shared by
+// preprocessFile's Fix 4d (runs on files the agent just wrote) and
+// ensureEssentialFiles (runs on whatever main.tsx is already on disk, so
+// pre-existing projects that never touch main.tsx again still get healed).
+function ensureErrorBoundaryWrap(content) {
+    if (content.includes('ErrorBoundary') || !/<App\s*\/>/.test(content)) return content;
+    const wrapped = content.replace(/<App\s*\/>/, '<ErrorBoundary>\n      <App />\n    </ErrorBoundary>');
+    const reactImportMatch = wrapped.match(/(import.*from.*['"]react['"];?\s*\n)/);
+    const importLine = "import ErrorBoundary from './components/ErrorBoundary';\n";
+    return reactImportMatch ? wrapped.replace(reactImportMatch[0], reactImportMatch[0] + importLine) : importLine + wrapped;
+}
+
 // ============================================================
 // FILE VALIDATION & AUTO-FIX UTILITIES
 // Catches common issues before they reach Vite
@@ -449,7 +520,7 @@ function preprocessFile(filePath, content) {
         if (componentMatch) {
             const componentName = componentMatch[2];
             const hasExportDefault = new RegExp(`export\\s+default\\s+${componentName}\\b`).test(fixed) ||
-                                     new RegExp(`export\\s+default\\s+function\\s+${componentName}\\b`).test(fixed);
+                new RegExp(`export\\s+default\\s+function\\s+${componentName}\\b`).test(fixed);
             if (!hasExportDefault && !fixed.includes('export default')) {
                 fixed = fixed.trimEnd() + `\n\nexport default ${componentName};\n`;
                 issues.push(`Added missing export default for ${componentName}`);
@@ -528,7 +599,7 @@ function preprocessFile(filePath, content) {
                 }
                 if (!balanced) {
                     const appImport = (fixed.match(/import\s+App\s+from\s+['"]([^'"]+)['"]/) || [])[1] || './App';
-                    fixed = `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from '${appImport}'\nimport './index.css'\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n)\n`;
+                    fixed = `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from '${appImport}'\nimport ErrorBoundary from './components/ErrorBoundary'\nimport './index.css'\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <ErrorBoundary>\n      <App />\n    </ErrorBoundary>\n  </React.StrictMode>,\n)\n`;
                     issues.push('Replaced truncated main.tsx');
                 }
             }
@@ -536,8 +607,19 @@ function preprocessFile(filePath, content) {
 
         // Fix 4c: Replace near-empty main.tsx
         if (!fixed.includes('createRoot') && fixed.trim().length < 100) {
-            fixed = `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App'\nimport './index.css'\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n)\n`;
+            fixed = `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App'\nimport ErrorBoundary from './components/ErrorBoundary'\nimport './index.css'\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <ErrorBoundary>\n      <App />\n    </ErrorBoundary>\n  </React.StrictMode>,\n)\n`;
             issues.push('Replaced empty main.tsx');
+        }
+
+        // Fix 4d: Ensure <App /> is wrapped in ErrorBoundary. Without this, any
+        // render-time throw anywhere in the tree unmounts React and leaves a
+        // blank white page — the "base template is white screen" failure mode.
+        {
+            const wrapped = ensureErrorBoundaryWrap(fixed);
+            if (wrapped !== fixed) {
+                fixed = wrapped;
+                issues.push('Wrapped <App /> in ErrorBoundary');
+            }
         }
     }
 
@@ -670,6 +752,32 @@ function ensureEssentialFiles(projectRoot, userFiles) {
         }
     }
 
+    // Ensure ErrorBoundary.tsx exists — self-heals every project (new AND
+    // pre-existing, since this runs on every /update) so a render-time throw
+    // can never again unmount React into a blank white page. See Fix 4d above
+    // for the matching main.tsx wrap-with-ErrorBoundary invariant.
+    const errorBoundaryPath = path.join(projectRoot, 'src', 'components', 'ErrorBoundary.tsx');
+    if (!fs.existsSync(errorBoundaryPath)) {
+        fs.mkdirSync(path.dirname(errorBoundaryPath), { recursive: true });
+        fs.writeFileSync(errorBoundaryPath, ERROR_BOUNDARY_TSX);
+        console.log(`[${path.basename(projectRoot)}] Created ErrorBoundary.tsx`);
+    }
+
+    // Heal pre-existing projects too: main.tsx is rarely re-sent by the agent
+    // after initial scaffold, so relying solely on preprocessFile's Fix 4d
+    // (which only runs on files the agent just wrote) would leave old
+    // projects' main.tsx unwrapped forever. Repair it directly on disk here,
+    // which runs on every /update AND on preview (re)open.
+    const mainTsxDiskPath = path.join(projectRoot, 'src', 'main.tsx');
+    if (fs.existsSync(mainTsxDiskPath) && !userFilePaths.has('src/main.tsx')) {
+        const existingMain = fs.readFileSync(mainTsxDiskPath, 'utf-8');
+        const healedMain = ensureErrorBoundaryWrap(existingMain);
+        if (healedMain !== existingMain) {
+            fs.writeFileSync(mainTsxDiskPath, healedMain);
+            console.log(`[${path.basename(projectRoot)}] Wrapped <App /> in ErrorBoundary (main.tsx)`);
+        }
+    }
+
     // Check if user provided an index.css
     if (!userFilePaths.has('src/index.css')) {
         const indexCssPath = path.join(projectRoot, 'src', 'index.css');
@@ -711,17 +819,17 @@ export default App;
         }
     }
 
-        // If generated files import the shadcn dialog primitive but omit the file,
-        // provide a minimal compatible fallback so preview builds don't fail.
-        const importsDialog = userFiles.some((f) =>
-                typeof f.content === 'string' && /@\/components\/ui\/dialog/.test(f.content)
-        );
-        if (importsDialog) {
-                const dialogPath = path.join(projectRoot, 'src', 'components', 'ui', 'dialog.tsx');
-                if (!fs.existsSync(dialogPath)) {
-                        const dialogDir = path.dirname(dialogPath);
-                        if (!fs.existsSync(dialogDir)) fs.mkdirSync(dialogDir, { recursive: true });
-                        fs.writeFileSync(dialogPath, `import * as React from 'react';
+    // If generated files import the shadcn dialog primitive but omit the file,
+    // provide a minimal compatible fallback so preview builds don't fail.
+    const importsDialog = userFiles.some((f) =>
+        typeof f.content === 'string' && /@\/components\/ui\/dialog/.test(f.content)
+    );
+    if (importsDialog) {
+        const dialogPath = path.join(projectRoot, 'src', 'components', 'ui', 'dialog.tsx');
+        if (!fs.existsSync(dialogPath)) {
+            const dialogDir = path.dirname(dialogPath);
+            if (!fs.existsSync(dialogDir)) fs.mkdirSync(dialogDir, { recursive: true });
+            fs.writeFileSync(dialogPath, `import * as React from 'react';
 
 type DialogContextValue = {
     open: boolean;
@@ -765,9 +873,9 @@ function DialogDescription({ className = '', children }: { className?: string; c
 
 export { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription };
 `);
-                        console.log(`[${path.basename(projectRoot)}] Created fallback src/components/ui/dialog.tsx`);
-                }
+            console.log(`[${path.basename(projectRoot)}] Created fallback src/components/ui/dialog.tsx`);
         }
+    }
 }
 
 // Returns true when a project directory contains only the blank scaffold written by
@@ -1123,6 +1231,8 @@ function harmonizePackageJson(packageJsonContent, files) {
 
 module.exports = {
     TAILWIND_CSS_BASE,
+    ERROR_BOUNDARY_TSX,
+    ensureErrorBoundaryWrap,
     preprocessFile,
     ensureEssentialFiles,
     isScaffoldOnly,

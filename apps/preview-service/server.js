@@ -26,7 +26,7 @@ const {
 } = require('./lib/validation');
 const { typeCheckProject } = require('./lib/typecheck');
 const {
-    TAILWIND_CSS_BASE, preprocessFile, ensureEssentialFiles,
+    TAILWIND_CSS_BASE, ERROR_BOUNDARY_TSX, preprocessFile, ensureEssentialFiles,
     materializeProjectFiles, pruneProjectFiles,
 } = require('./lib/materialize');
 const { snapshotProjectSrc, rollbackProjectSrc, cleanupSnapshot } = require('./lib/snapshot');
@@ -66,15 +66,6 @@ const HMR_PROTOCOL = process.env.VITE_HMR_PROTOCOL || undefined;
 const SUPABASE_REST_URL = (process.env.SUPABASE_URL || 'https://api.ecomgear.dev').replace(/\/$/, '');
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-// ── Preview access control ────────────────────────────────────────────────────
-// Before today, /preview/:projectId served to anyone who had the URL   no
-// session, no ownership check. A copy-pasted preview link (browser history,
-// screenshot, shared chat) gave a stranger a live view of someone else's
-// project, permanently. This gates it on the SAME auth the main app uses:
-// the visitor's Supabase JWT must belong to a user who actually has access
-// to that project (owner, or org admin/member via project_member_access
-// mirrors server/src/services/project.service.ts's getProject() exactly, so
-// the two access models can't silently drift apart).
 //
 // Fails OPEN (same convention as the agent-lock check above) when
 // SUPABASE_SERVICE_KEY isn't configured, so environments that never set up
@@ -88,6 +79,14 @@ const FRONTEND_HOME_URL = process.env.FRONTEND_HOME_URL
 
 // jwt → { userId, expiresAt } — avoids re-verifying the same token on every request.
 const jwtCache = new Map();
+//
+// Fails OPEN (same convention as the agent-lock check above) when
+// SUPABASE_SERVICE_KEY isn't configured, so environments that never set up
+// Supabase locally aren't newly broken by this. It fails CLOSED for every
+// environment that already has the key   which includes production today.
+// Bounces to the app's HOME page, not /login   a visitor without access might
+// already be logged in (just not a member of THIS project), so /login is the
+// wrong destination for them too; home is correct ei
 const JWT_CACHE_TTL_MS = 5 * 60 * 1000;
 // "userId:projectId" → { allowed, expiresAt }
 const accessCache = new Map();
@@ -466,14 +465,28 @@ function initProject(projectId) {
         fs.writeFileSync(mainTsxPath, `import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
+import ErrorBoundary from './components/ErrorBoundary'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 )
 `);
+    }
+
+    // Create ErrorBoundary.tsx only if missing -- without this, any render-time
+    // throw anywhere in the tree unmounts React and leaves a blank white page
+    // with nothing but a console error (the "base template is white screen"
+    // failure mode). See ensureEssentialFiles for the self-heal on existing projects.
+    const errorBoundaryPath = path.join(projectRoot, 'src', 'components', 'ErrorBoundary.tsx');
+    if (!fs.existsSync(errorBoundaryPath)) {
+        const componentsDir = path.join(projectRoot, 'src', 'components');
+        if (!fs.existsSync(componentsDir)) fs.mkdirSync(componentsDir, { recursive: true });
+        fs.writeFileSync(errorBoundaryPath, ERROR_BOUNDARY_TSX);
     }
 
     // Create minimal empty App.tsx only if missing - will be overwritten
@@ -705,7 +718,7 @@ const _envCapValid = _envCapRaw > 0;
 const MAX_ACTIVE_SERVERS = (_envCapValid ? _envCapRaw : null) ?? (IS_PRODUCTION ? 20 : 50);
 const _capSource =
     process.env.MAX_ACTIVE_SERVERS === undefined ? 'default (not set)' :
-    _envCapValid ? 'env' : `default (env value "${process.env.MAX_ACTIVE_SERVERS}" rejected)`;
+        _envCapValid ? 'env' : `default (env value "${process.env.MAX_ACTIVE_SERVERS}" rejected)`;
 console.log(`[Preview] MAX_ACTIVE_SERVERS = ${MAX_ACTIVE_SERVERS} (${_capSource})`);
 
 // ── Preview isolation, interim step: per-project child processes ────────────
@@ -842,99 +855,99 @@ async function getOrCreateServer(projectId) {
     // Register the creation promise BEFORE the async work begins so concurrent
     // callers can await it and share the single Vite instance being created.
     const creationPromise = (async () => {
-    const projectRoot = initProject(projectId);
-    // autoRestoreFromSupabase() USED to run here unconditionally on every server
-    // (re)creation: if it heuristically decided the project "looked scaffold-only"
-    // it would silently overwrite on-disk files with whatever the DB's last
-    // saved revision was   an independent, autonomous pull with no coordination
-    // with the backend, which is the ONLY thing that should ever decide what a
-    // project's current files are. A restart-triggered false-positive on that
-    // heuristic overwrote hours of real work with an old snapshot in production
-    // testing on 2026-07-21 (see git blame). Preview-service must be a passive
-    // renderer: it displays whatever the backend pushes via /update, never
-    // pulls/decides on its own. Recovery-from-cleanup, if still needed, belongs
-    // in an explicit backend-initiated action, not an implicit background guess
-    // on every Vite (re)start.
-    // Backfill compatibility files for older projects so module imports like /src/App.tsx resolve.
-    ensureEssentialFiles(projectRoot, []);
-    const projectCacheDir = path.join(projectRoot, '.vite-cache');
+        const projectRoot = initProject(projectId);
+        // autoRestoreFromSupabase() USED to run here unconditionally on every server
+        // (re)creation: if it heuristically decided the project "looked scaffold-only"
+        // it would silently overwrite on-disk files with whatever the DB's last
+        // saved revision was   an independent, autonomous pull with no coordination
+        // with the backend, which is the ONLY thing that should ever decide what a
+        // project's current files are. A restart-triggered false-positive on that
+        // heuristic overwrote hours of real work with an old snapshot in production
+        // testing on 2026-07-21 (see git blame). Preview-service must be a passive
+        // renderer: it displays whatever the backend pushes via /update, never
+        // pulls/decides on its own. Recovery-from-cleanup, if still needed, belongs
+        // in an explicit backend-initiated action, not an implicit background guess
+        // on every Vite (re)start.
+        // Backfill compatibility files for older projects so module imports like /src/App.tsx resolve.
+        ensureEssentialFiles(projectRoot, []);
+        const projectCacheDir = path.join(projectRoot, '.vite-cache');
 
-    // ── Child-process path (PREVIEW_CHILD_PROCESS_MODE) ─────────────────────
-    // Real OS process per project instead of an in-process Vite instance   see
-    // lib/viteChildRunner.js / lib/instanceOps.js for the split. No dummyServer
-    // trick needed here: the child's Vite binds its own real listen port, so
-    // its own WS server just works: the upgrade handler below proxies to it.
-    if (isChildProcessMode(projectId)) {
-        const port = portPool.allocate();
-        if (port == null) {
-            throw new Error(`No free ports in the preview child-process pool for ${projectId}`);
-        }
-        try {
-            const proc = await spawnChildInstance(projectId, projectRoot, port);
-            // Persistent cleanup: fires on both a deliberate closeInstance-driven
-            // exit AND an unexpected crash, so a crash doesn't leak the port or
-            // leave a stale activeServers entry blocking the next lazy recreate.
-            proc.on('exit', (code) => {
-                console.warn(`[${projectId}] Child Vite process exited (code ${code})`);
+        // ── Child-process path (PREVIEW_CHILD_PROCESS_MODE) ─────────────────────
+        // Real OS process per project instead of an in-process Vite instance   see
+        // lib/viteChildRunner.js / lib/instanceOps.js for the split. No dummyServer
+        // trick needed here: the child's Vite binds its own real listen port, so
+        // its own WS server just works: the upgrade handler below proxies to it.
+        if (isChildProcessMode(projectId)) {
+            const port = portPool.allocate();
+            if (port == null) {
+                throw new Error(`No free ports in the preview child-process pool for ${projectId}`);
+            }
+            try {
+                const proc = await spawnChildInstance(projectId, projectRoot, port);
+                // Persistent cleanup: fires on both a deliberate closeInstance-driven
+                // exit AND an unexpected crash, so a crash doesn't leak the port or
+                // leave a stale activeServers entry blocking the next lazy recreate.
+                proc.on('exit', (code) => {
+                    console.warn(`[${projectId}] Child Vite process exited (code ${code})`);
+                    portPool.release(port);
+                    const current = activeServers.get(projectId);
+                    if (current && current.proc === proc) {
+                        activeServers.delete(projectId);
+                        projectErrors.delete(projectId);
+                        runtimeInstances.delete(projectId);
+                        recentUpdateFingerprints.delete(projectId);
+                    }
+                });
+                const instance = { proc, port, lastAccessed: Date.now() };
+                activeServers.set(projectId, instance);
+                return instance;
+            } catch (error) {
                 portPool.release(port);
-                const current = activeServers.get(projectId);
-                if (current && current.proc === proc) {
-                    activeServers.delete(projectId);
-                    projectErrors.delete(projectId);
-                    runtimeInstances.delete(projectId);
-                    recentUpdateFingerprints.delete(projectId);
-                }
+                console.error(`[${projectId}] Failed to spawn Vite child process:`, error?.message || error);
+                throw error;
+            }
+        }
+
+        // ── Legacy in-process path (rollback fallback) ───────────────────────────
+        // Create a dummy HTTP server for this instance to attach HMR to
+        // We won't listen() on this, but we'll manually emit 'upgrade' events to it
+        const dummyServer = http.createServer();
+
+        // Build HMR config based on environment
+        const hmrConfig = {
+            server: dummyServer,
+        };
+
+        // In production, configure HMR explicitly so the Vite client connects to the
+        // nginx proxy (wss on port 443). Without explicit config, Vite auto-detects
+        // location.port which is '' for default ports, producing a malformed WS URL
+        // (wss://host:/path) that fails to connect, causing the browser to reload
+        // on each retry   an infinite reload loop when opening the preview link.
+        if (IS_PRODUCTION) {
+            hmrConfig.host = HMR_HOST || 'preview.ecomgear.app';
+            hmrConfig.protocol = HMR_PROTOCOL || 'wss';
+            hmrConfig.clientPort = HMR_PORT || 443;
+            console.log(`[Preview] HMR configured for production: ${hmrConfig.protocol}://${hmrConfig.host}:${hmrConfig.clientPort}`);
+        }
+
+        try {
+            const vite = await buildViteConfig({
+                projectId,
+                projectRoot,
+                projectCacheDir,
+                hmrConfig,
+                middlewareMode: true,
+                isProduction: IS_PRODUCTION,
+                onDiagnostic: (msg, kind) => appendProjectError(projectId, msg, kind),
             });
-            const instance = { proc, port, lastAccessed: Date.now() };
+            const instance = { vite, server: dummyServer, lastAccessed: Date.now() };
             activeServers.set(projectId, instance);
             return instance;
         } catch (error) {
-            portPool.release(port);
-            console.error(`[${projectId}] Failed to spawn Vite child process:`, error?.message || error);
+            console.error(`[${projectId}] Failed to create Vite server:`, error);
             throw error;
         }
-    }
-
-    // ── Legacy in-process path (rollback fallback) ───────────────────────────
-    // Create a dummy HTTP server for this instance to attach HMR to
-    // We won't listen() on this, but we'll manually emit 'upgrade' events to it
-    const dummyServer = http.createServer();
-
-    // Build HMR config based on environment
-    const hmrConfig = {
-        server: dummyServer,
-    };
-
-    // In production, configure HMR explicitly so the Vite client connects to the
-    // nginx proxy (wss on port 443). Without explicit config, Vite auto-detects
-    // location.port which is '' for default ports, producing a malformed WS URL
-    // (wss://host:/path) that fails to connect, causing the browser to reload
-    // on each retry   an infinite reload loop when opening the preview link.
-    if (IS_PRODUCTION) {
-        hmrConfig.host = HMR_HOST || 'preview.ecomgear.app';
-        hmrConfig.protocol = HMR_PROTOCOL || 'wss';
-        hmrConfig.clientPort = HMR_PORT || 443;
-        console.log(`[Preview] HMR configured for production: ${hmrConfig.protocol}://${hmrConfig.host}:${hmrConfig.clientPort}`);
-    }
-
-    try {
-        const vite = await buildViteConfig({
-            projectId,
-            projectRoot,
-            projectCacheDir,
-            hmrConfig,
-            middlewareMode: true,
-            isProduction: IS_PRODUCTION,
-            onDiagnostic: (msg, kind) => appendProjectError(projectId, msg, kind),
-        });
-        const instance = { vite, server: dummyServer, lastAccessed: Date.now() };
-        activeServers.set(projectId, instance);
-        return instance;
-    } catch (error) {
-        console.error(`[${projectId}] Failed to create Vite server:`, error);
-        throw error;
-    }
-})();
+    })();
 
     pendingServerCreations.set(projectId, creationPromise);
     try {
@@ -1107,8 +1120,8 @@ async function startMainServer() {
 
     // Service Health Check
     app.get('/health', (req, res) => {
-        res.json({ 
-            status: 'ok', 
+        res.json({
+            status: 'ok',
             activeServers: activeServers.size,
             uptime: Math.floor(process.uptime())
         });
@@ -1151,7 +1164,7 @@ async function startMainServer() {
         const pkgList = packages.map(p => p.trim()).join(' ');
         const baseFlags = '--ignore-scripts --no-audit --no-fund';
         const installCmd = `npm install ${baseFlags} ${pkgList}`;
-        const legacyCmd  = `npm install ${baseFlags} --legacy-peer-deps ${pkgList}`;
+        const legacyCmd = `npm install ${baseFlags} --legacy-peer-deps ${pkgList}`;
 
         console.log(`[Packages] Installing into preview node_modules: ${pkgList}`);
 
@@ -1358,9 +1371,9 @@ async function startMainServer() {
         // Register slug and persist (also write per-project .slug file for recovery)
         slugRegistry.set(normalizedSlug, projectId);
         saveSlugRegistry(slugRegistry);
-        try { fs.writeFileSync(path.join(projectRoot, '.slug'), normalizedSlug); } catch (_) {}
+        try { fs.writeFileSync(path.join(projectRoot, '.slug'), normalizedSlug); } catch (_) { }
         // Warm the Vite server so first visitor is fast
-        getOrCreateServer(projectId).catch(() => {});
+        getOrCreateServer(projectId).catch(() => { });
         setProjectErrors(projectId, []);
         res.json({
             success: true,
@@ -1806,7 +1819,7 @@ async function startMainServer() {
         console.log(`[${projectId}] Wrote ${envLines.length} secret(s) to .env.local`);
 
         if (changed) {
-            await restartProjectServer(projectId, 'secrets updated').catch(() => {});
+            await restartProjectServer(projectId, 'secrets updated').catch(() => { });
         }
 
         res.json({ success: true, secretsWritten: envLines.length, restarted: changed });
@@ -2179,18 +2192,18 @@ export default App;
         res.json({ ok: true });
     });
 
-        app.get('/preview/:projectId/error-overlay', cors(corsOptions), (req, res) => {
-                const { projectId } = req.params;
-                if (!isValidProjectId(projectId)) {
-                    return res.status(400).json({ error: 'Invalid project ID' });
-                }
-                const { errors, diagnosticKind } = getProjectDiagnostics(projectId);
-                if (errors.length === 0) {
-                        return res.status(404).type('html').send('<!doctype html><title>No preview errors</title><body style="font-family:system-ui;padding:24px">No preview errors recorded.</body>');
-                }
+    app.get('/preview/:projectId/error-overlay', cors(corsOptions), (req, res) => {
+        const { projectId } = req.params;
+        if (!isValidProjectId(projectId)) {
+            return res.status(400).json({ error: 'Invalid project ID' });
+        }
+        const { errors, diagnosticKind } = getProjectDiagnostics(projectId);
+        if (errors.length === 0) {
+            return res.status(404).type('html').send('<!doctype html><title>No preview errors</title><body style="font-family:system-ui;padding:24px">No preview errors recorded.</body>');
+        }
 
-                const items = errors.map((error) => `<li style="margin:0 0 12px;white-space:pre-wrap">${escapeHtml(error)}</li>`).join('');
-                res.type('html').send(`<!doctype html>
+        const items = errors.map((error) => `<li style="margin:0 0 12px;white-space:pre-wrap">${escapeHtml(error)}</li>`).join('');
+        res.type('html').send(`<!doctype html>
 <html lang="en">
     <head>
         <meta charset="utf-8" />
@@ -2216,7 +2229,7 @@ export default App;
         </main>
     </body>
 </html>`);
-        });
+    });
 
     // Preview access-control session bootstrap. Called by the frontend via
     // fetch (Authorization header, credentials:'include')   never a URL param.
@@ -2415,7 +2428,7 @@ export default App;
         // Must happen BEFORE closing servers so the list is still populated.
         saveWarmupList();
         console.log(`[Shutdown] Saved warmup list (${activeServers.size} project(s))`);
-        
+
         // Close all Vite servers
         for (const [projectId] of activeServers.entries()) {
             try {
@@ -2426,13 +2439,13 @@ export default App;
             }
         }
         activeServers.clear();
-        
+
         // Close main server
         mainServer.close(() => {
             console.log('[Shutdown] Server closed');
             process.exit(0);
         });
-        
+
         // Force exit after 10 seconds
         setTimeout(() => {
             console.log('[Shutdown] Forcing exit');

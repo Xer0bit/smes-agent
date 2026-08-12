@@ -157,7 +157,7 @@ async function buildViteConfig({
                         const isMainEntry = relPath === 'src/main.tsx' || relPath === 'src/main.jsx';
                         if (isMainEntry) {
                             const appImport = (code.match(/import\s+App\s+from\s+['"]([^'"]+)['"]/) || [])[1] || './App';
-                            const fallback = `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from '${appImport}'\nimport './index.css'\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n)\n`;
+                            const fallback = `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from '${appImport}'\nimport ErrorBoundary from './components/ErrorBoundary'\nimport './index.css'\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <ErrorBoundary>\n      <App />\n    </ErrorBoundary>\n  </React.StrictMode>,\n)\n`;
                             console.warn(`[${projectId}] Auto-repaired broken ${relPath} at transform time`);
                             onDiagnostic(syntaxError, 'build');
                             return { code: fallback, map: null };
