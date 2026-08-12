@@ -140,8 +140,20 @@ function ensureErrorBoundaryWrap(content) {
  * Fix common syntax issues in files before writing them
  */
 function preprocessFile(filePath, content) {
-    // Skip Supabase edge function files -- Deno backend, not React source
-    if (filePath.startsWith('supabase/') || filePath.includes('/supabase/')) {
+    // Skip Supabase EDGE FUNCTION files -- Deno backend, not React source.
+    // Edge functions always live at the project ROOT under supabase/functions/
+    // (Supabase CLI/Lovable convention, e.g. "supabase/functions/foo/index.ts").
+    // Real incident (2026-08-12): the old check also matched
+    // `filePath.includes('/supabase/')`, which false-positived on the
+    // CLIENT-SIDE Supabase wrapper every Lovable-imported project ships at
+    // "src/integrations/supabase/client.ts" -- that path contains "/supabase/"
+    // too, so EVERY repair in this function (including Fix 3.46's undefined-env-var
+    // repair) silently skipped that file. A client.ts with a literal `undefined`
+    // Supabase URL throws synchronously at module-eval time, before any
+    // component renders -- unrepairable and uncatchable by ErrorBoundary, so it
+    // presented as a pure blank white page. `startsWith('supabase/')` alone is
+    // the correct, sufficient check for the real convention.
+    if (filePath.startsWith('supabase/')) {
         return { content: content ?? '', issues: [] };
     }
     let fixed = content;
@@ -400,6 +412,18 @@ function preprocessFile(filePath, content) {
     // `import.meta.env.*` text itself, unlike the removed Fix 5 above) --
     // narrow and unambiguous on purpose: a bare `undefined` initializer for
     // a variable named exactly one of these is never intentional.
+    //
+    // Second real incident (2026-08-12): a Lovable-imported project used the
+    // ALL_CAPS Supabase-CLI naming convention instead --
+    // `const SUPABASE_URL = undefined; const SUPABASE_PUBLISHABLE_KEY =
+    // undefined;` in src/integrations/supabase/client.ts. createClient()
+    // throws SYNCHRONOUSLY at module-evaluation time on an invalid URL, i.e.
+    // before any component ever renders -- unlike a render-time throw, this
+    // can never be caught by a React ErrorBoundary, so it presented as a pure
+    // blank white page surviving the ErrorBoundary fix. Added the ALL_CAPS
+    // names below; also widened `const` to `const|let` since a bare
+    // `undefined` initializer for one of these exact names is never
+    // intentional regardless of declaration keyword.
     if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
         const before = fixed;
         const KNOWN_ENV_VAR_NAMES = {
@@ -411,9 +435,12 @@ function preprocessFile(filePath, content) {
             dbApiUrl: 'VITE_DB_API_URL',
             dbAnonKey: 'VITE_DB_ANON_KEY',
             dbSchema: 'VITE_DB_SCHEMA',
+            SUPABASE_URL: 'VITE_SUPABASE_URL',
+            SUPABASE_ANON_KEY: 'VITE_SUPABASE_ANON_KEY',
+            SUPABASE_PUBLISHABLE_KEY: 'VITE_SUPABASE_ANON_KEY',
         };
         for (const [varName, envName] of Object.entries(KNOWN_ENV_VAR_NAMES)) {
-            const re = new RegExp(`\\b(const\\s+${varName}\\s*=\\s*)undefined(\\s*;)`, 'g');
+            const re = new RegExp(`\\b((?:const|let)\\s+${varName}\\s*=\\s*)undefined(\\s*;)`, 'g');
             fixed = fixed.replace(re, `$1import.meta.env.${envName}$2`);
         }
         if (fixed !== before) {
