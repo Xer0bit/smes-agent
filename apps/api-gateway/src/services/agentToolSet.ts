@@ -334,6 +334,40 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
             `abandoning it silently. Then retry this write.`
           );
         }
+        // ── Mutation circuit breaker (lifecycle audit fix, 2026-08-11/12) ────
+        // Real fix for the dead editFailures mechanism (see AgentContext's
+        // mutationFailureStreak doc comment for the full incident this
+        // replaces). agentLoopService.ts tracks per-(tool,path) identical-
+        // failure streaks in ctx.mutationFailureStreak after each step; once a
+        // streak hits the threshold, HARD-block further calls to that exact
+        // tool+path combo -- not just an advisory note the model can ignore.
+        // Mirrors get_build_errors.ts's in-call breaker, the one place in the
+        // toolset where a repeated failure already produced a guaranteed
+        // behavior change. The escape hatch is genuine, not a special case:
+        // switching tool (edit_file -> write_file for a full rewrite, or vice
+        // versa) uses a DIFFERENT map key, so it's still allowed -- exactly
+        // "try a fundamentally different approach" instead of "retry the same
+        // broken thing again."
+        const MUTATION_CIRCUIT_BREAKER_THRESHOLD = 3;
+        if (
+          (def.name === 'write_file' || def.name === 'edit_file' || def.name === 'delete_file' || def.name === 'rename_file') &&
+          ctx.mutationFailureStreak
+        ) {
+          const targetPath: string | undefined = def.name === 'rename_file' ? args.from : args.path;
+          if (typeof targetPath === 'string') {
+            const streak = ctx.mutationFailureStreak.get(`${def.name}:${targetPath}`);
+            if (streak && streak.count >= MUTATION_CIRCUIT_BREAKER_THRESHOLD) {
+              return (
+                `BLOCKED (repeated identical failure): "${def.name}" has failed on "${targetPath}" ${streak.count} times in a row ` +
+                `with the exact same error:\n\n"${streak.message.slice(0, 300)}"\n\n` +
+                `Retrying this exact call again will fail the same way. Do ONE of: ` +
+                `(1) call read_file("${targetPath}") to see its current real state, then use ${def.name === 'edit_file' ? 'write_file to rewrite the whole file' : 'edit_file for a smaller targeted patch'} instead of repeating ${def.name}; ` +
+                `(2) if the error names a different file (e.g. a type it imports), fix THAT file instead; ` +
+                `(3) tell the user plainly this is blocked and why, instead of continuing to retry.`
+              );
+            }
+          }
+        }
         // ── Declared-scope guard (harness redesign increment 2, 2026-08-11) ──
         // Root-cause audit finding: nothing restricted WHICH files a write/
         // edit/delete/rename call could target, only how many. A "fix the

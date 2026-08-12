@@ -220,9 +220,19 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
           fileName: args.path,
         });
         if (tsResult.diagnostics && tsResult.diagnostics.length > 0) {
+          // Same fix as write_file.ts (lifecycle audit finding): include
+          // line/column/error code so the model can actually localize the
+          // problem instead of guessing at a full rewrite blind.
           const errors = tsResult.diagnostics
             .slice(0, 3)
-            .map(d => ts.flattenDiagnosticMessageText(d.messageText, ' '))
+            .map(d => {
+              const msg = ts.flattenDiagnosticMessageText(d.messageText, ' ');
+              if (d.file && d.start !== undefined) {
+                const { line, character } = d.file.getLineAndCharacterOfPosition(d.start);
+                return `Line ${line + 1}:${character + 1} - TS${d.code}: ${msg}`;
+              }
+              return `TS${d.code}: ${msg}`;
+            })
             .join('; ');
           const previewLines = original.split('\n').slice(0, 100).join('\n');
           const filePreview = original.split('\n').length > 100

@@ -11,6 +11,23 @@
 
 import { getLlmControlState, updateLlmControlState } from './llm-control.service.js';
 import { logger } from '../utils/logger.js';
+import { isAuthOrBillingError } from './agentProviderResolution.js';
+
+// Lifecycle audit finding (2026-08-11/12): today's ~11-hour Anthropic outage
+// ("credit balance too low") went undetected by this exact health-check
+// system -- testAnthropic's 400 handling only failed on "organization" +
+// "disabled" text, so it reported Anthropic healthy the whole time. This repo
+// already has a comprehensive, provider-agnostic billing/auth-error text
+// classifier (isAuthOrBillingError, used at runtime for the retry/circuit-
+// breaker path) that was never reused here -- the two classifiers had
+// drifted apart. Route every ambiguous status code through the shared one
+// instead of each test function re-inventing its own narrower text match.
+function isBillingBodyError(body: unknown): boolean {
+  const message = (body as { error?: { message?: string; code?: string | number } } | null)?.error?.message;
+  const code = (body as { error?: { message?: string; code?: string | number } } | null)?.error?.code;
+  if (!message && code === undefined) return false;
+  return isAuthOrBillingError({ data: { error: { message, code } } });
+}
 
 // ─── Per-provider test functions ─────────────────────────────────────────────
 
@@ -36,12 +53,15 @@ async function testAnthropic(apiKey: string): Promise<{ ok: boolean; reason: str
     if (res.status === 403) return { ok: false, reason: 'Forbidden   check billing or permissions (403)' };
     if (res.status === 529) return { ok: true, reason: 'Anthropic API overloaded (529)   key valid, transient issue' };
     if (res.status === 400) {
-      // 400 is normally "bad request body but key valid", EXCEPT when Anthropic disables the org
+      // 400 is normally "bad request body but key valid" -- EXCEPT when
+      // Anthropic disables the org, OR (the actual incident: "credit
+      // balance too low" is a 400, not a 402) any other billing/auth
+      // failure the shared classifier already knows how to recognize.
       try {
         const body = await res.json() as any;
         const msg: string = body?.error?.message ?? '';
-        if (msg.toLowerCase().includes('organization') && msg.toLowerCase().includes('disabled')) {
-          return { ok: false, reason: `Anthropic organization disabled: ${msg}` };
+        if (isBillingBodyError(body)) {
+          return { ok: false, reason: `Anthropic billing/auth error: ${msg || 'unknown'}` };
         }
       } catch {}
       return { ok: true, reason: 'HTTP 400   key accepted' };
@@ -74,6 +94,14 @@ async function testDeepSeek(apiKey: string): Promise<{ ok: boolean; reason: stri
     if (res.status === 401) return { ok: false, reason: 'Invalid API key (401)' };
     if (res.status === 402) return { ok: false, reason: 'Insufficient balance   top up DeepSeek account (402)' };
     if (res.status === 403) return { ok: false, reason: 'Forbidden (403)' };
+    if (res.status === 400 || res.status === 429) {
+      try {
+        const body = await res.json() as any;
+        if (isBillingBodyError(body)) {
+          return { ok: false, reason: `DeepSeek billing/auth error: ${body?.error?.message ?? 'unknown'}` };
+        }
+      } catch {}
+    }
     return { ok: true, reason: `HTTP ${res.status}   key accepted` };
   } catch (err: any) {
     return { ok: true, reason: `Network check skipped: ${err?.message ?? 'timeout'}` };
@@ -97,14 +125,33 @@ async function testGemini(apiKey: string): Promise<{ ok: boolean; reason: string
 
     if (res.status === 200) return { ok: true, reason: 'OK' };
     if (res.status === 400) {
-      const body = await res.text().catch(() => '');
-      if (body.includes('API key not valid') || body.includes('API_KEY_INVALID')) {
+      const bodyText = await res.text().catch(() => '');
+      if (bodyText.includes('API key not valid') || bodyText.includes('API_KEY_INVALID')) {
         return { ok: false, reason: 'Invalid API key' };
       }
+      try {
+        if (isBillingBodyError(JSON.parse(bodyText))) {
+          return { ok: false, reason: `Gemini billing/auth error: ${bodyText.slice(0, 200)}` };
+        }
+      } catch {}
       return { ok: true, reason: 'HTTP 400   key accepted' };
     }
     if (res.status === 403) return { ok: false, reason: 'Forbidden   check API key permissions (403)' };
-    // 5xx, 429, etc. are transient   key is likely valid
+    if (res.status === 429) {
+      // Most 429s are transient rate limits, but Gemini's monthly quota
+      // exhaustion ("You exceeded your current quota...") is ALSO a 429 --
+      // isAuthOrBillingError already special-cases this (see its own
+      // comment); a plain "429 = transient" assumption would have missed
+      // it, same class of bug as the Anthropic 400 case this fix started from.
+      try {
+        const body = await res.json() as any;
+        if (isBillingBodyError(body)) {
+          return { ok: false, reason: `Gemini quota exhausted: ${body?.error?.message ?? 'unknown'}` };
+        }
+      } catch {}
+      return { ok: true, reason: 'HTTP 429   transient rate limit, key accepted' };
+    }
+    // 5xx etc. are transient   key is likely valid
     return { ok: true, reason: `HTTP ${res.status}   key accepted` };
   } catch (err: any) {
     // Network/timeout errors at startup are transient   don't disable a valid key
@@ -132,6 +179,17 @@ async function testZai(apiKey: string): Promise<{ ok: boolean; reason: string }>
     if (res.status === 401) return { ok: false, reason: 'Invalid API key (401)' };
     if (res.status === 402) return { ok: false, reason: 'Insufficient balance (402)' };
     if (res.status === 403) return { ok: false, reason: 'Forbidden (403)' };
+    if (res.status === 400 || res.status === 429) {
+      // z.ai's own insufficient-balance/no-resource-package signal is error
+      // code 1113, not a distinct HTTP status -- isAuthOrBillingError already
+      // knows this pattern.
+      try {
+        const body = await res.json() as any;
+        if (isBillingBodyError(body)) {
+          return { ok: false, reason: `z.ai billing/auth error: ${body?.error?.message ?? 'unknown'}` };
+        }
+      } catch {}
+    }
     return { ok: true, reason: `HTTP ${res.status}   key accepted` };
   } catch (err: any) {
     return { ok: true, reason: `Network check skipped: ${err?.message ?? 'timeout'}` };

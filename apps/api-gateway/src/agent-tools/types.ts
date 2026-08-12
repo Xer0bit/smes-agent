@@ -51,10 +51,29 @@ export interface AgentContext {
    */
   pendingShrinkWarnings?: Map<string, string>;
   /**
-   * Tracks how many times edit_file has failed (SEARCH mismatch) per file path.
-   * After 2 failures, the tool dispatch blocks edit_file and forces write_file.
+   * Real fix, harness redesign (2026-08-11/12 lifecycle audit): this field
+   * used to be `editFailures?: Map<string, number>`, described in this exact
+   * comment as blocking edit_file after 2 failures and forcing write_file --
+   * but repo-wide grep found it was NEVER written to or read anywhere. Dead
+   * code describing a mechanism that didn't exist, discovered by a live
+   * incident (agent retried an identical failing write_file 5x in a row,
+   * tailwind.config.js, project dfe41091, 2026-08-11 08:52).
+   *
+   * This is the real, wired-up version. Keyed by `${toolName}:${normalizedPath}`,
+   * populated by agentLoopService.ts's post-step failure tracking (same data
+   * that already existed for the advisory-only circuitBreakerNote, now also
+   * written here) and READ by agentToolSet.ts's write_file/edit_file dispatch
+   * gate: once a (tool, path) pair hits MUTATION_CIRCUIT_BREAKER_THRESHOLD
+   * identical-message failures, further calls to that EXACT tool+path combo
+   * are hard-blocked -- not just advised against -- until either that pair
+   * succeeds (clears the entry) or the model switches tool (edit_file -> full
+   * write_file rewrite, or vice versa, is a different key and stays allowed;
+   * "try a fundamentally different approach" is the actual escape hatch, not
+   * a special-cased reset). Mirrors get_build_errors.ts's in-call circuit
+   * breaker, the one place in the toolset where a repeated failure already
+   * produced a guaranteed behavior change instead of an ignorable suggestion.
    */
-  editFailures?: Map<string, number>;
+  mutationFailureStreak?: Map<string, { message: string; count: number }>;
   /**
    * Tracks how many times get_build_errors has been called in this agent run.
    * After 3 calls the tool returns a hard STOP message to prevent infinite

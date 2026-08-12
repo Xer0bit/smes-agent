@@ -196,7 +196,56 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
       // Inconclusive, not confirmed-broken   leave lastBuildErrorsHealthy as-is.
       return 'Preview is unhealthy but no error details are available yet. Try again in a moment.';
     }
-    ctx.lastBuildErrorsHealthy = false;
+
+    // ─── Scope "healthy" to files THIS RUN touched, not the whole project ────
+    // Lifecycle audit finding (2026-08-11/12): this check is whole-project
+    // (typecheck.js walks the entire src/ tree), so a project carrying real,
+    // pre-existing errors in files nobody asked about this turn -- confirmed
+    // live on project dfe41091, 20 such errors -- made ctx.lastBuildErrorsHealthy
+    // permanently unable to become true. Every closure-verify gate that reads
+    // it (RESOLUTION_CLAIM_RE, phantom-narration, unfulfilled-promise,
+    // stuck-analysis) would then force its corrective loop and downgrade to an
+    // honest-fail override on EVERY future run in that project, even one that
+    // correctly and completely fixes the actually-reported bug. Scope the
+    // signal to files this run wrote: only applies once there's something to
+    // scope against (ctx.pendingPreviewFiles non-empty) -- the pre-write
+    // diagnostic call (finding what's broken, before any fix is attempted)
+    // keeps today's whole-project meaning, since every closure gate that reads
+    // this flag is already guarded on anySuccessfulWriteThisRun and so never
+    // fires before a write happens anyway. The full error list (condensed,
+    // circuit breaker, blast radius) below is UNCHANGED -- the model still
+    // sees everything; only the pass/fail signal used for closure-verification
+    // is scoped.
+    const touchedPaths = ctx.pendingPreviewFiles ? new Set(ctx.pendingPreviewFiles.keys()) : new Set<string>();
+    const errorFilePath = (e: string): string | null => {
+      const m = e.match(/^([^\s:]+\.[a-zA-Z0-9]+):\d+:\d+/);
+      return m ? m[1] : null;
+    };
+    let outOfScopeErrorCount = 0;
+    if (touchedPaths.size > 0) {
+      let touchedFileErrorCount = 0;
+      for (const e of errors) {
+        const p = errorFilePath(e);
+        if (p !== null && touchedPaths.has(p)) touchedFileErrorCount++;
+        else outOfScopeErrorCount++;
+      }
+      ctx.lastBuildErrorsHealthy = touchedFileErrorCount === 0;
+    } else {
+      ctx.lastBuildErrorsHealthy = false;
+    }
+
+    // Touched files are clean but unrelated errors sit elsewhere: say so
+    // plainly and stop here, rather than falling into the full error dump
+    // below (which would read as "still broken" and contradict the
+    // healthy=true signal just set   confusing the model into thinking its
+    // own fix needs more work when it doesn't).
+    if (ctx.lastBuildErrorsHealthy && outOfScopeErrorCount > 0) {
+      return (
+        `The file(s) you changed this run are clean -- no errors. ${outOfScopeErrorCount} error(s) remain elsewhere in the ` +
+        `project, in files you didn't touch this run; those are pre-existing and out of scope for this request. ` +
+        `Do not attempt to fix them unless the user asked for that.`
+      );
+    }
 
     const diagnosticPrefix = data.diagnosticKind && data.diagnosticKind !== 'healthy'
       ? `${data.diagnosticKind} errors`

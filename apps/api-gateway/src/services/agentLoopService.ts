@@ -32,6 +32,7 @@ import {
   isLikelyFixRequest, buildFallbackCandidates, createProviderForModel, resolveProviderWithFallback,
 } from './agentProviderResolution.js';
 import { snapshotProject, restoreSnapshot, createGeminiRunCache, SNAPSHOTS_DIR, MAX_SNAPSHOTS_PER_PROJECT } from './agentSnapshot.js';
+import { computeErrorFingerprint, recordThrashTrip } from './thrashDetector.js';
 import {
   EXTRACTABLE_DOC_TYPES, extractDocumentText, isReferenceScreenshot, isScreenshotFilename,
   hasEmbedIntent, supportsVision, analyzeImageWithVision,
@@ -462,7 +463,14 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // not persist across separate agent runs.
   const toolFailureStreak = new Map<string, { message: string; count: number }>();
   const CIRCUIT_BREAKER_THRESHOLD = 3;
+  // Same threshold as get_build_errors.ts's own in-call breaker (keep them
+  // matched -- both exist to catch "same error N times in a row").
+  const MUTATION_CIRCUIT_BREAKER_THRESHOLD = 3;
   let circuitBreakerNote = '';
+  // Mutation tools whose per-(tool,path) failure streak is tracked in
+  // ctx.mutationFailureStreak for agentToolSet.ts's dispatcher to hard-block
+  // on -- see that gate's comment for the full rationale.
+  const MUTATION_TOOLS = new Set(['write_file', 'edit_file', 'delete_file', 'rename_file']);
 
   // ── Stuck-analysis detector ─────────────────────────────────────────────
   // The identical-error circuit breaker above only fires when a TOOL returns
@@ -568,7 +576,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     userId,
     readFiles: new Set<string>(),
     pendingPreviewFiles: new Map<string, string>(),
-    editFailures: new Map<string, number>(),
+    mutationFailureStreak: new Map<string, { message: string; count: number }>(),
     buildErrorCallCount: 0,
     dbQueryCallCount: 0,
     pendingDbChanges: new Map(),
@@ -1257,7 +1265,20 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 includeCapabilities: isEmptyProject,
                 includePreviewEnvironment: isEmptyProject,
               })
-            : getAppBuilderSystemPrompt(promptProfile);
+            // Lifecycle audit finding (2026-08-11/12): promptProfile==='fix'
+            // (set by the isLikelyFixRequest heuristic) and _tier==='fix' (set
+            // by the real classifyRequest classifier, checked above) can
+            // disagree on borderline prompts -- when they do, execution used
+            // to fall through here to app-builder.prompt.ts's OTHER, separately
+            // maintained "fix" builder (getAppBuilderSystemPrompt('fix')),
+            // which strips only 4 sections vs getFixSystemPrompt()'s 8+2,
+            // producing a genuinely different (75.8K vs 69.6K char, measured)
+            // prompt depending on which classifier happened to fire. Route
+            // both paths through the SAME real builder so "fix" always means
+            // one prompt, not two silently-different ones.
+            : promptProfile === 'fix'
+              ? getFixSystemPrompt()
+              : getAppBuilderSystemPrompt(promptProfile);
 
   console.log(
     `[AgentLoop] Prompt profile=${promptProfile} tier=${_tier ?? 'unset'} maxSteps=${MAX_STEPS} staticChars=${staticSystemPrompt.length} ` +
@@ -1900,7 +1921,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // (see ai/dist/index.d.ts's StepResult type)   reading the old name here
         // silently always returned undefined, so cache stats (cacheR/cacheW) were
         // always logged as 0 regardless of whether Anthropic actually cached anything.
-        onStepFinish: ({ text, toolCalls, toolResults, usage, providerMetadata, reasoningText }: any) => {
+        onStepFinish: async ({ text, toolCalls, toolResults, usage, providerMetadata, reasoningText }: any) => {
           stepCount++;
           runLedger.setStep(stepCount);
           const toolNames = (toolCalls ?? []).map((tc: any) => tc.toolName);
@@ -1953,9 +1974,71 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 `(a) diagnose the actual root cause and try something fundamentally different, or ` +
                 `(b) tell the user plainly that this is blocked and why, instead of continuing to retry silently.`;
               // Reset so this doesn't re-fire every single step if the model
-              // (correctly) keeps trying variations that still happen to fail  
+              // (correctly) keeps trying variations that still happen to fail
               // only re-trip after another full streak of identical repeats.
               toolFailureStreak.delete(toolName);
+            }
+          }
+
+          // ── Mutation-tool circuit breaker (lifecycle audit fix, 2026-08-11/12) ──
+          // The generic breaker above is advisory-only (a note the model can
+          // ignore) and keyed by toolName alone. This is the real fix for the
+          // incident that motivated it: write_file retried an IDENTICAL failing
+          // write to tailwind.config.js 5x in a row (project dfe41091,
+          // 2026-08-11 08:52) before the whole run hard-stopped for an unrelated
+          // reason (budget-critical). Keyed by tool+PATH (not just tool) and
+          // written to ctx.mutationFailureStreak (agent-tools/types.ts), which
+          // agentToolSet.ts's dispatch gate reads to actually BLOCK a repeat
+          // call to that exact (tool, path) pair -- not just advise against it.
+          // Second tier reuses get_build_errors.ts's existing, proven, persistent
+          // thrash escalation: a 2nd full trip sets ctx.thrashEscalated, which
+          // every downstream consumer in this file already knows how to act on
+          // (skip retry loops, override false-resolution claims) -- this is a
+          // second PRODUCER for that flag, zero new consumption code.
+          for (const tr of (toolResults ?? []) as any[]) {
+            const toolName = tr?.toolName as string | undefined;
+            const result = tr?.output;
+            if (!toolName || !MUTATION_TOOLS.has(toolName) || typeof result !== 'string') continue;
+            const filePath = toolName === 'rename_file' ? tr?.input?.from : tr?.input?.path;
+            if (typeof filePath !== 'string') continue;
+            const key = `${toolName}:${filePath}`;
+
+            if (!isFailureResult(result)) {
+              ctx.mutationFailureStreak?.delete(key); // success clears the block
+              continue;
+            }
+
+            ctx.mutationFailureStreak = ctx.mutationFailureStreak ?? new Map();
+            const prevMut = ctx.mutationFailureStreak.get(key);
+            if (prevMut && prevMut.message === result) {
+              prevMut.count++;
+            } else {
+              // A DIFFERENT error for the same path is the model trying something
+              // different -- exactly the escape hatch this is meant to allow.
+              // Reset, don't accumulate across unrelated attempts.
+              ctx.mutationFailureStreak.set(key, { message: result, count: 1 });
+            }
+
+            const mutStreak = ctx.mutationFailureStreak.get(key)!;
+            if (mutStreak.count >= MUTATION_CIRCUIT_BREAKER_THRESHOLD) {
+              console.warn(`[AgentLoop] Mutation circuit breaker: "${key}" failed with the identical error ${mutStreak.count}x in a row (user=${userId ?? 'unknown'})`);
+              const fingerprint = computeErrorFingerprint([`${filePath}::${mutStreak.message.slice(0, 80)}`]);
+              const thrash = await recordThrashTrip(projectId, fingerprint);
+              if (thrash.escalate) {
+                ctx.thrashEscalated = true;
+                ctx.thrashFingerprint = fingerprint;
+                ctx.thrashTripCount = thrash.tripCount;
+                circuitBreakerNote = (circuitBreakerNote ? `${circuitBreakerNote}\n\n` : '') +
+                  `THRASH DETECTED: "${filePath}" via ${toolName} has now tripped this circuit breaker ${thrash.tripCount} ` +
+                  `times -- a previous "try something different" nudge did NOT work. STOP trying to fix this file yourself. ` +
+                  `Do not attempt another rewrite, do not state a new root cause, do not claim this is resolved. End your ` +
+                  `response now with an honest status: state plainly you've made ${thrash.tripCount} attempts and it's ` +
+                  `still not resolved, briefly describe what you tried, and ask the user for guidance instead of continuing.`;
+              }
+              // Deliberately NOT deleted (unlike the generic breaker above): the
+              // entry must survive so agentToolSet.ts's dispatch gate can see
+              // this (tool, path) pair is currently blocked. It clears only on
+              // an actual success, or resets on a genuinely different error.
             }
           }
 

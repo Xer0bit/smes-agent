@@ -133,14 +133,29 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
           fileName: args.path,
         });
         if (tsResult.diagnostics && tsResult.diagnostics.length > 0) {
+          // Lifecycle audit finding: this message used to omit line/column/
+          // error code entirely -- only the separate, narrower AST Reflection
+          // Interceptor (agentToolSet.ts) included those. Whether the model got
+          // a localizable error depended on which of two gates happened to
+          // catch the problem first; this one, hit more often, gave it nothing
+          // to localize with, which is a real contributor to the "retry the
+          // identical failing write 5 times" incident (project dfe41091,
+          // 2026-08-11 08:52) -- it couldn't find the actual line to fix.
           const errors = tsResult.diagnostics
             .slice(0, 3)
-            .map(d => ts.flattenDiagnosticMessageText(d.messageText, ' '))
+            .map(d => {
+              const msg = ts.flattenDiagnosticMessageText(d.messageText, ' ');
+              if (d.file && d.start !== undefined) {
+                const { line, character } = d.file.getLineAndCharacterOfPosition(d.start);
+                return `Line ${line + 1}:${character + 1} - TS${d.code}: ${msg}`;
+              }
+              return `TS${d.code}: ${msg}`;
+            })
             .join('; ');
           return (
             `ERROR: Cannot write ${args.path}   TypeScript/JSX syntax error: ${errors}. ` +
             `The file was NOT written. Common causes: unclosed JSX tags, mismatched tags, missing return expression. ` +
-            `Rewrite the COMPLETE file with valid syntax.`
+            `Rewrite the COMPLETE file with valid syntax, fixing the line(s) named above.`
           );
         }
       } catch (_) {

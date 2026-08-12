@@ -1158,24 +1158,37 @@ export function getAppBuilderBuildSystemPrompt(options?: AppBuilderBuildOptions)
   if (!options?.includeSeo) {
     toStrip.push('SEO (MANDATORY   auto-run after every website build)');
   }
+
+  let result = toStrip.length === 0 ? APP_BUILDER_SYSTEM_PROMPT : stripSections(APP_BUILDER_SYSTEM_PROMPT, ...toStrip);
+
+  // Lifecycle audit fix (2026-08-11/12): 'Integration And Database Guidance'
+  // was never a real heading in this file -- stripSections (top-level "# "
+  // only) silently no-op'd on it, so every build-tier request always carried
+  // the full ~16.6K-char / ~4.1K-token "Hosted database" block regardless of
+  // whether the project even has a database, verified by executing this
+  // function with includeIntegration true vs false and diffing byte-identical
+  // output. The real content is a "## " sub-heading nested inside "Execution
+  // Strategy" -- use the sub-section stripper (already existed, just never
+  // wired to this flag) with its actual title. The env-var routing table
+  // above it ("Which connection is which") stays in every prompt regardless
+  // -- it also covers auth, not just the database, so it's not DB-specific.
   if (!options?.includeIntegration) {
-    toStrip.push('Integration And Database Guidance');
+    result = stripSubSections(result, 'Hosted database (paid plans only):');
   }
 
-  return toStrip.length === 0 ? APP_BUILDER_SYSTEM_PROMPT : stripSections(APP_BUILDER_SYSTEM_PROMPT, ...toStrip);
+  return result;
 }
 
-/** Returns the system prompt for plan / confirm / fix profiles. */
-export function getAppBuilderSystemPrompt(profile: 'plan' | 'confirm' | 'fix' | string): string {
-  if (profile === 'fix') {
-    return stripSections(
-      APP_BUILDER_SYSTEM_PROMPT,
-      'Design Philosophy (MANDATORY   apply to every pixel you produce)',
-      'Requirement Gathering',
-      'Starting a New Project (MANDATORY)',
-      'SEO (MANDATORY   auto-run after every website build)',
-    );
-  }
+/** Returns the system prompt for plan / confirm profiles. */
+export function getAppBuilderSystemPrompt(profile: 'plan' | 'confirm' | string): string {
+  // Lifecycle audit finding (2026-08-11/12): this used to special-case
+  // profile==='fix' with its OWN section-stripping list, entirely separate
+  // from getFixSystemPrompt() below -- the two produced measurably different
+  // prompts (75.8K vs 69.6K chars) depending on which of two independent
+  // classifiers (isLikelyFixRequest heuristic vs. the real classifyRequest
+  // tier) a given request happened to match. Removed: getFixSystemPrompt()
+  // is now the ONLY fix-tier prompt builder anywhere in this file, called
+  // directly by agentLoopService.ts for every code path that means "fix."
   return APP_BUILDER_SYSTEM_PROMPT;
 }
 
@@ -1215,7 +1228,6 @@ export function getFixSystemPrompt(): string {
     'Design Philosophy (MANDATORY   apply to every pixel you produce)',
     'Requirement Gathering',
     'SEO (MANDATORY   auto-run after every website build)',
-    'Integration And Database Guidance',
     'Reference Screenshots (CRITICAL   never embed)',
     // New-build-only sections   a fix run never builds a new app or a new
     // multi-file feature from scratch, so app-complexity selection, the
@@ -1225,11 +1237,19 @@ export function getFixSystemPrompt(): string {
     'Complex App Protocol (MANDATORY   apps with 5+ files)',
     'File Completeness Rules (CRITICAL   prevent blank/Welcome preview)',
   );
-  // Strip new-project-specific subsections only (keep component manifest + build order)
+  // Strip new-project-specific subsections only (keep component manifest + build order).
+  // Lifecycle audit fix (2026-08-11/12): this function was TRYING to strip the
+  // hosted-database block above via 'Integration And Database Guidance', a
+  // heading that was never real (stripSections top-level-only, silent no-op)
+  // -- fix tier's prompt carried the full ~16.6K-char DB section every single
+  // request, which is why it measured LARGER than edit tier's (69.6K vs
+  // 53.4K), backwards from what this file's own doc comments assume. Verified
+  // by executing this function before/after and diffing output length.
   return stripSubSections(
     base,
     'For NEW projects (no existing pages):',
     'Large Build Chunking (MANDATORY for 5+ files)',
+    'Hosted database (paid plans only):',
   );
 }
 
@@ -1255,7 +1275,12 @@ export function getEditSystemPrompt(): string {
     'Design Philosophy (MANDATORY   apply to every pixel you produce)',
     'Requirement Gathering',
     'SEO (MANDATORY   auto-run after every website build)',
-    'Integration And Database Guidance',
+    // Hosted-database stripping is NOT listed here -- 'Integration And
+    // Database Guidance' was never a real heading (see getFixSystemPrompt's
+    // comment for the full incident), so this entry did nothing; removed
+    // rather than left as dead code that looks functional. The actual strip
+    // already happens correctly below via stripSubSections, which is why
+    // this function's measured output was correct despite the bug.
     'Reference Screenshots (CRITICAL   never embed)',
     // New-build-only sections   see getFixSystemPrompt for rationale; an edit
     // run never builds a new app or a new multi-file feature from scratch.
