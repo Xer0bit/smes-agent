@@ -728,7 +728,8 @@ After completing, tell user: "I've also set up your search engine metadata so yo
 - \`edit_file\`   Apply a targeted SEARCH/REPLACE change without rewriting the whole file. Prefer this for any change to an existing file.
 - \`rename_file\`   Rename a file.
 - \`delete_file\`   Delete a file.
-- \`run_command({ command: "npm install <packages>" })\`   Install npm packages needed by your code. Only \`npm install/uninstall/add/remove\` commands are allowed. Install multiple packages in one call. The package is available immediately after a successful install.
+- \`run_command({ command: "npm install <packages>" })\`   Install npm packages needed by your code. Install multiple packages in one call. The package is available immediately after a successful install.
+- \`run_command({ command: "npm test" })\`   Run the project's test suite and read the real result. Also \`npx vitest run <file>\` for one file, and \`npx tsc --noEmit\` to type-check without building. A FAILED result is a real answer, not a tool malfunction   read the output and fix the cause.
 
 **All file operations MUST go through these tool calls. NEVER emit \`<ecomgear-write>\`, \`<ecomgear-edit>\`, \`<ecomgear-delete>\`, \`<ecomgear-rename>\`, or any other XML tag as raw text   those are deprecated and will not be applied.**
 
@@ -1039,7 +1040,7 @@ When building complex apps (chat apps, dashboards, e-commerce, social clones, mu
 **Batch your reads, same as your writes:** if you already know you need 3-4 files (e.g. a component and the pages that import it) before you can plan the change, call \`read_file\`/\`grep\` for all of them in ONE step, not one file per step. One read per step is only correct when the NEXT file to read depends on what you just found in the last one.
 
 ## What You CANNOT Do (no exceptions):
-- **No arbitrary shell commands**   \`run_command\` is restricted to npm install/uninstall only. Any other command will be rejected.
+- **No arbitrary shell commands**   \`run_command\` only accepts npm install/uninstall, \`npm test\`, \`npx vitest run <file>\`, and \`npx tsc --noEmit\`. Any other command will be rejected.
 - **No server control**   You cannot start, stop, or restart any process.
 - **No network access**   You cannot make HTTP requests, fetch URLs, or query external APIs during your response.
 
@@ -1245,12 +1246,37 @@ export function getFixSystemPrompt(): string {
   // request, which is why it measured LARGER than edit tier's (69.6K vs
   // 53.4K), backwards from what this file's own doc comments assume. Verified
   // by executing this function before/after and diffing output length.
+  //
+  // Gap G7 (2026-08-12): fix tier is where "I fixed it" gets claimed without
+  // evidence, because until run_command gained verification commands there was
+  // no evidence available to gather. Now there is, so ask for it here -- and
+  // ONLY here. Deliberately not in the shared prompt: a build/feature run
+  // writing tests for code that does not exist yet is waste, and the shared
+  // prompt is already oversized (gap G16).
   return stripSubSections(
     base,
     'For NEW projects (no existing pages):',
     'Large Build Chunking (MANDATORY for 5+ files)',
     'Hosted database (paid plans only):',
-  );
+  ) + `
+
+## Proving the fix (fix tier only)
+
+You have tools that produce evidence. Use them instead of asserting.
+
+- For a LOGIC bug (wrong value, wrong condition, broken handler, bad state):
+  write a test that FAILS for the reason the user reported, then fix the code,
+  then re-run until it passes. A test that never failed proves nothing.
+  \`write_file\` the test as \`src/<Thing>.test.tsx\`, then
+  \`run_command({ command: "npm test" })\`.
+- For any change touching types or imports: \`run_command({ command: "npx tsc --noEmit" })\`.
+- For a purely visual change (colour, spacing, copy): no test. Do not waste a
+  step writing one.
+- If a verification command reports FAILED, that is a real answer about your
+  code. Read the output and fix the cause. Do not re-run unchanged hoping for
+  a different result, and never describe a failing state as fixed.
+- If you could not verify, say exactly that. "I changed X but could not verify
+  it" is a good answer. "Fixed!" without evidence is not.`;
 }
 
 /**

@@ -3392,6 +3392,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const droppedFiles: string[] = [];
 
     let previewPushOk = false;
+    // Result of the pre-response smoke gate (gap G2), read again by the
+    // post-response observability write so one run never launches Chromium
+    // twice to answer the same question. Declared at this scope because both
+    // sites need it. Null means the gate never ran.
+    let smokeGateResult: { ok: boolean; errors: string[]; skipped: boolean } | null = null;
     if (runtimeMode === 'build' && agentWroteFiles) {
       generateStatus(projectId, { kind: 'lifecycle', phase: 'preview-sync' }).then((s) => {
         if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
@@ -3449,6 +3454,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           req.end();
         });
 
+      // Gap G2 (2026-08-12): browser smoke-check failures are injected here as a
+      // ONE-SHOT so the existing, proven repair loop consumes them through its
+      // normal error source instead of needing a second parallel repair path.
+      // Cleared the moment the loop reads them (see the clear inside the repair
+      // loop) -- they must never be sticky, or a check that keeps failing would
+      // hold the loop open for all 3 attempts on a signal that is far newer and
+      // less proven than build errors.
+      let pendingSmokeErrors: string[] = [];
+      // True only when the browser smoke check (not a build/type/runtime error)
+      // is what marked this run unhealthy. Used to keep an unproven signal away
+      // from the most destructive path in this file -- see the revert guard.
+      let smokeTriggeredFailure = false;
       const getPreviewStatus = async (): Promise<{ healthy: boolean; errors: string[]; diagnosticKind?: string }> => {
         const statusRes = await httpGet(`${previewServiceUrl}/preview/${projectId}/status`);
         if (statusRes.status !== 200) {
@@ -3456,9 +3473,20 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         }
         try {
           const parsed = JSON.parse(statusRes.body) as { healthy?: boolean; errors?: string[]; diagnosticKind?: string };
+          const baseErrors = Array.isArray(parsed.errors) ? parsed.errors : [];
+          if (pendingSmokeErrors.length > 0) {
+            return {
+              healthy: false,
+              errors: [...baseErrors, ...pendingSmokeErrors],
+              // 'runtime' selects the runtime-error repair prompt, which is the
+              // correct one: a smoke failure is by definition a crash that only
+              // appears once the page actually renders.
+              diagnosticKind: 'runtime',
+            };
+          }
           return {
             healthy: Boolean(parsed.healthy),
-            errors: Array.isArray(parsed.errors) ? parsed.errors : [],
+            errors: baseErrors,
             diagnosticKind: typeof parsed.diagnosticKind === 'string' ? parsed.diagnosticKind : undefined,
           };
         } catch {
@@ -3624,6 +3652,69 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             console.warn(`[AgentLoop] Preview reported unhealthy on second check (${repairDiagnosticKind}): ${hint}`);
           }
         }
+
+        // ── Gap G2: browser smoke check as a REPAIR TRIGGER ──────────────────
+        // Runs only when every cheap signal already says healthy -- i.e. exactly
+        // when we are about to tell the user it worked. That placement is the
+        // point: the cost is paid only on runs that would otherwise be declared
+        // successful, and "compiles clean, renders a blank page" is precisely
+        // the failure this catches. When the build is already known broken the
+        // repair loop below is engaged anyway and this would add nothing.
+        //
+        // The original Phase 2b pass (2026-08-09) left this observability-only
+        // "until real false-positive rates are known". Those rates could not be
+        // read when this was written, so the design is defensive rather than
+        // tuned: a confirm pass kills the dominant false-positive source (a cold
+        // Vite still optimizing deps), the injection is one-shot so it can never
+        // hold the repair loop open, and AGENT_SMOKE_REPAIR=off disables it
+        // without a redeploy.
+        if (
+          previewPushOk &&
+          process.env.AGENT_SMOKE_REPAIR !== 'off' &&
+          // "The agent actually changed something" -- the same condition the
+          // post-response observability pass expresses via doneFilesToWrite,
+          // which is declared later. Its other half (a plan-mode guard) is
+          // omitted because this branch is already unreachable in plan mode.
+          agentWroteFiles &&
+          // Tier coverage (gap G3, folded in here because G2 is inert without
+          // it). Measured on 82 real runs 2026-08-09..08-12: edit 56, fix 13,
+          // feature 9, build 0. The original feature/build-only gate therefore
+          // admitted at most 11% of traffic and NEVER ran on the edit/fix runs
+          // where "you said you fixed it but the page is white" actually
+          // originates -- which is why preview_errors is null on all 82 rows.
+          // micro stays excluded: 8-step trivial tweaks do not justify a browser
+          // launch, and run_command is already excluded there for the same reason.
+          _tier !== 'micro' &&
+          !abortController.signal.aborted &&
+          runTokens.total < RUN_TOKEN_CAP
+        ) {
+          try {
+            const smokeBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
+            const smokeUrl = `${smokeBase}/preview/${projectId}`;
+            const first = await runPreviewSmokeCheck(smokeUrl);
+            smokeGateResult = first;
+            if (!first.skipped && !first.ok) {
+              // Confirm before acting: one blank reading is a suspicion, not a
+              // verdict. Same reasoning as the preview's own blank-check client
+              // script, which requires a second pass before it reports.
+              await new Promise<void>(r => setTimeout(r, 2500));
+              const confirmed = await runPreviewSmokeCheck(smokeUrl);
+              smokeGateResult = confirmed; // the confirm pass is the authoritative reading
+              if (!confirmed.skipped && !confirmed.ok) {
+                pendingSmokeErrors = confirmed.errors.slice(0, 4);
+                smokeTriggeredFailure = true;
+                previewPushOk = false;
+                repairDiagnosticKind = 'runtime';
+                console.warn(`[AgentLoop] Smoke check confirmed failure project=${projectId} -- triggering repair: ${pendingSmokeErrors.join('; ').slice(0, 300)}`);
+              } else {
+                console.log(`[AgentLoop] Smoke check recovered on confirm pass project=${projectId} (first reading was a false positive)`);
+              }
+            }
+          } catch (e) {
+            // Never let this block a run every other signal calls healthy.
+            console.warn(`[AgentLoop] Smoke-check gate errored (ignored): ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
       }
       if (!previewPushOk && !pushWasTransportFailure) {
         const isRuntimeRepair = repairDiagnosticKind === 'runtime';
@@ -3661,6 +3752,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           if (status.healthy) { previewPushOk = true; break; }
 
           const errors = status.errors.slice(0, 15);
+          // Gap G2: one-shot consume. Injected smoke errors seed the FIRST
+          // attempt only; from here the loop reads pure preview status, so a
+          // check that keeps failing can never hold all 3 attempts open on a
+          // signal newer and less proven than build errors. Cleared even when
+          // `errors` is empty, so no path leaves them sticky.
+          pendingSmokeErrors = [];
           if (errors.length === 0) break;
           lastRepairErrors = errors;
 
@@ -3987,6 +4084,28 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         } // end token-budget guard for repair loop
       } // end if (!previewPushOk && !pushWasTransportFailure)   repair section
 
+      // Gap G2 safety: a smoke-check failure must never reach the silent-revert
+      // path below. That path throws away everything the agent just built, which
+      // is the right call for a build that genuinely does not compile -- but the
+      // smoke check is a far newer signal whose real-world false-positive rate
+      // has not been measured. A false positive here would silently delete work
+      // the user explicitly asked for, which is strictly worse than the
+      // pre-existing behaviour for this case (ship it; the user sees the page and
+      // says so). The user still gets the Auto-fix button via 'repair-failed',
+      // and the post-response pass still records preview_errors, so the signal is
+      // not lost -- only its power to destroy work is.
+      if (smokeTriggeredFailure && !previewPushOk) {
+        console.warn('[AgentLoop] Smoke-triggered failure survived repair -- NOT reverting (unproven signal); surfacing to the user instead');
+        if (lastRepairErrors.length > 0) sink.emit('repair-failed', { errors: lastRepairErrors.slice(0, 5) });
+        // Restoring the flag is accurate, not a cover-up: the push genuinely DID
+        // succeed (files are on disk and served) -- only the rendered result is
+        // suspect. Downstream this keeps the revision's preview_url/thumbnail
+        // update alive so the work stays reachable, and lets the post-response
+        // pass record preview_errors. The user is not told everything is fine:
+        // 'repair-failed' above drives the Auto-fix affordance.
+        previewPushOk = true;
+      }
+
       if (!previewPushOk && !pushWasTransportFailure) {
           // All repair attempts exhausted. Silently restore the pre-agent state so
           // the user sees a clean working preview instead of broken generated code.
@@ -4233,10 +4352,22 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // for this) and only when the push already looked healthy and code
       // actually changed -- no point checking a run that wrote nothing.
       let previewSmokeErrors: string | null = null;
-      if (previewPushOk && doneFilesToWrite.length > 0 && (_tier === 'feature' || _tier === 'build')) {
+      // Same tier coverage as the repair-triggering gate above (gap G3): the
+      // feature/build-only restriction meant this recorded nothing for 3 days
+      // straight, because 84% of real runs are edit or fix.
+      //
+      // Reuses the pre-response gate's reading when there is one -- that gate
+      // already loaded this exact URL in a real browser moments ago, so
+      // re-launching Chromium here would double the cost to re-answer a
+      // question already answered. Only runs the check itself when the gate
+      // did not (kill switch off, or the run reached here another way).
+      if (previewPushOk && doneFilesToWrite.length > 0 && _tier !== 'micro') {
         try {
-          const smokeCheckPreviewBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
-          const smokeResult = await runPreviewSmokeCheck(`${smokeCheckPreviewBase}/preview/${projectId}`);
+          let smokeResult = smokeGateResult;
+          if (!smokeResult) {
+            const smokeCheckPreviewBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
+            smokeResult = await runPreviewSmokeCheck(`${smokeCheckPreviewBase}/preview/${projectId}`);
+          }
           if (!smokeResult.skipped && !smokeResult.ok) {
             previewSmokeErrors = smokeResult.errors.join('; ').slice(0, 2000);
             console.warn(`[AgentLoop] Preview smoke check failed for project=${projectId}: ${previewSmokeErrors}`);

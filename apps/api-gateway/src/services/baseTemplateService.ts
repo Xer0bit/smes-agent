@@ -202,7 +202,34 @@ async function verifyOrFixRollupNativeBinary(templateDir: string): Promise<void>
 // ─── Scaffold files written into every new project ────────────────────────────
 // These files are copied (not hard-linked) since each project may customise them.
 
+// Test scaffolding (gap G7, 2026-08-12). Exported because run_command's
+// verification preflight writes these into any project that has a test runner
+// but no config -- measured live, only 1 of 190 projects had a vitest config,
+// so a React component test would have died on "document is not defined" and
+// sent the agent chasing a defect that was really a missing jsdom environment.
+export const VITEST_CONFIG_TS = `import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+
+export default defineConfig({
+  plugins: [react()],
+  // process.cwd() (not __dirname): vitest always runs from the project root,
+  // and __dirname does not exist in an ESM config ("type": "module").
+  resolve: { alias: { '@': path.resolve(process.cwd(), './src') } },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+  },
+});
+`;
+
+export const VITEST_SETUP_TS = `import '@testing-library/jest-dom';
+`;
+
 const SCAFFOLD_FILES: Record<string, string> = {
+  'vitest.config.ts': VITEST_CONFIG_TS,
+  'src/test/setup.ts': VITEST_SETUP_TS,
   'vite.config.ts': `import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
