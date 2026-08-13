@@ -12,6 +12,7 @@
 import { getLlmControlState, updateLlmControlState } from './llm-control.service.js';
 import { logger } from '../utils/logger.js';
 import { isAuthOrBillingError } from './agentProviderResolution.js';
+import { AlertingService } from './alerting.service.js';
 
 // Lifecycle audit finding (2026-08-11/12): today's ~11-hour Anthropic outage
 // ("credit balance too low") went undetected by this exact health-check
@@ -282,6 +283,22 @@ export async function testAndAutoDisableProviders(): Promise<AllProviderResults>
   if (passing.length > 0) logger.info(`[LlmHealth] Enabled providers: ${passing.join(', ')}`);
   if (failing.length > 0) logger.warn(`[LlmHealth] Disabled providers: ${failing.join(', ')}   admin can re-enable from Settings after fixing.`);
   if (passing.length === 0) logger.error('[LlmHealth] No LLM providers are functional. All AI features disabled.');
+
+  // Alert only on a genuine ok->not-ok transition (or the very first check,
+  // where a null baseline means "no prior state to compare against" -- a
+  // server starting with a broken provider is real information, not noise).
+  // A provider that was already failing last cycle must NOT re-alert here,
+  // or a sustained outage would fire once per hourly cycle indefinitely.
+  const previousResultsByProvider = lastResults
+    ? new Map(Object.entries(lastResults) as [string, ProviderTestResult][])
+    : null;
+  for (const [provider, result] of Object.entries(results) as [string, ProviderTestResult][]) {
+    if (result.ok) continue;
+    const wasAlreadyFailing = previousResultsByProvider?.get(provider)?.ok === false;
+    if (!wasAlreadyFailing) {
+      await AlertingService.dispatch({ provider, reason: result.reason, severity: 'critical' });
+    }
+  }
 
   lastResults = results;
   return results;
