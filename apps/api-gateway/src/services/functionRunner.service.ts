@@ -129,7 +129,10 @@ function buildNoDbHelper(): Record<string, (...a: unknown[]) => never> {
   return { select: fail, insert: fail, update: fail, delete: fail, count: fail, rpc: fail };
 }
 
-function buildDbHelper(ctx: FunctionContext) {
+// Exported for direct unit testing of the db.* PostgREST bridge -- the actual
+// call site (runEdgeFunction, below) drives it from inside an isolated-vm
+// sandbox, which isn't worth spinning up just to test a fetch wrapper.
+export function buildDbHelper(ctx: FunctionContext) {
   const base = `${ctx.apiUrl}/rest/v1`;
   const headers = {
     'Content-Type': 'application/json',
@@ -194,7 +197,22 @@ function buildDbHelper(ctx: FunctionContext) {
     },
     async rpc(fn: string, args: unknown = {}) {
       const res = await fetch(`${base}/rpc/${fn}`, { method: 'POST', headers, body: JSON.stringify(args), signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS) });
-      if (!res.ok) throw new Error(`db.rpc failed: ${res.status} ${await res.text()}`);
+      if (!res.ok) {
+        // Resolve a PostgREST-shaped { data: null, error } instead of throwing.
+        // Real generated code (e.g. pm-auth.js's register/login actions) always
+        // destructures `const { data, error } = await db.rpc(...)` and branches
+        // on `error.message` for specific cases (duplicate email, bad
+        // credentials). Throwing here made that branch unreachable -- the
+        // reject skipped straight past it to the function's own outer catch,
+        // which only had a generic "unexpected error" message to fall back on.
+        // Kept in sync with the identical fix in
+        // apps/tenant-functions-runner/runEdgeFunction.js (the file this one
+        // is ported to; see that file's own header comment).
+        const bodyText = await res.text();
+        let parsed: Record<string, unknown>;
+        try { parsed = JSON.parse(bodyText); } catch { parsed = { message: bodyText }; }
+        return { data: null, error: { ...parsed, status: res.status } };
+      }
       return await res.json();
     },
   };

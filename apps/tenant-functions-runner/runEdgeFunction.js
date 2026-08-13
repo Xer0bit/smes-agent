@@ -75,7 +75,22 @@ function buildDbHelper(ctx) {
         headers,
         body: JSON.stringify(args),
       });
-      if (!res.ok) throw new Error(`db.rpc failed: ${res.status} ${await res.text()}`);
+      if (!res.ok) {
+        // Resolve a PostgREST-shaped { data: null, error } instead of throwing.
+        // Real generated code (e.g. pm-auth.js's register/login actions) always
+        // destructures `const { data, error } = await db.rpc(...)` and branches
+        // on `error.message` for specific cases (duplicate email, bad
+        // credentials). Throwing here made that branch unreachable -- the
+        // reject skipped straight past it to the function's own outer catch,
+        // which only had a generic "unexpected error" message to fall back on.
+        // Live incident: a 23505 duplicate-email conflict on register_and_login
+        // surfaced as "An unexpected server error occurred" instead of the
+        // function's own "An account with this email already exists." branch.
+        const bodyText = await res.text();
+        let parsed;
+        try { parsed = JSON.parse(bodyText); } catch { parsed = { message: bodyText }; }
+        return { data: null, error: { ...parsed, status: res.status } };
+      }
       return res.json();
     },
   };
