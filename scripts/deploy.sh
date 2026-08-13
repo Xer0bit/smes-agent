@@ -108,12 +108,19 @@ build_deploy_stage() {
     # the stage ROOT (the api-gateway build below does its own real npm ci in
     # its own directory -- never through a symlink).
     ln -s "$PROJECT_DIR/node_modules" "$STAGE_DIR/node_modules"
-    # Deployed-SHA stamp: dropped at the stage root so it rides along into
-    # every target's live directory. verify_remote_sha() below reads it back
-    # after a deploy to prove the SHA that's actually LIVE matches the SHA
-    # that was just pushed -- a real answer to "did this deploy actually
-    # land, or is something still running old code", not just a hope.
-    echo "$(git -C "$PROJECT_DIR" rev-parse HEAD)" > "$STAGE_DIR/.deployed-sha"
+    # Deployed-SHA stamp: verify_remote_sha() below reads this back after a
+    # deploy to prove the SHA that's actually LIVE matches the SHA that was
+    # just pushed. Dropped into EVERY per-service subdirectory a deploy
+    # target uploads independently (not just the stage root) -- each target
+    # scp's only its own subtree (e.g. apps/api-gateway/), so a root-only
+    # stamp never actually reaches any server. Confirmed live 2026-08-13: the
+    # first real deploy after adding this reported a false "version
+    # mismatch: live=<none>" for exactly this reason.
+    local sha; sha="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+    echo "$sha" > "$STAGE_DIR/.deployed-sha"
+    for svc in apps/api-gateway apps/tenant-functions-runner apps/hosting-service; do
+        [ -d "$STAGE_DIR/$svc" ] && echo "$sha" > "$STAGE_DIR/$svc/.deployed-sha"
+    done
     local tracked staged
     tracked=$(git -C "$PROJECT_DIR" ls-files | wc -l)
     staged=$(find "$STAGE_DIR" -type f | wc -l)
