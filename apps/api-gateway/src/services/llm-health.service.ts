@@ -296,7 +296,18 @@ export async function testAndAutoDisableProviders(): Promise<AllProviderResults>
     if (result.ok) continue;
     const wasAlreadyFailing = previousResultsByProvider?.get(provider)?.ok === false;
     if (!wasAlreadyFailing) {
-      await AlertingService.dispatch({ provider, reason: result.reason, severity: 'critical' });
+      // Belt-and-suspenders (followup F-1, 2026-08-13): dispatch() already
+      // catches and logs any delivery failure internally, so this try/catch
+      // is currently redundant -- but the "alert delivery can never block
+      // the health check" guarantee should not rest on a single, unguarded
+      // call site. A future edit inside dispatch() that adds code outside
+      // its own try block would otherwise silently remove the only
+      // protection this invariant has.
+      try {
+        await AlertingService.dispatch({ provider, reason: result.reason, severity: 'critical' });
+      } catch (alertErr) {
+        logger.warn(`[LlmHealth] Alert dispatch threw unexpectedly for ${provider} (non-fatal):`, alertErr);
+      }
     }
   }
 

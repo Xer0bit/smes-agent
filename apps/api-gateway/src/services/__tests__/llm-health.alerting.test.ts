@@ -109,6 +109,29 @@ describe('llm-health provider-disable alert (CP2)', () => {
     await expect(testAndAutoDisableProviders()).resolves.toBeDefined();
   });
 
+  it('never throws out of testAndAutoDisableProviders even when dispatch() itself throws synchronously (F-1: call-site defensive catch)', async () => {
+    // Distinct from the sink-failure test above: that one exercises
+    // dispatch()'s OWN internal try/catch (a fetch rejection it already
+    // guards against). This one makes AlertingService.dispatch throw
+    // BEFORE any of its own protection can run, proving the NEW call-site
+    // try/catch in testAndAutoDisableProviders -- not dispatch()'s existing
+    // internal one -- is what stops it from escaping.
+    process.env.ALERT_WEBHOOK_URL = 'https://sink.example.com/alert';
+    global.fetch = vi.fn(async (url: string) => {
+      if (typeof url === 'string' && url.includes('anthropic.com')) return anthropicResponse(401) as any;
+      if (typeof url === 'string' && isOtherProviderUrl(url)) return { status: 200, json: async () => ({}) } as any;
+      return { ok: true, status: 200 } as any;
+    }) as any;
+
+    const { testAndAutoDisableProviders } = await import('../llm-health.service.js');
+    const { AlertingService } = await import('../alerting.service.js');
+    vi.spyOn(AlertingService, 'dispatch').mockImplementation(() => {
+      throw new Error('synchronous throw bypassing dispatch()\'s own try/catch entirely');
+    });
+
+    await expect(testAndAutoDisableProviders()).resolves.toBeDefined();
+  });
+
   it('AlertingService.dispatch is a true no-op (no network call) when ALERT_WEBHOOK_URL is unset', async () => {
     delete process.env.ALERT_WEBHOOK_URL;
     const fetchSpy = vi.fn(async () => ({ ok: true, status: 200 }));
