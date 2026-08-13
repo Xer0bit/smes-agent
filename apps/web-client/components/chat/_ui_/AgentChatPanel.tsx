@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, StopCircle, ChevronDown, Zap, Paperclip, X, FileText, Image as ImageIcon, RotateCcw, Sparkles, Bot, ClipboardList } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { ArrowUp, Square, Loader2, StopCircle, ChevronDown, Zap, Paperclip, X, FileText, Image as ImageIcon, RotateCcw, Sparkles, Bot, ClipboardList } from 'lucide-react';
 import ecgAgentLogo from '@/assets/ecgagent.png';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
@@ -1356,7 +1357,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         </div>
       </div>
 
-      {/* ── Input ── */}
+      {/* ── Input   redesigned to match the ai-prompt-box component language
+          (rounded-3xl panel, pill toolbar, circular action button), while every
+          handler below stays wired to this file's own real state: multi-file
+          upload with progress, Build/Plan mode, char limit, Stop-during-generation,
+          paste-to-upload, drag-drop. No fake toggles were carried over. ── */}
       <div
         className="p-2.5 border-t border-white/[0.06]"
         onDragOver={handleDragOver}
@@ -1376,57 +1381,58 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           }}
         />
 
-        <div className="max-h-[32vh] overflow-y-auto overscroll-contain pr-1 sm:max-h-[45vh]">
-          {/* Drag overlay */}
-          {isDragOver && (
-            <div className="mb-2 flex items-center justify-center rounded-xl border-2 border-dashed border-indigo-500/40 bg-indigo-500/[0.06] py-4">
-              <p className="text-xs text-indigo-300">Drop files here</p>
-            </div>
-          )}
-
-          {/* Pending attachment previews */}
-          {(pendingAttachments.length > 0 || uploadingCount > 0) && (
-            <div className="mb-2 flex max-h-28 flex-wrap gap-2 overflow-y-auto overscroll-contain sm:max-h-40">
-              {pendingAttachments.map((att) => (
-                <div
-                  key={att.id}
-                  className="group relative flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[11px] text-gray-300"
-                >
-                  {att.category === 'image' ? (
-                    <img
-                      src={att.previewUrl}
-                      alt={att.name}
-                      className="h-8 w-8 rounded object-cover"
-                    />
-                  ) : (
-                    <FileText className="h-4 w-4 text-gray-500 shrink-0" />
-                  )}
-                  <div className="min-w-0 max-w-[120px]">
-                    <p className="truncate font-medium">{att.name}</p>
-                    <p className="text-[9px] text-gray-600">{formatFileSize(att.size)}</p>
-                  </div>
-                  <button
-                    onClick={() => removePendingAttachment(att.id)}
-                    className="ml-1 rounded p-0.5 text-gray-600 hover:bg-white/10 hover:text-gray-300 transition-colors"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-              {uploadingCount > 0 && (
-                <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[11px] text-gray-500">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  Uploading…
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Textarea   overflow-hidden only wraps this so rounded corners work */}
-          <div className={`rounded-xl overflow-hidden transition-all duration-150
+        <div
+          className={`rounded-3xl px-3 pt-3 pb-2 transition-all duration-200
             ${isDragOver
-              ? 'bg-[#0e0e14] border border-primary/40 shadow-[0_0_0_1px_rgba(45,212,191,0.22)]'
-              : 'bg-[#0c0c10] border border-white/[0.08] focus-within:border-primary/35 focus-within:shadow-[0_0_0_1px_rgba(45,212,191,0.18)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04),0_2px_8px_rgba(0,0,0,0.2)]'}`}>
+              ? 'border border-primary/40 bg-[#0e0e14] shadow-[0_0_0_1px_rgba(45,212,191,0.22)]'
+              : 'border border-white/[0.08] bg-[#0c0c10] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04),0_8px_30px_rgba(0,0,0,0.24)] focus-within:border-primary/35 focus-within:shadow-[0_0_0_1px_rgba(45,212,191,0.18)]'}`}
+        >
+          <div className="max-h-[32vh] overflow-y-auto overscroll-contain pr-1 sm:max-h-[45vh]">
+            {/* Drag overlay */}
+            {isDragOver && (
+              <div className="mb-2 flex items-center justify-center rounded-xl border-2 border-dashed border-indigo-500/40 bg-indigo-500/[0.06] py-4">
+                <p className="text-xs text-indigo-300">Drop files here</p>
+              </div>
+            )}
+
+            {/* Pending attachment previews */}
+            {(pendingAttachments.length > 0 || uploadingCount > 0) && (
+              <div className="mb-2 flex max-h-28 flex-wrap gap-2 overflow-y-auto overscroll-contain sm:max-h-40">
+                {pendingAttachments.map((att) => (
+                  <div
+                    key={att.id}
+                    className="group relative flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[11px] text-gray-300"
+                  >
+                    {att.category === 'image' ? (
+                      <img
+                        src={att.previewUrl}
+                        alt={att.name}
+                        className="h-8 w-8 rounded object-cover"
+                      />
+                    ) : (
+                      <FileText className="h-4 w-4 text-gray-500 shrink-0" />
+                    )}
+                    <div className="min-w-0 max-w-[120px]">
+                      <p className="truncate font-medium">{att.name}</p>
+                      <p className="text-[9px] text-gray-600">{formatFileSize(att.size)}</p>
+                    </div>
+                    <button
+                      onClick={() => removePendingAttachment(att.id)}
+                      className="ml-1 rounded p-0.5 text-gray-600 hover:bg-white/10 hover:text-gray-300 transition-colors"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+                {uploadingCount > 0 && (
+                  <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[11px] text-gray-500">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Uploading…
+                  </div>
+                )}
+              </div>
+            )}
+
             <Textarea
               ref={inputRef}
               placeholder={
@@ -1448,96 +1454,103 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 }
               }}
               disabled={isGenerating || !projectId}
-              className="min-h-[52px] max-h-[140px] w-full resize-none overflow-y-auto bg-transparent border-0 focus-visible:ring-0 shadow-none text-[12px] text-gray-200 placeholder:text-gray-600 px-3 pt-2.5 pb-2.5"
+              className="min-h-[44px] max-h-[140px] w-full resize-none overflow-y-auto bg-transparent border-0 focus-visible:ring-0 shadow-none text-[12px] text-gray-200 placeholder:text-gray-600 px-0 py-1"
             />
           </div>
-        </div>
 
-        {/* Over-limit warning */}
-        {input.length > MAX_INPUT_CHARS && (
-          <p className="text-[11px] text-red-400 px-1 mt-1">
-            Message is too long. Please shorten it before sending ({input.length - MAX_INPUT_CHARS} characters over the {MAX_INPUT_CHARS.toLocaleString()} limit).
-          </p>
-        )}
+          {/* Over-limit warning */}
+          {input.length > MAX_INPUT_CHARS && (
+            <p className="text-[11px] text-red-400 px-1 mt-1">
+              Message is too long. Please shorten it before sending ({input.length - MAX_INPUT_CHARS} characters over the {MAX_INPUT_CHARS.toLocaleString()} limit).
+            </p>
+          )}
 
-        {/* Toolbar */}
-        <div className="flex items-center justify-between mt-1.5 px-0.5">
+          {/* Toolbar */}
+          <div className="flex items-center justify-between pt-1.5">
 
-          {/* Left: attach */}
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isGenerating || !projectId}
-            className="h-6 w-6 flex items-center justify-center rounded-md text-gray-600 hover:text-gray-300 hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-default transition-all"
-            title="Attach file"
-          >
-            <Paperclip className="w-3 h-3" />
-          </button>
-
-          {/* Right: char counter + mode dropdown + send */}
-          <div className="flex items-center gap-1.5">
-            {input.length >= MAX_INPUT_CHARS * 0.8 && (
-              <span className={`text-[10px] tabular-nums transition-colors ${
-                input.length >= MAX_INPUT_CHARS ? 'text-red-400' : input.length >= MAX_INPUT_CHARS * 0.95 ? 'text-amber-400' : 'text-gray-500'
-              }`}>
-                {input.length}/{MAX_INPUT_CHARS}
-              </span>
-            )}
-
-            {/* Build / Plan mode dropdown */}
-            <div className="relative" ref={modelMenuRef}>
-              <button
-                onClick={() => setModelMenuOpen(v => !v)}
-                disabled={isGenerating}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] font-medium text-white/70 hover:text-white hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-default transition-colors"
-              >
-                <span>{agentMode === 'plan' ? 'Plan' : 'Build'}</span>
-                <ChevronDown className="w-3 h-3 opacity-60" />
-              </button>
-
-              {/* Dropdown   opens upward */}
-              {modelMenuOpen && (
-                <div className="absolute bottom-full right-0 mb-1.5 bg-[#1c1c20] border border-white/[0.10] rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.7)] z-[200] overflow-hidden" style={{ minWidth: 210 }}>
-                  <button
-                    onClick={() => { setAgentMode('agent'); setModelMenuOpen(false); }}
-                    className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.05] ${agentMode === 'agent' ? 'text-white' : 'text-white/60'}`}
-                  >
-                    <span className="mt-0.5 w-3.5 shrink-0 text-indigo-400">{agentMode === 'agent' ? '✓' : ''}</span>
-                    <div>
-                      <p className="text-[13px] font-semibold leading-none mb-1">Build</p>
-                      <p className="text-[11px] text-white/40">Make changes directly</p>
-                    </div>
-                  </button>
-                  <button
-                    onClick={() => { setAgentMode('plan'); setModelMenuOpen(false); }}
-                    className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.05] ${agentMode === 'plan' ? 'text-white' : 'text-white/60'}`}
-                  >
-                    <span className="mt-0.5 w-3.5 shrink-0 text-indigo-400">{agentMode === 'plan' ? '✓' : ''}</span>
-                    <div>
-                      <p className="text-[13px] font-semibold leading-none mb-1">Plan</p>
-                      <p className="text-[11px] text-white/40">Discuss before building</p>
-                    </div>
-                  </button>
-                  <div className="px-4 py-2 border-t border-white/[0.06]">
-                    <span className="text-[11px] text-white/25">Toggle with <kbd className="px-1 py-0.5 rounded bg-white/[0.07] text-white/40 font-mono text-[10px]">Alt</kbd> <kbd className="px-1 py-0.5 rounded bg-white/[0.07] text-white/40 font-mono text-[10px]">P</kbd></span>
-                  </div>
-                </div>
-              )}
-            </div>
-
+            {/* Left: attach */}
             <button
-              onClick={() => handleSubmit()}
-              disabled={(!input.trim() && pendingAttachments.length === 0) || isGenerating || !projectId || input.length > MAX_INPUT_CHARS}
-              className="h-7 w-7 flex items-center justify-center rounded-lg
-                bg-primary hover:bg-primary/90
-                disabled:bg-white/[0.05] disabled:text-white/15
-                text-primary-foreground
-                transition-all duration-150"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isGenerating || !projectId}
+              className="h-8 w-8 flex items-center justify-center rounded-full text-[#9CA3AF] hover:text-[#D1D5DB] hover:bg-gray-600/30 disabled:opacity-40 disabled:cursor-default transition-colors"
+              title="Attach file"
             >
-              {isGenerating
-                ? <Loader2 className="w-3 h-3 animate-spin" />
-                : <Send className="w-3 h-3 translate-x-px" />
-              }
+              <Paperclip className="w-4 h-4" />
             </button>
+
+            {/* Right: char counter + mode dropdown + send */}
+            <div className="flex items-center gap-1.5">
+              {input.length >= MAX_INPUT_CHARS * 0.8 && (
+                <span className={`text-[10px] tabular-nums transition-colors ${
+                  input.length >= MAX_INPUT_CHARS ? 'text-red-400' : input.length >= MAX_INPUT_CHARS * 0.95 ? 'text-amber-400' : 'text-gray-500'
+                }`}>
+                  {input.length}/{MAX_INPUT_CHARS}
+                </span>
+              )}
+
+              {/* Build / Plan mode dropdown */}
+              <div className="relative" ref={modelMenuRef}>
+                <button
+                  onClick={() => setModelMenuOpen(v => !v)}
+                  disabled={isGenerating}
+                  className="flex items-center gap-1 px-2 py-1 rounded-full text-[12px] font-medium text-white/70 hover:text-white hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-default transition-colors"
+                >
+                  <span>{agentMode === 'plan' ? 'Plan' : 'Build'}</span>
+                  <ChevronDown className="w-3 h-3 opacity-60" />
+                </button>
+
+                {/* Dropdown   opens upward */}
+                {modelMenuOpen && (
+                  <div className="absolute bottom-full right-0 mb-1.5 bg-[#1c1c20] border border-white/[0.10] rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.7)] z-[200] overflow-hidden" style={{ minWidth: 210 }}>
+                    <button
+                      onClick={() => { setAgentMode('agent'); setModelMenuOpen(false); }}
+                      className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.05] ${agentMode === 'agent' ? 'text-white' : 'text-white/60'}`}
+                    >
+                      <span className="mt-0.5 w-3.5 shrink-0 text-indigo-400">{agentMode === 'agent' ? '✓' : ''}</span>
+                      <div>
+                        <p className="text-[13px] font-semibold leading-none mb-1">Build</p>
+                        <p className="text-[11px] text-white/40">Make changes directly</p>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { setAgentMode('plan'); setModelMenuOpen(false); }}
+                      className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.05] ${agentMode === 'plan' ? 'text-white' : 'text-white/60'}`}
+                    >
+                      <span className="mt-0.5 w-3.5 shrink-0 text-indigo-400">{agentMode === 'plan' ? '✓' : ''}</span>
+                      <div>
+                        <p className="text-[13px] font-semibold leading-none mb-1">Plan</p>
+                        <p className="text-[11px] text-white/40">Discuss before building</p>
+                      </div>
+                    </button>
+                    <div className="px-4 py-2 border-t border-white/[0.06]">
+                      <span className="text-[11px] text-white/25">Toggle with <kbd className="px-1 py-0.5 rounded bg-white/[0.07] text-white/40 font-mono text-[10px]">Alt</kbd> <kbd className="px-1 py-0.5 rounded bg-white/[0.07] text-white/40 font-mono text-[10px]">P</kbd></span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Send / Stop   circular button, morphs to a Stop control while
+                  generating (wired to the real cancelGeneration, unlike the
+                  reference component's unwired Square icon). */}
+              <motion.button
+                whileTap={{ scale: 0.92 }}
+                onClick={() => {
+                  if (isGenerating) cancelGeneration();
+                  else handleSubmit();
+                }}
+                disabled={!isGenerating && ((!input.trim() && pendingAttachments.length === 0) || !projectId || input.length > MAX_INPUT_CHARS)}
+                title={isGenerating ? 'Stop generation' : 'Send message'}
+                className={`h-8 w-8 flex items-center justify-center rounded-full transition-all duration-150
+                  ${isGenerating
+                    ? 'bg-transparent text-red-400 hover:bg-red-400/10'
+                    : 'bg-white text-black hover:bg-white/80 disabled:bg-white/[0.05] disabled:text-white/15'}`}
+              >
+                {isGenerating
+                  ? <Square className="w-3.5 h-3.5 fill-current" />
+                  : <ArrowUp className="w-4 h-4" />
+                }
+              </motion.button>
+            </div>
           </div>
         </div>
 
