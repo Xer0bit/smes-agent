@@ -12,6 +12,7 @@ import { messageService } from '@/eCG/UserPrompt/messageService';
 import { uploadChatAttachment, isAllowedFile, formatFileSize, type ChatAttachment } from '@/services/chatAttachmentService';
 import { useUsage } from '@/contexts/UsageContext';
 import type { StepEntry, LiveFileChange, Message } from '../_utils_/agentChatHelpers';
+import { TypewriterLine } from './TypewriterLine';
 import {
   extractSummary,
   parseToolActivities,
@@ -1322,13 +1323,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   <span className={`absolute inline-flex h-full w-full rounded-full opacity-60 ${hasFile ? 'bg-emerald-400' : 'bg-indigo-400'} animate-ping`} />
                   <span className={`relative inline-flex h-2 w-2 rounded-full ${hasFile ? 'bg-emerald-400' : 'bg-indigo-400'}`} />
                 </span>
-                {/* Headline   the real status (replaces the old raw-file-path line) */}
-                <span
+                {/* Headline   the real status (replaces the old raw-file-path line).
+                    Typed out once per new headline, not the old instant-appear text. */}
+                <TypewriterLine
                   key={headline.slice(0, 20)}
+                  text={headline}
                   className={`text-[11px] truncate max-w-[200px] animate-status-in ${hasStatus ? 'text-white/55' : 'text-white/35 italic'}`}
-                >
-                  {headline}
-                </span>
+                />
                 {/* Secondary: current file, subtle   only when a real status is present */}
                 {hasStatus && fileDetail && (
                   <span className="text-[10px] text-white/25 truncate max-w-[120px] font-mono">

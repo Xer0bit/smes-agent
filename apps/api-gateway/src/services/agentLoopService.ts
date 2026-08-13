@@ -1689,6 +1689,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // implicated, so the main loop is scoped from its very first step instead
     // of relying on prompt text alone.
     //
+    // Extended to edit tier 2026-08-13: originally fix-only, but a near-
+    // identical incident recurred on an EDIT-tier request ("use the real
+    // logos in the project" -- not phrased as a bug report, so it never hit
+    // FIX_RE/fell through to 'edit') -- it wandered into unrelated files and
+    // ended up deleting/renaming pre-existing duplicate type-definition
+    // files nobody asked about. edit tier has the same "read several
+    // existing files, then change some of them" shape fix tier does (25 vs
+    // 28 max steps), so the same guardrail applies.
+    //
     // Best-effort: any failure, timeout, empty, or unusable result falls
     // through to today's unchanged, unscoped behavior -- this must never
     // block the turn. No write/edit/delete/rename tools are in this pass's
@@ -1697,7 +1706,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // this discipline, a bug here can't make the diagnosis pass itself wander
     // and edit the wrong file, because it has no tool that could.
     let diagnosisContext = '';
-    if (_tier === 'fix' && runtimeMode === 'build') {
+    if ((_tier === 'fix' || _tier === 'edit') && runtimeMode === 'build') {
       try {
         const DIAGNOSIS_TOOL_NAMES = new Set(['read_file', 'read_files', 'grep', 'glob_files', 'list_files', 'get_build_errors', 'think']);
         // Fresh, isolated AgentContext -- NOT the real `ctx` -- so this pass's
@@ -1722,12 +1731,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           model: aiProvider,
           system:
             'You are a diagnosis-only agent. You have READ-ONLY tools -- no write/edit/delete/rename capability ' +
-            'exists in this pass, so do not attempt to fix anything. Your only job: investigate the SPECIFIC issue ' +
-            'the user reported and identify which file(s) are actually responsible for it. Do NOT go looking for ' +
-            'other problems elsewhere in the codebase, even if you notice them -- report only what is relevant to ' +
-            'this specific report. Call get_build_errors if it would help confirm the cause. End with a short final ' +
-            'message naming the implicated file(s) and stating the root cause in one sentence.',
-          messages: [{ role: 'user', content: `Diagnose this reported issue (do not fix it): "${prompt}"` }],
+            'exists in this pass, so do not attempt to fix or change anything. Your only job: investigate the ' +
+            'SPECIFIC task or issue the user described and identify which file(s) are actually relevant to it. ' +
+            'Do NOT go looking for other problems elsewhere in the codebase, even if you notice them -- report ' +
+            'only what is relevant to this specific request. Call get_build_errors if it would help confirm a ' +
+            'cause. End with a short final message naming the relevant file(s) and stating in one sentence what ' +
+            'needs to change and why.',
+          messages: [{ role: 'user', content: `Diagnose what this request actually requires touching (do not fix or change anything): "${prompt}"` }],
           tools: diagnosisToolSet,
           stopWhen: stepCountIs(8),
           abortSignal: abortController.signal,
@@ -1756,9 +1766,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         if (implicatedFiles.size > 0 && implicatedFiles.size <= 10 && diagnosisResult.text?.trim()) {
           ctx.declaredScope = new Set([...implicatedFiles].map(normalizeScopePath));
           diagnosisContext =
-            `# Diagnosis (pre-fix investigation pass)\n\n${diagnosisResult.text.trim()}\n\n` +
-            `Scope has been seeded with the file(s) above based on this investigation. Stay focused on resolving ` +
-            `the reported issue in these files; if the task genuinely requires touching others, call declare_scope ` +
+            `# Diagnosis (pre-change investigation pass)\n\n${diagnosisResult.text.trim()}\n\n` +
+            `Scope has been seeded with the file(s) above based on this investigation. Stay focused on this ` +
+            `request in these files; if the task genuinely requires touching others, call declare_scope ` +
             `again with the wider set and say why.\n\n`;
           console.log(`[AgentLoop] Diagnose-before-fix: implicated ${implicatedFiles.size} file(s), scope seeded`);
         } else {

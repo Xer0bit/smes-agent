@@ -132,4 +132,51 @@ describe('agentLoopService diagnose-before-fix scope seeding (fix tier, build mo
     expect(gateResult).toContain('WARNING (out of declared scope)');
     expect(gateResult).toContain('src/pages/Unrelated.css');
   }, 20_000);
+
+  // 2026-08-13: extended to edit tier after a near-identical incident recurred
+  // on an edit-tier request ("use the real logos in the project") that never
+  // hit FIX_RE, so the fix-only diagnosis pass never ran and the model wandered
+  // into unrelated files (deleted/renamed pre-existing duplicate type files).
+  it('also seeds ctx.declaredScope on an edit-tier run (not just fix)', async () => {
+    const sink: AgentEventSink = { emit: () => {}, heartbeat: () => {} };
+
+    await runAgentLoop({
+      prompt: 'Use the real logos in the project',
+      projectId: 'scope-seed-test-project-edit',
+      appPath: tmpDir,
+      mode: 'build',
+      promptIntent: { requestTier: 'edit' },
+      sink,
+    }).catch(() => {});
+
+    expect(diagnosisCallCount).toBe(1);
+    expect(seededDeleteAttempted).toBe(true);
+    const gateResult = await scopeGateResultPromise!;
+    expect(gateResult).toContain('WARNING (out of declared scope)');
+  }, 20_000);
+
+  // Regression guard: tiers outside {fix, edit} (feature/build/micro) must
+  // stay unscoped -- this increment was deliberately not generalized further.
+  // The delete_file tool still exists in a feature-tier toolset (scope
+  // seeding controls ctx.declaredScope, not tool availability), so the mock
+  // still invokes it -- what proves the diagnosis pass itself didn't run is
+  // diagnosisCallCount staying 0, and the gate having nothing to warn about
+  // since ctx.declaredScope was never seeded.
+  it('does NOT run the diagnosis pass on a feature-tier run', async () => {
+    const sink: AgentEventSink = { emit: () => {}, heartbeat: () => {} };
+
+    await runAgentLoop({
+      prompt: 'Build a full checkout flow with cart, payment, and order history',
+      projectId: 'scope-seed-test-project-feature',
+      appPath: tmpDir,
+      mode: 'build',
+      promptIntent: { requestTier: 'feature' },
+      sink,
+    }).catch(() => {});
+
+    expect(diagnosisCallCount).toBe(0);
+    expect(seededDeleteAttempted).toBe(true);
+    const gateResult = await scopeGateResultPromise!;
+    expect(gateResult).not.toContain('WARNING (out of declared scope)');
+  }, 20_000);
 });
