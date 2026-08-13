@@ -2171,7 +2171,9 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   }, [requestedTab, setActiveBuilderTab]);
 
   useEffect(() => {
-    if (activeBuilderTab === 'code') {
+    // canExportCode-gated: without it this could be reached via a bare
+    // ?tab=code URL, bypassing the toggle button's own gate above.
+    if (activeBuilderTab === 'code' && canExportCode) {
       setShowCodeViewer(true);
     }
 
@@ -2726,12 +2728,20 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                 </Button>
               </div>
               <div className="h-3 w-px bg-white/[0.06]" />
-              <Button variant="ghost" size="icon" disabled={!canToggleCodeViewer}
-                onClick={() => { const next = !showCodeViewer; setShowCodeViewer(next); setActiveBuilderTab(next ? 'code' : 'preview'); }}
-                title={showCodeViewer ? "View Preview" : "View Source Code"}
-                className={cn("h-7 w-7 rounded-md", showCodeViewer ? "bg-white/[0.1] text-white" : "text-white/25 hover:text-white/70 hover:bg-white/[0.06] disabled:text-white/10 disabled:hover:bg-transparent")}>
-                <FileCode className="h-3.5 w-3.5" />
-              </Button>
+              {canExportCode && (
+                // Raw source code is a Professional/Enterprise "code export" feature
+                // (see canExportCode below), not something the default vibe-coding
+                // audience should ever see. This toggle used to be visible and
+                // clickable for every plan tier -- the entitlement only lived on
+                // the export button *inside* the panel, so any free-tier user saw
+                // raw source code by default. Gate the toggle itself the same way.
+                <Button variant="ghost" size="icon" disabled={!canToggleCodeViewer}
+                  onClick={() => { const next = !showCodeViewer; setShowCodeViewer(next); setActiveBuilderTab(next ? 'code' : 'preview'); }}
+                  title={showCodeViewer ? "View Preview" : "View Source Code"}
+                  className={cn("h-7 w-7 rounded-md", showCodeViewer ? "bg-white/[0.1] text-white" : "text-white/25 hover:text-white/70 hover:bg-white/[0.06] disabled:text-white/10 disabled:hover:bg-transparent")}>
+                  <FileCode className="h-3.5 w-3.5" />
+                </Button>
+              )}
               <Button variant="ghost" size="icon" disabled={showCodeViewer}
                 onClick={() => setInspectMode(!inspectMode)}
                 title={inspectMode ? "Exit inspect mode" : "Inspect   click an element in the preview to scope your next prompt"}
@@ -3265,7 +3275,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                     </p>
                   </div>
                 </div>
-              ) : showCodeViewer ? (
+              ) : showCodeViewer && canExportCode ? (
                 <div className="w-full h-full bg-[#111113] border border-white/[0.06] rounded-xl overflow-hidden shadow-2xl">
                   <CodeEditorPanel
                     files={(() => {
