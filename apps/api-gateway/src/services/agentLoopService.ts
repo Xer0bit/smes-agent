@@ -3397,6 +3397,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // twice to answer the same question. Declared at this scope because both
     // sites need it. Null means the gate never ran.
     let smokeGateResult: { ok: boolean; errors: string[]; skipped: boolean } | null = null;
+    // True once the revert guard below fires: smoke check failed AND repair
+    // could not bring it back healthy, so the run's files were kept
+    // unverified. Declared at this scope (not inside the block below) because
+    // the 'done' emit further down, outside that block, needs to read it.
+    let smokeFailureSurvivedRepair = false;
     if (runtimeMode === 'build' && agentWroteFiles) {
       generateStatus(projectId, { kind: 'lifecycle', phase: 'preview-sync' }).then((s) => {
         if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
@@ -4096,13 +4101,22 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // not lost -- only its power to destroy work is.
       if (smokeTriggeredFailure && !previewPushOk) {
         console.warn('[AgentLoop] Smoke-triggered failure survived repair -- NOT reverting (unproven signal); surfacing to the user instead');
+        smokeFailureSurvivedRepair = true;
         if (lastRepairErrors.length > 0) sink.emit('repair-failed', { errors: lastRepairErrors.slice(0, 5) });
+        // Same house style as the droppedFiles/genuinelyOutOfSteps honest-copy
+        // blocks below: say what broke and what happens next, instead of
+        // letting the unconditional success toast downstream claim otherwise.
+        sink.emit('text-delta', {
+          text: '\n\n> ⚠️ I made the changes, but a live browser check found the page isn\'t rendering correctly afterward, and the automatic repair couldn\'t confirm a fix. Your changes were kept rather than reverted. Tell me what looks wrong, or send your request again.',
+        });
         // Restoring the flag is accurate, not a cover-up: the push genuinely DID
         // succeed (files are on disk and served) -- only the rendered result is
         // suspect. Downstream this keeps the revision's preview_url/thumbnail
         // update alive so the work stays reachable, and lets the post-response
         // pass record preview_errors. The user is not told everything is fine:
-        // 'repair-failed' above drives the Auto-fix affordance.
+        // 'repair-failed' above drives the Auto-fix affordance, and the
+        // text-delta plus smokeFailureSurvivedRepair flag above/below keep the
+        // 'done' event from claiming an unverified run succeeded.
         previewPushOk = true;
       }
 
@@ -4316,6 +4330,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // Only expose snapshot to frontend when code actually changed
       snapshotId: doneFilesToWrite.length > 0 ? snapshotId : null,
       previewPushed: previewPushOk,
+      // Files were kept (not reverted) but a browser smoke check found the
+      // rendered page broken and repair couldn't confirm a fix -- the frontend
+      // uses this to hold back its success toast for this run only.
+      smokeFailureSurvivedRepair,
       needsAutoContinue,
       continuationPrompt,
     });

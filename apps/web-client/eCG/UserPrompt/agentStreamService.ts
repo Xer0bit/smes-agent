@@ -417,6 +417,7 @@ export async function streamAgentGeneration(params: {
                 snapshotId: typeof payload.snapshotId === 'string' ? payload.snapshotId : undefined,
                 previewPushed: payload.previewPushed === true,
                 ghostRun: payload.ghostRun === true,
+                smokeFailureSurvivedRepair: payload.smokeFailureSurvivedRepair === true,
                 costUsd: typeof payload.costUsd === 'number' ? payload.costUsd : undefined,
                 ecoUsed: typeof payload.ecoUsed === 'number' ? payload.ecoUsed : undefined,
                 needsAutoContinue: payload.needsAutoContinue === true,

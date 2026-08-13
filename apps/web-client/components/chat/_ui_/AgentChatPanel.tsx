@@ -898,6 +898,12 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 // calls and only narrated. Either way, nothing changed: never claim otherwise
                 // with a success toast, and never auto-retry here (repair auto-fix only fires
                 // via onRepairFailed on real build errors).
+              } else if (result.smokeFailureSurvivedRepair) {
+                // Files were kept but a browser smoke check confirmed the page is broken and
+                // repair couldn't fix it   the honest text-delta already told the user this,
+                // and onRepairFailed (fired for this same run, above) is escalating the repair
+                // counter. Showing "App updated." here would contradict both. Don't reset the
+                // counter either: onRepairFailed just incremented it for this exact failure.
               } else {
                 autoRepairCountRef.current = 0; // successful build   reset repair counter
                 toast.success('App updated.');

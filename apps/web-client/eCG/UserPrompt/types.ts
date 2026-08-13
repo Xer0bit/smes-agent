@@ -87,6 +87,10 @@ export interface GenerationResponse {
   previewPushed?: boolean;
   /** True when the agent ran in build mode but wrote zero files   ghost run */
   ghostRun?: boolean;
+  /** True when a browser smoke check found the rendered page broken after this
+   *  run and repair couldn't confirm a fix, but the files were kept (not
+   *  reverted). Frontend should not show an unqualified success toast. */
+  smokeFailureSurvivedRepair?: boolean;
   /** Actual USD cost of this run (0 on ghost/timeout runs) */
   costUsd?: number;
   /** Eco credits charged for this run (cost-based, clamped 0.5-2.0) */
