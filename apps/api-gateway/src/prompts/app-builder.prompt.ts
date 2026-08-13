@@ -1159,6 +1159,12 @@ export function getAppBuilderBuildSystemPrompt(options?: AppBuilderBuildOptions)
   if (!options?.includeSeo) {
     toStrip.push('SEO (MANDATORY   auto-run after every website build)');
   }
+  if (!options?.includeErrorPatterns) {
+    toStrip.push('Common Error Patterns   MEMORIZED FIXES');
+  }
+  if (!options?.includePreviewEnvironment) {
+    toStrip.push('Preview Environment Architecture (understand how your code gets served)');
+  }
 
   let result = toStrip.length === 0 ? APP_BUILDER_SYSTEM_PROMPT : stripSections(APP_BUILDER_SYSTEM_PROMPT, ...toStrip);
 
