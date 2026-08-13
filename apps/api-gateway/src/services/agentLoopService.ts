@@ -4310,7 +4310,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // very likely pick up and finish, same as a user manually replying
     // "continue" would today. Not offered for a stuck/looping run   retrying
     // that blindly is more likely to spend money re-failing the same way.
-    const needsAutoContinue = Boolean(budgetAbortReason) && !stuckAnalysisAbortReason && anySuccessfulWriteThisRun;
+    //
+    // hitStepCap (checkpoint 6, 2026-08-13) extends this to the step-count
+    // ceiling, not just the token/cost cap: a run that used its whole step
+    // budget (mirrors genuinelyOutOfSteps's calc above) with real progress
+    // and no stuck signal previously got NO signal at all when it wrote some
+    // files (the honest zero-files message above only fires when
+    // !agentWroteFiles) -- it just silently ended with partial work. This is
+    // the same safe-to-continue shape as the budget-cap case, just reached
+    // via a different exhausted resource.
+    const hitStepCap = outerFinishReason === 'tool-calls' && stepCount >= MAX_STEPS - 1;
+    const needsAutoContinue = (Boolean(budgetAbortReason) || hitStepCap) && !stuckAnalysisAbortReason && anySuccessfulWriteThisRun;
     const continuationPrompt = needsAutoContinue
       ? `Continue exactly where you left off on this request: "${prompt}". Do not redo files you already finished   pick up with whatever is left.`
       : undefined;
