@@ -529,7 +529,14 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     const EXECUTE_RE = /^(execute|apply|do\s+it|go\s+ahead|proceed|yes|confirm|run|ship\s+it|make\s+(the\s+)?changes|ok\s+do\s+it|let'?s?\s+(do\s+it|go)|build\s+it)/i;
     const isExecuteCmd = !forcedMode && agentMode === 'plan' && EXECUTE_RE.test(raw);
     if (isExecuteCmd) setAgentMode('agent');
-    const resolvedMode: 'build' | 'plan' | undefined = forcedMode ?? (isExecuteCmd ? 'build' : agentMode === 'plan' ? 'plan' : undefined);
+    // Always send an explicit mode when the user has a toggle selection -- the
+    // server's shouldAutoPlan() prompt-shape heuristic (bullet-count, generic
+    // keyword hits) only runs when clientMode is undefined, and it was silently
+    // overriding an explicit Build selection into Plan mode for any message
+    // shaped like a bullet list (e.g. a pasted build-error list), with zero
+    // indication to the user why. Build mode is now forced explicitly, matching
+    // how Plan mode already worked -- the toggle is authoritative either way.
+    const resolvedMode: 'build' | 'plan' = forcedMode ?? (isExecuteCmd ? 'build' : agentMode === 'plan' ? 'plan' : 'build');
 
     const userMsg: Message = {
       id: Date.now().toString(),
