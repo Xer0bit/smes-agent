@@ -3546,85 +3546,19 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         console.log(`[AgentLoop] Preview push OK: ${mergedWrites.length} files`);
         previewPushOk = true;
       } else if (firstAttempt.status === 422) {
-        console.warn(`[AgentLoop] Preview validation failed (422). Attempting surgical revert of broken files.`);
-
-        // ── Surgical revert: identify broken files from the 422 response and
-        // replace them with the pre-agent version before trying LLM repair.
-        // This is much faster and more reliable than the full LLM repair loop.
-        try {
-          const errBody = JSON.parse(firstAttempt.body);
-          const validationErrors: Array<{ file?: string }> = Array.isArray(errBody?.validationErrors) ? errBody.validationErrors : [];
-          const brokenFiles = new Set(validationErrors.map(e => e.file).filter(Boolean) as string[]);
-
-          if (brokenFiles.size > 0 && brokenFiles.size <= 10) {
-            // Use pre-agent snapshot (disk state captured before push) which
-            // works even when frontend doesn't send existingFiles.
-            const preAgentMap = preAgentDiskSnapshot;
-
-            let reverted = 0;
-            let removed = 0;
-            const revertedMerged = mergedWrites
-              .map(f => {
-                if (brokenFiles.has(f.path)) {
-                  if (preAgentMap.has(f.path)) {
-                    // File existed before agent   restore original version
-                    reverted++;
-                    return { path: f.path, content: preAgentMap.get(f.path)! };
-                  } else {
-                    // File is NEW (created by agent) and broken   remove from push
-                    removed++;
-                    return null;
-                  }
-                }
-                return f;
-              })
-              .filter((f): f is { path: string; content: string } => f !== null);
-
-            if (reverted > 0 || removed > 0) {
-              console.log(`[AgentLoop] Surgical revert: reverted ${reverted}, removed ${removed} broken file(s): ${[...brokenFiles].join(', ')}`);
-              const revertAttempt = await httpPost(updateUrl, JSON.stringify({ files: revertedMerged, fullSync: true }));
-              if (revertAttempt.status === 200) {
-                console.log(`[AgentLoop] Surgical revert succeeded   preview is healthy`);
-                droppedFiles.push(...[...brokenFiles].filter((f) => !preAgentMap.has(f)));
-                // Update mergedWrites so 'done' sends the reverted set
-                mergedWrites.length = 0;
-                revertedMerged.forEach(f => mergedWrites.push(f));
-                // Also revert the on-disk files so they match what was pushed
-                for (const brokenPath of brokenFiles) {
-                  const preContent = preAgentMap.get(brokenPath);
-                  if (preContent != null) {
-                    try {
-                      const fullFilePath = safeJoin(appPath, brokenPath);
-                      // See the pre-agent-restore loop below for why binary
-                      // content (BINARY_SENTINEL-prefixed) can't be written as 'utf8'.
-                      if (preContent.startsWith(BINARY_SENTINEL)) {
-                        fs.writeFileSync(fullFilePath, Buffer.from(preContent.slice(BINARY_SENTINEL.length), 'base64'));
-                      } else {
-                        fs.writeFileSync(fullFilePath, preContent, 'utf8');
-                      }
-                    } catch { /* best-effort disk revert */ }
-                  } else {
-                    // New file created by agent   delete from disk
-                    try {
-                      const fullFilePath = safeJoin(appPath, brokenPath);
-                      fs.unlinkSync(fullFilePath);
-                    } catch { /* best-effort delete */ }
-                  }
-                }
-                previewPushOk = true;
-                const revertMsg = [
-                  reverted > 0 ? `reverted ${reverted}` : '',
-                  removed > 0 ? `removed ${removed} new broken` : '',
-                ].filter(Boolean).join(' and ');
-                console.log(`[AgentLoop] Surgical revert complete (silent): ${revertMsg} file(s)`);
-              } else {
-                console.warn(`[AgentLoop] Surgical revert still failed (${revertAttempt.status})   falling to LLM repair`);
-              }
-            }
-          }
-        } catch {
-          // 422 body parse failed   fall through to LLM repair
-        }
+        // Previously this branch immediately reverted whichever files the
+        // preview service's validationErrors named as broken -- BEFORE ever
+        // giving the LLM repair loop below a chance to actually fix them and
+        // deliver what the user asked for. That meant any validation hiccup
+        // on a file the user explicitly asked to change (a logo, a component)
+        // silently discarded the request instead of attempting a fix: fast,
+        // but it threw away real user-requested work on the first sign of
+        // trouble. previewPushOk stays false here on purpose so this falls
+        // straight into the real repair loop (up to 3 LLM-driven attempts,
+        // with actual build-error context) -- reverting to pre-agent state is
+        // now only the last resort after repair is exhausted, not the first
+        // response to a validation error.
+        console.warn(`[AgentLoop] Preview validation failed (422). Routing to repair loop before considering any revert.`);
       } else {
         console.warn(`[AgentLoop] Preview push returned ${firstAttempt.status}`);
       }
@@ -4160,11 +4094,19 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             if (diskRestoreFailures > 0) {
               console.error(`[AgentLoop] Pre-agent disk restore: ${diskRestoreFailures}/${preAgentDiskSnapshot.size} file(s) failed to restore locally for project=${projectId}`);
             }
-            // Everything this run wrote that wasn't already on disk before the
-            // agent started is about to vanish along with the rest of the
-            // revert -- capture those paths for the caveat below before mergedWrites
-            // (this run's attempted final state) gets overwritten with the pre-agent set.
-            droppedFiles.push(...mergedWrites.filter((f) => !preAgentDiskSnapshot.has(f.path)).map((f) => f.path));
+            // Every file this run actually changed is about to vanish along with
+            // the rest of the revert -- capture those paths for the caveat below
+            // before mergedWrites (this run's attempted final state) gets
+            // overwritten with the pre-agent set. Must include EXISTING files
+            // whose content this run changed, not just brand-new ones: an
+            // existing file (e.g. a logo/component the user asked to change)
+            // silently restored to its pre-agent content is exactly as much a
+            // lost change as a new file vanishing, and this array is the only
+            // thing that drives the user-facing warning below -- previously an
+            // existing-file revert here produced zero signal to the user.
+            droppedFiles.push(...mergedWrites
+              .filter((f) => preAgentDiskSnapshot.get(f.path) !== f.content)
+              .map((f) => f.path));
             const preAgentFiles = Array.from(preAgentDiskSnapshot.entries()).map(([p, c]) => ({ path: p, content: c }));
             mergedWrites.length = 0;
             preAgentFiles.forEach(f => mergedWrites.push(f));
