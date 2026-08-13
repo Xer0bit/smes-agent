@@ -4450,6 +4450,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           needs_auto_continue: needsAutoContinue,
           edit_search_miss_count:          ctx.editSearchMissCount ?? 0,
           build_error_circuit_break_count: ctx.buildErrorCircuitBreakCount ?? 0,
+          net_new_write_count:                    ctx.netNewWriteCount ?? 0,
+          net_new_write_without_retrieval_count:   ctx.netNewWriteWithoutRetrievalCount ?? 0,
         }).eq('id', agentRunId).then(
           ({ error }) => { if (error) console.warn(`[AgentLoop] agent_runs update failed: ${error.message}`); },
           (e: any) => console.warn('[AgentLoop] agent_runs update rejected:', e?.message)
@@ -4575,6 +4577,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           stuck_abort_reason: stuckAnalysisAbortReason,
           edit_search_miss_count:          ctx.editSearchMissCount ?? 0,
           build_error_circuit_break_count: ctx.buildErrorCircuitBreakCount ?? 0,
+          net_new_write_count:                    ctx.netNewWriteCount ?? 0,
+          net_new_write_without_retrieval_count:   ctx.netNewWriteWithoutRetrievalCount ?? 0,
         }).eq('id', agentRunId).then(() => {}, () => {});
       }
 
@@ -4649,6 +4653,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         stuck_abort_reason: stuckAnalysisAbortReason,
         edit_search_miss_count:          ctx.editSearchMissCount ?? 0,
         build_error_circuit_break_count: ctx.buildErrorCircuitBreakCount ?? 0,
+        net_new_write_count:                    ctx.netNewWriteCount ?? 0,
+        net_new_write_without_retrieval_count:   ctx.netNewWriteWithoutRetrievalCount ?? 0,
       }).eq('id', agentRunId).then(() => {}, () => {});
     }
     throw err;

@@ -421,12 +421,23 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
           if (ctx.readFiles && !ctx.readFiles.has(relPath)) {
             try {
               const fullPath = safeJoin(ctx.appPath, relPath);
-              if (fs.existsSync(fullPath)) {
+              const targetExists = fs.existsSync(fullPath);
+              if (targetExists) {
                 return (
                   `BLOCKED: You haven't read "${relPath}" yet in this run. ` +
                   `Call read_file("${relPath}") first to get the current content, then proceed with your edit. ` +
                   `This prevents accidental overwrites of unread code.`
                 );
+              }
+              // CP4a retrieval-consult telemetry (measurement only, no gate -- see
+              // docs/spec/agent-orchestration-stability.md): a net-new write_file
+              // call is one whose target didn't exist on disk before this write.
+              // Reuses the existsSync result above instead of a second stat call.
+              if (def.name === 'write_file') {
+                ctx.netNewWriteCount = (ctx.netNewWriteCount ?? 0) + 1;
+                if (!ctx.retrievalConsulted) {
+                  ctx.netNewWriteWithoutRetrievalCount = (ctx.netNewWriteWithoutRetrievalCount ?? 0) + 1;
+                }
               }
             } catch { /* path traversal   let the tool itself reject it */ }
           }
@@ -614,6 +625,13 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
 
         try {
           let result = await def.execute(args, ctx);
+          // ── CP4a retrieval-consult telemetry (measurement only, no gate) ────
+          // Single generic dispatch point for every tool call, so this is the
+          // one place a "was a retrieval tool used yet this run" flag needs to
+          // be set, instead of duplicating the check in each of the three tool files.
+          if (def.name === 'search_codebase' || def.name === 'grep' || def.name === 'glob_files') {
+            ctx.retrievalConsulted = true;
+          }
           // ── Track successful reads ─────────────────────────────────────────
           // Mark file as read so subsequent write_file/edit_file calls are allowed.
           if (def.name === 'read_file' && typeof args.path === 'string' && ctx.readFiles) {

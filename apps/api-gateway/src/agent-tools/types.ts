@@ -138,6 +138,21 @@ export interface AgentContext {
    */
   editSearchMissCount?: number;
   buildErrorCircuitBreakCount?: number;
+  /**
+   * Retrieval-consult telemetry (CP4a, measurement only -- no gate/nudge yet,
+   * see docs/spec/agent-orchestration-stability.md). retrievalConsulted is
+   * set true the first time this run calls search_codebase/grep/glob_files
+   * (agentToolSet.ts's generic tool-dispatch point). netNewWriteCount counts
+   * write_file calls whose target didn't exist on disk before the write
+   * (agentToolSet.ts's read-before-write guard, reusing its existsSync
+   * check); netNewWriteWithoutRetrievalCount is the subset of those where
+   * retrievalConsulted was still false. agentLoopService.ts persists both to
+   * agent_runs so the retrieval skip rate is queryable instead of guessed --
+   * whether that rate justifies a CP4b gate is a later, separate decision.
+   */
+  retrievalConsulted?: boolean;
+  netNewWriteCount?: number;
+  netNewWriteWithoutRetrievalCount?: number;
   /** URL of the preview service, e.g. http://localhost:3001 */
   previewServiceUrl?: string;
   /** Authenticated user id   required by database_query / get_database_schema to scope tenant DB access. */
