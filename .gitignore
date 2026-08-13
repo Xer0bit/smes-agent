@@ -60,3 +60,9 @@ apps/web-client/base-example/.env
 .scratch
 .deploy-stage/
 codebase
+tmp/
+.claude/.atomic-index/
+
+docs/wiki
+docs/spec
+docs/design
