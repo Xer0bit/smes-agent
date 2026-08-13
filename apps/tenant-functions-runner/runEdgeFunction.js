@@ -4,6 +4,7 @@
 // if that one changes.
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
+import { validateEdgeFunction } from './validateEdgeFunction.js';
 
 const TIMEOUT_MS = 5_000;
 
@@ -136,12 +137,59 @@ export async function runEdgeFunction(code, params, dbCtx, ecgCtx, secrets) {
   const logs = [];
   const start = Date.now();
 
+  // SANDBOX ESCAPE GUARD (defense-in-depth). vm.createContext is NOT a real
+  // security boundary; the complete fix is isolated-vm (a separate V8 heap,
+  // as functionRunner.service.ts uses), not installed on VPS5. Reject the
+  // known escape primitives before execution so a tampered/malicious function
+  // body -- e.g. `Object.constructor.constructor('return process')()` -- gets
+  // a clear error instead of host-process RCE. Runs even though
+  // write_edge_function validates upstream: this path is also reachable via a
+  // direct _sync POST (server.js) and a tampered tenant_functions row.
+  const escapeIssues = validateEdgeFunction(code);
+  if (escapeIssues.length > 0) {
+    return {
+      result: null,
+      logs,
+      durationMs: Date.now() - start,
+      error: `Rejected before execution (sandbox violation): ${escapeIssues.map((i) => i.message).join(' | ')}`,
+    };
+  }
+
   const consoleMock = {
     log:   (...a) => { logs.push(a.map(String).join(' ')); },
     warn:  (...a) => { logs.push('[warn] ' + a.map(String).join(' ')); },
     error: (...a) => { logs.push('[error] ' + a.map(String).join(' ')); },
   };
 
+  // Minimal Response polyfill -- the documented write_edge_function contract
+  // (app-builder.prompt.ts's "sandbox contract" section) explicitly promises
+  // `Response` is in scope alongside params/db/secrets/fetch/console/ecg, and
+  // its worked example uses `new Response(JSON.stringify(...), {status})` for
+  // custom HTTP status codes. This sandbox never actually provided it --
+  // confirmed live 2026-08-13, project dfe41091's pm-auth function (every
+  // path returns via `new Response(...)`) threw ReferenceError on every
+  // invocation. functionRunner.service.ts (the isolated-vm implementation
+  // this file was ported from) defines the identical minimal polyfill; kept
+  // in sync here rather than trying to construct a real WHATWG Response.
+  class EdgeFunctionResponse {
+    constructor(body, init) {
+      this.body = body;
+      this.status = (init && init.status) || 200;
+      this.__isEdgeFunctionResponse = true;
+    }
+  }
+
+  // Do NOT inject host ECMAScript intrinsics (Object, Array, Error, Promise,
+  // Map, Set, Date, String, Number, Boolean, JSON, Math, parseInt, ...). A new
+  // vm context already has its OWN copies of every ECMAScript global, so the
+  // code still works -- but if we pass the HOST's Object here, then inside the
+  // sandbox `Object.constructor` is the host Function constructor, and
+  // `Object.constructor('return process')()` reaches the host process. Passing
+  // the host intrinsics was the escape. Only genuinely non-ECMAScript host
+  // capabilities are injected below (params/db/ecg/fetch/console/secrets plus
+  // the WHATWG globals a vm context lacks), and the AST guard above rejects
+  // `.constructor` access on those, closing the equivalent route through
+  // fetch/crypto/console.
   const context = vm.createContext({
     params,
     db:  dbCtx ? buildDbHelper(dbCtx) : buildNoDbHelper(),
@@ -149,13 +197,12 @@ export async function runEdgeFunction(code, params, dbCtx, ecgCtx, secrets) {
     secrets: Object.freeze({ ...(secrets ?? {}) }),
     fetch: safeFetch,
     console: consoleMock,
-    JSON, Math, Date, Object, Array, String, Number, Boolean, Promise, Error, Map, Set,
-    parseInt, parseFloat, isNaN, isFinite, encodeURIComponent, decodeURIComponent, btoa, atob,
-    // Hashing (password hashing, UUIDs) is near-universal in generated auth
-    // functions   without these, `new TextEncoder()` / `crypto.subtle.digest`
-    // crashed with "TextEncoder is not defined" (vm.createContext only
-    // includes ECMAScript intrinsics, not Node's WHATWG globals).
-    TextEncoder, TextDecoder, crypto: webcrypto,
+    // WHATWG/Node globals a bare vm context does NOT provide (unlike the
+    // ECMAScript intrinsics above, which it does). Hashing (password hashing,
+    // UUIDs) is near-universal in generated auth functions -- without these,
+    // `new TextEncoder()` / `crypto.subtle.digest` throw "not defined".
+    TextEncoder, TextDecoder, crypto: webcrypto, btoa, atob,
+    Response: EdgeFunctionResponse,
   });
 
   const wrapped = `
@@ -166,12 +213,20 @@ ${code}
 
   try {
     const script = new vm.Script(wrapped, { filename: 'edge-function.js' });
-    const result = await Promise.race([
+    let result = await Promise.race([
       script.runInContext(context),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error(`Function timed out after ${TIMEOUT_MS / 1000}s`)), TIMEOUT_MS)
       ),
     ]);
+    // Unwrap a `new Response(...)` return into the plain JSON value the
+    // caller (server.js) and the generated frontend's `const { result, error
+    // } = await res.json()` both expect -- without this, the client received
+    // the polyfill's raw { body, status, __isEdgeFunctionResponse } shape
+    // instead of the actual payload the function author wrote.
+    if (result && typeof result === 'object' && result.__isEdgeFunctionResponse) {
+      try { result = JSON.parse(result.body); } catch { result = result.body; }
+    }
     return { result: result ?? null, logs, durationMs: Date.now() - start };
   } catch (err) {
     const msg = err?.message ?? String(err);
