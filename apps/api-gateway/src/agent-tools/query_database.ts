@@ -30,6 +30,35 @@ export function isSchemaMutatingSql(sql: string): boolean {
   return DDL_RE.test(sql);
 }
 
+// pgcrypto functions this codebase's own generated SQL actually uses. Not the
+// extension's full surface -- deliberately scoped to what's been seen live,
+// same "broad enough to catch the real class, not a general SQL linter"
+// posture as DDL_RE above.
+const PGCRYPTO_FUNCTIONS = ['crypt', 'gen_salt', 'gen_random_bytes', 'digest', 'hmac'];
+
+/**
+ * Real incident, 2026-08-13: a register_and_login function correctly
+ * schema-qualified extensions.crypt/extensions.gen_salt for password hashing,
+ * then called a bare gen_random_bytes(32) two lines later for the session
+ * token -- pgcrypto isn't on this role's search_path, so the unqualified call
+ * failed with "function ... does not exist" at RUNTIME. write_edge_function's
+ * AST validation never sees this class of bug (it doesn't execute SQL);
+ * neither does this tool's own success/failure path for a CREATE FUNCTION
+ * statement, which only fails when the function BODY runs, not when it's
+ * defined. Advisory only (a function name match doesn't prove the call is
+ * actually unqualified in every syntactic position) -- surfaced at staging
+ * time, before confirm_database_change actually runs it, so the model has a
+ * chance to catch its own mistake before it reaches the live database.
+ */
+export function findUnqualifiedPgcryptoCalls(sql: string): string[] {
+  const found: string[] = [];
+  for (const fn of PGCRYPTO_FUNCTIONS) {
+    const re = new RegExp(`(?<!extensions\\.)\\b${fn}\\s*\\(`, 'gi');
+    if (re.test(sql)) found.push(fn);
+  }
+  return found;
+}
+
 // Unqualified DELETE/UPDATE (no WHERE clause) previously ran IMMEDIATELY,
 // with zero staging -- unlike DDL, which was already gated above. A model
 // forgetting a WHERE clause on a DELETE wipes an entire table with no
@@ -139,10 +168,18 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
       if (!ctx.pendingDbChanges) ctx.pendingDbChanges = new Map();
       const confirmationId = crypto.randomUUID();
       ctx.pendingDbChanges.set(confirmationId, { sql: args.sql, createdAt: Date.now() });
+      const unqualified = findUnqualifiedPgcryptoCalls(args.sql);
+      const pgcryptoWarning = unqualified.length > 0
+        ? `\n\n⚠ POSSIBLE BUG: this SQL calls pgcrypto function(s) ${unqualified.map(f => `"${f}"`).join(', ')} without the ` +
+          `"extensions." prefix. pgcrypto is installed in the extensions schema, which is NOT on this role's search_path -- ` +
+          `an unqualified call fails at RUNTIME with "function ... does not exist" (this exact bug broke registration in ` +
+          `production for hours on 2026-08-13). Before confirming, check every pgcrypto call in this statement is written ` +
+          `as extensions.${unqualified[0]}(...), not bare ${unqualified[0]}(...).`
+        : '';
       return (
         `PENDING CONFIRMATION   this SQL was NOT executed yet. It contains a schema-mutating statement ` +
         `(CREATE/ALTER/DROP/TRUNCATE/GRANT/REVOKE), which changes the live database for real users, so it ` +
-        `requires one extra confirmation step.\n\n` +
+        `requires one extra confirmation step.${pgcryptoWarning}\n\n` +
         `SQL to run:\n${args.sql}\n\n` +
         `To actually execute it, call confirm_database_change with confirmationId: "${confirmationId}". ` +
         `If you decide NOT to run it (e.g. after reconsidering), simply don't call confirm   nothing happens.`
