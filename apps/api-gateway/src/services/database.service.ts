@@ -835,6 +835,71 @@ export const databaseService = {
     }
   },
 
+  // ── Archive (not drop) a tenant DB when its owning project is deleted ─────
+  // deprovision() above is the right call for an EXPLICIT, single-purpose
+  // "remove my database" action (Settings page, admin tool) -- immediate
+  // DROP SCHEMA CASCADE is the correct behavior there. Project deletion is a
+  // different risk profile: it's one step inside a larger, automated,
+  // fire-and-forget cascade, where a wrong-project-id bug anywhere upstream
+  // would otherwise permanently destroy a tenant's real data with no
+  // recovery path (unlike the platform DB, which gets a 2-year archive on
+  // delete). This renames the schema out of PostgREST's reach and revokes
+  // its roles' access instead of dropping anything -- reversible by a
+  // support action until a separate, deliberately-not-automated purge job
+  // hard-deletes schemas past their retention window.
+  async archiveForProjectDeletion(projectId: string): Promise<void> {
+    const { data: record } = await supabase
+      .from('tenant_databases')
+      .select('id, schema_name, status')
+      .eq('project_id', projectId)
+      .not('status', 'eq', 'deprovisioned')
+      .maybeSingle();
+    if (!record) return; // most projects never provisioned a hosted DB -- not an error
+
+    const schema = record.schema_name as string;
+    const archivedSchema = `deleted_${schema}_${Date.now()}`;
+
+    const pg = await pool();
+    const c = await pg.connect();
+    try {
+      await c.query('BEGIN');
+      // Belt-and-suspenders alongside the schema rename below: a deleted
+      // project's edge functions must stop being invocable even if
+      // PostgREST's schema cache is briefly stale after reload -- the
+      // functions-runner (VPS5) checks is_active on every invoke, so this
+      // closes the window immediately regardless of cache timing.
+      await c.query(`UPDATE public.tenant_functions SET is_active = false WHERE schema_name = $1`, [schema]);
+      await c.query(`ALTER SCHEMA "${schema}" RENAME TO "${archivedSchema}"`);
+      for (const role of [`${schema}_anon`, `${schema}_service`, `${schema}_owner`]) {
+        // REVOKE, not DROP ROLE -- the role's GRANTs inside the archived
+        // schema must survive for a support-initiated restore (rename back +
+        // re-grant) to actually work. Dropping the role here would silently
+        // strip that on some Postgres versions.
+        await c.query(`REVOKE ALL PRIVILEGES ON SCHEMA "${archivedSchema}" FROM "${role}"`).catch(() => {});
+      }
+      await c.query('COMMIT');
+    } catch (err) {
+      try { await c.query('ROLLBACK'); } catch { /* connection may already be dead */ }
+      throw err;
+    } finally {
+      c.release();
+    }
+
+    let reloadWarning: string | null = null;
+    try {
+      await this._reloadPostgREST();
+    } catch (err) {
+      reloadWarning = (err as Error).message;
+      logger.warn('Tenant DB archived on project delete but PostgREST reload failed -- schema is renamed but cache may be stale', { projectId, schema, archivedSchema, error: reloadWarning });
+    }
+
+    await supabase.from('tenant_databases').update({
+      status: 'deprovisioned',
+      error_message: `Archived on project deletion as "${archivedSchema}" (not dropped -- recoverable via support). ${reloadWarning ? `PostgREST reload failed and may need a retry: ${reloadWarning}` : ''}`.trim(),
+    }).eq('id', record.id);
+    logger.info('Tenant DB archived for project deletion', { projectId, schema, archivedSchema, reloadWarning });
+  },
+
   // ── List tables in tenant schema ─────────────────────────────────────────
   async listTables(userId: string, projectId?: string): Promise<TenantTable[]> {
     const record = await this.getStatus(userId, projectId);
@@ -1096,6 +1161,69 @@ export const databaseService = {
       try { await c.query('ROLLBACK'); } catch { /* ignore */ }
       throw err;
     } finally {
+      try { await c.query('RESET ROLE'); } catch { /* ignore */ }
+      c.release();
+    }
+  },
+
+  // ── Runtime verification for agent-written SQL functions ─────────────────
+  // 2026-08-13 stability review: write_edge_function's AST validation and
+  // query_database's DDL confirmation gate both check that CREATE FUNCTION
+  // SQL is well-formed -- neither ever EXECUTES the function body. PL/pgSQL
+  // does not resolve function/table/column references inside a function body
+  // at CREATE time; a call to an undefined function (e.g. an unqualified
+  // pgcrypto call) compiles cleanly and only fails the first time something
+  // actually invokes it. Real incident: a register_and_login function passed
+  // every static check and broke registration in production for hours before
+  // anyone actually called it.
+  //
+  // This closes that gap: runs the function for real, inside a transaction
+  // that ALWAYS rolls back (success or failure) -- so even a function that
+  // inserts/updates/deletes rows, like register_and_login, can be tested
+  // with zero lasting effect. Same SET ROLE + search_path scoping as
+  // runQuery() above. Known caveat: sequence nextval() advances are NOT
+  // transactional in Postgres and will NOT be undone by the rollback -- an
+  // acceptable, minor side effect (a skipped ID value) for what this buys.
+  async testDatabaseFunction(
+    userId: string,
+    functionName: string,
+    args: Record<string, unknown>,
+    projectId?: string,
+  ): Promise<{ ok: true; rows: object[] } | { ok: false; error: string }> {
+    const record = await this.getStatus(userId, projectId);
+    if (!record || record.status !== 'active') throw new Error('No active database');
+
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(functionName)) {
+      throw new Error(`Invalid function name "${functionName}"`);
+    }
+    for (const key of Object.keys(args)) {
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+        throw new Error(`Invalid argument name "${key}"`);
+      }
+    }
+
+    const pg = await pool();
+    const schemaRole = `${record.schema_name}_service`;
+    const c = await pg.connect();
+    try {
+      await c.query(`SET ROLE "${schemaRole}"`);
+      await c.query('BEGIN');
+      await c.query(`SET LOCAL search_path TO "${record.schema_name}"`);
+      await c.query('SET LOCAL statement_timeout TO 10000');
+
+      // Named-parameter call (func(param_name := $1, ...)) rather than
+      // positional -- the agent supplies args keyed by the parameter names
+      // it just declared, not an order it has to get exactly right.
+      const argNames = Object.keys(args);
+      const callArgs = argNames.map((name, i) => `${name} := $${i + 1}`).join(', ');
+      const values = argNames.map((k) => args[k]);
+      const result = await c.query(`SELECT * FROM ${functionName}(${callArgs})`, values);
+
+      return { ok: true, rows: result.rows };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    } finally {
+      try { await c.query('ROLLBACK'); } catch { /* ignore -- always roll back, this is a test */ }
       try { await c.query('RESET ROLE'); } catch { /* ignore */ }
       c.release();
     }

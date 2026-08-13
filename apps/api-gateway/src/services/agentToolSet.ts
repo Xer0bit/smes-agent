@@ -24,6 +24,7 @@ import { thinkTool } from '../agent-tools/think.js';
 import { getDatabaseSchemaTool } from '../agent-tools/get_database_schema.js';
 import { queryDatabaseTool } from '../agent-tools/query_database.js';
 import { confirmDatabaseChangeTool } from '../agent-tools/confirm_database_change.js';
+import { testDatabaseFunctionTool } from '../agent-tools/test_database_function.js';
 import { provisionDatabaseTool } from '../agent-tools/provision_database.js';
 import { writeEdgeFunctionTool } from '../agent-tools/write_edge_function.js';
 import { confirmEdgeFunctionDeployTool } from '../agent-tools/confirm_edge_function_deploy.js';
@@ -45,7 +46,7 @@ import { applySearchReplace } from '../agent-tools/edit_file.js';
 // task this narrowly; scoping the tool list to match is the same idea applied to
 // the request payload, not just the instructions.
 const MICRO_EXCLUDED_TOOLS = new Set([
-  'run_command', 'get_database_schema', 'query_database', 'confirm_database_change', 'provision_database',
+  'run_command', 'get_database_schema', 'query_database', 'confirm_database_change', 'test_database_function', 'provision_database',
   'write_edge_function', 'confirm_edge_function_deploy', 'delete_edge_function', 'set_secret', 'list_secrets',
   'push_to_github', 'publish_site',
 ]);
@@ -75,6 +76,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
     getDatabaseSchemaTool,
     queryDatabaseTool,
     confirmDatabaseChangeTool,
+    testDatabaseFunctionTool,
     provisionDatabaseTool,
     writeEdgeFunctionTool,
     confirmEdgeFunctionDeployTool,
