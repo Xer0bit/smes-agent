@@ -159,3 +159,64 @@ Flow: mid-run re-tier (CP6)
 ## Change log
 
 <!-- Populated on first amendment after the spec is approved. Do not log drafting/refinement turns. -->
+
+## Implementation log
+
+### shipped — 2026-08-13
+
+Built across 6 iterations of `/subagent-implementation`. Commits (chronological):
+
+- `5e54d66` — CP1: don't claim success when a browser smoke check found a broken render
+- `b4c9486` — CP2: alert on LLM provider disable, transition-only, never blocks the health check
+- `1b05ab4` — CP3: verify the pre-existing declared-scope gate + diagnosis seeding (no production code changed)
+- `d9358df` — CP4a: measure retrieval-consult skip rate before writing new code (telemetry only)
+- `3b78b5f` — CP5: guard the prompt-chunking mechanism against silent heading-mismatch drift; wire two dead build-tier flags
+- `93bf9c7` — CP6: auto-continue a step-capped run that made real progress
+- `e51ad91` — followup F-1: defend the alert dispatch call site, not just `dispatch()` itself
+
+**Out-of-scope work performed during this build:**
+
+- None. Every commit stayed within its checkpoint's declared file set;
+  each brief explicitly fenced off every other checkpoint's files and no
+  reviewer found a violation.
+
+**Unforeseens — surprises that emerged during implementation:**
+
+- CP3's entire production mechanism (the `declare_scope` tool, the
+  warn-then-block gate, the diagnosis-seeding integration) already existed
+  from a prior session's work — none of it had ever been tested. Reframed
+  the checkpoint from "build the gate" to "prove the already-built gate
+  does what it claims"; shipped as a test-only commit.
+- CP6's spec described dynamically raising the step/token budget mid-run.
+  Traced the actual control flow and found that would require
+  reconfiguring the AI SDK's `stopWhen` mid-stream — high risk on the core
+  loop. Found a smaller, already-proven path instead: the existing
+  `needsAutoContinue` mechanism only triggered on a token/cost-cap hit,
+  never on the plain step-count ceiling, even when a run had made real
+  progress. Widened one condition instead of building new machinery.
+- An implementer's attempt to get a local test environment running
+  (mid-CP1) symlinked package directories from the main checkout instead
+  of doing a proper install; `npm install` wrote through those symlinks
+  into the shared main checkout's `node_modules`, corrupting 160 packages.
+  Independently verified by the orchestrator (spot-checked content,
+  counted affected dirs, confirmed no concurrent process was touching the
+  directory), user explicitly confirmed the restore before it ran, then
+  independently re-verified via `node -e require.resolve(...)` against the
+  real module resolver. A separate, unrelated pre-existing gap
+  (`@testing-library/dom` declared in the lockfile but never actually
+  installed even before the incident) was found and fixed scoped to the
+  worktree only.
+- A CP2 reviewer used `git stash` despite an explicit instruction not to
+  (shared stack across other worktrees on this machine). No harm this
+  time (`git stash list` confirmed empty immediately after), but every
+  subsequent reviewer/implementer dispatch repeated the constraint more
+  forcefully; no further occurrence.
+
+**Deferred items still open:**
+
+- **CP4b (retrieval nudge/gate)** — explicitly contingent on CP4a's
+  measured skip rate. No live data exists yet since CP4a just shipped;
+  not started, per the spec's own non-goal.
+- F-1 and F-2 (the only two non-blocking findings raised across all 6
+  checkpoints) were both dispositioned at finalization — F-1 fixed
+  (`e51ad91`), F-2 dropped. No open follow-ups remain.
