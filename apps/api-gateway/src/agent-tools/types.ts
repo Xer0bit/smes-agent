@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import type { RunStateLedger } from '../services/runStateLedger.js';
 
 // ─── AgentContext ────────────────────────────────────────────────────────────
@@ -183,6 +184,18 @@ export interface AgentContext {
    */
   pendingDbChanges?: Map<string, { sql: string; createdAt: number }>;
   /**
+   * Mutation-breaker support for confirm_database_change (checkpoint 1,
+   * 2026-08 orchestration hardening). Its own arg is only a single-use
+   * confirmationId minted fresh every call -- no stable key to track retries
+   * on. agentToolSet.ts's dispatch wrapper snapshots the staged SQL here
+   * (keyed by confirmationId) BEFORE calling execute(), because execute()
+   * deletes the pendingDbChanges entry unconditionally as its first act (see
+   * confirm_database_change.ts) -- by the time agentLoopService.ts's
+   * post-step tracking loop runs, pendingDbChanges no longer has it. See
+   * deriveDbMutationKey below.
+   */
+  dbMutationSqlByConfirmationId?: Map<string, string>;
+  /**
    * Turn-scoped staging area for edge-function deploys awaiting a
    * confirm_edge_function_deploy call. write_edge_function validates and
    * stages here instead of writing the live DB row / syncing to the execution
@@ -252,6 +265,47 @@ export function extractAnonFetchTables(content: string): string[] {
     tables.add(m[1].toLowerCase());
   }
   return [...tables];
+}
+
+// ─── DB-mutation-tool key derivation ─────────────────────────────────────────
+
+/**
+ * Resolves a stable per-retry key for the mutation circuit breaker
+ * (ctx.mutationFailureStreak) for the 3 database-action tools. Unlike
+ * write_file/edit_file/delete_file/rename_file, none of these have a simple
+ * string arg field to key on directly:
+ *   - query_database: no natural identity beyond the SQL itself, so the key
+ *     is a hash of the (whitespace-normalized) SQL text -- stable across
+ *     retries of the identical statement, distinct across different ones.
+ *   - confirm_database_change: its own arg is a single-use confirmationId
+ *     minted fresh every call, never a stable key on its own -- resolves via
+ *     the staged SQL snapshotted in ctx.dbMutationSqlByConfirmationId
+ *     (populated by agentToolSet.ts before execute() consumes the pending
+ *     entry), hashed the same way as query_database.
+ *   - provision_database: no per-call key at all (only an optional
+ *     organization_id) -- a project has exactly one hosted DB, so every call
+ *     this run shares one fixed constant key.
+ * Returns undefined when no stable key can be derived (e.g. the SQL for a
+ * confirmationId was never captured) -- callers should skip tracking that
+ * call rather than track it under a wrong or empty key.
+ */
+export function deriveDbMutationKey(toolName: string, args: Record<string, unknown>, ctx: AgentContext): string | undefined {
+  if (toolName === 'provision_database') return 'provision_database';
+  if (toolName === 'query_database') {
+    return typeof args?.sql === 'string' ? hashSql(args.sql) : undefined;
+  }
+  if (toolName === 'confirm_database_change') {
+    const sql = typeof args?.confirmationId === 'string'
+      ? ctx.dbMutationSqlByConfirmationId?.get(args.confirmationId)
+      : undefined;
+    return typeof sql === 'string' ? hashSql(sql) : undefined;
+  }
+  return undefined;
+}
+
+function hashSql(sql: string): string {
+  const normalized = sql.trim().replace(/\s+/g, ' ');
+  return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
 }
 
 // ─── Tool abstraction ────────────────────────────────────────────────────────
