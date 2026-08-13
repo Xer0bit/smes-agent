@@ -469,7 +469,7 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [],
               <CardHeader>
                 <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
                 <CardDescription className="text-xs text-white/45">
-                  Permanently delete this project and all its data, including settings and collaborators. This cannot be undone.
+                  Permanently delete this project. This app cannot be recovered once deleted.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -488,7 +488,8 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [],
                     Delete project
                   </DialogTitle>
                   <DialogDescription>
-                    This permanently deletes the project and all its data including settings and collaborators. This cannot be undone.
+                    <span className="block font-medium text-destructive/90 mb-1.5">This app cannot be recovered once deleted.</span>
+                    This permanently removes the project's code, its published site and custom domain, its hosted database, and every setting and collaborator. This cannot be undone.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-3 py-1">

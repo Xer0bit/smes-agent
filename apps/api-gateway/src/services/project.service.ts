@@ -1,7 +1,11 @@
 import { randomUUID } from 'crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
-import { syncPlatformAuthSecrets } from './database.service.js';
+import { syncPlatformAuthSecrets, databaseService } from './database.service.js';
+import { SNAPSHOTS_DIR } from './agentSnapshot.js';
 
 // /var/ecomgear is the real, root-owned path on VPS1 in production. Locally
 // the dev server runs as a normal user and can't mkdir under /var at all
@@ -305,11 +309,16 @@ export class ProjectService {
 
         logger.info(`Project ${projectId} deleted   archive saved, background cleanup started`);
 
-        // 4. Fire-and-forget: clean up storage files
-        setImmediate(() => { void this._cleanupProjectAsync(projectId); });
+        // 4. Fire-and-forget: clean up storage files + every other server this
+        //    project's data ever touched (preview host, agent-runner files,
+        //    tenant DB, hosted site + domain). Owner id (not necessarily the
+        //    caller -- an admin can delete someone else's project) is needed
+        //    for the eCG-routes' directory-naming convention below.
+        const ownerId = (project as any).created_by ?? (project as any).user_id ?? userId;
+        setImmediate(() => { void this._cleanupProjectAsync(projectId, ownerId); });
     }
 
-    private async _cleanupProjectAsync(projectId: string): Promise<void> {
+    private async _cleanupProjectAsync(projectId: string, ownerId: string): Promise<void> {
         const RELATED_TABLES = [
             'revision_preview',
             'published_versions',
@@ -351,7 +360,97 @@ export class ProjectService {
             logger.warn(`[cleanup] Storage deletion failed for project ${projectId}: ${(err as Error).message}`);
         }
 
+        // Everything below runs independently (Promise.allSettled) -- a
+        // failure on one server (e.g. VPS4 briefly unreachable) must not
+        // block cleanup on the others. Each failure is logged with enough
+        // context to retry by hand; none of them throw back to the caller.
+        await Promise.allSettled([
+            this._cleanupTenantDatabase(projectId),
+            this._cleanupHostingAndDomains(projectId),
+            this._cleanupPreviewService(projectId),
+            this._cleanupLocalProjectFiles(projectId, ownerId),
+        ]);
+
         logger.info(`[cleanup] Project ${projectId} background cleanup complete`);
+    }
+
+    // VPS5: archive (rename, don't drop) the tenant DB schema if one was
+    // provisioned, and deactivate its edge functions. See
+    // database.service.ts's archiveForProjectDeletion for why this is a
+    // rename, not deprovision()'s immediate DROP SCHEMA CASCADE.
+    private async _cleanupTenantDatabase(projectId: string): Promise<void> {
+        try {
+            await databaseService.archiveForProjectDeletion(projectId);
+        } catch (err) {
+            logger.warn(`[cleanup] Tenant DB archive failed for project ${projectId}: ${(err as Error).message}`);
+        }
+    }
+
+    // VPS4: remove the published site's files and every custom domain
+    // mapping for this project (Caddy config + registry), in one call --
+    // DELETE /deploy/:projectId on hosting-service already cascades both.
+    private async _cleanupHostingAndDomains(projectId: string): Promise<void> {
+        const base = (process.env.VITE_HOSTING_SERVICE_URL || process.env.HOSTING_SERVICE_URL || '').replace(/\/$/, '');
+        if (!base) return; // hosting service not configured -- nothing to clean up
+        const secret = process.env.VITE_HOSTING_SERVICE_SECRET || process.env.HOSTING_SERVICE_SECRET || '';
+        try {
+            const res = await fetch(`${base}/deploy/${projectId}`, {
+                method: 'DELETE',
+                headers: secret ? { 'x-deploy-secret': secret } : {},
+            });
+            if (!res.ok && res.status !== 404) {
+                logger.warn(`[cleanup] Hosting-service deploy/domain removal returned ${res.status} for project ${projectId}`);
+            }
+        } catch (err) {
+            logger.warn(`[cleanup] Hosting-service cleanup failed for project ${projectId}: ${(err as Error).message}`);
+        }
+    }
+
+    // VPS2: stop the running Vite dev-server process and clear every
+    // in-memory map tracking it (the actual "free the memory" for this
+    // project), then delete its files from the preview host's disk.
+    private async _cleanupPreviewService(projectId: string): Promise<void> {
+        const base = (process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app').replace(/\/$/, '');
+        try {
+            const res = await fetch(`${base}/control/project/${projectId}`, { method: 'DELETE' });
+            if (!res.ok && res.status !== 404) {
+                logger.warn(`[cleanup] Preview-service teardown returned ${res.status} for project ${projectId}`);
+            }
+        } catch (err) {
+            logger.warn(`[cleanup] Preview-service cleanup failed for project ${projectId}: ${(err as Error).message}`);
+        }
+    }
+
+    // VPS3 (this process's own host): remove the project's local file copy
+    // (both naming conventions in use across the codebase -- plain-UUID for
+    // the main chat agent, user_/project_-prefixed for the eCG customize/
+    // dev-agent routes), its agent-loop snapshots, and any staged chat
+    // uploads. force:true makes each rm a no-op when that path was never
+    // created for this project, so attempting all of them is safe.
+    private async _cleanupLocalProjectFiles(projectId: string, ownerId: string): Promise<void> {
+        const targets = [
+            path.join(PROJECTS_BASE_DIR, projectId),
+            path.join(PROJECTS_BASE_DIR, getProjectDirName(ownerId, projectId)),
+            path.join(os.tmpdir(), 'ecomgear-chat-uploads', projectId),
+        ];
+        for (const dir of targets) {
+            try {
+                await fs.promises.rm(dir, { recursive: true, force: true });
+            } catch (err) {
+                logger.warn(`[cleanup] Local file removal failed for ${dir}: ${(err as Error).message}`);
+            }
+        }
+        // Snapshots are named "<projectId>_<hash>" (see agentSnapshot.ts) --
+        // not a single directory, so list and filter by prefix.
+        try {
+            const entries = await fs.promises.readdir(SNAPSHOTS_DIR).catch(() => [] as string[]);
+            const matches = entries.filter((e) => e.startsWith(`${projectId}_`));
+            await Promise.all(matches.map((e) =>
+                fs.promises.rm(path.join(SNAPSHOTS_DIR, e), { recursive: true, force: true })
+            ));
+        } catch (err) {
+            logger.warn(`[cleanup] Snapshot removal failed for project ${projectId}: ${(err as Error).message}`);
+        }
     }
 }
 

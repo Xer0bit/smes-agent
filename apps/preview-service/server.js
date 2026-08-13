@@ -1104,6 +1104,26 @@ async function startMainServer() {
         res.json({ success: true, projectId, runtimeStatus: 'stopped' });
     });
 
+    // Full teardown for a deleted project -- stops the running dev server,
+    // clears every in-memory map (activeServers/runtimeInstances/etc, via
+    // closeProjectServer -- the actual "free the memory" for this project's
+    // Vite process and tracking state), then removes its files from disk.
+    // Distinct from /control/runtime/:projectId/stop above: stop is a
+    // pause/idle action a project can come back from; this is permanent.
+    app.delete('/control/project/:projectId', cors(corsOptions), async (req, res) => {
+        const { projectId } = req.params;
+        try {
+            await closeProjectServer(projectId, 'project deleted');
+            const projectRoot = path.join(PROJECTS_ROOT, projectId);
+            await fs.promises.rm(projectRoot, { recursive: true, force: true });
+            const uploadsDir = path.join('/tmp/ecomgear-preview', projectId);
+            await fs.promises.rm(uploadsDir, { recursive: true, force: true }).catch(() => {});
+            res.json({ success: true, projectId });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message || String(err), projectId });
+        }
+    });
+
     app.get('/control/runtime/:projectId/status', cors(corsOptions), async (req, res) => {
         const { projectId } = req.params;
         const instance = runtimeInstances.get(projectId);
