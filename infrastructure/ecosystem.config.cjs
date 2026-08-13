@@ -66,6 +66,11 @@ module.exports = {
                 PORT: GEN_API_PORT,
                 SERVICE_ROLE: 'gen',
                 TENANT_DB_API_URL: 'https://cloud.ecomgear.app',
+                // Lets a local dev frontend (npm run dev, default Vite port) call
+                // this production server directly -- see server/src/app.ts's
+                // allowedOrigins, which reads this env var when NODE_ENV=production
+                // (where the hardcoded localhost list is otherwise excluded).
+                CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:8080',
             },
             max_memory_restart: '2000M',
             error_file: path.join(ROOT, 'logs', 'gen-error.log'),
@@ -105,6 +110,11 @@ module.exports = {
                 ECG_AUTH_BASE_URL: process.env.ECG_AUTH_BASE_URL || 'https://auth.ecomgear.ai',
                 ECG_AUTH_API_KEY: process.env.ECG_AUTH_API_KEY || '',
                 ECG_AUTH_2FA_ACTIVE: process.env.ECG_AUTH_2FA_ACTIVE || 'false',
+                // Lets a local dev frontend (npm run dev, default Vite port) call
+                // this production server directly -- see server/src/app.ts's
+                // allowedOrigins, which reads this env var when NODE_ENV=production
+                // (where the hardcoded localhost list is otherwise excluded).
+                CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:8080',
             },
             max_memory_restart: '2000M',
             error_file: path.join(ROOT, 'logs', 'api-error.log'),
