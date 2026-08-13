@@ -7,7 +7,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import type { AgentContext } from '../agent-tools/types.js';
-import { safeJoin } from '../agent-tools/types.js';
+import { safeJoin, deriveDbMutationKey } from '../agent-tools/types.js';
 import { normalizeScopePath } from '../agent-tools/declare_scope.js';
 import { scanForDeadDangerousEdgeFunctions } from './edgeFunctionSecurityScan.js';
 import { EDGE_FUNCTIONS_DIR } from '../agent-tools/write_edge_function.js';
@@ -470,7 +470,23 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // Mutation tools whose per-(tool,path) failure streak is tracked in
   // ctx.mutationFailureStreak for agentToolSet.ts's dispatcher to hard-block
   // on -- see that gate's comment for the full rationale.
-  const MUTATION_TOOLS = new Set(['write_file', 'edit_file', 'delete_file', 'rename_file']);
+  const MUTATION_TOOLS = new Set([
+    'write_file', 'edit_file', 'delete_file', 'rename_file',
+    // write_edge_function/delete_edge_function: re-added 2026-08-13. A prior
+    // attempt at this exact extension was made earlier the same night but
+    // never actually landed in a commit (lost between edit and `git add`),
+    // so the gap it was meant to close -- live evidence, project dfe41091,
+    // write_edge_function retrying 10+ consecutive steps with no hard block
+    // -- was still live in production. Keyed by `name` (see below), a plain
+    // string arg same as path/from, no fingerprinting needed.
+    'write_edge_function', 'delete_edge_function',
+    // Checkpoint 1 (2026-08 orchestration hardening): same breaker, extended
+    // to the 3 database-action tools. These have no simple string arg to key
+    // on directly (unlike path/from/name) -- see deriveDbMutationKey below.
+    'query_database', 'confirm_database_change', 'provision_database',
+  ]);
+  const DB_MUTATION_TOOLS = new Set(['query_database', 'confirm_database_change', 'provision_database']);
+  const EDGE_FN_MUTATION_TOOLS = new Set(['write_edge_function', 'delete_edge_function']);
 
   // ── Stuck-analysis detector ─────────────────────────────────────────────
   // The identical-error circuit breaker above only fires when a TOOL returns
@@ -1999,9 +2015,25 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const toolName = tr?.toolName as string | undefined;
             const result = tr?.output;
             if (!toolName || !MUTATION_TOOLS.has(toolName) || typeof result !== 'string') continue;
-            const filePath = toolName === 'rename_file' ? tr?.input?.from : tr?.input?.path;
-            if (typeof filePath !== 'string') continue;
-            const key = `${toolName}:${filePath}`;
+            // DB-action tools (checkpoint 1) have no simple string arg to key
+            // on -- resolved via deriveDbMutationKey instead of a raw field.
+            // Edge-function tools key on `name` (the function name), same
+            // shape as rename_file's `from`/the other file tools' `path`.
+            const mutationKey = DB_MUTATION_TOOLS.has(toolName)
+              ? deriveDbMutationKey(toolName, tr?.input, ctx)
+              : EDGE_FN_MUTATION_TOOLS.has(toolName)
+              ? tr?.input?.name
+              : (toolName === 'rename_file' ? tr?.input?.from : tr?.input?.path);
+            if (typeof mutationKey !== 'string') continue;
+            const key = `${toolName}:${mutationKey}`;
+
+            // confirm_database_change's SQL snapshot (see AgentContext.
+            // dbMutationSqlByConfirmationId) is one-shot, same as the
+            // pendingDbChanges entry it stands in for -- consume it now that
+            // the streak key has been derived.
+            if (toolName === 'confirm_database_change' && typeof tr?.input?.confirmationId === 'string') {
+              ctx.dbMutationSqlByConfirmationId?.delete(tr.input.confirmationId);
+            }
 
             if (!isFailureResult(result)) {
               ctx.mutationFailureStreak?.delete(key); // success clears the block
@@ -2022,14 +2054,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const mutStreak = ctx.mutationFailureStreak.get(key)!;
             if (mutStreak.count >= MUTATION_CIRCUIT_BREAKER_THRESHOLD) {
               console.warn(`[AgentLoop] Mutation circuit breaker: "${key}" failed with the identical error ${mutStreak.count}x in a row (user=${userId ?? 'unknown'})`);
-              const fingerprint = computeErrorFingerprint([`${filePath}::${mutStreak.message.slice(0, 80)}`]);
+              const fingerprint = computeErrorFingerprint([`${mutationKey}::${mutStreak.message.slice(0, 80)}`]);
               const thrash = await recordThrashTrip(projectId, fingerprint);
               if (thrash.escalate) {
                 ctx.thrashEscalated = true;
                 ctx.thrashFingerprint = fingerprint;
                 ctx.thrashTripCount = thrash.tripCount;
                 circuitBreakerNote = (circuitBreakerNote ? `${circuitBreakerNote}\n\n` : '') +
-                  `THRASH DETECTED: "${filePath}" via ${toolName} has now tripped this circuit breaker ${thrash.tripCount} ` +
+                  `THRASH DETECTED: "${mutationKey}" via ${toolName} has now tripped this circuit breaker ${thrash.tripCount} ` +
                   `times -- a previous "try something different" nudge did NOT work. STOP trying to fix this file yourself. ` +
                   `Do not attempt another rewrite, do not state a new root cause, do not claim this is resolved. End your ` +
                   `response now with an honest status: state plainly you've made ${thrash.tripCount} attempts and it's ` +

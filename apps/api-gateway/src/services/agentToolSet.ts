@@ -2,7 +2,7 @@ import { ToolSet, jsonSchema } from 'ai';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import type { AgentContext } from '../agent-tools/types.js';
-import { safeJoin } from '../agent-tools/types.js';
+import { safeJoin, deriveDbMutationKey } from '../agent-tools/types.js';
 import { writeFileTool } from '../agent-tools/write_file.js';
 import { proposePlanTool } from '../agent-tools/propose_plan.js';
 import { declareScopeTool, pathMatchesScope } from '../agent-tools/declare_scope.js';
@@ -366,6 +366,72 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
                 `(3) tell the user plainly this is blocked and why, instead of continuing to retry.`
               );
             }
+          }
+        }
+        // ── DB-action mutation circuit breaker (checkpoint 1, 2026-08 ─────────
+        // orchestration hardening) — same breaker as above, strictly additive,
+        // extended to query_database/confirm_database_change/provision_database.
+        // The file-tool block above is untouched. These 3 tools have no simple
+        // string arg to key on (unlike path/from) -- deriveDbMutationKey
+        // resolves a stable key for each (see its doc comment in
+        // agent-tools/types.ts for how query_database/confirm_database_change/
+        // provision_database each derive theirs).
+        if (def.name === 'query_database' || def.name === 'confirm_database_change' || def.name === 'provision_database') {
+          // confirm_database_change's execute() deletes its pendingDbChanges
+          // entry as the FIRST thing it does (one-shot semantics) -- snapshot
+          // the staged SQL here, before that delete, so both this gate check
+          // and agentLoopService.ts's post-step tracking (which runs AFTER
+          // execute() completes) can still resolve a key for it.
+          if (def.name === 'confirm_database_change' && typeof args.confirmationId === 'string') {
+            const pendingSql = ctx.pendingDbChanges?.get(args.confirmationId)?.sql;
+            if (typeof pendingSql === 'string') {
+              ctx.dbMutationSqlByConfirmationId = ctx.dbMutationSqlByConfirmationId ?? new Map();
+              ctx.dbMutationSqlByConfirmationId.set(args.confirmationId, pendingSql);
+            }
+          }
+
+          if (ctx.mutationFailureStreak) {
+            const dbKey = deriveDbMutationKey(def.name, args, ctx);
+            if (typeof dbKey === 'string') {
+              const streak = ctx.mutationFailureStreak.get(`${def.name}:${dbKey}`);
+              if (streak && streak.count >= MUTATION_CIRCUIT_BREAKER_THRESHOLD) {
+                return (
+                  `BLOCKED (repeated identical failure): "${def.name}" has failed ${streak.count} times in a row ` +
+                  `with the exact same error:\n\n"${streak.message.slice(0, 300)}"\n\n` +
+                  `Retrying this exact call again will fail the same way. Do ONE of: ` +
+                  `(1) call get_database_schema to confirm the real current schema, then adjust the statement instead of repeating it verbatim; ` +
+                  `(2) if the error points at something else (e.g. a missing table this depends on), fix THAT first; ` +
+                  `(3) tell the user plainly this is blocked and why, instead of continuing to retry.`
+                );
+              }
+            }
+          }
+        }
+        // ── Edge-function mutation circuit breaker (re-added 2026-08-13) ─────
+        // Same breaker as the file-tool block above, extended to
+        // write_edge_function/delete_edge_function, keyed by the function's
+        // `name` (a plain string arg, same shape as path/from -- no
+        // deriveDbMutationKey needed). A prior attempt at this exact
+        // extension was made earlier the same night but never actually
+        // landed in a commit; live evidence (project dfe41091,
+        // write_edge_function retrying 10+ consecutive steps with no hard
+        // block, real cost burned, nothing landed) is what motivated it both
+        // times.
+        if (
+          (def.name === 'write_edge_function' || def.name === 'delete_edge_function') &&
+          ctx.mutationFailureStreak &&
+          typeof args.name === 'string'
+        ) {
+          const streak = ctx.mutationFailureStreak.get(`${def.name}:${args.name}`);
+          if (streak && streak.count >= MUTATION_CIRCUIT_BREAKER_THRESHOLD) {
+            return (
+              `BLOCKED (repeated identical failure): "${def.name}" has failed on "${args.name}" ${streak.count} times in a row ` +
+              `with the exact same error:\n\n"${streak.message.slice(0, 300)}"\n\n` +
+              `Retrying this exact call again will fail the same way. Do ONE of: ` +
+              `(1) call get_build_errors or re-read the error closely to find the ACTUAL cause (bad import, wrong table/column name, missing env var) instead of resubmitting similar code; ` +
+              `(2) if the error names a different resource (a table, a secret, another function it calls), fix THAT instead; ` +
+              `(3) tell the user plainly this is blocked and why, instead of continuing to retry.`
+            );
           }
         }
         // ── Declared-scope guard (harness redesign increment 2, 2026-08-11) ──
