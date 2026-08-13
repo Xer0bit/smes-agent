@@ -108,6 +108,12 @@ build_deploy_stage() {
     # the stage ROOT (the api-gateway build below does its own real npm ci in
     # its own directory -- never through a symlink).
     ln -s "$PROJECT_DIR/node_modules" "$STAGE_DIR/node_modules"
+    # Deployed-SHA stamp: dropped at the stage root so it rides along into
+    # every target's live directory. verify_remote_sha() below reads it back
+    # after a deploy to prove the SHA that's actually LIVE matches the SHA
+    # that was just pushed -- a real answer to "did this deploy actually
+    # land, or is something still running old code", not just a hope.
+    echo "$(git -C "$PROJECT_DIR" rev-parse HEAD)" > "$STAGE_DIR/.deployed-sha"
     local tracked staged
     tracked=$(git -C "$PROJECT_DIR" ls-files | wc -l)
     staged=$(find "$STAGE_DIR" -type f | wc -l)
@@ -184,6 +190,23 @@ scp_vps1() { rsync_exec "$VPS1_USER" "$VPS1_IP" "$VPS1_KEY_PATH" "${VPS1_PASS:-}
 scp_vps2() { rsync_exec "$VPS2_USER" "$VPS2_IP" "$VPS2_KEY_PATH" "${VPS2_PASS:-}" "$@"; }
 scp_vps3() { rsync_exec "$VPS3_USER" "$VPS3_IP" "$VPS3_KEY_PATH" "${VPS3_PASS:-}" "$@"; }
 scp_vps4() { rsync_exec "$VPS4_USER" "$VPS4_IP" "$VPS4_KEY_PATH" "${VPS4_PASS:-}" "$@"; }
+scp_vps5() { rsync_exec "$VPS5_USER" "$VPS5_IP" "$VPS5_KEY_PATH" "${VPS5_PASS:-}" "$@"; }
+
+# Confirms the SHA actually running on a target matches the SHA this run just
+# deployed -- proof a deploy landed, not just an assumption. Usage:
+#   verify_remote_sha <ssh_fn> <remote_live_dir> <label>
+DEPLOY_SHA="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+verify_remote_sha() {
+    local ssh_fn="$1" remote_dir="$2" label="$3"
+    local remote_sha
+    remote_sha=$("$ssh_fn" "cat $remote_dir/.deployed-sha 2>/dev/null" || true)
+    if [ "$remote_sha" = "$DEPLOY_SHA" ]; then
+        success "$label is running the just-deployed SHA (${DEPLOY_SHA:0:8})"
+    else
+        echo -e "${YELLOW}  ⚠ $label version mismatch: live=${remote_sha:-<none>} expected=${DEPLOY_SHA:0:8}${NC}"
+        echo -e "${YELLOW}    Deploy may not have actually landed on this target -- check the swap/restart step above.${NC}"
+    fi
+}
 
 # =========================================================================
 # VPS1   Deploy React SPA + nginx
@@ -228,6 +251,29 @@ EOF
     rm -f "$PROD_ENV_OVERRIDE"
     trap - EXIT
     success "Build complete ($STAGE_DIR/dist/)"
+
+    # ── Backup platform DB before any migration touches it ────────────────────
+    # pg_dumpall (not pg_dump) so this captures every database in the cluster
+    # (auth/storage/realtime/app data), not just one. Runs unconditionally,
+    # even when this deploy carries zero new migration files -- a backup that
+    # only runs "when needed" is a backup nobody trusts when they actually
+    # need it. Kept alongside the existing code-backup retention pattern
+    # (BACKUP_KEEP=5) so this doesn't grow unbounded on VPS1's disk.
+    step "Backing up platform Postgres (VPS1) before migrations..."
+    ssh_vps1 "bash -s" << 'DBBACKUP'
+set -e
+DB_CONTAINER="supabase_db_zurneeqpussrefamhtoq"
+BACKUP_DIR="/var/www/ecomgear/db-backups"
+mkdir -p "$BACKUP_DIR"
+TS=$(date +%Y%m%d-%H%M%S)
+docker exec "$DB_CONTAINER" pg_dumpall -U postgres | gzip > "$BACKUP_DIR/platform-${TS}.sql.gz"
+SIZE=$(du -h "$BACKUP_DIR/platform-${TS}.sql.gz" | cut -f1)
+echo "  Backup written: platform-${TS}.sql.gz ($SIZE)"
+# Keep last 10 -- DB backups are cheap relative to a lost-data incident,
+# and this runs on every deploy (more frequent than the code BACKUP_KEEP=5).
+ls -1dt "$BACKUP_DIR"/platform-*.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
+DBBACKUP
+    success "Platform DB backed up"
 
     # ── Apply DB migrations ──────────────────────────────────────────────────
     # Uploads and applies any .sql migration files to the Supabase DB on VPS1.
@@ -888,6 +934,7 @@ echo "  Active PM2 workers: \$FINAL_PM2_PIDS"
 BACKUP_COUNT=\$(ls -1d "\$BACKUP_DIR"/server-* 2>/dev/null | wc -l)
 echo "  Backups stored: \$BACKUP_COUNT (in \$BACKUP_DIR)"
 REMOTE
+    verify_remote_sha ssh_vps3 "$DEPLOY_PATH/server" "VPS3 (gen server)"
     success "VPS3 deploy complete → https://gen.ecomgear.dev"
 }
 
@@ -1011,19 +1058,22 @@ REMOTE
 }
 
 # =========================================================================
-# VPS5   Tenant Postgres (paid-user hosted DBs)   health check only
-# No application code from this repo is deployed here. VPS5 is a passive DB
-# endpoint (TENANT_DB_HOST) that VPS3's server.env points at for the hosted-
-# database feature. This target verifies the DB and its reload sidecar are
-# reachable   useful to run before/after a VPS3 deploy so a DB-side outage
-# isn't mistaken for a VPS3 regression.
+# VPS5   Tenant Postgres + tenant-functions-runner
+# VPS5 is the tenant database host AND runs apps/tenant-functions-runner/
+# (functions-runner.service, systemd-managed, port 4001) -- the sandbox that
+# executes every tenant's edge-function code. That second half used to have
+# NO deploy path at all (this target was health-check-only, "no code is
+# deployed to VPS5 from this repo"), so a real fix to that code (e.g. the
+# missing-Response-global bug found live 2026-08-13, project dfe41091) could
+# only reach production via manual scp -- exactly the kind of drift that lets
+# a fix silently never ship. This target now deploys it for real, following
+# the same backup → atomic-swap → health-check → rollback shape as VPS3/VPS4.
 # =========================================================================
 deploy_vps5() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  VPS5   Tenant Postgres (health check only) → $VPS5_IP"
+    echo "  VPS5   Tenant DB + functions-runner → $VPS5_IP"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    info "No code is deployed to VPS5 from this repo   this only checks reachability."
 
     step "Checking Postgres port (${TENANT_DB_PORT:-5432})..."
     # Run the whole check as a heredoc script on the remote side rather than a
@@ -1057,8 +1107,79 @@ REMOTE
     else
         info "TENANT_DB_RELOAD_URL not set   skipping sidecar check"
     fi
-
     success "VPS5 health check complete"
+
+    if [ ! -d "$STAGE_DIR/apps/tenant-functions-runner" ]; then
+        err "apps/tenant-functions-runner/ directory not found in repo   nothing to deploy"
+    fi
+
+    # ── Backup tenant DB before any code touching it changes ──────────────────
+    # Single-database dump (not pg_dumpall): ecg_tenants is the one DB that
+    # matters here, and it can be large (every paid tenant's schema lives in
+    # it) -- pg_dumpall would also capture template/system databases nobody
+    # needs backed up on every deploy.
+    step "Backing up tenant Postgres (VPS5) before deploy..."
+    ssh_vps5 "bash -s" << TDBBACKUP
+set -e
+BACKUP_DIR="/root/.ecomgear/db-backups"
+mkdir -p "\$BACKUP_DIR"
+TS=\$(date +%Y%m%d-%H%M%S)
+PGPASSWORD='${TENANT_DB_SUPERUSER_PASSWORD:-}' pg_dump -h 127.0.0.1 -p ${TDB_PORT_CHECK} -U '${TENANT_DB_SUPERUSER:-ecg_provisioner}' -d '${TENANT_DB_NAME:-ecg_tenants}' | gzip > "\$BACKUP_DIR/tenant-\${TS}.sql.gz"
+SIZE=\$(du -h "\$BACKUP_DIR/tenant-\${TS}.sql.gz" | cut -f1)
+echo "  Backup written: tenant-\${TS}.sql.gz (\$SIZE)"
+ls -1dt "\$BACKUP_DIR"/tenant-*.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
+TDBBACKUP
+    success "Tenant DB backed up"
+
+    step "Uploading apps/tenant-functions-runner/ to VPS5 (staging dir)..."
+    ssh_vps5 "mkdir -p /opt/functions-runner.staging"
+    scp_vps5 --delete --exclude='node_modules' \
+        "$STAGE_DIR/apps/tenant-functions-runner/" "$VPS5_USER@$VPS5_IP:/opt/functions-runner.staging/"
+
+    step "Remote: install deps, atomic swap, functions-runner.service restart..."
+    ssh_vps5 "bash -s" << 'REMOTE'
+set -e
+cd /opt/functions-runner.staging
+npm ci --omit=dev
+cd /
+
+# Atomic swap -- same pattern as VPS3/VPS4: two near-instant mv's, keeping
+# the old version on disk until the new one is confirmed healthy below.
+# npm ci already ran above, so node_modules is already correct inside
+# staging before it becomes the live directory.
+rm -rf /opt/functions-runner.old
+[ -d /opt/functions-runner ] && mv /opt/functions-runner /opt/functions-runner.old
+mv /opt/functions-runner.staging /opt/functions-runner
+
+systemctl restart functions-runner.service
+sleep 3
+
+HEALTHY=0
+for i in $(seq 1 8); do
+    if curl -sf http://127.0.0.1:4001/health >/dev/null 2>&1; then
+        HEALTHY=1
+        break
+    fi
+    echo "  Health check $i/8 -- waiting..."
+    sleep 2
+done
+
+if [ $HEALTHY -eq 0 ]; then
+    echo "ERROR: functions-runner failed health check -- rolling back"
+    if [ -d /opt/functions-runner.old ]; then
+        rm -rf /opt/functions-runner.failed
+        mv /opt/functions-runner /opt/functions-runner.failed
+        mv /opt/functions-runner.old /opt/functions-runner
+        systemctl restart functions-runner.service
+    fi
+    echo "ROLLED BACK -- check /opt/functions-runner.failed for the broken build"
+    exit 1
+fi
+echo "  functions-runner healthy"
+echo "Backup preserved at /opt/functions-runner.old for manual rollback"
+REMOTE
+    verify_remote_sha ssh_vps5 "/opt/functions-runner" "VPS5 (functions-runner)"
+    success "VPS5 deploy complete (functions-runner + tenant DB backup)"
 }
 
 # =========================================================================
