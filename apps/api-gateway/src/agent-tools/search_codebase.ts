@@ -2,10 +2,12 @@
  * search_codebase tool   semantic + graph search over the project's own files,
  * for mid-run lookups the agent can't answer from files already in context.
  *
- * Reuses the same vector+graph engine (server/src/knowledgebase/retrieval.ts)
- * that already selects initial context files before a run starts   this just
- * exposes it as an on-demand tool call, so a mid-run "where does X live" no
- * longer has to fall back to blind grep/read_file loops.
+ * Reuses the same hybrid (dense + BM25, RRF-merged) vector+graph engine
+ * (server/src/knowledgebase/retrieval.ts) that already selects initial
+ * context files before a run starts   this just exposes it as an on-demand
+ * tool call, so a mid-run "where does X live" no longer has to fall back to
+ * blind grep/read_file loops. Also opts into rerank.ts's LLM-graded
+ * re-ranking pass, which the tight-budget initial-context pass doesn't.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -62,6 +64,10 @@ export const searchCodebaseTool: ToolDefinition<z.infer<typeof schema>> = {
     const results = await retrieveRelevantFiles(ctx.projectId, args.query, files, {
       maxFiles,
       graphExpansion: true,
+      // Mid-run tool call, not the tight-budget per-run initial-context
+      // pass -- the agent can afford the extra ~2.5s for an LLM-graded
+      // re-rank of the RRF-merged candidates (see rerank.ts).
+      rerank: true,
     });
 
     if (results.length === 0) return 'No relevant files found for that query.';

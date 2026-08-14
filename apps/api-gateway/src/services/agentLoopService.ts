@@ -24,6 +24,7 @@ import { captureThumbnail } from './thumbnailService.js';
 import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
 import { beginRun as beginNarration, updateThought, endRun as endNarration, generateStatus, getNarrationCost, type LifecyclePhase } from './narration.service.js';
 import { lookupFailureFix, storeFailureFix } from './failureMemory.service.js';
+import { checkSemanticCache, storeSemanticCache } from './agentSemanticCache.js';
 import { databaseService, buildProjectEnvSecrets } from './database.service.js';
 import {
   isBillingCircuitOpen, tripBillingCircuit, extractCacheUsage,
@@ -1175,6 +1176,32 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const isFirstMessage = !history || history.length === 0;
   const shouldConfirmFirst = isEmptyProject && isFirstMessage && runtimeMode === 'build';
 
+  // Semantic cache: on a fresh, empty project's first BUILD message, check
+  // whether a near-identical prompt already produced a good result on some
+  // other fresh project (agentSemanticCache.ts, cosine similarity > 0.94).
+  // A hit does NOT skip generation -- the model still writes and validates
+  // its own files through the normal tool-call path, nothing about the
+  // existing build-check/preview/persistence machinery is bypassed. It's
+  // injected as a strong reference the model can adapt, which is where most
+  // of the token/time cost of a from-scratch build actually goes. Bounded
+  // and best-effort, same as every other KB lookup in this file.
+  let semanticCacheHintBlock = '';
+  if (isEmptyProject && isFirstMessage && runtimeMode === 'build') {
+    try {
+      const cacheResult = await Promise.race([
+        checkSemanticCache(prompt, 'react'),
+        new Promise<{ hit: false }>((resolve) => setTimeout(() => resolve({ hit: false }), 2500)),
+      ]);
+      if (cacheResult.hit && cacheResult.cachedSnapshot) {
+        const files = Object.entries(cacheResult.cachedSnapshot)
+          .slice(0, 20)
+          .map(([p, c]) => `--- ${p} ---\n${String(c).slice(0, 1500)}`)
+          .join('\n\n');
+        semanticCacheHintBlock = `\n\n# Reference Implementation (similarity ${cacheResult.similarity?.toFixed(2) ?? '?'})\n\nA previous request very similar to this one produced the following working implementation. Use it as a strong starting reference -- adapt it to the specifics of THIS request rather than building from zero, but verify and adjust anything that doesn't actually match what was asked for here.\n\n${files}`;
+      }
+    } catch { /* non-fatal -- proceed without the hint */ }
+  }
+
   const modeInstruction = runtimeMode === 'plan'
     ? `\n\n# Runtime Mode Instruction
 
@@ -1433,6 +1460,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     (effectiveFilesContext
       ? `\n\n# Current Project File Contents\n\nFocused previews of the most relevant project files. Use these to get oriented quickly, then call \`read_file\` for any file you need in full before editing.\n\n${effectiveFilesContext}${_tier !== 'micro' ? truncatedFilesNote + excludedFilesNote : ''}`
       : '') +
+    semanticCacheHintBlock +
     attachmentContext;
 
   // Defense-in-depth: strip any build-mode directives that should never appear in plan mode.
@@ -4535,6 +4563,19 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         })();
       }
     })();
+
+    // Semantic cache: only store a fresh, empty-project, first-message BUILD
+    // run that actually produced files and didn't get stuck -- that's the one
+    // context (see the read-side hint above) where reusing this exact output
+    // for a different project's near-identical prompt is safe: a fresh
+    // project has nothing to conflict with. Fire-and-forget; never blocks the
+    // response the user is waiting on.
+    if (isEmptyProject && isFirstMessage && runtimeMode === 'build'
+      && doneFilesToWrite.length > 0 && !stuckAnalysisAbortReason) {
+      const snapshot: Record<string, string> = {};
+      for (const f of doneFilesToWrite) snapshot[f.path] = f.content;
+      void storeSemanticCache({ prompt, framework: 'react', fileSnapshot: snapshot });
+    }
 
     if (agentTimeoutId) clearTimeout(agentTimeoutId);
     clearInterval(heartbeatId);

@@ -1,0 +1,85 @@
+#!/bin/bash
+# =============================================================================
+# EcomGear   Local dev environment setup (frontend + api-gateway + preview)
+# Usage: bash scripts/setup-local-dev.sh
+#
+# Configures the "local code, production data" pattern this repo already uses:
+#   - apps/api-gateway/.env    -> production Supabase + tenant DB (no local
+#                                 Postgres stack exists, so the local server
+#                                 talks to the real backing data)
+#   - .env.development.local   -> frontend auth stays on production Supabase,
+#                                 but API/gen/agent/preview calls are routed
+#                                 to your own locally-running processes
+#                                 (npm run dev:all -> :5001 api-gateway,
+#                                 :3001 preview-service, :8080 vite)
+#
+# Idempotent: safe to re-run, only touches the specific keys it sets, never
+# wipes the rest of either file. Pulls all secret VALUES from .deploy.env
+# (already gitignored) at runtime -- nothing here is hardcoded, so this
+# script itself is safe to have tracked in git.
+# =============================================================================
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT_DIR"
+
+DEPLOY_ENV_FILE="$ROOT_DIR/.deploy.env"
+if [ ! -f "$DEPLOY_ENV_FILE" ]; then
+    echo "✗ .deploy.env not found at repo root -- can't pull production credentials." >&2
+    exit 1
+fi
+set -a && . "$DEPLOY_ENV_FILE" && set +a
+
+set_env() {
+    # set_env <file> <key> <value>
+    local file="$1" key="$2" value="$3"
+    touch "$file"
+    if grep -q "^${key}=" "$file" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+    else
+        echo "${key}=${value}" >> "$file"
+    fi
+}
+
+echo "▶ Configuring apps/api-gateway/.env (local backend -> production data)..."
+API_ENV="$ROOT_DIR/apps/api-gateway/.env"
+set_env "$API_ENV" SUPABASE_URL "https://api.ecomgear.dev"
+set_env "$API_ENV" SUPABASE_ANON_KEY "${SUPABASE_ANON_KEY:?missing SUPABASE_ANON_KEY in .deploy.env}"
+set_env "$API_ENV" SUPABASE_SERVICE_ROLE_KEY "${SUPABASE_SERVICE_ROLE_KEY:?missing SUPABASE_SERVICE_ROLE_KEY in .deploy.env}"
+set_env "$API_ENV" SUPABASE_SERVICE_KEY "${SUPABASE_SERVICE_ROLE_KEY}"
+set_env "$API_ENV" DASHBOARD_ACCESS_SECRET "${DASHBOARD_ACCESS_SECRET:?missing DASHBOARD_ACCESS_SECRET in .deploy.env}"
+set_env "$API_ENV" TENANT_DB_HOST "${TENANT_DB_HOST:?missing TENANT_DB_HOST in .deploy.env}"
+set_env "$API_ENV" TENANT_DB_PORT "${TENANT_DB_PORT}"
+set_env "$API_ENV" TENANT_DB_SUPERUSER "${TENANT_DB_SUPERUSER}"
+set_env "$API_ENV" TENANT_DB_SUPERUSER_PASSWORD "${TENANT_DB_SUPERUSER_PASSWORD}"
+set_env "$API_ENV" TENANT_DB_NAME "${TENANT_DB_NAME}"
+set_env "$API_ENV" TENANT_DB_JWT_SECRET "${TENANT_DB_JWT_SECRET}"
+set_env "$API_ENV" TENANT_DB_API_URL "${TENANT_DB_API_URL}"
+set_env "$API_ENV" TENANT_DB_SSL "${TENANT_DB_SSL}"
+set_env "$API_ENV" TENANT_DB_RELOAD_URL "${TENANT_DB_RELOAD_URL}"
+set_env "$API_ENV" TENANT_DB_RELOAD_SECRET "${TENANT_DB_RELOAD_SECRET}"
+
+echo "▶ Configuring .env.development.local (frontend -> local backend + preview)..."
+FRONTEND_ENV="$ROOT_DIR/.env.development.local"
+# Auth stays on production -- no local Supabase/Postgres stack exists.
+set_env "$FRONTEND_ENV" VITE_SUPABASE_URL "https://api.ecomgear.dev"
+set_env "$FRONTEND_ENV" VITE_SUPABASE_PUBLISHABLE_KEY "${SUPABASE_PUBLISHABLE_KEY:?missing SUPABASE_PUBLISHABLE_KEY in .deploy.env}"
+# API/gen/agent/preview calls go to your own locally-running processes.
+set_env "$FRONTEND_ENV" VITE_API_SERVER_URL "http://localhost:5001"
+set_env "$FRONTEND_ENV" VITE_GEN_SERVER_URL "http://localhost:5001"
+set_env "$FRONTEND_ENV" VITE_AGENT_SERVER_URL "http://localhost:5001"
+set_env "$FRONTEND_ENV" VITE_PREVIEW_URL "http://localhost:3001"
+set_env "$FRONTEND_ENV" VITE_PREVIEW_SERVICE_URL "http://localhost:3001"
+
+echo ""
+echo "✓ Local dev environment configured."
+echo ""
+echo "Next: stop any running dev servers, then start fresh so the new env"
+echo "values are actually loaded (Vite/Node only read env files at boot):"
+echo ""
+echo "    npm run dev:all"
+echo ""
+echo "  Frontend  -> http://localhost:8080"
+echo "  API/agent -> http://localhost:5001"
+echo "  Preview   -> http://localhost:3001"
+echo "  Auth/DB   -> production (api.ecomgear.dev, tenant DB on VPS5)"

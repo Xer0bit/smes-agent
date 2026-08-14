@@ -1,8 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowUp, Square, Loader2, StopCircle, ChevronDown, Zap, Paperclip, X, FileText, Image as ImageIcon, RotateCcw, Sparkles, Bot, ClipboardList } from 'lucide-react';
+import { ArrowUp, Square, Loader2, StopCircle, ChevronDown, Paperclip, X, FileText, RotateCcw, Sparkles, MousePointerClick } from 'lucide-react';
 import ecgAgentLogo from '@/assets/ecgagent.png';
 import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
+import type { MagicCursorTarget } from '@/pages/editor/types';
+import { buildMagicCursorPrompt } from '@/pages/editor/utils/magicCursorPrompt';
 import { toast } from 'sonner';
 import { streamAgentGeneration } from '@/eCG/UserPrompt/agentStreamService';
 import type { StepFinishData } from '@/eCG/UserPrompt/agentStreamService';
@@ -12,8 +15,9 @@ import { lovableCloud } from '@/integrations/supabase/client';
 import { messageService } from '@/eCG/UserPrompt/messageService';
 import { uploadChatAttachment, isAllowedFile, formatFileSize, type ChatAttachment } from '@/services/chatAttachmentService';
 import { useUsage } from '@/contexts/UsageContext';
-import type { StepEntry, LiveFileChange, Message } from '../_utils_/agentChatHelpers';
-import { TypewriterLine } from './TypewriterLine';
+import type { StepEntry, Message } from '../_utils_/agentChatHelpers';
+import Plan, { type Task } from '@/components/ui/agent-plan';
+import { applyStepToTasks, finalizeTasks } from '../_utils_/agentPlanMapper';
 import {
   extractSummary,
   parseToolActivities,
@@ -50,6 +54,19 @@ interface AgentChatPanelProps {
   /** Called when the agent starts installing an npm dependency mid-run, so the
    * preview can show an "installing" state instead of a false build error. */
   onDependencyInstallStart?: () => void;
+  /** Magic Cursor / inspect-mode state, owned by Editor.tsx (also drives the
+   * live preview's click-to-select overlay) -- rendered here, next to the
+   * Build/Plan toggle, instead of in the preview panel's own toolbar. */
+  inspectMode?: boolean;
+  onInspectModeChange?: (value: boolean) => void;
+  inspectTargets?: MagicCursorTarget[];
+  onInspectTargetsChange?: (targets: MagicCursorTarget[]) => void;
+  /** Reads a project file's current content by path, for scoping the prompt
+   * to the selected element's real source (see magicCursorPrompt.ts). Owned
+   * by Editor.tsx since that's where the live workspace file map lives. */
+  onResolveFileContent?: (path: string) => string | undefined;
+  /** False while the raw code viewer is open -- inspect needs the live preview visible. */
+  canUseInspect?: boolean;
 }
 
 export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
@@ -67,6 +84,12 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   onAgentStreamText,
   onAgentStreamClear,
   onDependencyInstallStart,
+  inspectMode = false,
+  onInspectModeChange,
+  inspectTargets = [],
+  onInspectTargetsChange,
+  onResolveFileContent,
+  canUseInspect = true,
 }) => {
   const GREETING: Message = {
     id: 'greeting',
@@ -82,18 +105,18 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusText, setStatusText] = useState('');
-  const [thinkingText, setThinkingText] = useState('');
-  // The agent's real internal reasoning (the `think` tool's actual argument)  
+  // The agent's real internal reasoning (the `think` tool's actual argument)
   // shown live only, cleared on the next step/completion, never saved to the
   // persisted chat transcript.
   const [liveThought, setLiveThought] = useState('');
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [stepCount, setStepCount] = useState(0);
   // Timestamp until which LLM-generated statuses block lower-priority overrides.
   const llmStatusLockedUntil = useRef<number>(0);
-  const [liveFiles, setLiveFiles] = useState<LiveFileChange[]>([]);
-  const [filesWritten, setFilesWritten] = useState(0);
+  // Real-time task/subtask breakdown of the current run, built from the
+  // agent loop's actual onStepFinish events (real tool names) -- see
+  // ../_utils_/agentPlanMapper.ts. Never fake/demo data.
+  const [planTasks, setPlanTasks] = useState<Task[]>([]);
+  const [expandedPlanTasks, setExpandedPlanTasks] = useState<string[]>([]);
+  const [expandedPlanSubtasks, setExpandedPlanSubtasks] = useState<Record<string, boolean>>({});
 
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [agentMode, setAgentMode] = useState<'agent' | 'plan'>(() => {
@@ -107,8 +130,51 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [uploadingCount, setUploadingCount] = useState(0);
   const [isDragOver, setIsDragOver] = useState(false);
   const [rollingBack, setRollingBack] = useState(false);
+  // Real narration (onAgentNarration/onStepStatusRefine) arrives on its own
+  // stream, separate from onStepFinish -- it fires BEFORE the step's tool
+  // list is known. Stashed here and consumed by the next onStepFinish so the
+  // Plan mapper actually sees it as that step's statusText. Without this,
+  // the mapper only ever saw stepData.status, a rare secondary field (retry/
+  // fallback info) -- Plan stayed empty for almost every real run, since the
+  // *primary* narration channel was never reaching it.
+  const pendingNarrationRef = useRef<string | undefined>(undefined);
+  // Synchronous re-entrancy guard for handleSubmit -- see its own comment.
+  const submitInFlightRef = useRef(false);
+
+  // Defensive dedupe-and-reorder right before render:
+  //  - dedupe by id   guards against ever showing two greeting cards (or any
+  //    other duplicated bubble) regardless of which upstream state update
+  //    produced the collision, since `key={msg.id}` alone only suppresses a
+  //    React warning, not the actual duplicate DOM node.
+  //  - the greeting always renders first   a pagination prepend (or any
+  //    other update that doesn't fully replace the array) can otherwise
+  //    shove it out of position; this makes "greeting is always first" a
+  //    hard render-time guarantee instead of something every state update
+  //    has to individually get right.
+  const dedupedMessages = React.useMemo(() => {
+    const seen = new Set<string>();
+    const rest: Message[] = [];
+    let greeting: Message | undefined;
+    for (const m of messages) {
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      if (m.id === 'greeting') greeting = m;
+      else rest.push(m);
+    }
+    return greeting ? [greeting, ...rest] : rest;
+  }, [messages]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Set right before a "load older messages" prepend so the blanket
+  // auto-scroll effect below skips that update -- otherwise it always wins
+  // the race against loadMoreMessages' own scroll-position-preserving
+  // rAF callback and yanks the view back to the bottom mid-read.
+  const skipAutoScrollRef = useRef(false);
+  // Tracks whether the user is already at (or very near) the bottom. Auto-
+  // scroll-to-bottom on new content only fires when true, so scrolling up
+  // to re-read earlier messages during a live response no longer gets
+  // fought every token.
+  const isNearBottomRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
@@ -130,25 +196,14 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
   const startProgressFeedback = () => {
     setStatusText('');
-    setThinkingText('');
     setLiveThought('');
-    setStepCount(0);
-    setLiveFiles([]);
-    setFilesWritten(0);
+    setPlanTasks([]);
+    setExpandedPlanTasks([]);
+    setExpandedPlanSubtasks({});
+    isNearBottomRef.current = true;
     llmStatusLockedUntil.current = 0;
-    // Start elapsed seconds counter
-    setElapsedSeconds(0);
-    if (elapsedIntervalRef.current) clearInterval(elapsedIntervalRef.current);
-    elapsedIntervalRef.current = setInterval(() => setElapsedSeconds(s => s + 1), 1000);
+    pendingNarrationRef.current = undefined;
   };
-
-  // ── Stop elapsed timer when generation ends ───────────────────────────────
-  useEffect(() => {
-    if (!isGenerating && elapsedIntervalRef.current) {
-      clearInterval(elapsedIntervalRef.current);
-      elapsedIntervalRef.current = null;
-    }
-  }, [isGenerating]);
 
   // Persist plan/build mode across refreshes
   useEffect(() => {
@@ -251,9 +306,16 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
   // ── Auto-scroll ───────────────────────────────────────────────────────────
   // scrollRef points to a plain div with overflow-y:auto   set scrollTop directly.
+  // Two guards, both fixing real "keeps scrolling me back to bottom" reports:
+  //  1. Skipped entirely right after loadMoreMessages prepends older history
+  //     (that function restores scroll position itself   this effect used to
+  //     always win the race and undo it).
+  //  2. Otherwise only scrolls when the user was already near the bottom, so
+  //     scrolling up mid-stream to re-read something isn't fought every token.
   useEffect(() => {
+    if (skipAutoScrollRef.current) { skipAutoScrollRef.current = false; return; }
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && isNearBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [messages, statusText]);
 
   // ── Load older messages when scrolled to top ──────────────────────────────
@@ -296,6 +358,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       // Preserve scroll position: save height before prepend, restore delta after
       const el = scrollRef.current;
       const prevHeight = el?.scrollHeight ?? 0;
+      skipAutoScrollRef.current = true;
       setMessages(prev => [...mapped, ...prev]);
       requestAnimationFrame(() => {
         if (el) el.scrollTop = el.scrollHeight - prevHeight;
@@ -311,7 +374,16 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
-      if (el.scrollTop < 80 && hasMoreMessages && !isLoadingMore) loadMoreMessages();
+      isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      // Real content overflow required, not just a low scrollTop -- setting
+      // scrollTop via JS (the auto-scroll-to-bottom effect) fires a native
+      // scroll event too, and when a short conversation doesn't overflow the
+      // container, scrollTop clamps to 0 with zero user action. Without this
+      // guard that spuriously looked like "scrolled to the top" and fired a
+      // pagination fetch that prepended older content before the existing
+      // array (which starts with the greeting), shoving it out of position.
+      const hasOverflow = el.scrollHeight > el.clientHeight;
+      if (hasOverflow && el.scrollTop < 80 && hasMoreMessages && !isLoadingMore) loadMoreMessages();
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
@@ -381,22 +453,32 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   },
                   onStepFinish: (stepData: StepFinishData) => {
                     if (generationDone || cancelled) return;
-                    if (stepData.step > 0) setStepCount(stepData.step);
                     const isLLMStatus = stepData.step === 0 && stepData.toolCount === 0;
                     if (stepData.status) pushStatus(stepData.status, isLLMStatus);
+                    if (stepData.tools.length > 0) {
+                      const narrationForStep = stepData.status || pendingNarrationRef.current;
+                      pendingNarrationRef.current = undefined;
+                      setPlanTasks(prev => {
+                        const next = applyStepToTasks(prev, {
+                          tools: stepData.tools,
+                          statusText: narrationForStep,
+                          hadFailedEdits: stepData.failedEdits > 0,
+                        }, stepData.step);
+                        const active = next.find(t => t.status === 'in-progress');
+                        if (active) setExpandedPlanTasks(p => p.includes(active.id) ? p : [...p, active.id]);
+                        return next;
+                      });
+                    }
                   },
                   onAgentNarration: (narration) => {
                     if (generationDone || cancelled) return;
                     pushStatus(narration, true, true);
+                    pendingNarrationRef.current = narration;
                   },
                   onDone: (result) => {
                     generationDone = true;
                     setIsGenerating(false);
                     setStatusText('');
-                    setThinkingText('');
-                    setStepCount(0);
-                    setLiveFiles([]);
-                    setFilesWritten(0);
                     const rawContent = currentContent || result.summary || '';
                     const { body: finalContent, summary } = extractSummary(stripEcomgearTags(rawContent));
                     const toolActivities = parseToolActivities(toolXmlAccum || rawContent);
@@ -424,9 +506,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                     if (cancelled) return;
                     setIsGenerating(false);
                     setStatusText('');
-                    setStepCount(0);
-                    setLiveFiles([]);
-                    setFilesWritten(0);
                     setMessages(prev => prev.filter(m => m.id !== asstId));
                   },
                 },
@@ -506,23 +585,41 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
   // ── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async (overridePrompt?: string, displayText?: string, forcedMode?: 'build' | 'plan', isAutoFix?: boolean) => {
-    const raw = (overridePrompt ?? input).trim();
-    const hasAttachments = !overridePrompt && pendingAttachments.length > 0;
-    if ((!raw && !hasAttachments) || isGenerating || !projectId) return;
+    // Synchronous re-entrancy guard. `isGenerating` (React state) doesn't
+    // actually block a second call until the next render commits -- two
+    // handleSubmit calls landing in the same tick (e.g. Enter and a Send
+    // click racing) can both slip past the state check below and both run,
+    // producing duplicate toasts/error bubbles for the same submission.
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
+    try {
+      const raw = (overridePrompt ?? input).trim();
+      const hasAttachments = !overridePrompt && pendingAttachments.length > 0;
+      if ((!raw && !hasAttachments) || isGenerating || !projectId) return;
 
-    // Eco gate   block non-guest users who are at their daily limit
-    if (!isGuest && !isWithinLimit()) {
-      toast.error('Monthly eco limit reached. Please upgrade your plan or wait for the reset.');
-      return;
-    }
+      // Eco gate   block non-guest users who are at their daily limit
+      if (!isGuest && !isWithinLimit()) {
+        toast.error('Monthly eco limit reached. Please upgrade your plan or wait for the reset.', { id: 'eco-limit-reached' });
+        return;
+      }
 
-    if (!overridePrompt) setInput('');
+      if (!overridePrompt) setInput('');
 
     // Capture and clear pending attachments
     const messageAttachments = !overridePrompt ? [...pendingAttachments] : [];
     if (!overridePrompt) setPendingAttachments([]);
 
-    const effectivePrompt = raw || (messageAttachments.length > 0 ? 'Please review the attached files.' : '');
+    let effectivePrompt = raw || (messageAttachments.length > 0 ? 'Please review the attached files.' : '');
+
+    // Inspect mode: scope the prompt to whatever the user selected in the
+    // live preview, via the SAME main input/send flow as any other message
+    // -- no separate popup/textarea. The chat bubble still shows the user's
+    // plain typed text; only the prompt actually sent to the agent carries
+    // the full source-addressed region context.
+    const hadInspectTargets = !overridePrompt && inspectTargets.length > 0;
+    if (hadInspectTargets && raw) {
+      effectivePrompt = buildMagicCursorPrompt(inspectTargets, raw, onResolveFileContent ?? (() => undefined));
+    }
 
     // When in plan mode and user types an execution confirmation ("execute", "apply",
     // "do it", etc.), automatically switch to build mode so the agent actually makes
@@ -548,6 +645,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     };
     const asstId = (Date.now() + 1).toString();
     const asstMsg: Message = { id: asstId, role: 'assistant', content: '', status: 'pending' };
+
+    if (hadInspectTargets) {
+      onInspectTargetsChange?.([]);
+      onInspectModeChange?.(false);
+    }
 
     setMessages(prev => [...prev, userMsg, asstMsg]);
     setIsGenerating(true);
@@ -691,20 +793,8 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             currentContent += chunk;
             const displayContent = stripEcomgearTags(currentContent);
 
-            // Capture real streamed text for the thinking display.
-            // Strip XML tags and take the last meaningful line being typed.
             const liveTool = detectLiveTool(currentContent);
-            if (liveTool) {
-              pushStatus(liveTool);
-            } else {
-              const clean = displayContent.replace(/<[^>]+>/g, '').trim();
-              if (clean.length > 0) {
-                // Last non-empty line the LLM is currently writing
-                const lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
-                const last = lines[lines.length - 1] ?? '';
-                setThinkingText(last.slice(-80)); // cap at 80 chars
-              }
-            }
+            if (liveTool) pushStatus(liveTool);
 
             setMessages(prev =>
               prev.map(m =>
@@ -731,30 +821,23 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             if (writeMatch) {
               const label = `Building ${filePathToLabel(writeMatch[1])}...`;
               pushStatus(label);
-              setLiveFiles(prev => [...prev, { path: writeMatch[1], type: 'write', timestamp: Date.now() }]);
-              setFilesWritten(prev => prev + 1);
               stepsAccum.push({ type: 'write', label, done: true });
             } else if (editMatch) {
               const label = `Updating ${filePathToLabel(editMatch[1])}...`;
               pushStatus(label);
-              setLiveFiles(prev => [...prev, { path: editMatch[1], type: 'edit', timestamp: Date.now() }]);
-              setFilesWritten(prev => prev + 1);
               stepsAccum.push({ type: 'edit', label, done: true });
             } else if (deleteMatch) {
               const label = `Removing ${filePathToLabel(deleteMatch[1])}...`;
               pushStatus(label);
-              setLiveFiles(prev => [...prev, { path: deleteMatch[1], type: 'delete', timestamp: Date.now() }]);
               stepsAccum.push({ type: 'delete', label, done: true });
             } else if (renameMatch) {
               const label = `Renaming ${filePathToLabel(renameMatch[1])}...`;
               pushStatus(label);
-              setLiveFiles(prev => [...prev, { path: `${renameMatch[1]} → ${renameMatch[2]}`, type: 'rename', timestamp: Date.now() }]);
               stepsAccum.push({ type: 'rename', label, done: true });
             } else if (depMatch) {
               const label = `Installing ${depMatch[1]}...`;
               pushStatus(label);
               onDependencyInstallStart?.();
-              setLiveFiles(prev => [...prev, { path: depMatch[1], type: 'dependency', timestamp: Date.now() }]);
               stepsAccum.push({ type: 'dependency', label, done: true });
             } else {
               pushStatus('Applying changes…');
@@ -763,7 +846,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           },
           onStepFinish: (stepData: StepFinishData) => {
             if (generationDone) return;
-            if (stepData.step > 0) setStepCount(stepData.step);
             // Clear the live thought once the agent moves past thinking into a real
             // action step, so it doesn't linger stale behind a "Building X..." status.
             if (!stepData.tools.includes('think')) setLiveThought('');
@@ -778,21 +860,44 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             } else if (stepData.toolCount > 0) {
               pushStatus('Reviewing generated changes...');
             }
+            if (stepData.tools.length > 0) {
+              // Prefer the step's own status; fall back to whatever real
+              // narration arrived on the separate onAgentNarration/
+              // onStepStatusRefine streams just before this step finished.
+              const narrationForStep = stepData.status || pendingNarrationRef.current;
+              pendingNarrationRef.current = undefined;
+              setPlanTasks(prev => {
+                const next = applyStepToTasks(prev, {
+                  tools: stepData.tools,
+                  statusText: narrationForStep,
+                  hadFailedEdits: stepData.failedEdits > 0,
+                }, stepData.step);
+                // Keep whichever task just became active expanded by default,
+                // so live progress is visible without the user clicking in.
+                const active = next.find(t => t.status === 'in-progress');
+                if (active) setExpandedPlanTasks(p => p.includes(active.id) ? p : [...p, active.id]);
+                return next;
+              });
+            }
           },
           onStepStatusRefine: ({ status }) => {
             // A cheap-model-generated description of what the step actually did,
             // replacing the rule-based canned phrase once it resolves (feature/build
-            // tiers only   see generateDynamicStepStatus on the server). Live ticker
-            // only, same as onStepFinish above   never saved to the permanent history.
+            // tiers only   see generateDynamicStepStatus on the server).
             if (generationDone) return;
             pushStatus(status, true, true);
+            pendingNarrationRef.current = status;
           },
           onAgentNarration: (narration) => {
             // Real-time, LLM-written description of what the agent is doing RIGHT
             // NOW (from the narration microservice). Highest priority   force-push
             // so it always wins as the live headline, overriding canned strings.
+            // Also the PRIMARY source for Plan's subtask titles (see
+            // pendingNarrationRef above) -- stepData.status is a rare
+            // secondary field, not this.
             if (generationDone) return;
             pushStatus(narration, true, true);
+            pendingNarrationRef.current = narration;
           },
           onAgentThinking: ({ thought }) => {
             // The agent's real internal reasoning, live only   replaces the
@@ -805,11 +910,8 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             generationDone = true;             // block any further text-delta updates
             setIsGenerating(false);
             setStatusText('');
-            setThinkingText('');
             setLiveThought('');
-            setStepCount(0);
-            setLiveFiles([]);
-            setFilesWritten(0);
+            setPlanTasks(prev => finalizeTasks(prev, false));
 
             // Prefer full streamed text over backend summary
             const rawContent = currentContent || result.summary || '';
@@ -962,9 +1064,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           onError: (errMsg) => {
             setIsGenerating(false);
             setStatusText('');
-            setStepCount(0);
-            setLiveFiles([]);
-            setFilesWritten(0);
+            setPlanTasks(prev => finalizeTasks(prev, true));
             // Show real error so users/devs can diagnose   strip raw HTTP prefix if present
             const display = errMsg
               ? errMsg.replace(/^Agent stream failed \(\d+\):\s*/i, '').slice(0, 300)
@@ -985,6 +1085,14 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 console.error('Failed to save partial assistant message on error', err);
               });
             }
+            // The client's cached usage (isWithinLimit gate at the top of
+            // handleSubmit) only self-corrects on a successful generation --
+            // a server-side eco-limit rejection never updates it. Without
+            // this, the client keeps believing it's under budget and lets
+            // every retry slip past the cheap client-side toast-only gate
+            // and all the way to the server again, each one producing its
+            // own full persisted error bubble instead of a single toast.
+            if (!isGuest) refreshUsage().catch(() => {});
           },
           onUsage: (tokensUsed) => {
             onUsage?.(tokensUsed);
@@ -996,9 +1104,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       if (err instanceof Error && err.name === 'AbortError') return;
       setIsGenerating(false);
       setStatusText('');
-      setStepCount(0);
-      setLiveFiles([]);
-      setFilesWritten(0);
+      setPlanTasks(prev => finalizeTasks(prev, true));
       const errDisplay = err instanceof Error
         ? err.message.replace(/^Agent stream failed \(\d+\):\s*/i, '').slice(0, 300)
         : 'Model temporarily unavailable. Please try again.';
@@ -1011,12 +1117,23 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           return { ...m, status: 'error', content: errorContent, steps: stepsAccum };
         })
       );
-      toast.error(errDisplay);
-      if (!alreadyHandled && !isGuest && errorContent.trim()) {
-        messageService.saveAssistantMessage(projectId, `${errorContent}\n\n*[error]*`, userId).catch(err2 => {
-          console.error('Failed to save partial assistant message on error', err2);
-        });
+      // streamAgentGeneration's onError callback already ran (and already
+      // toasted/saved) for terminal errors like eco-limit before it threw --
+      // this catch block is where that throw lands. Re-toasting/re-saving
+      // here on top of it is what produced two "Agent ... [error]" bubbles
+      // for a single rejected request.
+      if (!alreadyHandled) {
+        toast.error(errDisplay);
+        if (!isGuest && errorContent.trim()) {
+          messageService.saveAssistantMessage(projectId, `${errorContent}\n\n*[error]*`, userId).catch(err2 => {
+            console.error('Failed to save partial assistant message on error', err2);
+          });
+        }
+        if (!isGuest) refreshUsage().catch(() => {});
       }
+    }
+    } finally {
+      submitInFlightRef.current = false;
     }
   };
 
@@ -1024,9 +1141,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     abortRef.current?.abort();
     setIsGenerating(false);
     setStatusText('');
-    setStepCount(0);
-    setLiveFiles([]);
-    setFilesWritten(0);
+    setPlanTasks(prev => finalizeTasks(prev, false)); // work already landed stays landed
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (last?.role === 'assistant' && (last.status === 'pending' || last.status === 'streaming')) {
@@ -1048,10 +1163,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     });
   };
 
-  const executePlan = (planContent: string) => {
-    setAgentMode('agent');
-    handleSubmit(`Execute the following plan:\n\n${planContent}`, 'Execute plan', 'build');
-  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1113,7 +1224,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               ↑ Load older messages
             </button>
           )}
-          {messages.map((msg, msgIndex) => (
+          {dedupedMessages.map((msg, msgIndex) => (
             <div key={msg.id} className="group">
               {msg.id === 'greeting' ? (
                 <div className="relative overflow-hidden rounded-2xl p-4 mb-1"
@@ -1169,7 +1280,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   <button
                     onClick={() => {
                       for (let j = msgIndex - 1; j >= 0; j--) {
-                        if (messages[j].role === 'user') { handleSubmit(messages[j].content); break; }
+                        if (dedupedMessages[j].role === 'user') { handleSubmit(dedupedMessages[j].content); break; }
                       }
                     }}
                     disabled={isGenerating}
@@ -1311,46 +1422,26 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             </div>
           )}
 
-          {/* ── Live agent status   Lovable-style: real status headline first ── */}
-          {isGenerating && (() => {
-            const hasFile = liveFiles.length > 0;
-            const f = hasFile ? liveFiles[liveFiles.length - 1] : null;
-            const fileIcon: Record<string, string> = { write: '✦', edit: '✎', delete: '✕', rename: '↪', dependency: '⬡' };
-
-            // Priority: REAL status (from the parallel cheap-model run / step)
-            // wins as the headline. The current file is shown as a subtle
-            // secondary detail, never replacing the descriptive status.
-            const hasStatus = Boolean(statusText) && !/writing response/i.test(statusText ?? '');
-            const headline = statusText || thinkingText || 'Working…';
-            const fileDetail = f ? `${fileIcon[f.type] ?? '·'} ${f.path.replace(/^src\//, '')}` : '';
-
-            return (
-              <div className="ml-[28px] flex items-center gap-2 py-1" aria-hidden="true">
-                {/* Pulsing activity dot   indigo while thinking, emerald while writing files */}
-                <span className="relative flex h-2 w-2 shrink-0">
-                  <span className={`absolute inline-flex h-full w-full rounded-full opacity-60 ${hasFile ? 'bg-emerald-400' : 'bg-indigo-400'} animate-ping`} />
-                  <span className={`relative inline-flex h-2 w-2 rounded-full ${hasFile ? 'bg-emerald-400' : 'bg-indigo-400'}`} />
-                </span>
-                {/* Headline   the real status (replaces the old raw-file-path line).
-                    Typed out once per new headline, not the old instant-appear text. */}
-                <TypewriterLine
-                  key={headline.slice(0, 20)}
-                  text={headline}
-                  className={`text-[11px] truncate max-w-[200px] animate-status-in ${hasStatus ? 'text-white/55' : 'text-white/35 italic'}`}
-                />
-                {/* Secondary: current file, subtle   only when a real status is present */}
-                {hasStatus && fileDetail && (
-                  <span className="text-[10px] text-white/25 truncate max-w-[120px] font-mono">
-                    {fileDetail}
-                  </span>
+          {/* ── Agent plan   real task/subtask breakdown built from the agent
+              loop's actual tool calls (see agentPlanMapper.ts). Stays visible
+              after the run finishes so the final breakdown is still readable;
+              cleared at the start of the next request. ── */}
+          {planTasks.length > 0 && (
+            <div className="ml-[20px] mb-1">
+              <Plan
+                tasks={planTasks}
+                expandedTasks={expandedPlanTasks}
+                onToggleTask={(taskId) => setExpandedPlanTasks(prev =>
+                  prev.includes(taskId) ? prev.filter(id => id !== taskId) : [...prev, taskId]
                 )}
-                {filesWritten > 1 && (
-                  <span className="text-[10px] text-white/15 font-mono shrink-0">+{filesWritten - 1}</span>
-                )}
-                <span className="text-[10px] text-white/15 font-mono tabular-nums ml-auto shrink-0">{elapsedSeconds}s</span>
-              </div>
-            );
-          })()}
+                expandedSubtasks={expandedPlanSubtasks}
+                onToggleSubtask={(taskId, subtaskId) => {
+                  const key = `${taskId}-${subtaskId}`;
+                  setExpandedPlanSubtasks(prev => ({ ...prev, [key]: !prev[key] }));
+                }}
+              />
+            </div>
+          )}
 
           {/* Bottom anchor   keeps scroll pinned */}
           <div className="h-1" />
@@ -1437,6 +1528,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               ref={inputRef}
               placeholder={
                 isGenerating ? 'Agent is working…'
+                : inspectTargets.length > 0 ? 'What should change here?'
                 : 'Describe your idea or ask me to build something…'
               }
               value={input}
@@ -1485,6 +1577,35 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   input.length >= MAX_INPUT_CHARS ? 'text-red-400' : input.length >= MAX_INPUT_CHARS * 0.95 ? 'text-amber-400' : 'text-gray-500'
                 }`}>
                   {input.length}/{MAX_INPUT_CHARS}
+                </span>
+              )}
+
+              {/* Inspect (Magic Cursor)   click an element in the live preview
+                  to scope your next prompt to it. Moved here from the preview
+                  panel's own toolbar so it sits next to Build/Plan. */}
+              {onInspectModeChange && (
+                <button
+                  onClick={() => onInspectModeChange(!inspectMode)}
+                  disabled={!canUseInspect}
+                  title={inspectMode ? 'Exit inspect mode' : 'Inspect   click an element in the preview to scope your next prompt'}
+                  className={cn(
+                    'h-7 w-7 flex items-center justify-center rounded-full transition-colors disabled:opacity-30 disabled:cursor-default',
+                    inspectMode ? 'bg-indigo-500/20 text-indigo-300' : 'text-white/40 hover:text-white/70 hover:bg-white/[0.06]',
+                  )}
+                >
+                  <MousePointerClick className="h-3.5 w-3.5" />
+                </button>
+              )}
+
+              {/* Selected-element chip   no separate popup/textarea anymore.
+                  Type the instruction directly in the main input below;
+                  submitting scopes it to these regions automatically. */}
+              {inspectTargets.length > 0 && (
+                <span className="hidden lg:flex items-center gap-1 h-7 px-2 rounded-full bg-indigo-500/10 text-[11px] text-indigo-300 whitespace-nowrap cursor-default">
+                  {inspectTargets.length === 1
+                    ? <>Editing <code className="font-mono text-indigo-200">{inspectTargets[0].source?.componentName || inspectTargets[0].tagName}</code></>
+                    : <>{inspectTargets.length} selected</>}
+                  <button onClick={() => onInspectTargetsChange?.([])} className="text-indigo-300/50 hover:text-white ml-0.5">×</button>
                 </span>
               )}
 

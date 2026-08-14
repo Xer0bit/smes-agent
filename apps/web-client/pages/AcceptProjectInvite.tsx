@@ -21,7 +21,7 @@ interface InvitationInfo {
 export default function AcceptProjectInvite() {
     const { token } = useParams<{ token: string }>();
     const navigate = useNavigate();
-    const { setCurrentOrganizationId } = useOrganization();
+    const { refreshOrganization } = useOrganization();
 
     const [loading, setLoading] = useState(true);
     const [accepting, setAccepting] = useState(false);
@@ -29,6 +29,7 @@ export default function AcceptProjectInvite() {
     const [error, setError] = useState<string | null>(null);
     const [done, setDone] = useState(false);
     const [currentUserEmail, setCurrentUserEmail] = useState('');
+    const [currentUser, setCurrentUser] = useState<Awaited<ReturnType<typeof supabase.auth.getUser>>['data']['user']>(null);
 
     useEffect(() => {
         loadInvitation();
@@ -46,6 +47,7 @@ export default function AcceptProjectInvite() {
                 return;
             }
             setCurrentUserEmail(user.email || '');
+            setCurrentUser(user);
 
             if (!token) {
                 setError('Invalid invitation link.');
@@ -143,7 +145,11 @@ export default function AcceptProjectInvite() {
                 .maybeSingle();
 
             if (project?.organization_id) {
-                setCurrentOrganizationId(project.organization_id);
+                // Re-fetch the accessible-workspaces list, not just set the id --
+                // same bug as workspace creation (CreateWorkspaceDialog.tsx):
+                // a bare setCurrentOrganizationId resolves to no active
+                // workspace since this org isn't in the cached list yet.
+                await refreshOrganization(currentUser, project.organization_id);
             }
 
             setDone(true);

@@ -30,7 +30,7 @@ type PendingOrgInvitation = {
 
 export function NotificationBell() {
   const navigate = useNavigate();
-  const { setCurrentOrganizationId } = useOrganization();
+  const { refreshOrganization } = useOrganization();
   const [projectInvitations, setProjectInvitations] = useState<PendingProjectInvitation[]>([]);
   const [orgInvitations, setOrgInvitations] = useState<PendingOrgInvitation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,7 +108,12 @@ export function NotificationBell() {
       if (data && !data.success) { toast.error(data.error || 'Failed to accept invitation'); return; }
 
       toast.success(`You've joined ${inv.org_name}.`);
-      setCurrentOrganizationId(inv.org_id);
+      // Re-fetch the accessible-workspaces list, not just set the id -- the
+      // just-joined org isn't in OrganizationContext's cached list yet, so a
+      // bare setCurrentOrganizationId resolves to no active workspace at all
+      // (same bug as workspace creation -- see CreateWorkspaceDialog.tsx).
+      const { data: { user } } = await supabase.auth.getUser();
+      await refreshOrganization(user, inv.org_id);
       setOpen(false);
       await loadInvitations();
       navigate('/dashboard/organizations');
@@ -150,7 +155,10 @@ export function NotificationBell() {
         .select('organization_id')
         .eq('id', inv.project_id)
         .maybeSingle();
-      if (project?.organization_id) setCurrentOrganizationId(project.organization_id);
+      if (project?.organization_id) {
+        const { data: { user } } = await supabase.auth.getUser();
+        await refreshOrganization(user, project.organization_id);
+      }
 
       toast.success(`You now have access to "${inv.project_name}".`);
       setOpen(false);

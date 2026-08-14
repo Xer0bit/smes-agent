@@ -27,7 +27,7 @@ interface CreateWorkspaceDialogProps {
 }
 
 export function CreateWorkspaceDialog({ open, onOpenChange, onUpgradeRequired }: CreateWorkspaceDialogProps) {
-  const { setCurrentOrganizationId } = useOrganization();
+  const { refreshOrganization } = useOrganization();
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [region, setRegion] = useState<'global' | 'cn'>('global');
@@ -72,7 +72,15 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onUpgradeRequired }:
       if (error) throw error;
 
       toast.success('Workspace created');
-      setCurrentOrganizationId(newOrg.id);
+      // Re-fetch the accessible-workspaces list (not just set the id) --
+      // OrganizationContext derives currentOrganization by looking up
+      // currentOrganizationId inside its cached `organizations` array. The
+      // brand-new workspace isn't in that cache yet, so a bare
+      // setCurrentOrganizationId(newOrg.id) resolved to no match at all --
+      // every workspace showed as inactive until a full page reload
+      // re-fetched the list fresh. refreshOrganization() does both the
+      // refetch and the activation in one step, same as what reload did.
+      await refreshOrganization(user, newOrg.id);
       onOpenChange(false);
       reset();
     } catch (error) {

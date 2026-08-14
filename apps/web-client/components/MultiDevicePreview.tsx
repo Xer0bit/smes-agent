@@ -422,24 +422,6 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
                 </div>
             </div>
 
-            {/* Status Bar */}
-            <div className="flex items-center justify-between px-4 py-1.5 bg-gray-800/50 border-t border-white/5 text-xs text-gray-500">
-                <span>{config.label} - {viewMode === 'desktop' ? 'Full width' : config.width}</span>
-                <span className={`flex items-center gap-1.5 ${
-                    status === 'ready' ? 'text-green-400' :
-                    status === 'building' ? 'text-yellow-400' :
-                    status === 'failed' || hasBuildErrors ? 'text-amber-400' : 'text-gray-500'
-                    }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${
-                        status === 'ready' ? 'bg-green-400' :
-                        status === 'building' ? 'bg-yellow-400 animate-pulse' :
-                        status === 'failed' || hasBuildErrors ? 'bg-amber-400 animate-pulse' : 'bg-gray-500'
-                        }`} />
-                    {status === 'building' ? 'Building' :
-                     status === 'ready' ? 'Ready' :
-                     status === 'failed' || hasBuildErrors ? 'Needs Repair' : 'Idle'}
-                </span>
-            </div>
         </div>
     );
 };

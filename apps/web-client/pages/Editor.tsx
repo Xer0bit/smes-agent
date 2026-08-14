@@ -44,7 +44,6 @@ import {
   Eye,
   Database,
   ArrowUpRight,
-  MousePointerClick,
 } from "lucide-react";
 import ecgLogo from "@/assets/ecg-logo.png";
 import {
@@ -86,7 +85,6 @@ import { checkAndIncrementPublishLines, showLimitToast } from "@/services/subscr
 import type { BuilderTab } from "./editor/types";
 import { BUILDER_TABS, AUTO_REPAIR_COOLDOWN_MS, MAX_CONSECUTIVE_REPAIRS, NAV_BLANK_GRACE_MS } from "./editor/constants";
 import type { MagicCursorTarget } from "./editor/types";
-import { buildMagicCursorPrompt } from "./editor/utils/magicCursorPrompt";
 import { extractInvalidSourceFiles, buildRetryFilesWithFallback, buildSafeFilesAfterValidation } from "./editor/utils/fileRecovery";
 import { normalizeProjectFiles } from "./editor/utils/fileNormalization";
 
@@ -381,28 +379,6 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   // Magic Cursor: click-to-select inspect mode (Cmd/Ctrl+click adds more)
   const [inspectMode, setInspectMode] = useState(false);
   const [inspectTargets, setInspectTargets] = useState<MagicCursorTarget[]>([]);
-  const [magicCursorInstruction, setMagicCursorInstruction] = useState('');
-  const [triggerLabel, setTriggerLabel] = useState<string | undefined>(undefined);
-
-  // Turns the selected element(s) + the user's free-text instruction into one
-  // source-addressed prompt: exact file, exact line range, exact source text
-  // per region (see editor/utils/magicCursorPrompt.ts) -- the agent gets a
-  // precise address instead of having to re-locate the target itself.
-  const submitMagicCursorEdit = () => {
-    if (inspectTargets.length === 0 || !magicCursorInstruction.trim()) return;
-
-    const instruction = buildMagicCursorPrompt(
-      inspectTargets,
-      magicCursorInstruction.trim(),
-      (path) => workspaceFiles.get(path.replace(/^\//, ''))?.content
-    );
-
-    setTriggerLabel(inspectTargets.length > 1 ? `Edit ${inspectTargets.length} selections...` : 'Edit selection...');
-    setRepairPrompt(instruction);
-    setInspectTargets([]);
-    setMagicCursorInstruction('');
-    setInspectMode(false);
-  };
 
   const sharePreviewUrl = useMemo(() => {
     const candidate = latestPreviewUrl || previewUrl;
@@ -2264,11 +2240,16 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       userId={currentUser?.id || `guest:${guestFingerprint || 'anonymous'}`}
                       isMinimized={false}
                       triggerPrompt={repairPrompt}
-                      triggerDisplayText={triggerLabel}
                       onTriggerConsumed={() => {
                         setRepairPrompt(null);
                         isAgentRunningRef.current = true;
                       }}
+                      inspectMode={inspectMode}
+                      onInspectModeChange={setInspectMode}
+                      inspectTargets={inspectTargets}
+                      onInspectTargetsChange={setInspectTargets}
+                      onResolveFileContent={(path) => workspaceFiles.get(path.replace(/^\//, ''))?.content}
+                      canUseInspect={!showCodeViewer}
                       onDependencyInstallStart={() => setInstallingDependency(true)}
                       onFilesGenerated={(files, filesToDelete, previewPushed) => {
                         setInstallingDependency(false);
@@ -2444,11 +2425,16 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               userId={currentUser?.id || `guest:${guestFingerprint || 'anonymous'}`}
               isMinimized={isMinimized}
               triggerPrompt={repairPrompt}
-              triggerDisplayText={triggerLabel}
               onTriggerConsumed={() => {
                 setRepairPrompt(null);
                 isAgentRunningRef.current = true;
               }}
+              inspectMode={inspectMode}
+              onInspectModeChange={setInspectMode}
+              inspectTargets={inspectTargets}
+              onInspectTargetsChange={setInspectTargets}
+              onResolveFileContent={(path) => workspaceFiles.get(path.replace(/^\//, ''))?.content}
+              canUseInspect={!showCodeViewer}
               onDependencyInstallStart={() => setInstallingDependency(true)}
               onFilesGenerated={(files, filesToDelete, previewPushed) => {
                 setInstallingDependency(false);
@@ -2742,65 +2728,109 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                   <FileCode className="h-3.5 w-3.5" />
                 </Button>
               )}
-              <Button variant="ghost" size="icon" disabled={showCodeViewer}
-                onClick={() => setInspectMode(!inspectMode)}
-                title={inspectMode ? "Exit inspect mode" : "Inspect   click an element in the preview to scope your next prompt"}
-                className={cn("h-7 w-7 rounded-md", inspectMode ? "bg-indigo-500/20 text-indigo-300" : "text-white/25 hover:text-white/70 hover:bg-white/[0.06] disabled:text-white/10 disabled:hover:bg-transparent")}>
-                <MousePointerClick className="h-3.5 w-3.5" />
-              </Button>
-              {inspectTargets.length > 0 && (
-                <Popover open onOpenChange={(o) => { if (!o) { setInspectTargets([]); setMagicCursorInstruction(''); } }}>
-                  <PopoverTrigger asChild>
-                    <span className="hidden lg:flex items-center gap-1 h-7 px-2 rounded-md bg-indigo-500/10 text-[11px] text-indigo-300 whitespace-nowrap cursor-default">
-                      {inspectTargets.length === 1
-                        ? <>Editing <code className="font-mono text-indigo-200">{inspectTargets[0].source?.componentName || inspectTargets[0].tagName}</code></>
-                        : <>{inspectTargets.length} selected</>}
-                      <button onClick={(e) => { e.stopPropagation(); setInspectTargets([]); setMagicCursorInstruction(''); }} className="text-indigo-300/50 hover:text-white ml-0.5">×</button>
-                    </span>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-80 z-[300] p-3 space-y-3">
-                    <div className="space-y-1">
-                      <p className="text-[11px] text-white/45">
-                        {inspectTargets.length === 1 ? 'Selected element' : `${inspectTargets.length} selected elements`}
-                        <span className="text-white/25"> · ⌘/Ctrl+click to add more</span>
-                      </p>
-                      <div className="space-y-1 max-h-28 overflow-y-auto">
-                        {inspectTargets.map((target, i) => (
-                          <div key={i} className="flex items-center gap-1.5 text-xs text-white/70 font-mono truncate">
-                            <span className="shrink-0 flex items-center justify-center h-4 w-4 rounded-full bg-indigo-500/20 text-indigo-300 text-[9px] font-semibold">{i + 1}</span>
-                            <span className="truncate" title={target.source ? `${target.source.file}:${target.source.line}` : target.selector}>
-                              {target.source
-                                ? `${target.source.componentName || target.tagName} — ${target.source.file.split('/').pop()}:${target.source.line}`
-                                : target.selector}
-                            </span>
-                            <button
-                              onClick={() => setInspectTargets(prev => prev.filter((_, j) => j !== i))}
-                              className="ml-auto shrink-0 text-white/25 hover:text-white/70"
-                            >×</button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[11px] text-white/45">Instruction</label>
-                      <textarea
-                        autoFocus
-                        value={magicCursorInstruction}
-                        onChange={(e) => setMagicCursorInstruction(e.target.value)}
-                        placeholder="What should change here?"
-                        rows={2}
-                        className="w-full px-2 py-1.5 rounded-md bg-white/[0.05] border border-white/[0.08] text-xs text-white/85 outline-none focus:border-indigo-500/50 resize-none"
-                      />
-                    </div>
-                    <div className="flex gap-2 pt-1">
-                      <Button size="sm" variant="ghost" className="flex-1 h-7 text-[11px]" onClick={() => { setInspectTargets([]); setMagicCursorInstruction(''); }}>Cancel</Button>
-                      <Button size="sm" className="flex-1 h-7 text-[11px] bg-indigo-600 hover:bg-indigo-500 text-white" disabled={!magicCursorInstruction.trim()} onClick={submitMagicCursorEdit}>Apply</Button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              )}
+              {/* Inspect toggle + selection popover moved into AgentChatPanel's
+                  toolbar (next to Build/Plan) -- inspectMode/inspectTargets
+                  state stays here since MultiDevicePreview also needs it. */}
             </>
           </div>
+
+          {/* Route navigator   moved here from its own dedicated row (freed
+              that vertical space for the preview) into the header's middle
+              gap between the tabs and the eco/settings cluster. */}
+          {showRouteNavigator && (
+            <div className="flex items-center gap-1 flex-1 min-w-0 mx-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 shrink-0 text-white/30 hover:text-white/70 hover:bg-white/[0.04] gap-1 px-2 rounded-md"
+                    title="Select route"
+                  >
+                    <Navigation className="h-3.5 w-3.5" />
+                    <ChevronDown className="h-2.5 w-2.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  className="w-64 bg-[#1c1b1d] border-white/[0.06] text-white max-h-80 overflow-y-auto rounded-xl"
+                >
+                  <DropdownMenuLabel className="text-white/30 text-[10px] uppercase tracking-widest">
+                    Routes ({detectedRoutes.length})
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator className="bg-white/[0.06]" />
+                  {detectedRoutes.map((route) => {
+                    const routeName = typeof route.name === 'string' ? route.name : String(route.name);
+                    const routePath = typeof route.path === 'string' ? route.path : String(route.path);
+
+                    return (
+                      <DropdownMenuItem
+                        key={routePath}
+                        className={`cursor-pointer hover:bg-white/[0.06] rounded-lg ${currentRoutePath === routePath ? 'bg-indigo-500/10 text-indigo-300' : ''}`}
+                        onClick={() => {
+                          setCurrentRoutePath(routePath);
+                          if (projectId) {
+                            // Construct new URL with route path using project base URL
+                            const baseUrl = getPreviewUrl(projectId);
+                            const newUrl = buildPreviewNavigationUrl(baseUrl, routePath);
+                            setPreviewUrl(newUrl);
+                          }
+                        }}
+                      >
+                        <div className="flex flex-col">
+                          <span className="font-medium">{routeName}</span>
+                          <span className="text-xs text-gray-500 font-mono">{routePath}</span>
+                        </div>
+                      </DropdownMenuItem>
+                    );
+                  })}
+                  {detectedRoutes.length === 0 && (
+                    <DropdownMenuItem disabled className="text-gray-500 text-sm">
+                      No routes detected
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {/* Editable URL Bar */}
+              <div className="flex items-center gap-2 flex-1 min-w-0 bg-white/[0.03] rounded-full px-3 py-1 focus-within:bg-white/[0.05] transition-all">
+                <Globe className="h-3.5 w-3.5 text-white/20 flex-shrink-0" />
+                <input
+                  type="text"
+                  className="flex-1 bg-transparent border-none outline-none text-sm text-white/60 placeholder-white/20 font-mono min-w-0"
+                  placeholder="/path"
+                  value={currentRoutePath}
+                  onChange={(e) => setCurrentRoutePath(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && effectivePreviewUrl) {
+                      const baseUrl = getPreviewUrl(projectId!);
+                      const path = currentRoutePath.startsWith('/') ? currentRoutePath : '/' + currentRoutePath;
+                      const newUrl = buildPreviewNavigationUrl(baseUrl, path);
+                      setPreviewUrl(newUrl);
+                      toast.success(`Navigating to ${path}`);
+                    }
+                  }}
+                />
+                {previewStatus === 'building' && <div className="w-3 h-3 border-2 border-indigo-400/60 border-t-transparent rounded-full animate-spin flex-shrink-0" />}
+              </div>
+
+              {/* Refresh Button */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0 text-white/20 hover:text-white/60 hover:bg-white/[0.04] rounded-md"
+                onClick={() => {
+                  if (!projectId) return;
+                  // Always rebuild from the clean base URL so repeated clicks don't
+                  // accumulate extra ?t=...&t=...&t=... params.
+                  const baseUrl = getPreviewUrl(projectId);
+                  setPreviewUrl(buildPreviewNavigationUrl(baseUrl, previewPathRef.current || '/', true));
+                }}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
 
           <TooltipProvider>
             <div className="flex gap-1 items-center">
@@ -3155,112 +3185,13 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             ) : (
               <>
 
-            {/* Route Navigator Address Bar */}
-            {showRouteNavigator && (
-            <div className="h-10 bg-[#0e0e10] flex items-center px-3 gap-1.5 flex-shrink-0">
-              {/* Route Dropdown */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-white/30 hover:text-white/70 hover:bg-white/[0.04] gap-1 px-2 rounded-md"
-                    title="Select route"
-                  >
-                    <Navigation className="h-3.5 w-3.5" />
-                    <ChevronDown className="h-2.5 w-2.5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="start"
-                  className="w-64 bg-[#1c1b1d] border-white/[0.06] text-white max-h-80 overflow-y-auto rounded-xl"
-                >
-                  <DropdownMenuLabel className="text-white/30 text-[10px] uppercase tracking-widest">
-                    Routes ({detectedRoutes.length})
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator className="bg-white/[0.06]" />
-                  {detectedRoutes.map((route) => {
-                    const routeName = typeof route.name === 'string' ? route.name : String(route.name);
-                    const routePath = typeof route.path === 'string' ? route.path : String(route.path);
-
-                    return (
-                      <DropdownMenuItem
-                        key={routePath}
-                        className={`cursor-pointer hover:bg-white/[0.06] rounded-lg ${currentRoutePath === routePath ? 'bg-indigo-500/10 text-indigo-300' : ''}`}
-                        onClick={() => {
-                          setCurrentRoutePath(routePath);
-                          if (projectId) {
-                            // Construct new URL with route path using project base URL
-                            const baseUrl = getPreviewUrl(projectId);
-                            const newUrl = buildPreviewNavigationUrl(baseUrl, routePath);
-                            setPreviewUrl(newUrl);
-                          }
-                        }}
-                      >
-                        <div className="flex flex-col">
-                          <span className="font-medium">{routeName}</span>
-                          <span className="text-xs text-gray-500 font-mono">{routePath}</span>
-                        </div>
-                      </DropdownMenuItem>
-                    );
-                  })}
-                  {detectedRoutes.length === 0 && (
-                    <DropdownMenuItem disabled className="text-gray-500 text-sm">
-                      No routes detected
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              {/* Editable URL Bar */}
-              <div className="flex items-center gap-2 flex-1 bg-white/[0.03] rounded-full px-3 py-1 focus-within:bg-white/[0.05] transition-all">
-                <Globe className="h-3.5 w-3.5 text-white/20 flex-shrink-0" />
-                <input
-                  type="text"
-                  className="flex-1 bg-transparent border-none outline-none text-sm text-white/60 placeholder-white/20 font-mono min-w-0"
-                  placeholder="/path"
-                  value={currentRoutePath}
-                  onChange={(e) => setCurrentRoutePath(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && effectivePreviewUrl) {
-                      const baseUrl = getPreviewUrl(projectId!);
-                      const path = currentRoutePath.startsWith('/') ? currentRoutePath : '/' + currentRoutePath;
-                      const newUrl = buildPreviewNavigationUrl(baseUrl, path);
-                      setPreviewUrl(newUrl);
-                      toast.success(`Navigating to ${path}`);
-                    }
-                  }}
-                />
-                {previewStatus === 'building' && <div className="w-3 h-3 border-2 border-indigo-400/60 border-t-transparent rounded-full animate-spin flex-shrink-0" />}
-              </div>
-
-              {/* Refresh Button */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-white/20 hover:text-white/60 hover:bg-white/[0.04] rounded-md"
-                onClick={() => {
-                  if (!projectId) return;
-                  // Always rebuild from the clean base URL so repeated clicks don't
-                  // accumulate extra ?t=...&t=...&t=... params.
-                  const baseUrl = getPreviewUrl(projectId);
-                  setPreviewUrl(buildPreviewNavigationUrl(baseUrl, previewPathRef.current || '/', true));
-                }}
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-              </Button>
-
-
-            </div>
-            )}
-
             <div className={cn(
               "flex-1 overflow-hidden bg-[#09090b]",
               showCodeViewer ? "relative flex items-center justify-center" : ""
             )}>
               {!hasLoadedCode && !hasRenderablePreview && !isLoading ? (
-                <div className="relative flex h-full items-center justify-center overflow-hidden">
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.10),transparent_40%),radial-gradient(circle_at_bottom,rgba(168,85,247,0.08),transparent_35%)]" />
+                <div className="relative flex h-full items-center justify-center overflow-hidden bg-[#09090b]">
+                  <div className="absolute inset-0 bg-black" />
                   <div className="relative z-10 flex max-w-lg flex-col items-center justify-center px-8 text-center">
                     <video
                       src="/assets/loading.mp4"
@@ -3268,11 +3199,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       loop
                       muted
                       playsInline
-                      className="mb-6 w-full max-w-xs rounded-xl border border-white/[0.06] object-cover shadow-[0_24px_80px_rgba(3,12,27,0.4)]"
+                      className="mb-6 w-full max-w-xs object-cover "
                     />
-                    <p className="text-sm text-white/40 leading-relaxed">
-                      Describe what you want to build in the assistant
-                    </p>
                   </div>
                 </div>
               ) : showCodeViewer && canExportCode ? (

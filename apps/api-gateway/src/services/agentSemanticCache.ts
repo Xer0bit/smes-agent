@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '../utils/logger.js';
+import { embedText, getProvider } from '../knowledgebase/embedder.js';
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
@@ -13,35 +14,16 @@ export interface CachedDiffResult {
 }
 
 /**
- * Generate OpenAI embedding using text-embedding-3-small model.
- * Returns vector array or null if request fails.
+ * Embeds via the same provider-fallback chain the rest of the KB layer uses
+ * (embedder.ts: Google -> OpenAI -> BM25), not a hardcoded OpenAI-only call.
+ * The prior version required OPENAI_API_KEY specifically and returned null
+ * without it -- this cache was permanently inert on any deployment running
+ * Google-only, including this one. embedText() never throws.
  */
-async function getOpenAiEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-
+async function getCacheEmbedding(text: string): Promise<number[] | null> {
+  if (getProvider() === 'bm25') return null; // pseudo-embedding isn't meaningful cross-project
   try {
-    const res = await fetch('https://api.openai.com/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'text-embedding-3-small',
-        input: text.slice(0, 4000),
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (!res.ok) {
-      return null;
-    }
-
-    const data = (await res.json()) as { data?: Array<{ embedding: number[] }> };
-    return data.data?.[0]?.embedding ?? null;
+    return await embedText(text.slice(0, 4000));
   } catch {
     return null;
   }
@@ -60,7 +42,7 @@ export async function checkSemanticCache(
   }
 
   try {
-    const embedding = await getOpenAiEmbedding(prompt.trim());
+    const embedding = await getCacheEmbedding(prompt.trim());
     if (!embedding) {
       return { hit: false };
     }
@@ -123,7 +105,7 @@ export async function storeSemanticCache(opts: {
   if (!supabase || !opts.prompt || !opts.fileSnapshot) return;
 
   try {
-    const embedding = await getOpenAiEmbedding(opts.prompt);
+    const embedding = await getCacheEmbedding(opts.prompt);
     if (!embedding) return;
 
     await supabase.from('agent_semantic_cache').insert({

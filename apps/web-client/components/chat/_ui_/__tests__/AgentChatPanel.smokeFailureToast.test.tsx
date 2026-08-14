@@ -51,11 +51,11 @@ const baseResult = {
 };
 
 async function runGeneration(doneExtra: Record<string, unknown>, repairFailedErrors?: string[]) {
-  vi.mocked(streamAgentGeneration).mockImplementation(async ({ callbacks }: any) => {
+  vi.mocked(streamAgentGeneration).mockImplementation((async ({ callbacks }: any) => {
     callbacks.onOpen?.();
     if (repairFailedErrors) callbacks.onRepairFailed?.(repairFailedErrors);
     callbacks.onDone?.({ ...baseResult, ...doneExtra });
-  });
+  }) as unknown as typeof streamAgentGeneration);
 
   render(<AgentChatPanel projectId="test-project" userId="guest:test-user" />);
 

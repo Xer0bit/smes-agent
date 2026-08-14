@@ -26,6 +26,8 @@ import {
   deleteFileGraph,
 } from './graphStore.js';
 import { extractSymbols, upsertSymbolGraph, deleteSymbolGraph } from './symbolGraph.js';
+import { getCachedRetrieval, setCachedRetrieval } from './retrievalCache.js';
+import { rerankFiles } from './rerank.js';
 
 export interface WorkspaceFile {
   path: string;
@@ -89,14 +91,63 @@ export async function indexFile(
   }
 }
 
-/** Index multiple files in parallel (batch, e.g. on project load). */
+/**
+ * Index multiple files (batch, e.g. on project load or a multi-file write).
+ * Unlike calling indexFile() per file -- which fires one embedText() network
+ * round-trip EACH -- this embeds every changed file in a single embedTexts()
+ * batch call. embedTexts() already existed for exactly this; indexFiles()
+ * just never used it, so a 10-file feature-tier write paid for 10 separate
+ * embedding API calls instead of 1.
+ */
 export async function indexFiles(
   projectId: string,
   files: WorkspaceFile[],
 ): Promise<void> {
   const indexable = files.filter(f => isIndexableFile(f.path));
+  if (indexable.length === 0) return;
+
+  // Symbol graph is pure static analysis, independent of the embedding
+  // provider -- same as indexFile()'s handling, run for every indexable file.
   await Promise.allSettled(
-    indexable.map(f => indexFile(projectId, f.path, f.content)),
+    indexable.map(async f => {
+      try {
+        await upsertSymbolGraph(projectId, f.path, extractSymbols(f.content));
+      } catch { /* regex extraction should never throw, but never risk the batch on it */ }
+    }),
+  );
+
+  if (getProvider() === 'bm25') return; // no real embeddings to batch
+
+  // Skip files whose content hasn't changed, same content-hash check indexFile() does.
+  const toEmbed: WorkspaceFile[] = [];
+  await Promise.allSettled(
+    indexable.map(async f => {
+      try {
+        if (!(await isAlreadyIndexed(projectId, f.path, f.content))) toEmbed.push(f);
+      } catch {
+        toEmbed.push(f); // can't confirm it's cached -- index it rather than skip it
+      }
+    }),
+  );
+  if (toEmbed.length === 0) return;
+
+  // The actual batch: one embedTexts() call for every changed file.
+  // embedTexts() never throws -- on provider failure it falls back to a
+  // same-length BM25 pseudo-embedding array, so this always returns exactly
+  // toEmbed.length vectors in order.
+  const embeddings = await embedTexts(toEmbed.map(f => buildEmbedInput(f.path, f.content)));
+
+  await Promise.allSettled(
+    toEmbed.map(async (f, i) => {
+      try {
+        await Promise.all([
+          upsertFileGraph(projectId, f.path, parseImports(f.path, f.content), parseExports(f.content)),
+          upsertFileEmbedding(projectId, f.path, f.content, embeddings[i]),
+        ]);
+      } catch (err) {
+        console.warn('[kb/retrieval] indexFiles: indexing failed for', f.path, err);
+      }
+    }),
   );
 }
 
@@ -117,6 +168,13 @@ export interface RetrievalOptions {
   maxFiles?: number;           // default 4
   graphExpansion?: boolean;    // include direct imports of top results (default true)
   mentionedPaths?: string[];   // files explicitly mentioned in prompt (always included)
+  // LLM-graded re-rank of the merged candidate set before returning (see
+  // rerank.ts). Opt-in and default false: the automatic per-run
+  // initial-context pass is bounded to a 2s timeout and shouldn't absorb an
+  // extra LLM round-trip -- only the on-demand search_codebase tool call
+  // enables this, where the agent can afford a couple more seconds for a
+  // meaningfully better-ordered result.
+  rerank?: boolean;
 }
 
 /**
@@ -133,6 +191,7 @@ export async function retrieveRelevantFiles(
     maxFiles = 4,
     graphExpansion = true,
     mentionedPaths = [],
+    rerank = false,
   } = options;
 
   const existingPaths = new Set(allFiles.map(f => f.path));
@@ -162,26 +221,73 @@ export async function retrieveRelevantFiles(
     return results.sort((a, b) => b.score - a.score).slice(0, maxFiles + mentionedPaths.length);
   }
 
+  // Cache only the DB-backed path -- BM25 above is pure in-memory and already
+  // cheaper than a Redis round-trip would be.
+  if (projectId) {
+    const cached = await getCachedRetrieval(projectId, prompt, options);
+    if (cached) return cached;
+  }
+
+  let vectorSimilar: { file_path: string; similarity: number }[] = [];
   try {
     // 2. Vector search via DB (google/openai embeddings only)
     const queryEmbedding = await embedText(prompt);
-    const similar = await searchSimilarFiles(projectId, queryEmbedding, maxFiles + 2);
+    vectorSimilar = await searchSimilarFiles(projectId, queryEmbedding, maxFiles + 4);
+  } catch (err) {
+    console.warn('[kb/retrieval] vector search failed, hybrid falls back to BM25-only:', err);
+  }
 
-    const vectorPaths: string[] = [];
-    for (const { file_path, similarity } of similar) {
-      if (similarity > 0.3) {
-        add(file_path, similarity, 'vector');
-        vectorPaths.push(file_path);
-      }
-    }
+  // 3. BM25 always runs alongside vector search now, not just as a fallback
+  // after vector search comes back empty -- dense embeddings are weak on
+  // exact-term queries (function names, error codes, IDs) even when a
+  // vector match exists, so a fallback-only BM25 never got a chance to
+  // contribute to those queries at all.
+  const bm25Results = scoreFilesLocally(prompt, allFiles, maxFiles + 4);
 
-    // 3. Graph expansion   add direct imports of vector-found files
-    if (graphExpansion && vectorPaths.length > 0) {
+  // 4. Reciprocal Rank Fusion: merge by RANK, not raw score. Cosine
+  // similarity and BM25's weighted score live on different, incomparable
+  // scales -- summing them directly would let whichever happens to run
+  // numerically higher dominate. RRF needs no calibration between the two.
+  const RRF_K = 60;
+  const RRF_MAX = 2 / (1 + RRF_K); // theoretical max: rank #1 in both lists
+  const rrfScores = new Map<string, number>();
+  const strongVectorPaths = new Set<string>();
+  vectorSimilar.forEach(({ file_path, similarity }, i) => {
+    if (similarity <= 0.3) return; // keep the existing relevance floor
+    rrfScores.set(file_path, (rrfScores.get(file_path) ?? 0) + 1 / (i + 1 + RRF_K));
+    strongVectorPaths.add(file_path);
+  });
+  bm25Results.forEach((r, i) => {
+    if (r.score <= 0) return;
+    rrfScores.set(r.path, (rrfScores.get(r.path) ?? 0) + 1 / (i + 1 + RRF_K));
+  });
+
+  const mergedPaths = [...rrfScores.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [path, rawScore] of mergedPaths) {
+    // Normalize back into the same 0-1 range the mentioned/graph-import/
+    // graph-dependent buckets already use, so a strong hybrid hit still
+    // outranks a fixed graph-expansion marker as intended.
+    add(path, rawScore / RRF_MAX, strongVectorPaths.has(path) ? 'vector' : 'recency');
+  }
+
+  // 5. Graph expansion   seeded from the merged ranking now (not vector-only
+  // as before), so an exact-term BM25 hit gets the same import/dependent
+  // expansion a vector hit does. Same safety valve as before: only expand
+  // from genuinely strong matches (vector > 0.3 or BM25 > 0.15) -- expanding
+  // from a weak match (e.g. App.tsx matching "navbar" via an import line)
+  // floods context with unrelated components like HeroSection, Footer, etc.
+  const strongBm25Paths = new Set(bm25Results.filter(r => r.score > 0.15).map(r => r.path));
+  const graphSeedPaths = mergedPaths
+    .map(([path]) => path)
+    .filter(path => strongVectorPaths.has(path) || strongBm25Paths.has(path));
+
+  if (graphExpansion && graphSeedPaths.length > 0 && projectId) {
+    try {
+      const seeds = graphSeedPaths.slice(0, 3);
       const [imports, dependents] = await Promise.all([
-        getDirectImports(projectId, vectorPaths),
-        getDirectDependents(projectId, vectorPaths),
+        getDirectImports(projectId, seeds),
+        getDirectDependents(projectId, seeds),
       ]);
-
       // Imports are more useful than dependents   include up to 2
       for (const p of resolveExtensions(imports, existingPaths).slice(0, 2)) {
         add(p, 0.7, 'graph-import');
@@ -190,52 +296,37 @@ export async function retrieveRelevantFiles(
       for (const p of dependents.slice(0, 1)) {
         add(p, 0.6, 'graph-dependent');
       }
-    }
-  } catch (err) {
-    console.warn('[kb/retrieval] vector/graph retrieval failed, falling back to BM25:', err);
+    } catch { /* non-fatal */ }
   }
 
-  // 4. BM25 in-memory scoring   used when no real embedding provider is configured,
-  // or when vector search returned no results above the similarity threshold.
+  // If both vector and BM25 scored everything at/below their floors (very
+  // short prompt, or a prompt with no real overlap with the corpus), fall
+  // back to largest files.
   if (results.filter(r => r.reason !== 'mentioned').length === 0) {
-    const bm25Results = scoreFilesLocally(prompt, allFiles, maxFiles);
-    const bm25Paths: string[] = [];
-    for (const r of bm25Results) {
-      if (r.score > 0) {
-        add(r.path, r.score, 'recency');
-        bm25Paths.push(r.path);
-      }
-    }
-
-    // Expand graph only from files with a meaningful BM25 score (> 0.15).
-    // Expanding from weakly-matched files (e.g. App.tsx matched "navbar" via an import line)
-    // floods context with unrelated components like HeroSection, Footer, etc.
-    const strongBm25 = bm25Results.filter(r => r.score > 0.15).map(r => r.path);
-    if (graphExpansion && strongBm25.length > 0 && projectId) {
-      try {
-        const [imports, dependents] = await Promise.all([
-          getDirectImports(projectId, strongBm25.slice(0, 2)),
-          getDirectDependents(projectId, strongBm25.slice(0, 2)),
-        ]);
-        for (const p of resolveExtensions(imports, existingPaths).slice(0, 2)) {
-          add(p, 0.7, 'graph-import');
-        }
-        for (const p of dependents.slice(0, 1)) {
-          add(p, 0.6, 'graph-dependent');
-        }
-      } catch { /* non-fatal */ }
-    }
-
-    // If BM25 also scored everything 0 (very short prompt), fall back to largest files
-    if (results.filter(r => r.reason !== 'mentioned').length === 0) {
-      const bySize = [...allFiles].sort((a, b) => b.content.length - a.content.length).slice(0, maxFiles);
-      for (const f of bySize) add(f.path, 0.05, 'recency');
-    }
+    const bySize = [...allFiles].sort((a, b) => b.content.length - a.content.length).slice(0, maxFiles);
+    for (const f of bySize) add(f.path, 0.05, 'recency');
   }
 
-  return results
+  const sorted = results
     .sort((a, b) => b.score - a.score)
     .slice(0, maxFiles + mentionedPaths.length);
+
+  // Explicitly mentioned files are already known-relevant (the user named
+  // them) -- pin them ahead of reranking rather than asking the model to
+  // re-judge something that was never a candidate in the first place.
+  let final = sorted;
+  if (rerank) {
+    const mentionedEntries = sorted.filter(r => r.reason === 'mentioned');
+    const rerankCandidates = sorted.filter(r => r.reason !== 'mentioned');
+    const fileContents = new Map(allFiles.map(f => [f.path, f.content]));
+    final = [...mentionedEntries, ...(await rerankFiles(prompt, rerankCandidates, fileContents))];
+  }
+
+  // Fire-and-forget: setCachedRetrieval never rejects (internal try/catch),
+  // and the caller shouldn't wait on a cache write to get its results.
+  if (projectId) void setCachedRetrieval(projectId, prompt, options, final);
+
+  return final;
 }
 
 // ─── In-memory BM25 fallback (no DB required) ────────────────────────────────
