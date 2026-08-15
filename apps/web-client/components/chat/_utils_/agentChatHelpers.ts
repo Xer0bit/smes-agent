@@ -198,3 +198,27 @@ export function filePathToLabel(filePath: string): string {
   if (base === 'main') return 'app entry';
   return words;
 }
+
+// ─── Relevance scoring for older-turn compaction ────────────────────────────
+// Same camelCase-aware tokenization idea as the KB layer's retrieval.ts
+// (server-side, a separate deployable app -- can't share the module, so this
+// is the client-side equivalent). Used to rank OLDER conversation turns by
+// relevance to the CURRENT prompt when compacting them into olderSummary,
+// instead of including them uniformly by chronological order regardless of
+// whether they're actually relevant to what's being asked right now.
+
+export function tokenize(text: string): string[] {
+  const camelSplit = text
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+  return camelSplit.toLowerCase().split(/[\s/._\-(){}[\]:,;'"<>|]+/).filter(t => t.length > 2);
+}
+
+/** 0-1: fraction of `text`'s tokens that also appear in `referenceTokens`. */
+export function relevanceScore(referenceTokens: Set<string>, text: string): number {
+  const tokens = tokenize(text);
+  if (tokens.length === 0) return 0;
+  let hits = 0;
+  for (const t of tokens) if (referenceTokens.has(t)) hits++;
+  return hits / tokens.length;
+}

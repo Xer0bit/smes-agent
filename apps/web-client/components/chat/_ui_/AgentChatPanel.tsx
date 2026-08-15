@@ -26,6 +26,8 @@ import {
   parseCommandSuggestions,
   stripEcomgearTags,
   filePathToLabel,
+  tokenize,
+  relevanceScore,
 } from '../_utils_/agentChatHelpers';
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -621,20 +623,22 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       effectivePrompt = buildMagicCursorPrompt(inspectTargets, raw, onResolveFileContent ?? (() => undefined));
     }
 
-    // When in plan mode and user types an execution confirmation ("execute", "apply",
-    // "do it", etc.), automatically switch to build mode so the agent actually makes
-    // the changes instead of producing another plan response.
-    const EXECUTE_RE = /^(execute|apply|do\s+it|go\s+ahead|proceed|yes|confirm|run|ship\s+it|make\s+(the\s+)?changes|ok\s+do\s+it|let'?s?\s+(do\s+it|go)|build\s+it)/i;
-    const isExecuteCmd = !forcedMode && agentMode === 'plan' && EXECUTE_RE.test(raw);
-    if (isExecuteCmd) setAgentMode('agent');
     // Always send an explicit mode when the user has a toggle selection -- the
-    // server's shouldAutoPlan() prompt-shape heuristic (bullet-count, generic
-    // keyword hits) only runs when clientMode is undefined, and it was silently
-    // overriding an explicit Build selection into Plan mode for any message
-    // shaped like a bullet list (e.g. a pasted build-error list), with zero
-    // indication to the user why. Build mode is now forced explicitly, matching
-    // how Plan mode already worked -- the toggle is authoritative either way.
-    const resolvedMode: 'build' | 'plan' = forcedMode ?? (isExecuteCmd ? 'build' : agentMode === 'plan' ? 'plan' : 'build');
+    // server's tier/mode classification only runs when clientMode is
+    // undefined, and it was silently overriding an explicit Build selection
+    // into Plan mode for any message shaped like a bullet list (e.g. a
+    // pasted build-error list), with zero indication to the user why. Build
+    // mode is now forced explicitly, matching how Plan mode already worked --
+    // the toggle is authoritative either way.
+    //
+    // Execute-confirmation detection ("yes", "go ahead", "do it" flipping
+    // plan mode into build) used to happen HERE, client-side, deciding real
+    // agent behavior with no server awareness of the override. Moved to
+    // agentLoopService.ts (EXECUTE_CONFIRM_RE) -- the server now makes that
+    // call and reports back which mode actually ran via the 'done' event's
+    // `mode` field (handled in onDone below), so the toggle stays honest
+    // instead of the client guessing ahead of the server's decision.
+    const resolvedMode: 'build' | 'plan' = forcedMode ?? (agentMode === 'plan' ? 'plan' : 'build');
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -694,11 +698,26 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     // Combines: verified file changes from tool activities + user constraints + summary chips.
     const olderSummary = olderTurns.length > 0
       ? (() => {
+          // Rank older turns by lexical relevance to the CURRENT prompt --
+          // a 40-turn-old exchange about theming is worth resurfacing for
+          // "make the toggle dark-mode aware"; one about payments isn't, and
+          // shouldn't win a size-capped slot just for being less old.
+          // Constraints are deliberately NOT relevance-ranked below: a
+          // standing rule ("always use strict TypeScript") applies
+          // regardless of the current topic, so filtering by topical
+          // relevance would be a correctness regression there, not an
+          // improvement.
+          const currentTokens = new Set(tokenize(raw));
+          const rankedOlderTurns = [...olderTurns].sort(
+            (a, b) => relevanceScore(currentTokens, `${b.content} ${b.summary ?? ''}`)
+                    - relevanceScore(currentTokens, `${a.content} ${a.summary ?? ''}`)
+          );
+
           // Collect verified file changes from tool activities (ground truth   not LLM narrative)
           const filesChanged: string[] = [];
           const constraints: string[] = [];
 
-          for (const m of olderTurns) {
+          for (const m of rankedOlderTurns) {
             if (m.role === 'assistant' && m.toolActivities) {
               for (const act of m.toolActivities) {
                 if (act.type === 'write' || act.type === 'edit') {
@@ -706,6 +725,9 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 }
               }
             }
+          }
+          // Constraints: chronological order (oldest first, as before), not relevance-ranked.
+          for (const m of olderTurns) {
             if (m.role === 'user') {
               const text = m.content.trim();
               if (/\b(keep|make sure|don't|do not|always|never|must|should)\b/i.test(text)) {
@@ -723,9 +745,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             structuredLines.push(`User constraints to maintain: ${[...new Set(constraints)].slice(0, 3).join(' | ')}`);
           }
 
-          // Also include assistant summary chips as narrative context fallback
-          const summaryChips = olderTurns
+          // Assistant summary chips, most relevant first, capped -- this was
+          // previously unbounded (every older assistant turn, forever), which
+          // grows without limit as a conversation gets longer.
+          const MAX_SUMMARY_CHIPS = 8;
+          const summaryChips = rankedOlderTurns
             .filter(m => m.role === 'assistant')
+            .slice(0, MAX_SUMMARY_CHIPS)
             .map(m => `• ${m.summary || m.content.split('\n')[0].slice(0, 80)}`)
             .join('\n');
 
@@ -918,6 +944,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             const { body: strippedContent, summary } = extractSummary(stripEcomgearTags(rawContent));
             const isPlan = result.mode === 'plan'
               || (!result.mode && /reply\s+\*\*execute\*\*/i.test(rawContent) && !overridePrompt);
+            // Server-side execute-confirmation override (agentLoopService.ts
+            // EXECUTE_CONFIRM_RE) flipped this plan-mode request into a real
+            // build -- resync the visible toggle to match what actually ran,
+            // since that decision no longer happens in this component.
+            if (result.mode === 'build' && resolvedMode === 'plan') setAgentMode('agent');
             // Tool activities come from tool-output XML (accumulated during streaming),
             // not from the text-delta stream which rarely contains ecomgear tags.
             const toolActivities = isPlan ? [] : parseToolActivities(toolXmlAccum || rawContent);
