@@ -201,7 +201,19 @@ router.post('/preview-update', async (req: AuthenticatedRequest, res: Response) 
     });
     if (!previewRes.ok) {
       const text = await previewRes.text().catch(() => '');
-      res.status(502).json({ success: false, error: `Preview service error ${previewRes.status}: ${text}` });
+      // Pass through preview-service's real status (429 rate-limited, 423
+      // project-locked, 401, etc.) instead of flattening every failure into
+      // an opaque 502 -- callers need to tell "another generation is running,
+      // retry shortly" apart from "the preview host is actually down".
+      let upstreamError = text;
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed?.error) upstreamError = parsed.error;
+      } catch {
+        // Not JSON -- use the raw text as-is.
+      }
+      const status = previewRes.status >= 400 && previewRes.status < 600 ? previewRes.status : 502;
+      res.status(status).json({ success: false, error: upstreamError });
       return;
     }
     const data = await previewRes.json().catch(() => ({}));
