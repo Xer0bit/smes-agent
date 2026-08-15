@@ -372,6 +372,12 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [fallbackPreviewUrl, setFallbackPreviewUrl] = useState<string | null>(null);
   const [previewStatus, setPreviewStatus] = useState<'pending' | 'building' | 'ready' | 'failed'>('pending');
+  // True for the agent's ENTIRE run, not just around individual preview
+  // pushes -- previewStatus/'building' only brackets specific push moments
+  // (onFilesGenerated fires once at completion, onPreviewCommand only on a
+  // user-issued refresh), so it doesn't reliably span a run that pushes
+  // multiple times mid-way (auto-fix passes). This does, unconditionally.
+  const [isAgentGenerating, setIsAgentGenerating] = useState(false);
   const [latestPreviewUrl, setLatestPreviewUrl] = useState<string | null>(null);
   // True while the agent is mid-install of an npm dependency; suppresses the
   // preview's build-error overlay for that window (see MultiDevicePreview).
@@ -2316,6 +2322,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       onUsage={(_tokensUsed) => {}}
                       onAgentStreamText={handleAgentStreamText}
                       onAgentStreamClear={handleAgentStreamClear}
+                      onGeneratingChange={setIsAgentGenerating}
                     />
                   )}
                 </div>
@@ -2607,6 +2614,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               }}
               onAgentStreamText={handleAgentStreamText}
               onAgentStreamClear={handleAgentStreamClear}
+              onGeneratingChange={setIsAgentGenerating}
             />
           </div>
         )}
@@ -3296,6 +3304,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                   inspectMode={inspectMode}
                   onInspectModeChange={setInspectMode}
                   installingDependency={installingDependency}
+                  isGenerating={isAgentGenerating}
                   onRepair={(errorSummary) => {
                     setRepairPrompt(errorSummary);
                     setIsMinimized(false);

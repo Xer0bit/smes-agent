@@ -73,6 +73,12 @@ interface MultiDevicePreviewProps {
      * error block during this window and show an "installing" state instead.
      */
     installingDependency?: boolean;
+    /** True for the agent's entire run (mirrors AgentChatPanel's own isGenerating,
+     * not just the moments status flips to 'building'). Covers the live iframe
+     * for the full duration so mid-run preview pushes (auto-fix passes included)
+     * don't flash the live-reloading Vite content on every one of them -- see
+     * the cover rendered alongside the iframe below. */
+    isGenerating?: boolean;
 }
 
 function isNonFatalAssetError(errorText: string): boolean {
@@ -115,6 +121,7 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     inspectMode = false,
     onInspectModeChange,
     installingDependency = false,
+    isGenerating = false,
 }) => {
     const config = DEVICE_CONFIGS[viewMode];
     const [previewDiagnostics, setPreviewDiagnostics] = useState<PreviewStatus>({ healthy: true, errors: [], diagnosticKind: 'healthy' });
@@ -332,6 +339,20 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
                         className="w-full h-full border-0 bg-white"
                         onLoad={handleIframeLoad}
                     />
+                    {/* The live preview is a real, HMR-connected Vite dev server -- its own
+                        injected client script reacts to every file write on disk the instant
+                        it happens, independent of anything in this React tree. That's every
+                        push mid-generation (including intermediate auto-fix passes), each
+                        showing as a visible reload/flash even for small changes. This cover
+                        doesn't change that underlying behavior (the iframe stays mounted and
+                        keeps receiving live updates underneath) -- it just keeps the user from
+                        watching it happen: one clean reveal of the final state when the run
+                        finishes, instead of a flicker on every intermediate write. */}
+                    {(isGenerating || status === 'building') && hasRenderableFrame && !installingDependency && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
+                            <div className="animate-spin w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full" />
+                        </div>
+                    )}
                     {blankScreen && !hasBuildErrors && !installingDependency && (
                         <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
                             <div className="text-center max-w-sm px-6">

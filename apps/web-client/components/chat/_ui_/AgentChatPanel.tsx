@@ -69,6 +69,11 @@ interface AgentChatPanelProps {
   onResolveFileContent?: (path: string) => string | undefined;
   /** False while the raw code viewer is open -- inspect needs the live preview visible. */
   canUseInspect?: boolean;
+  /** Mirrors this panel's isGenerating state outward, so the preview panel can
+   * cover the live iframe for the run's full duration instead of flashing on
+   * every intermediate preview push (mid-run auto-fix passes included) --
+   * see MultiDevicePreview's isGenerating prop. */
+  onGeneratingChange?: (isGenerating: boolean) => void;
 }
 
 export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
@@ -92,6 +97,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   onInspectTargetsChange,
   onResolveFileContent,
   canUseInspect = true,
+  onGeneratingChange,
 }) => {
   const GREETING: Message = {
     id: 'greeting',
@@ -106,6 +112,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [messages, setMessages] = useState<Message[]>([GREETING]);
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  useEffect(() => { onGeneratingChange?.(isGenerating); }, [isGenerating, onGeneratingChange]);
   const [statusText, setStatusText] = useState('');
   // The agent's real internal reasoning (the `think` tool's actual argument)
   // shown live only, cleared on the next step/completion, never saved to the
@@ -179,6 +186,16 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const isNearBottomRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Separate from abortRef: the auto-reconnect effect below (rejoining an
+  // already-in-progress run on load) used to share abortRef with
+  // handleSubmit's own fresh-submission flow. Its cleanup unconditionally
+  // aborts whatever abortRef.current currently is -- if handleSubmit had
+  // since overwritten it with a genuinely new, wanted request's controller,
+  // the cleanup aborted THAT instead, surfacing as a confusing "connection
+  // failed on all local endpoints" error on an unrelated fresh submission
+  // (e.g. sending "Hello" right after the reconnect effect ran). Each flow
+  // now only ever touches its own controller.
+  const reconnectAbortRef = useRef<AbortController | null>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -436,7 +453,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               let toolXmlAccum = '';
               let generationDone = false;
 
-              abortRef.current = new AbortController();
+              reconnectAbortRef.current = new AbortController();
               streamAgentGeneration({
                 prompt: '__rejoin__',
                 projectId,
@@ -511,7 +528,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                     setMessages(prev => prev.filter(m => m.id !== asstId));
                   },
                 },
-                signal: abortRef.current.signal,
+                signal: reconnectAbortRef.current.signal,
               }).catch(() => {
                 if (!cancelled) {
                   setIsGenerating(false);
@@ -528,8 +545,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     return () => {
       cancelled = true;
       // Abort any in-flight SSE stream so a stale project's events don't
-      // bleed into the next project's chat panel when the user switches projects.
-      abortRef.current?.abort();
+      // bleed into the next project's chat panel when the user switches
+      // projects. Own ref -- must never touch a fresh handleSubmit
+      // request that happens to be in flight at the same time.
+      reconnectAbortRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);

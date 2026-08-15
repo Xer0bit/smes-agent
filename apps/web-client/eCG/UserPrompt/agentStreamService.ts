@@ -245,6 +245,14 @@ export async function streamAgentGeneration(params: {
       } catch (error) {
         // Terminal/retryable-lock errors   don't try other candidate URLs, propagate immediately
         if ((error as any).sessionExpired || (error as any).guestLimitReached || (error as any).ecoLimitReached || (error as any).projectLocked || (error as any).projectLockedRetry) throw error;
+        // A genuine abort (user cancelled, or the signal's owner tore down)
+        // is also terminal -- without this, an abort on candidate 1 fell
+        // through to trying candidates 2..N (each aborting too, on the same
+        // signal), eventually exhausting every URL and reporting "connection
+        // failed on all local endpoints" instead of cleanly stopping. Rethrow
+        // the ORIGINAL error so its real name ('AbortError') survives -- the
+        // caller's `err.name === 'AbortError'` check depends on that.
+        if (error instanceof Error && error.name === 'AbortError') throw error;
         lastNetworkError = error instanceof Error ? error.message : String(error);
       }
     }
