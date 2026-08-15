@@ -347,10 +347,15 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
                         doesn't change that underlying behavior (the iframe stays mounted and
                         keeps receiving live updates underneath) -- it just keeps the user from
                         watching it happen: one clean reveal of the final state when the run
-                        finishes, instead of a flicker on every intermediate write. */}
+                        finishes, instead of a flicker on every intermediate write.
+                        Translucent + blurred, not opaque (found 2026-08-15): a solid cover for
+                        a run's full duration -- which can run several minutes -- read as a
+                        crashed/black screen with no feedback. Blur hides the same underlying
+                        flicker without hiding that the app is still there and working. */}
                     {(isGenerating || status === 'building') && hasRenderableFrame && !installingDependency && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gray-900/70 backdrop-blur-md z-10">
                             <div className="animate-spin w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full" />
+                            <p className="text-white/90 text-xs font-medium">Applying changes…</p>
                         </div>
                     )}
                     {blankScreen && !hasBuildErrors && !installingDependency && (
