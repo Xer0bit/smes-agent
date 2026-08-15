@@ -81,8 +81,23 @@ export const provisionDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
       }
 
       // Surface the billable DB provisioning in the chat (reuses the write_file
-      // chip path). Previously this account-level mutation was invisible.
+      // chip path). This tag is deliberately self-closing and NOT parsed by
+      // agentXmlParser.ts's <ecomgear-write> regex (which requires a literal
+      // </ecomgear-write> and would push the placeholder text through as a
+      // real file write) -- "database/${record.schema_name}" isn't a project
+      // file, so a matching open/close tag would inject a bogus file into the
+      // live project tree. This call is chat-display-only (sink.emit in
+      // agentLoopService.ts's onXmlComplete streams the raw XML to the
+      // frontend regardless of whether the strict parser matches it).
+      // agentWroteFiles/ghostRun tracking goes through nonFileMutation below
+      // instead, which was the actual gap here.
       ctx.onXmlComplete?.(`<ecomgear-write path="database/${record.schema_name}" description="Provisioned hosted PostgreSQL (${record.status})" />`);
+      // See AgentContext.nonFileMutation's doc comment (agent-tools/types.ts):
+      // a real, billable mutation with no project file to track it by. Without
+      // this, a turn whose only action was provisioning a database left
+      // agentWroteFiles false -- no preview-sync push, and the run got flagged
+      // ghostRun despite the provisioning having genuinely happened.
+      ctx.nonFileMutation = true;
       return (
         `Database provisioned successfully!\n` +
         `Schema: ${record.schema_name}\n` +

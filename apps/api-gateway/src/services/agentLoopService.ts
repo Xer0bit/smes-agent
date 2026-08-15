@@ -256,6 +256,15 @@ export interface AgentRunResult {
   continuationPrompt?: string;
   /** True when the stuck-analysis detector killed the run   the model spun without landing changes */
   stuckAborted?: boolean;
+  /**
+   * The mode this run actually executed under -- may differ from the
+   * client-requested mode when an execute-confirmation phrase ("yes",
+   * "go ahead", "do it") flips a plan-mode request into build (see
+   * EXECUTE_CONFIRM_RE below). The client uses this to keep its own
+   * Plan/Build toggle in sync with what actually happened, since the
+   * override decision now lives here, not in the client.
+   */
+  runtimeMode: 'build' | 'plan';
 }
 
 export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResult> {
@@ -331,7 +340,21 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const boundedOlderSummary = olderSummary
     ? clampContextSection('Earlier conversation summary', olderSummary, MAX_OLDER_SUMMARY_CHARS)
     : undefined;
-  const runtimeMode: 'build' | 'plan' = mode === 'plan' ? 'plan' : 'build';
+  // When the client is in plan mode but the user's message reads as an
+  // execution confirmation ("yes", "go ahead", "do it", "ship it"...),
+  // switch to build for this turn instead of producing another plan.
+  // This decision used to live client-side (AgentChatPanel.tsx's EXECUTE_RE)
+  // and only updated the client's own toggle -- the server just trusted
+  // whatever `mode` the client sent. Moved here so the actual mode a run
+  // executes under is decided in one place, not duplicated in the browser
+  // with no server-side awareness of the override. AgentRunResult.runtimeMode
+  // reports back whichever mode actually ran, so the client can resync its
+  // toggle after the fact instead of deciding upfront.
+  const EXECUTE_CONFIRM_RE = /^(execute|apply|do\s+it|go\s+ahead|proceed|yes|confirm|run|ship\s+it|make\s+(the\s+)?changes|ok\s+do\s+it|let'?s?\s+(do\s+it|go)|build\s+it)/i;
+  const runtimeMode: 'build' | 'plan' =
+    mode === 'plan' && EXECUTE_CONFIRM_RE.test(prompt.trim()) ? 'build'
+    : mode === 'plan' ? 'plan'
+    : 'build';
 
   let requestedModelId = canonicalizeModelId(model || process.env.AI_MODEL, DEFAULT_PRIMARY_MODEL);
 
@@ -769,6 +792,40 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // Always-include critical files
   const criticalFiles = new Set(['src/App.tsx', 'src/index.css', 'src/lib/utils.ts', 'package.json']);
 
+  // Detect if this is the first build on an empty/new project. Moved up from
+  // its original spot further below so the semantic-cache lookup can be
+  // kicked off here, concurrently with KB retrieval, instead of after it --
+  // see the "start the promise now, await it later" note by
+  // semanticCachePromise below.
+  // Use fileSources (full relative paths like src/pages/Home.tsx) NOT liveFileTree
+  // the tree is indent-formatted so full paths like "src/pages/Home.tsx" never appear in it.
+  const hasUserFiles = fileSources.some(f =>
+    /^src\/pages\//.test(f.path) ||
+    (/^src\/components\//.test(f.path) && !/^src\/components\/ui\//.test(f.path)) ||
+    (/^src\/views\//.test(f.path)) ||
+    (/^src\/screens\//.test(f.path))
+  ) || fileSources.filter(f =>
+    /^src\/.*\.(tsx|jsx)$/.test(f.path) && !/^src\/components\/ui\//.test(f.path)
+  ).length > 3;
+  const isEmptyProject = !hasUserFiles;
+  const isFirstMessage = !history || history.length === 0;
+
+  // Semantic cache lookup (agentSemanticCache.ts) -- started here, awaited
+  // much further below where its result is actually used (semanticCacheHintBlock).
+  // This and KB retrieval right below are two independent network calls that
+  // both sit on the critical path before the model's first visible token;
+  // starting this one now instead of after KB retrieval finishes lets them
+  // run concurrently -- up to ~2.5s off the worst case for a fresh-project
+  // first-build prompt (previously up to 2000ms KB + 2500ms cache = 4500ms
+  // serial; now max(2000, 2500) = 2500ms).
+  const semanticCachePromise: Promise<{ hit: boolean; cachedSnapshot?: Record<string, string>; similarity?: number }> =
+    (isEmptyProject && isFirstMessage && runtimeMode === 'build')
+      ? Promise.race([
+          checkSemanticCache(prompt, 'react'),
+          new Promise<{ hit: false }>((resolve) => setTimeout(() => resolve({ hit: false }), 2500)),
+        ])
+      : Promise.resolve({ hit: false });
+
   // KB vector retrieval   skip for micro (partial snapshot) and fix (2s latency with no benefit;
   // fix agent calls get_build_errors first and reads only the broken file).
   const kbScores = new Map<string, number>(); // path → 0-50 bonus points
@@ -1161,46 +1218,31 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     }
   }
 
-  // Detect if this is the first build on an empty/new project.
-  // Use fileSources (full relative paths like src/pages/Home.tsx) NOT liveFileTree  
-  // the tree is indent-formatted so full paths like "src/pages/Home.tsx" never appear in it.
-  const hasUserFiles = fileSources.some(f =>
-    /^src\/pages\//.test(f.path) ||
-    (/^src\/components\//.test(f.path) && !/^src\/components\/ui\//.test(f.path)) ||
-    (/^src\/views\//.test(f.path)) ||
-    (/^src\/screens\//.test(f.path))
-  ) || fileSources.filter(f =>
-    /^src\/.*\.(tsx|jsx)$/.test(f.path) && !/^src\/components\/ui\//.test(f.path)
-  ).length > 3;
-  const isEmptyProject = !hasUserFiles;
-  const isFirstMessage = !history || history.length === 0;
+  // isEmptyProject/isFirstMessage were computed earlier (up by the KB
+  // retrieval block) so semanticCachePromise could be started concurrently
+  // with it instead of after it -- see the comment there.
   const shouldConfirmFirst = isEmptyProject && isFirstMessage && runtimeMode === 'build';
 
-  // Semantic cache: on a fresh, empty project's first BUILD message, check
-  // whether a near-identical prompt already produced a good result on some
-  // other fresh project (agentSemanticCache.ts, cosine similarity > 0.94).
+  // Semantic cache result (agentSemanticCache.ts): the lookup was already
+  // started above, concurrently with KB retrieval -- this just awaits
+  // whatever's already in flight (already resolved by now on most runs,
+  // since everything between the two await points is pure local computation).
   // A hit does NOT skip generation -- the model still writes and validates
   // its own files through the normal tool-call path, nothing about the
   // existing build-check/preview/persistence machinery is bypassed. It's
   // injected as a strong reference the model can adapt, which is where most
-  // of the token/time cost of a from-scratch build actually goes. Bounded
-  // and best-effort, same as every other KB lookup in this file.
+  // of the token/time cost of a from-scratch build actually goes.
   let semanticCacheHintBlock = '';
-  if (isEmptyProject && isFirstMessage && runtimeMode === 'build') {
-    try {
-      const cacheResult = await Promise.race([
-        checkSemanticCache(prompt, 'react'),
-        new Promise<{ hit: false }>((resolve) => setTimeout(() => resolve({ hit: false }), 2500)),
-      ]);
-      if (cacheResult.hit && cacheResult.cachedSnapshot) {
-        const files = Object.entries(cacheResult.cachedSnapshot)
-          .slice(0, 20)
-          .map(([p, c]) => `--- ${p} ---\n${String(c).slice(0, 1500)}`)
-          .join('\n\n');
-        semanticCacheHintBlock = `\n\n# Reference Implementation (similarity ${cacheResult.similarity?.toFixed(2) ?? '?'})\n\nA previous request very similar to this one produced the following working implementation. Use it as a strong starting reference -- adapt it to the specifics of THIS request rather than building from zero, but verify and adjust anything that doesn't actually match what was asked for here.\n\n${files}`;
-      }
-    } catch { /* non-fatal -- proceed without the hint */ }
-  }
+  try {
+    const cacheResult = await semanticCachePromise;
+    if (cacheResult.hit && cacheResult.cachedSnapshot) {
+      const files = Object.entries(cacheResult.cachedSnapshot)
+        .slice(0, 20)
+        .map(([p, c]) => `--- ${p} ---\n${String(c).slice(0, 1500)}`)
+        .join('\n\n');
+      semanticCacheHintBlock = `\n\n# Reference Implementation (similarity ${cacheResult.similarity?.toFixed(2) ?? '?'})\n\nA previous request very similar to this one produced the following working implementation. Use it as a strong starting reference -- adapt it to the specifics of THIS request rather than building from zero, but verify and adjust anything that doesn't actually match what was asked for here.\n\n${files}`;
+    }
+  } catch { /* non-fatal -- proceed without the hint */ }
 
   const modeInstruction = runtimeMode === 'plan'
     ? `\n\n# Runtime Mode Instruction
@@ -2701,7 +2743,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // route-level catch doesn't emit a second 'error' SSE that overwrites the done result.
       if (timeoutDoneSent || (streamError as any)?.isAgentTimeout) {
         console.log('[AgentLoop] Timeout abort   swallowing streamError, done already sent.');
-        return { filesToWrite: [], filesToDelete: [], renames: [], dependencies: [], summary: '', costUsd: 0, ecoUsed: 0 };
+        return { filesToWrite: [], filesToDelete: [], renames: [], dependencies: [], summary: '', costUsd: 0, ecoUsed: 0, runtimeMode };
       }
       throw streamError;
     }
@@ -3450,7 +3492,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       }
     }
 
-    const agentWroteFiles = filesToWrite.length > 0 || filesEdited.length > 0 || filesToDelete.length > 0 || renames.length > 0;
+    // ctx.nonFileMutation: a real, consequential change with no corresponding
+    // project file (e.g. provision_database.ts) -- see its doc comment in
+    // agent-tools/types.ts for why this can't be a synthetic filesToWrite entry.
+    const agentWroteFiles = filesToWrite.length > 0 || filesEdited.length > 0 || filesToDelete.length > 0 || renames.length > 0 || ctx.nonFileMutation === true;
 
     // Paths whose content this run actually wrote/edited but that never made
     // it into the live preview -- surgical-revert-removed new files, or
@@ -4579,7 +4624,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     if (agentTimeoutId) clearTimeout(agentTimeoutId);
     clearInterval(heartbeatId);
-    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed, needsAutoContinue, continuationPrompt, stuckAborted: Boolean(stuckAnalysisAbortReason) };
+    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed, needsAutoContinue, continuationPrompt, stuckAborted: Boolean(stuckAnalysisAbortReason), runtimeMode };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     if (agentTimeoutId) clearTimeout(agentTimeoutId);

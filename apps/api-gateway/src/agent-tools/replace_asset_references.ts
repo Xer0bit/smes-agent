@@ -35,6 +35,7 @@ import {
   REF_SCAN_MAX_FILES,
   IMPORT_SPECIFIER_RE,
   resolveImportSpecifier,
+  escapeXmlAttr,
 } from './types.js';
 
 const MAX_FILE_SIZE = 1024 * 1024; // 1 MB   skip larger text files, same order of magnitude as agentLoopService's own cap
@@ -255,6 +256,29 @@ export const replaceAssetReferencesTool: ToolDefinition<z.infer<typeof schema>> 
       fullyResolved: notRewritten.length === 0,
       unresolvedCount: notRewritten.length,
     });
+
+    // Register every file this actually rewrote with the tracked-write
+    // pathway (same mechanism write_file/place_asset use), instead of
+    // relying on scanAndRewrite's direct fs.writeFileSync calls to be picked
+    // up only as a side effect of place_asset also running in the same turn.
+    // Without this, a hypothetical run that called this tool without a
+    // co-occurring tracked write left agentWroteFiles false: the reference
+    // rewrites landed on disk correctly, but the end-of-turn preview-sync
+    // push never ran, so none of it reached the live preview. Real files
+    // (confirmed on disk by the scan itself), so -- unlike
+    // provision_database.ts's non-file case -- an open/close tag here is
+    // exactly the place_asset.ts/confirm_edge_function_deploy.ts fix, not a
+    // bogus-file risk.
+    const rewrittenFiles = [...new Set(rewritten.map((f) => f.file))];
+    for (const relPath of rewrittenFiles) {
+      let content = '';
+      try {
+        content = fs.readFileSync(safeJoin(ctx.appPath, relPath), 'utf8');
+      } catch { /* full-disk-walk sync will still pick up the real content from disk */ }
+      ctx.onXmlComplete?.(
+        `<ecomgear-write path="${escapeXmlAttr(relPath)}" description="${escapeXmlAttr(`Updated asset reference: ${oldAssetPath} -> ${newAssetPath}`)}">${content}</ecomgear-write>`
+      );
+    }
 
     const lines: string[] = [];
     lines.push(`Scanned ${scan.filesScanned} file(s) for references to ${oldAssetPath}.`);

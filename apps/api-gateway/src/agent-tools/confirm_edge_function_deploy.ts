@@ -126,7 +126,17 @@ export const confirmEdgeFunctionDeployTool: ToolDefinition<z.infer<typeof schema
       }
 
       const chipDesc = `${verb} edge function${description ? `: ${description}` : ''}`.replace(/"/g, '&quot;');
-      ctx.onXmlComplete?.(`<ecomgear-write path="${mirrorRelPath}" description="${chipDesc}" />`);
+      // MUST be a real open/close tag, not self-closing: agentXmlParser.ts's
+      // <ecomgear-write> regex requires a literal </ecomgear-write> to match
+      // (/<ecomgear-write\s+path="([^"]+)"[^>]*>([\s\S]*?)<\/ecomgear-write>/)
+      // -- the self-closing form used here previously silently failed to
+      // parse, so this never reached filesToWrite/agentWroteFiles. Unlike
+      // provision_database.ts's identical-looking self-closing tag,
+      // mirrorRelPath IS a real file (just written above via
+      // fs.writeFileSync), so agentLoopService.ts's full-disk-walk sync
+      // re-reads the real content -- this placeholder is only a temporary
+      // stand-in, same as place_asset.ts's fix for the same bug.
+      ctx.onXmlComplete?.(`<ecomgear-write path="${mirrorRelPath}" description="${chipDesc}">[edge function code -- see ${mirrorRelPath} on disk]</ecomgear-write>`);
 
       // Functions execute on VPS5, next to the tenant database   never on the
       // platform API. Sync the code there now so it's invocable immediately;

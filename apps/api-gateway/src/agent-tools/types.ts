@@ -176,6 +176,20 @@ export interface AgentContext {
   /** Counts place_asset calls this run   cheap signal for "an asset task happened", used to scope the asset-completeness closure-claim check without a false trigger on unrelated runs. */
   placeAssetCallCount?: number;
   /**
+   * Set true by a tool that made a real, billable/consequential change with
+   * NO corresponding project file (e.g. provision_database.ts provisioning a
+   * tenant Postgres schema   there's nothing on disk to write). agentWroteFiles
+   * in agentLoopService.ts ORs this in alongside filesToWrite/filesEdited/
+   * filesToDelete/renames, so a turn whose only action was this kind of
+   * mutation still triggers the end-of-turn preview-sync gate and doesn't get
+   * mislabeled ghostRun. Deliberately NOT implemented via a synthetic
+   * <ecomgear-write> entry: agentLoopService.ts's disk-walk sync re-reads
+   * every path in filesToWrite from disk, and a path with nothing real there
+   * would inject a bogus placeholder file into the live project instead of
+   * fixing anything (found during the 2026-08 sync audit, provision_database.ts).
+   */
+  nonFileMutation?: boolean;
+  /**
    * Turn-scoped staging area for schema-mutating SQL (DDL: CREATE/ALTER/DROP/
    * TRUNCATE) awaiting a confirm_database_change call. query_database stages
    * DDL here instead of executing it immediately   closes the "agent silently
