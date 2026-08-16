@@ -426,6 +426,21 @@ npm ci --omit=dev
 pm2 delete ecomgear-api 2>/dev/null || true
 pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-api --update-env
 pm2 save
+# Sweep workers PM2 abandoned: a `pm2 delete` on a cluster app can deregister
+# a worker whose kill never lands (open SSE streams), leaving it serving OLD
+# code indefinitely -- one leaked per deploy, one survived 5+ weeks. Any
+# child of the PM2 daemon not in `pm2 jlist` is such an orphan: kill it.
+sleep 3
+PM2_PID=$(pgrep -f "PM2 v" | head -1)
+if [ -n "$PM2_PID" ]; then
+    REG=" $(pm2 jlist 2>/dev/null | python3 -c "import json,sys; print(' '.join(str(p['pid']) for p in json.load(sys.stdin)))" 2>/dev/null) "
+    for c in $(pgrep -P "$PM2_PID"); do
+        case "$REG" in *" $c "*) ;; *)
+            echo "Killing orphaned pm2 child $c (deregistered worker, old code)"
+            kill "$c" 2>/dev/null; sleep 1; kill -9 "$c" 2>/dev/null || true ;;
+        esac
+    done
+fi
 echo "ecomgear-api restarted"
 REMOTE_API
     success "VPS1 API server deployed"
@@ -899,6 +914,22 @@ if [ -n "\$STUCK_PIDS" ]; then
     kill -KILL \$STUCK_PIDS 2>/dev/null || true
 else
     echo "  All old workers exited cleanly"
+fi
+
+# Second, stricter sweep on the daemon-registry invariant: every child of the
+# PM2 daemon must be in \`pm2 jlist\`. The path-based sweep above missed a
+# leaked worker on 2026-08-16 (worker churn during warmup deregisters a
+# process whose kill never lands); this catches any orphan regardless of
+# cmdline shape.
+PM2_PID3=\$(pgrep -f "PM2 v" | head -1)
+if [ -n "\$PM2_PID3" ]; then
+    REG3=" \$(pm2 jlist 2>/dev/null | python3 -c "import json,sys; print(' '.join(str(p['pid']) for p in json.load(sys.stdin)))" 2>/dev/null) "
+    for c in \$(pgrep -P "\$PM2_PID3"); do
+        case "\$REG3" in *" \$c "*) ;; *)
+            echo "  Killing orphaned pm2 child \$c (deregistered worker)"
+            kill "\$c" 2>/dev/null; sleep 1; kill -9 "\$c" 2>/dev/null || true ;;
+        esac
+    done
 fi
 
 # ── 8. Health check with retry ───────────────────────────────────────────────
