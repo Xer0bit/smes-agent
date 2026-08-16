@@ -426,21 +426,19 @@ npm ci --omit=dev
 pm2 delete ecomgear-api 2>/dev/null || true
 pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-api --update-env
 pm2 save
-# Sweep workers PM2 abandoned: a `pm2 delete` on a cluster app can deregister
-# a worker whose kill never lands (open SSE streams), leaving it serving OLD
-# code indefinitely -- one leaked per deploy, one survived 5+ weeks. Any
-# child of the PM2 daemon not in `pm2 jlist` is such an orphan: kill it.
-sleep 3
-PM2_PID=$(pgrep -f "PM2 v" | head -1)
-if [ -n "$PM2_PID" ]; then
-    REG=" $(pm2 jlist 2>/dev/null | python3 -c "import json,sys; print(' '.join(str(p['pid']) for p in json.load(sys.stdin)))" 2>/dev/null) "
-    for c in $(pgrep -P "$PM2_PID"); do
-        case "$REG" in *" $c "*) ;; *)
-            echo "Killing orphaned pm2 child $c (deregistered worker, old code)"
-            kill "$c" 2>/dev/null; sleep 1; kill -9 "$c" 2>/dev/null || true ;;
-        esac
-    done
-fi
+# Sweep truly-stale leaked workers: a node process running from a DELETED
+# directory is unambiguously serving code that no longer exists on disk
+# (one such worker from July 9 survived 5+ weeks holding locks). This is
+# the ONLY safe kill criterion -- pid-set comparison against `pm2 jlist`
+# was tried twice on 2026-08-16 and killed live workers both times: jlist's
+# recorded pids lag PM2's own worker churn, so "unregistered" pids can be
+# the real serving processes.
+for c in $(pgrep -f "node .*/server/dist/index.js"); do
+    if [ -L "/proc/$c/cwd" ] && ! readlink -e "/proc/$c/cwd" >/dev/null 2>&1; then
+        echo "Killing stale worker $c (cwd deleted -- code no longer on disk)"
+        kill "$c" 2>/dev/null; sleep 1; kill -9 "$c" 2>/dev/null || true
+    fi
+done
 echo "ecomgear-api restarted"
 REMOTE_API
     success "VPS1 API server deployed"
@@ -895,42 +893,20 @@ pm2 save --force
 # We check against the FINAL PM2 roster to avoid killing active workers.
 echo "  Waiting 18s for graceful shutdown of old workers..."
 sleep 18
-FINAL_PIDS=\$(pm2 jlist 2>/dev/null | python3 -c "
-import sys, json
-procs = json.load(sys.stdin)
-print(' '.join(str(p['pid']) for p in procs if p.get('name') == '\$APP_NAME' and p.get('pid', 0) > 0))
-" 2>/dev/null || echo "")
-ALL_PIDS3=\$(pgrep -f "\$DEPLOY_PATH/server/dist/index.js" 2>/dev/null || true)
-STUCK_PIDS=""
-for pid in \$ALL_PIDS3; do
-    is_managed=0
-    for fp in \$FINAL_PIDS; do
-        [ "\$pid" = "\$fp" ] && is_managed=1 && break
-    done
-    [ \$is_managed -eq 0 ] && STUCK_PIDS="\$STUCK_PIDS \$pid"
+# Kill ONLY workers running from a deleted directory -- code that no longer
+# exists on disk (the July 9 leak signature: 5+ weeks serving deleted code).
+# Pid-set comparison against pm2 jlist was tried twice on 2026-08-16 and
+# killed live workers both times (jlist's recorded pids lag worker churn),
+# so deleted-cwd is the only kill criterion used here.
+KILLED=""
+for c in \$(pgrep -f "node .*/server/dist/index.js"); do
+    if [ -L "/proc/\$c/cwd" ] && ! readlink -e "/proc/\$c/cwd" >/dev/null 2>&1; then
+        echo "  Killing stale worker \$c (cwd deleted -- code no longer on disk)"
+        kill "\$c" 2>/dev/null; sleep 1; kill -9 "\$c" 2>/dev/null || true
+        KILLED="yes"
+    fi
 done
-if [ -n "\$STUCK_PIDS" ]; then
-    echo "  Force-killing stuck old workers (survived 18s drain):\$STUCK_PIDS"
-    kill -KILL \$STUCK_PIDS 2>/dev/null || true
-else
-    echo "  All old workers exited cleanly"
-fi
-
-# Second, stricter sweep on the daemon-registry invariant: every child of the
-# PM2 daemon must be in \`pm2 jlist\`. The path-based sweep above missed a
-# leaked worker on 2026-08-16 (worker churn during warmup deregisters a
-# process whose kill never lands); this catches any orphan regardless of
-# cmdline shape.
-PM2_PID3=\$(pgrep -f "PM2 v" | head -1)
-if [ -n "\$PM2_PID3" ]; then
-    REG3=" \$(pm2 jlist 2>/dev/null | python3 -c "import json,sys; print(' '.join(str(p['pid']) for p in json.load(sys.stdin)))" 2>/dev/null) "
-    for c in \$(pgrep -P "\$PM2_PID3"); do
-        case "\$REG3" in *" \$c "*) ;; *)
-            echo "  Killing orphaned pm2 child \$c (deregistered worker)"
-            kill "\$c" 2>/dev/null; sleep 1; kill -9 "\$c" 2>/dev/null || true ;;
-        esac
-    done
-fi
+[ -z "\$KILLED" ] && echo "  All old workers exited cleanly"
 
 # ── 8. Health check with retry ───────────────────────────────────────────────
 HEALTHY=0
