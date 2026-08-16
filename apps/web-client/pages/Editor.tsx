@@ -2353,7 +2353,25 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             </SheetContent>
           </Sheet>
 
-          {/* Legacy pop-over Agent Button removed */}
+          {/* Launcher for the assistant sheet. Below 1024px the sheet is forced
+              closed on mount, and every control that reopens it lived inside
+              the desktop-only chat sidebar below (rendered under
+              !isMobileViewport) -- so on a tablet the agent was closed with no
+              way to open it at all. Reported 2026-08-16: "on tab view I can't
+              access agent". Only rendered while minimised so it never sits on
+              top of the open sheet. */}
+          {isMinimized && (
+            <button
+              type="button"
+              aria-label="Open assistant"
+              onClick={() => setIsMinimized(false)}
+              className="fixed bottom-5 right-5 z-50 flex h-12 w-12 items-center justify-center
+                rounded-full bg-indigo-600 text-white shadow-lg shadow-black/40
+                hover:bg-indigo-500 active:scale-95 transition"
+            >
+              <Bot className="h-5 w-5" />
+            </button>
+          )}
         </>
       )}
 
