@@ -6,7 +6,7 @@ import { useOrganization } from "@/contexts/OrganizationContext";
 import { useUsage } from "@/contexts/UsageContext";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { revisionService } from "@/services/revisionService";
+import { revisionService, computePublishFilesHash } from "@/services/revisionService";
 import { consumePendingPrompt } from "@/services/pendingPromptHandoff";
 import { RevisionPanel } from "@/components/RevisionPanel";
 import { VersionHistoryPanel } from "@/components/VersionHistoryPanel";
@@ -642,6 +642,22 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   const canInteractWithPublishActions = canRenderProjectActions && canShowPublishActions;
   const isVersionPublishable = previewStatus === 'ready';
 
+  // Content hash of the current workspace (source files only), compared
+  // against project.published_files_hash to gate republish when nothing
+  // that would change the live site has changed since the last publish.
+  const [currentPublishHash, setCurrentPublishHash] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const files = Array.from(workspaceFiles.values()).map(f => ({ path: f.path, content: f.content }));
+    if (files.length === 0) { setCurrentPublishHash(null); return; }
+    computePublishFilesHash(files).then((hash) => { if (!cancelled) setCurrentPublishHash(hash); });
+    return () => { cancelled = true; };
+  }, [workspaceFiles]);
+  const noChangesSincePublish = Boolean(
+    isAlreadyPublished && project?.published_files_hash && currentPublishHash &&
+    currentPublishHash === project.published_files_hash
+  );
+
   // Guest mode state
   const [isGuest, setIsGuest] = useState(false);
   const [promptCount, setPromptCount] = useState(0);
@@ -885,7 +901,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     // tens of MB) and is write-only (kept for backwards compat, never read).
     const { data, error } = await supabase
       .from("projects")
-      .select("id, name, status, created_at, updated_at, organization_id, slug, description, visibility, created_by, message_count, user_id, total_storage_bytes, revision_count, latest_revision_size, storage_warning_shown, org_id, docker_path, server_path, preview_port, template_type, node_version, published_subdomain, published_url, published_at, website_name, website_description, meta_image_url, favicon_url, custom_system_prompt, context_notes, thumbnail_url")
+      .select("id, name, status, created_at, updated_at, organization_id, slug, description, visibility, created_by, message_count, user_id, total_storage_bytes, revision_count, latest_revision_size, storage_warning_shown, org_id, docker_path, server_path, preview_port, template_type, node_version, published_subdomain, published_url, published_at, published_files_hash, website_name, website_description, meta_image_url, favicon_url, custom_system_prompt, context_notes, thumbnail_url")
       .eq("id", projectId)
       .single();
 
@@ -1753,6 +1769,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     setIsPublishing(true);
     try {
       const files = Array.from(workspaceFiles.values()).map(f => ({ path: f.path, content: f.content }));
+      const filesHash = await computePublishFilesHash(files);
 
       // Each publish action counts as 1 against the monthly publish quota
       const allowed = await checkAndIncrementPublishLines(currentOrganizationId, 1);
@@ -1773,10 +1790,11 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
         published_subdomain: publishSlug,
         published_url: result.publishedUrl,
         published_at: new Date().toISOString(),
+        published_files_hash: filesHash,
       }).eq('id', projectId);
 
       setPublishedUrl(result.publishedUrl || null);
-      if (project) setProject({ ...project, published_url: result.publishedUrl, published_subdomain: publishSlug });
+      if (project) setProject({ ...project, published_url: result.publishedUrl, published_subdomain: publishSlug, published_files_hash: filesHash });
       toast.success(`Live at ${result.publishedUrl}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Publish failed');
@@ -1791,6 +1809,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     setIsPublishing(true);
     try {
       const files = Array.from(workspaceFiles.values()).map(f => ({ path: f.path, content: f.content }));
+      const filesHash = await computePublishFilesHash(files);
       const allowed = await checkAndIncrementPublishLines(currentOrganizationId, 1);
       if (!allowed) {
         showLimitToast('You have reached your monthly publish limit.', 'starter');
@@ -1806,7 +1825,9 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
         published_subdomain: slug,
         published_url: result.publishedUrl,
         published_at: new Date().toISOString(),
+        published_files_hash: filesHash,
       }).eq('id', projectId);
+      if (project) setProject({ ...project, published_url: result.publishedUrl, published_subdomain: slug, published_files_hash: filesHash });
       toast.success(`Site updated at ${result.publishedUrl}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Update failed');
@@ -1832,6 +1853,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     setIsPublishing(true);
     try {
       const files = Array.from(workspaceFiles.values()).map(f => ({ path: f.path, content: f.content }));
+      const filesHash = await computePublishFilesHash(files);
       const allowed = await checkAndIncrementPublishLines(currentOrganizationId, 1);
       if (!allowed) {
         showLimitToast('You have reached your monthly publish limit.', 'starter');
@@ -1850,11 +1872,13 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
           status: 'active',
           published_url: `https://${normalizedDomain}`,
           published_at: new Date().toISOString(),
+          published_files_hash: filesHash,
         })
         .eq('id', projectId);
 
       setCustomDomainActivated(true);
       setPublishedUrl(`https://${normalizedDomain}`);
+      if (project) setProject({ ...project, published_url: `https://${normalizedDomain}`, published_files_hash: filesHash });
       toast.success(`Production updated at https://${normalizedDomain}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Production update failed');
@@ -1928,6 +1952,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     setIsPublishing(true);
     try {
       const files = Array.from(workspaceFiles.values()).map(f => ({ path: f.path, content: f.content }));
+      const filesHash = await computePublishFilesHash(files);
       const allowed = await checkAndIncrementPublishLines(currentOrganizationId, 1);
       if (!allowed) {
         showLimitToast('You have reached your monthly publish limit.', 'starter');
@@ -1971,11 +1996,13 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
           status: 'active',
           published_url: `https://${normalizedDomain}`,
           published_at: new Date().toISOString(),
+          published_files_hash: filesHash,
         })
         .eq('id', projectId);
 
       setCustomDomainActivated(true);
       setPublishedUrl(`https://${normalizedDomain}`);
+      if (project) setProject({ ...project, published_url: `https://${normalizedDomain}`, published_files_hash: filesHash });
       toast.success(`Custom domain is live at https://${normalizedDomain}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to activate custom domain');
@@ -3173,11 +3200,11 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                           {/* Update button */}
                           <div className="px-4 py-3">
                             <button
-                              disabled={!isVersionPublishable || isPublishing}
+                              disabled={!isVersionPublishable || isPublishing || noChangesSincePublish}
                               className="w-full h-9 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
                               onClick={() => {
                                 if (!currentOrganizationId) { toast.error("Join or create an organization to publish your site"); return; }
-                                if (!isVersionPublishable) return;
+                                if (!isVersionPublishable || noChangesSincePublish) return;
                                 if (customDomainUrl) {
                                   handleUpdateCustomDomainSite();
                                 } else if (project?.published_subdomain) {
@@ -3189,7 +3216,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                             >
                               {isPublishing ? (
                                 <><RotateCcw className="h-4 w-4 animate-spin" /> Updating…</>
-                              ) : 'Update'}
+                              ) : noChangesSincePublish ? 'No changes to publish' : 'Update'}
                             </button>
                           </div>
                         </div>
@@ -3681,8 +3708,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                         {isPublishing ? 'Deploying and verifying…' : 'Verify DNS and Go Live'}
                       </Button>
                       {customDomainActivated && (
-                        <Button className="w-full bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-40" disabled={isPublishing || isCheckingDns || !isVersionPublishable} onClick={handleUpdateCustomDomainSite}>
-                          {isPublishing ? 'Updating production…' : 'Update Production Site'}
+                        <Button className="w-full bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-40" disabled={isPublishing || isCheckingDns || !isVersionPublishable || noChangesSincePublish} onClick={handleUpdateCustomDomainSite}>
+                          {isPublishing ? 'Updating production…' : noChangesSincePublish ? 'No changes to publish' : 'Update Production Site'}
                         </Button>
                       )}
                     </div>
@@ -3698,32 +3725,41 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       {previewStatus === 'building' ? 'Preview is still building…' : 'Preview must be ready before publishing.'}
                     </p>
                   )}
-                  <Button
-                    className="w-full bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-40"
-                    disabled={
-                      !publishSlug ||
-                      (slugAvailable !== true && publishSlug !== project?.published_subdomain) ||
-                      isPublishing ||
-                      !isVersionPublishable
-                    }
-                    onClick={() => {
-                      if (publishedUrl && publishSlug === project?.published_subdomain) {
-                        handleUpdateSite();
-                      } else {
-                        setIsEditingSlug(false);
-                        handlePublishToSubdomain();
-                      }
-                    }}
-                  >
-                    {isPublishing ? (
-                      <span className="flex items-center gap-2">
-                        <svg className="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
-                        {publishSlug === project?.published_subdomain ? 'Updating…' : 'Building & deploying…'}
-                      </span>
-                    ) : (
-                      publishedUrl && publishSlug === project?.published_subdomain ? 'Update Site' : 'Publish'
-                    )}
-                  </Button>
+                  {(() => {
+                    const isRepublish = Boolean(publishedUrl && publishSlug === project?.published_subdomain);
+                    return (
+                      <Button
+                        className="w-full bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-40"
+                        disabled={
+                          !publishSlug ||
+                          (slugAvailable !== true && publishSlug !== project?.published_subdomain) ||
+                          isPublishing ||
+                          !isVersionPublishable ||
+                          (isRepublish && noChangesSincePublish)
+                        }
+                        onClick={() => {
+                          if (isRepublish) {
+                            if (noChangesSincePublish) return;
+                            handleUpdateSite();
+                          } else {
+                            setIsEditingSlug(false);
+                            handlePublishToSubdomain();
+                          }
+                        }}
+                      >
+                        {isPublishing ? (
+                          <span className="flex items-center gap-2">
+                            <svg className="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+                            {isRepublish ? 'Updating…' : 'Building & deploying…'}
+                          </span>
+                        ) : isRepublish && noChangesSincePublish ? (
+                          'No changes to publish'
+                        ) : (
+                          isRepublish ? 'Update Site' : 'Publish'
+                        )}
+                      </Button>
+                    );
+                  })()}
                 </div>
               )}
             </div>

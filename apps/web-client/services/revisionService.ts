@@ -69,6 +69,26 @@ export function isStaleParentError(err: unknown): boolean {
   return msg.includes('stale_parent');
 }
 
+// Build/dependency artifacts that regenerate on their own -- comparing these
+// would make an unchanged project look "changed" on every publish check.
+const NON_SOURCE_PATH = /(^|\/)(node_modules|dist|build|\.git|\.cache)(\/|$)|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|\.DS_Store)$/;
+
+/**
+ * Deterministic content hash over a file set (path + per-file SHA-256, same
+ * primitive the revision manifest uses), skipping non-source paths. Used to
+ * gate republish: if this matches the hash stored at the last publish,
+ * nothing that would actually change the live site has changed.
+ */
+export async function computePublishFilesHash(files: { path: string; content: string }[]): Promise<string> {
+  const perFile = await Promise.all(
+    files
+      .filter((f) => !NON_SOURCE_PATH.test(f.path))
+      .map(async (f) => `${f.path}:${await sha256Hex(f.content ?? '')}`)
+  );
+  perFile.sort();
+  return sha256Hex(perFile.join('\n'));
+}
+
 export const revisionService = {
   async createProject(name: string, userId: string, organizationId?: string): Promise<Project> {
     // Validate userId
