@@ -5,7 +5,9 @@ import { supabase } from '@/integrations/supabase/client';
 
 export interface MessageAttachment {
   name: string;
-  size: number;
+  /** Optional: the dashboard hero-launch path forwards AgentAttachment, which
+   * carries no size. Nothing renders it -- it is stored metadata only. */
+  size?: number;
   type: string;
   url: string;
   category: 'image' | 'document';

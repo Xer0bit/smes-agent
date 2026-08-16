@@ -38,7 +38,7 @@ import { useSubscription } from '@/contexts/SubscriptionContext';
 import { getUsageColor, getProgressColor } from '@/hooks/useUsage';
 import { ProjectThumbnail } from '@/components/dashboard/ProjectThumbnail';
 import { toast } from 'sonner';
-import { uploadChatAttachment, isAllowedFile } from '@/services/chatAttachmentService';
+import { uploadChatAttachment, isAllowedFile, categorize } from '@/services/chatAttachmentService';
 import { stashPendingPrompt } from '@/services/pendingPromptHandoff';
 import type { AgentAttachment } from '@/eCG/UserPrompt/types';
 
@@ -263,9 +263,18 @@ export default function DashboardHome() {
       toast.error('Maximum 10 files allowed');
       return;
     }
+    // Gate on isAllowedFile -- the same check the upload actually enforces.
+    // This used to allow up to 20MB and any MIME type, while the uploader
+    // capped at 10MB with an allowlist; anything in the gap (10-20MB, AVIF or
+    // HEIC, or a file the OS reports with an empty type) was accepted here,
+    // failed silently at upload, fell through to a text-extraction path that
+    // yields nothing for an image, and reached the agent as no attachment at
+    // all with no error shown. That is the open "uploads images but does
+    // nothing with them" report.
     for (const file of Array.from(files)) {
-      if (file.size > 20 * 1024 * 1024) {
-        toast.error(`File ${file.name} exceeds 20MB limit`);
+      const check = isAllowedFile(file);
+      if (!check.ok) {
+        toast.error(`${file.name}: ${check.reason}`);
         return;
       }
     }
@@ -309,7 +318,16 @@ export default function DashboardHome() {
               attachments.push({ name: att.name, type: att.type, category: att.category, tempPath: att.tempPath, publicUrl: att.publicUrl });
               continue;
             } catch (err) {
-              console.error('Attachment upload failed, falling back to parse-file:', err);
+              console.error('Attachment upload failed:', err);
+              // An image that fails to upload cannot be recovered by the
+              // text-extraction fallback below -- parse-file returns no
+              // extractedText for an image, so the agent would receive
+              // nothing at all while the user saw no error. Say so instead
+              // of silently degrading.
+              if (categorize(file.type) === 'image') {
+                toast.error(`Couldn't attach ${file.name}. Try again, or send it once the project is open.`);
+                continue;
+              }
             }
           }
           const formData = new FormData();

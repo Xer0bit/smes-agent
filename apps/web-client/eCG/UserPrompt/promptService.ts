@@ -107,7 +107,22 @@ export const promptService = {
 
     // Save user message to database (skip for guests   no DB row)
     if (!fingerprint) {
-      await messageService.saveUserMessage(projectId, promptText);
+      // Attachments and userId were both dropped here, so an image attached on
+      // the dashboard reached the model but never landed on the message row --
+      // it never rendered in chat and vanished on reload, while the same
+      // attachment sent from AgentChatPanel persisted fine. That asymmetry is
+      // the open "images should appear and be depicted" report. Mirrors
+      // AgentChatPanel's mapping; publicUrl is the durable copy, so an
+      // attachment without one has nothing to render later.
+      const attachmentsForDb = (attachments ?? [])
+        .filter((a) => a.publicUrl)
+        .map((a) => ({ name: a.name, type: a.type, url: a.publicUrl!, category: a.category }));
+      await messageService.saveUserMessage(
+        projectId,
+        promptText,
+        userId,
+        attachmentsForDb.length > 0 ? attachmentsForDb : undefined,
+      );
       await messageService.incrementProjectMessageCount(projectId);
     }
 

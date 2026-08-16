@@ -992,9 +992,19 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
 
     const parts: string[] = [];
     for (const att of attachments) {
-      // Validate tempPath exists and is under /tmp to prevent path traversal
+      // Validate tempPath is inside the chat-upload directory specifically --
+      // not merely somewhere under /tmp. The old check accepted any path with
+      // an os.tmpdir() prefix, so a caller could name another project's
+      // upload (or a sibling path like /tmpfoo, which also passes a bare
+      // prefix test) and have its contents read into this run's prompt and,
+      // for documents, copied into the generated app. /agent-stream is
+      // optionalAuthMiddleware, so that reachable without an account. This
+      // matches the stricter check place_asset.ts already applies to the same
+      // class of path, including the trailing separator that makes the prefix
+      // test a real directory-containment test.
+      const uploadRoot = path.resolve(path.join(os.tmpdir(), 'ecomgear-chat-uploads')) + path.sep;
       let resolvedPath = path.resolve(att.tempPath);
-      let tempPathValid = resolvedPath.startsWith(os.tmpdir()) && fs.existsSync(resolvedPath);
+      let tempPathValid = resolvedPath.startsWith(uploadRoot) && fs.existsSync(resolvedPath);
 
       // Self-heal from the durable Supabase Storage copy (publicUrl) if the
       // ephemeral /tmp file (cleaned up after 1 hour) is already gone. Writes
@@ -1023,7 +1033,16 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       }
 
       if (!tempPathValid) {
-        parts.push(`- **${att.name}**   file not found or access denied`);
+        // The section preamble below tells the model it MUST act on attached
+        // files. Pairing that hard obligation with a file it cannot open is
+        // how a run ends up inventing a plausible-looking asset URL instead
+        // of stopping -- so the escape hatch has to sit right next to the
+        // failure, where it outranks the general instruction.
+        parts.push(
+          `- **${att.name}**   NOT AVAILABLE (upload expired or inaccessible). ` +
+          `Do NOT invent, guess, or substitute a URL or placeholder for this file, and do not reference it in code. ` +
+          `Complete the rest of the request without it and tell the user this file needs re-attaching.`
+        );
         continue;
       }
 
@@ -1344,8 +1363,20 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             ? getAppBuilderBuildSystemPrompt({
                 includeRequirementGathering: isEmptyProject,
                 includeStartingNewProject: isEmptyProject,
-                includeSeo: promptIntent?.isWebsiteBuild === true,
-                includeIntegration: promptIntent?.hasIntegrationRequest === true,
+                // includeSeo/includeIntegration were driven by per-MESSAGE
+                // classifier output (promptIntent), so "build me a store" and
+                // "change the button colour" produced two different system
+                // prompts inside one conversation. This block carries its own
+                // cache breakpoint and is the largest single thing in the
+                // request (~15-25K tokens), so every flip turned a 0.1x cache
+                // READ into a 1.25x cache WRITE. Pinning them on costs a few
+                // thousand always-cached tokens and buys a byte-stable prefix
+                // across every message of a project phase -- overwhelmingly
+                // the better trade at those multipliers. The isEmptyProject
+                // flags stay conditional: they flip once, when the project
+                // stops being empty, not per message.
+                includeSeo: true,
+                includeIntegration: true,
                 includeErrorPatterns: isEmptyProject,
                 includeCapabilities: isEmptyProject,
                 includePreviewEnvironment: isEmptyProject,
@@ -1416,9 +1447,16 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         const tables = await databaseService.listTables(userId, projectId);
         liveSchemaBlock = tables.length === 0
           ? '\n\n**Current schema: no tables yet.** Use `query_database` with CREATE TABLE to add some before writing data-dependent code.'
-          : '\n\n**Current schema (live, as of this message):**\n' + tables.map((t) => {
+          // Row counts deliberately omitted: they change whenever an end user
+          // touches the generated app, and this block sits inside the cached
+          // dynamic-context system message -- so a visitor signing up could
+          // invalidate the agent's cached prefix between two messages that are
+          // otherwise identical. The agent needs table and column names to
+          // write correct code; it has never needed the row count, and
+          // get_database_schema can still report it on demand.
+          : '\n\n**Current schema (live):**\n' + tables.map((t) => {
               const cols = t.columns.map((c) => `${c.name} ${c.type}${c.nullable ? '' : ' NOT NULL'}`).join(', ');
-              return `- ${t.name} (${t.row_count ?? '?'} rows): ${cols}`;
+              return `- ${t.name}: ${cols}`;
             }).join('\n') +
             '\n\nUse these EXACT table/column names   never guess or invent one. If you need to change the schema, call `query_database`, then re-check via `get_database_schema` before writing dependent code.';
 
