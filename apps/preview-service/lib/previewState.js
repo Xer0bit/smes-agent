@@ -90,8 +90,17 @@ function getProjectDiagnostics(projectId) {
     const stored = projectDiagnostics.get(projectId);
     const errors = stored?.errors || [];
     const kind = stored?.diagnosticKind || 'healthy';
-    // Warnings (from non-blocking checks) don't make the preview "unhealthy"
-    const isWarningOnly = kind === 'warning';
+    // Warnings (from non-blocking checks) don't make the preview "unhealthy".
+    // Neither does 'type': Vite/esbuild strips types without checking them, so
+    // whole-program TS errors do not stop the app from building or running.
+    // Treating them as build failures marked every non-trivial project
+    // permanently unhealthy (measured 2026-08-16: 303 real type errors on a
+    // live project whose preview served fine), which fired the agent's repair
+    // loop on every push -- a loop that cannot converge, since one edit-tier
+    // run fixes one or two of hundreds. Genuinely app-breaking cases (unbound
+    // identifiers, bad syntax) are caught by validateSourceFile and
+    // quickViteBuildCheck and still report as 'build'.
+    const isWarningOnly = kind === 'warning' || kind === 'type';
 
     return {
         healthy: errors.length === 0 || isWarningOnly,

@@ -27,7 +27,7 @@ const {
 const { typeCheckProject } = require('./lib/typecheck');
 const {
     TAILWIND_CSS_BASE, ERROR_BOUNDARY_TSX, preprocessFile, ensureEssentialFiles,
-    materializeProjectFiles, pruneProjectFiles,
+    materializeProjectFiles, pruneProjectFiles, packageJsonNeedsRestart,
 } = require('./lib/materialize');
 const { snapshotProjectSrc, rollbackProjectSrc, cleanupSnapshot } = require('./lib/snapshot');
 // buildViteConfig/COMMON_DEPS shared by both the legacy in-process path
@@ -365,6 +365,15 @@ function shouldRestartViteForUpdate(files = [], projectRoot = null) {
             try {
                 const diskContent = fs.readFileSync(diskPath, 'utf-8');
                 const incoming = typeof file?.content === 'string' ? file.content : '';
+                if (safePath === 'package.json') {
+                    try {
+                        return packageJsonNeedsRestart(diskContent, incoming);
+                    } catch {
+                        // Either side unparseable -- fall back to a byte compare
+                        // rather than silently never restarting.
+                        return diskContent !== incoming;
+                    }
+                }
                 return diskContent !== incoming;
             } catch {
                 // File doesn't exist on disk yet   this IS a real config change
@@ -2062,25 +2071,12 @@ export default App;
             // whole-program check once the cheap checks are clean, since this
             // is a meaningfully slower cross-file build, not a per-file
             // transform, and every agent push hits this route.
-            let typeCheckErrors = [];
-            if (fastCheckErrors.length === 0) {
-                try {
-                    const overlay = Object.fromEntries(files.map((f) => [f.path, f.content]));
-                    const typeResult = typeCheckProject(projectRoot, overlay);
-                    typeCheckErrors = typeResult.errors.map((e) => e.summary);
-                } catch (typeCheckErr) {
-                    // Never let a bug in the type-checker itself block a real
-                    // file promotion -- degrade to "no additional errors found".
-                    console.error(`[${projectId}] Post-write type-check failed (non-fatal):`, typeCheckErr);
-                }
-            }
-
-            const combinedErrorSummaries = [...fastCheckErrors, ...typeCheckErrors];
-            if (combinedErrorSummaries.length > 0) {
-                console.warn(`[${projectId}] Build/type errors: ${combinedErrorSummaries.length} issue(s)   agent will repair`);
-                setProjectErrors(projectId, combinedErrorSummaries, 'build');
+            // Only REAL build breakage gates preview health and the agent's
+            // repair loop, and it's the only check that runs before we respond.
+            if (fastCheckErrors.length > 0) {
+                console.warn(`[${projectId}] Build errors: ${fastCheckErrors.length} issue(s)   agent will repair`);
+                setProjectErrors(projectId, fastCheckErrors, 'build');
             } else {
-                // Clear previous errors only when BOTH checks are clean.
                 setProjectErrors(projectId, []);
             }
             cleanupSnapshot(projectRoot);
@@ -2101,6 +2097,32 @@ export default App;
                 contentHash,
                 revisionId,
             });
+
+            // ── Advisory type check, AFTER the response ──────────────────
+            // typeCheckProject is a whole-program ts.createProgram pass
+            // measured at 11.6-17.8s on a 105-file project. It never gated
+            // promotion -- the files are already on disk above -- yet it sat
+            // on the blocking path, so every push (and every repair-loop push
+            // behind it) paid that cost before the caller heard back. Files
+            // under 'type', which getProjectDiagnostics treats as non-blocking.
+            // Deliberately never touches `res`: the response is already sent,
+            // and this runs outside the rollback handler below.
+            if (fastCheckErrors.length === 0) {
+                setImmediate(() => {
+                    try {
+                        const overlay = Object.fromEntries(files.map((f) => [f.path, f.content]));
+                        const typeErrors = typeCheckProject(projectRoot, overlay).errors.map((e) => e.summary);
+                        if (typeErrors.length === 0) return;
+                        // A newer push may have landed real build errors while
+                        // this ran -- never downgrade those to advisory.
+                        if (getProjectDiagnostics(projectId).diagnosticKind === 'build') return;
+                        console.warn(`[${projectId}] Type errors: ${typeErrors.length} issue(s) (advisory   preview still serves)`);
+                        setProjectErrors(projectId, typeErrors, 'type');
+                    } catch (typeCheckErr) {
+                        console.error(`[${projectId}] Post-write type-check failed (non-fatal):`, typeCheckErr);
+                    }
+                });
+            }
         } catch (err) {
             // Rollback on any unexpected error
             if (hasSnapshot) {
@@ -2175,11 +2197,22 @@ export default App;
                 }
             }
 
+            // Type errors are REPORTED but do not gate health. Vite/esbuild
+            // strips types without checking them, so they never stop the app
+            // building or running; lumping them into `healthy: false` made
+            // every non-trivial project permanently unhealthy and drove the
+            // agent's repair loop on every turn -- a loop that cannot converge
+            // (measured 2026-08-16: 303 real type errors on a project whose
+            // preview served fine). The agent still sees them in `errors` and
+            // can act when the user actually asks; it just no longer treats
+            // them as build breakage. Syntax/import breakage stays blocking.
             const allErrors = [...errors, ...typeErrors];
             res.json({
-                healthy: allErrors.length === 0,
+                healthy: errors.length === 0,
                 errors: allErrors,
-                diagnosticKind: allErrors.length === 0 ? 'healthy' : 'build',
+                diagnosticKind: errors.length > 0
+                    ? 'build'
+                    : (typeErrors.length > 0 ? 'type' : 'healthy'),
             });
         } catch (err) {
             console.error(`[${projectId}] Check failed:`, err);
