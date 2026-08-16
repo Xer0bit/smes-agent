@@ -474,7 +474,14 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     }, { replace: true });
   }, [previewPath]);
   const [showRouteDropdown, setShowRouteDropdown] = useState(false);
+  // Also reused to auto-send a brand-new project's first prompt through
+  // AgentChatPanel's own send flow (see the initial-prompt effect below) --
+  // not repair-specific despite the name.
   const [repairPrompt, setRepairPrompt] = useState<string | null>(null);
+  // Overrides AgentChatPanel's default '🔧 Repair request' bubble label when
+  // repairPrompt is being reused for something other than an actual repair
+  // (e.g. showing the user's real typed text for the first-prompt case).
+  const [agentTriggerDisplayText, setAgentTriggerDisplayText] = useState<string | undefined>(undefined);
   const [agentStreamText, setAgentStreamText] = useState<string>('');
 
   const handleAgentStreamText = useCallback((chunk: string) => {
@@ -850,7 +857,23 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
       // Defer by one tick so React can flush the setPrompt update first.
       const timerId = setTimeout(() => {
-        handleGenerateWithContext(initialPrompt, fileContext, attachments);
+        if (attachments && attachments.length > 0) {
+          // AgentChatPanel's triggerPrompt path (below) doesn't carry
+          // attachments yet -- promptService.handlePrompt already does
+          // (upload wiring, message-row persistence), so keep using it for
+          // this narrower case rather than dropping attachment support.
+          handleGenerateWithContext(initialPrompt, fileContext, attachments);
+        } else {
+          // No attachments: route through AgentChatPanel's own send flow --
+          // same live streaming/narration every later prompt already gets --
+          // instead of promptService's dead-ended status lines that nothing
+          // renders (Editor's own `messages` state isn't shown anywhere;
+          // AgentChatPanel owns the actual visible chat).
+          setAgentTriggerDisplayText(initialPrompt);
+          setRepairPrompt(
+            fileContext ? `${initialPrompt}\n\n--- Attached file content ---\n${fileContext}` : initialPrompt
+          );
+        }
       }, 100);
       return () => clearTimeout(timerId);
     }
@@ -2306,8 +2329,10 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       userId={currentUser?.id || `guest:${guestFingerprint || 'anonymous'}`}
                       isMinimized={false}
                       triggerPrompt={repairPrompt}
+                      triggerDisplayText={agentTriggerDisplayText}
                       onTriggerConsumed={() => {
                         setRepairPrompt(null);
+                        setAgentTriggerDisplayText(undefined);
                         isAgentRunningRef.current = true;
                       }}
                       inspectMode={inspectMode}
@@ -2511,8 +2536,10 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               userId={currentUser?.id || `guest:${guestFingerprint || 'anonymous'}`}
               isMinimized={isMinimized}
               triggerPrompt={repairPrompt}
+              triggerDisplayText={agentTriggerDisplayText}
               onTriggerConsumed={() => {
                 setRepairPrompt(null);
+                setAgentTriggerDisplayText(undefined);
                 isAgentRunningRef.current = true;
               }}
               inspectMode={inspectMode}
