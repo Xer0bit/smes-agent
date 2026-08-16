@@ -123,16 +123,24 @@ bounded verify; prompt-hoped correctness → deterministic validation.
 - **`revisions` becomes an index of commits** (sha, author, prompt, ts) — the
   existing table and Storage manifests remain as the export/CDN layer, derived
   from commits, no longer independently writable.
-- **Client saves are fast-forward-only.** A save carries `base_sha` and only
-  *dirty files*. If `base_sha != HEAD`, the server 409s; the client reloads
-  HEAD, reapplies its dirty files, retries. This deletes the entire
-  clobber-loop class (the 05:27 stale-tab incident) with git's own machinery
-  instead of custom concurrency. The full-workspace-map serialize
-  (`WorkspaceContext.tsx:90`) is gone: dirty paths only.
-- **Preview accepts only fast-forward.** `/preview/:id/update` carries the
-  commit sha; the preview refuses to move backwards. `revisionId`/
-  `contentHash` already travel on this wire unvalidated — this gives them
-  teeth.
+- **Client saves are fast-forward-only.** A save carries the base head id and
+  only *dirty files*. If the base is no longer HEAD, the server rejects; the
+  client refetches HEAD, reapplies its dirty files on top, retries once. This
+  deletes the entire clobber-loop class (the 05:27 stale-tab incident). The
+  full-workspace-map serialize (`WorkspaceContext.tsx:90`) is gone: dirty
+  paths only. **Built in M1a without git**: `create_revision_checked`
+  (advisory lock + head check in Postgres) gives the same semantics against
+  the existing revisions table; the git sha becomes the check when M1b flips
+  authority.
+- **Preview accepts only fast-forward.** `/preview/:id/update` carries a
+  `baseSeq` (M1a: DB-clock timestamp of the pusher's base state; M1b: commit
+  sha); the preview 409s `STALE_BASE` on any full-sync push more than 60s
+  behind the newest accepted base. The tolerance exists because an agent's
+  final push can postdate its revision insert by seconds and server clocks
+  drift — the incident class is minutes-stale tabs, not second-level races.
+  Client wall-clocks never enter the protocol. The guard map is in-memory
+  and re-arms after a preview restart; revision integrity never depends on
+  it (the RPC is the durable guard).
 - **Restore = `git revert` semantics** (new commit, history preserved —
   Lovable's model). Restore points never expire; the snapshot-dir prune that
   silently nullified `snapshot_id` after 20 runs is deleted along with the
@@ -140,8 +148,42 @@ bounded verify; prompt-hoped correctness → deterministic validation.
 - **Stated limit (L9):** restore covers code, not the tenant DB. The restore
   UI must say so — Lovable's silent half-restore is a top user grievance.
 
-Migration is shadow-first: commit alongside the existing revision writes for a
-week, diff the two stores, then flip authority.
+**Single-writer rule (replaces the shadow-diff week).** A week of diffing the
+git store against the revisions table can never go green: the two stores have
+different exclusion sets (`agentLoopService.ts:649` skips `.env*`/
+`.gitignore`/`package-lock.json`; git skips whatever `.gitignore` says), and
+four writers touch revisions outside the agent loop (`deployment.service.ts`,
+`github.service.ts`, `ecg-connect.routes.ts`, `file.routes.ts`). Instead:
+one `commitProject(projectId, paths, author, message)` function that writes
+the revision row and the git commit in the same critical section, under the
+existing `acquireProjectLock` — client saves included (today only agent runs
+take that lock, so a mid-run save would be committed as the agent's work and
+destroyed by a later revert). Commits use explicit pathspecs, never
+`git add -A`. Divergence becomes structurally impossible instead of measured.
+
+**Prerequisites before the first commit (git-store operational reality):**
+- `agent-template` ships a `.gitignore` (`node_modules`, `.env*`, `dist`) —
+  today it has none, so the first `git add -A` would commit the dependency
+  tree into every project's history.
+- Secrets are outside the store by design (`set_secret.ts` writes
+  `.env.local`), so restore/fullSync must preserve `.env.local` explicitly —
+  a restore that wipes tenant API keys is neither "code" nor "DB" and the
+  stated-limit line doesn't cover it. Commit a key-name manifest so restore
+  can report which secrets the restored state expects.
+- `git gc --auto` + a per-project repo size cap with a loud failure. The
+  snapshot prune this replaces was the only thing bounding disk on VPS3.
+
+**Ordering token:** the store keeps a per-project monotonic integer
+(`storeSeq`, incremented under the commit lock). Preview pushes carry it and
+the preview compares numerically — one clock, no skew, replacing the M1a
+timestamp scheme. Out-of-band pushes that write non-store files (`.env.local`
+overlays, DB config) carry `overlay: true`: exempt from ordering, never
+pruned by a later fullSync.
+
+**Multi-user note:** the 409/rebase is last-writer-wins per file. Before team
+editing ships, a rebase must detect that a dirty path was also changed by the
+intervening commit and surface a yours/theirs choice instead of silently
+overwriting.
 
 ## 3. Context Engine — structural sight on a budget (L4, L6, L10)
 
@@ -201,17 +243,25 @@ cascading-bug failure mode reviewers pin on Lovable-style full rewrites.
   missing provider wrappers. Each fix is logged into the commit message.
 
 **Scope enforcement (L2 — mechanism, not prompt):**
-- **Auto-seeded scope** for micro/edit/fix: the selector's file list IS the
-  initial `declaredScope`. Not model-volunteered.
-- **The gate covers every mutating tool** — including
-  `replace_asset_references` (today: zero guards), `place_asset`,
-  edge-function and DB tools, `run_command` installs.
-- **Tolerance 0** for micro/edit (today: 2 free violations). Widening scope
-  is one explicit `declare_scope` call naming files and reason — the gate
-  stays hard because the escape hatch is cheap.
-- **Locks**: user-lockable files/folders in the editor UI (bolt.diy), plus
-  system-privileged paths — `App.tsx`, `main.tsx`, `Layout.*`, `index.html`
-  can only enter scope by explicit declaration, never by selector side effect.
+- **Enforced at commit, not only at dispatch.** The dispatcher gate is fast
+  feedback, but it is self-serve (a `declare_scope(["src"])` re-declaration
+  silently widens to everything) and blind to `run_command`, which executes
+  arbitrary shell in `appPath` — a `sed -i` or codemod walks straight past a
+  per-tool gate. The authoritative check is in the finalizer: `git diff
+  --name-only` against the declared scope; out-of-scope paths are reverted
+  from the commit and reported. One check, covers every tool including
+  shell, zero per-tool maintenance.
+- **Scope = selector output ∪ files actually read this turn.** The selector
+  seeds it, but a successful `read_file` grants entry — otherwise one
+  selector recall miss both hides a file AND blocks writing it, and the
+  model's only moves are duplicate-component, scope-widen, or lie-success
+  (the logo-saga shape at lower cost). Selector recall is logged against
+  each commit's touched-file set from day one; tolerance 0 ships only after
+  recall is measured, not on faith.
+- **Privileged paths are a denylist `declare_scope` cannot widen** —
+  `App.tsx`, `main.tsx`, `Layout.*`, `index.html` enter scope only through
+  an `ask_user` answer. Plus user-lockable files/folders in the editor UI
+  (bolt.diy).
 - Real caps for feature/build (today: uncapped).
 
 **Assets (deterministic):**
@@ -223,10 +273,17 @@ cascading-bug failure mode reviewers pin on Lovable-style full rewrites.
 ## 5. Interaction — ask, plan, act (L7)
 
 - **`ask_user` tool.** Pauses the run in a new `needs_input` state; SSE event
-  renders a question card with quick-reply chips; run resumes on answer;
-  10-min timeout ends the turn gracefully (not an abort, work-so-far
-  committed). Never called in parallel with other tools (v0's rule). Exempt
-  from the phantom-narration abort — asking must not be punished.
+  renders a question card with quick-reply chips. **The project lock is
+  released on pause and re-acquired on resume** — the run lock auto-extends
+  for its whole duration (`agentProjectLock.ts`), so a held pause would block
+  the user's next message, deploys, and queued runs for up to 10 minutes
+  (exactly `MAX_QUEUE_WAIT_MS`). The pending question, tool-call id, and run
+  id persist to a DB row so the client re-attaches after a PM2 restart
+  instead of hanging on a dead SSE stream. **On the 10-min timeout, commit
+  nothing and reset the working tree** — the question stays answerable and
+  answering starts a fresh turn; committing "work so far" would checkpoint a
+  half-applied edit set that looks green and renders broken. Never called in
+  parallel with other tools (v0's rule).
 - **When to ask** (prompt, one rule, no contradictions): missing *input* the
   model cannot invent — an asset, a credential, a choice between two named
   targets — → ask. Missing *decision* with a sane default → act and state the
@@ -249,9 +306,16 @@ cascading-bug failure mode reviewers pin on Lovable-style full rewrites.
   (`error-reporter.js`), surface it as `read_console_logs` and instruct its
   use BEFORE reading source on any "it's broken" prompt (L11). Agent debug
   logging is namespaced `[ecg]` for greppable auto-removal.
-- **Finalize**: build check (exists) → **smoke the route that renders the
-  touched components** — the route map makes "which route" a lookup; today's
-  smoke only visits the root. Console errors captured during smoke feed the
+- **Finalize**: build check (exists) → **readiness probe** → **smoke the
+  route that renders the touched components**. The probe matters because the
+  autofix pass can touch `package.json`, which triggers the preview's
+  reinstall/restart path — smoking during that window captures startup noise
+  as "console errors" and fails a correct change. "Preview not ready" is its
+  own outcome, never reported as `failed`. The route map makes "which route"
+  a lookup, but static parsing misses dynamic `import()` and data-router
+  definitions — when the map can't resolve a touched component, fall back to
+  smoking the root plus every known route rather than trusting an
+  "unreachable" verdict. Console errors captured during smoke feed the
   single bounded fix pass.
 - **One bounded repair pass, then stop and surface** (L8): replaces today's
   ≤3 LLM repair passes. On failure after one pass: commit what's healthy,
@@ -289,12 +353,14 @@ Each stage ships alone, ordered by user pain; the audit's earlier phase plan
 
 | # | Stage | Contents | Size |
 |---|---|---|---|
-| M1 | **Stop the reverts** | Git store in shadow mode → dirty-file saves with base_sha + 409/rebase → fast-forward preview pushes → flip authority | M/L |
-| M2 | **Sight + asking** | Route/render map, asset registry, selector-picked 100-line windows, injected retrieval text; `ask_user` + needs_input state + turn-1 override; delete contradictory prompt lines | M |
-| M3 | **Hard scope** | Auto-seed from selector, all-tools gate, tolerance 0, privileged paths, locks UI, feature/build caps | S/M |
+| M0 | **Honest metrics first** | Before/after content hashes per write (makes `net_new_write_count` real — dead today, 349/352 runs read 0), verified-level classification, format-adherence and selector-recall logging. Cheap instrumentation over existing run records; without it M1-M5 ship blind and nothing can be bisected when cost or success regresses | S |
+| M1a | **Stop the reverts (DB-native, built 2026-08-16)** | `create_revision_checked` RPC (advisory lock + head check, 409/rebase-retry on stale parent) → dirty-file-only saves (`isDirty: source === 'user'`) → fast-forward preview guard (`baseSeq` = DB-clock timestamps, 60s tolerance for run-end ordering/skew, in-memory map that re-arms after preview restart; revisions stay safe via the RPC regardless) | M |
+| M1b | **Git store, single writer** | Per-project git repo on the gen server: one `commitProject()` under `acquireProjectLock` (saves included), explicit pathspecs, template `.gitignore`, env-preservation + repo GC/size cap, `storeSeq` ordering token + `overlay: true` for out-of-band pushes. No shadow-diff week — divergence is made impossible, not measured. Blocked on an ops decision: agent `appPath` lives under `/tmp` on VPS3 — per-project repos need a durable home first | M/L |
+| M2 | **Sight + asking** | Route/render map, asset registry, selector-picked 100-line windows, injected retrieval text; `ask_user` + needs_input state (lock released on pause, question persisted, timeout commits nothing) + turn-1 override; delete contradictory prompt lines. Selector recall logged from day one | M |
+| M3 | **Hard scope** | Commit-time diff enforcement (covers `run_command`), scope = selector ∪ read files, privileged-path denylist behind `ask_user`, locks UI, feature/build caps. Tolerance-0 flip gated on M2's measured selector recall, not on M2 having shipped | S/M |
 | M4 | **Edit engine** | `line_replace` with ellipsis + per-model formats + 2-miss fallback + keep-existing-code splice + per-edit lint + format-adherence metric | M |
 | M5 | **Deterministic finalize** | Import/dep/icon autofix pass; asset dedup + server naming; one-ordering fix | S |
-| M6 | **Verified done** | Touched-route smoke, console-capture surfacing, one bounded repair pass, verified levels in run records, honest metrics | S/M |
+| M6 | **Verified done** | Touched-route smoke behind a readiness probe, route-map fallback (root + all routes when unresolvable), console-capture surfacing, one bounded repair pass | S/M |
 | M7 | **Cost dials** | Thinking budgets, compaction threshold, architect/editor routing | XS/S |
 
 Acceptance test for the whole build — replay the logo saga:

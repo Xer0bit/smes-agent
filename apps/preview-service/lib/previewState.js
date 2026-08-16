@@ -26,6 +26,13 @@ const runtimeInstances = new Map();
 const pendingServerCreations = new Map();
 const closingServers = new Set();
 const recentUpdateFingerprints = new Map();
+// M1 fast-forward guard: last accepted full-sync base sequence (ISO timestamp
+// of the revision/turn the push derives from) per project. A full-sync push
+// with an OLDER base is a stale snapshot -- rejecting it stops a lagging tab
+// or worker from rolling the live preview backwards. In-memory only: on
+// restart the guard fails open, which only re-admits the pre-existing race,
+// never creates a new failure.
+const lastAcceptedBaseSeq = new Map();
 let cleanupTimer = null;
 
 function createUpdateFingerprint(files, fullSync) {
@@ -152,6 +159,7 @@ module.exports = {
     pendingServerCreations,
     closingServers,
     recentUpdateFingerprints,
+    lastAcceptedBaseSeq,
     get cleanupTimer() { return cleanupTimer; },
     set cleanupTimer(v) { cleanupTimer = v; },
     isUpdateRateLimited,

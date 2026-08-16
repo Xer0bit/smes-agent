@@ -73,7 +73,15 @@ export class WorkspaceManager {
         const file: WorkspaceFile = {
             path: normalizedPath,
             content,
-            isDirty: true,
+            // Dirty means "user-authored and not yet persisted". 'ai'-sourced
+            // writes are agent output or revision loads -- both already
+            // persisted server-side (the agent inserts its own revision; a
+            // load IS the persisted state). Marking them dirty made every
+            // agent run trigger an immediate client re-save of the same
+            // content as a duplicate "Auto-saved workspace changes" revision,
+            // and let an idle tab's rejoin republish a full stale snapshot
+            // (the 2026-08-16 05:27 clobber incident).
+            isDirty: source === 'user',
             lastModified: new Date(),
             type: this.getFileType(normalizedPath),
         };

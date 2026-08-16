@@ -15,7 +15,7 @@ const {
 const previewState = require('./lib/previewState');
 const {
     activeServers, projectErrors, projectDiagnostics, runtimeInstances,
-    pendingServerCreations, closingServers, recentUpdateFingerprints,
+    pendingServerCreations, closingServers, recentUpdateFingerprints, lastAcceptedBaseSeq,
     isUpdateRateLimited, createUpdateFingerprint, getPreviewPublicBaseUrl,
     touchRuntime, escapeHtml, isValidProjectId, getProjectDiagnostics,
     setProjectErrors, appendProjectError,
@@ -1898,6 +1898,33 @@ async function startMainServer() {
                 error: 'Another generation is currently running for this project. This push was rejected to avoid corrupting its files   wait for it to finish and try again.',
                 code: 'PROJECT_LOCKED',
             });
+        }
+
+        // ── M1 fast-forward guard ─────────────────────────────────────
+        // A full-sync push replaces the whole project, so it must never move
+        // the preview BACKWARDS. baseSeq is a timestamp of the state this
+        // push derives from (head revision created_at for client pushes,
+        // push time for agent runs, whose result becomes the new head).
+        // Compared numerically: Postgres created_at ('+00:00') and JS
+        // toISOString ('Z') don't order lexicographically against each other.
+        // The tolerance absorbs run-end ordering (an agent's final push can
+        // postdate the revision insert by seconds) and residual server clock
+        // skew -- the incident class this guards against is a tab stale by
+        // MINUTES republishing old code, not second-level races.
+        // Absent/unparseable field = older caller: fail open. The map is
+        // in-memory: a preview restart forgets it and the guard re-arms on
+        // the next push (revisions stay safe via create_revision_checked).
+        const STALE_BASE_TOLERANCE_MS = 60_000;
+        const baseSeq = typeof req.body.baseSeq === 'string' ? Date.parse(req.body.baseSeq) : NaN;
+        if (fullSync && Number.isFinite(baseSeq)) {
+            const last = lastAcceptedBaseSeq.get(projectId);
+            if (last !== undefined && last - baseSeq > STALE_BASE_TOLERANCE_MS) {
+                return res.status(409).json({
+                    error: `STALE_BASE: this push derives from ${new Date(baseSeq).toISOString()} but the preview already holds ${new Date(last).toISOString()}. Reload the project before pushing.`,
+                    code: 'STALE_BASE',
+                });
+            }
+            if (last === undefined || baseSeq > last) lastAcceptedBaseSeq.set(projectId, baseSeq);
         }
 
         const now = Date.now();

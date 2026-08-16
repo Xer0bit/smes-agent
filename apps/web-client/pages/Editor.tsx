@@ -111,6 +111,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     deleteFile: deleteFileWorkspace,
     saveToDatabase: saveWorkspaceToDb,
     loadFromDatabase: loadWorkspaceFromDb,
+    setBaseRevisionId,
     isLoading: isWorkspaceLoading,
   } = useWorkspace();
 
@@ -120,6 +121,15 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   const prevWorkspaceLoadingRef = useRef(true);
   const [prompt, setPrompt] = useState("");
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // M1 fast-forward guard: the ISO timestamp of the state this tab's preview
+  // pushes derive from. Advanced on load and whenever newer state lands here
+  // (an agent run completing). A push older than what the preview last
+  // accepted gets a STALE_BASE 409 instead of rolling the preview back.
+  // Base sequence for the preview's fast-forward guard. Always a DB-clock
+  // timestamp (revision created_at) or '' (guard inert) -- never the browser
+  // clock, which can be minutes off and would poison the guard for every
+  // other pusher on this project.
+  const previewBaseSeqRef = useRef<string>('');
   const codeEditorSyncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const previewStatusResetRef = useRef<NodeJS.Timeout | null>(null);
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant', content: string }>>([]);
@@ -379,6 +389,24 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   // user-issued refresh), so it doesn't reliably span a run that pushes
   // multiple times mid-way (auto-fix passes). This does, unconditionally.
   const [isAgentGenerating, setIsAgentGenerating] = useState(false);
+  // Stable handler: advances the preview base seq only on the running->idle
+  // TRANSITION (the moment newer agent state exists). An inline arrow here
+  // would re-run the child's effect every render and bump the seq while
+  // idle, letting a stale tab defeat the fast-forward guard.
+  const wasGeneratingRef = useRef(false);
+  const handleGeneratingChange = useCallback((g: boolean) => {
+    if (wasGeneratingRef.current && !g) {
+      // Agent run just finished: this tab received the new files, so advance
+      // its preview base to the head revision's DB timestamp. Fire-and-forget;
+      // until it lands the old base stays, and the guard's tolerance window
+      // absorbs the gap.
+      revisionService.getHeadRevisionMeta(projectId!).then((head) => {
+        if (head?.created_at) previewBaseSeqRef.current = head.created_at;
+      }).catch(() => { /* keep previous base */ });
+    }
+    wasGeneratingRef.current = g;
+    setIsAgentGenerating(g);
+  }, [projectId]);
   /** Last completed run wrote no files -- dims the preview instead of revealing
    * an unchanged frame as if work landed. See MultiDevicePreview's noChanges. */
   const [lastRunNoChanges, setLastRunNoChanges] = useState(false);
@@ -964,6 +992,12 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
       const revisions = await revisionService.getRevisions(projectId!, 1, 0);
       if (revisions && revisions.length > 0) {
         const latestRevision = revisions[0];
+        // M1: this tab's workspace now bases on the head revision; saves are
+        // parent-checked against it (see WorkspaceContext.saveToDatabase) and
+        // preview pushes carry its created_at so the preview can refuse to
+        // move backwards (fast-forward guard).
+        setBaseRevisionId(latestRevision.id);
+        previewBaseSeqRef.current = latestRevision.created_at ?? '';
 
         // Set latest preview URL for sharing
         if (latestRevision.preview_url) {
@@ -1035,9 +1069,14 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             }
 
             const filesToUpdate = files.map((f: any) => ({ path: f.path, content: f.content }));
-            const result = await updateDockerPreview(projectId!, filesToUpdate);
+            const result = await updateDockerPreview(projectId!, filesToUpdate, true, previewBaseSeqRef.current);
 
-            if (!result.success) {
+            if (!result.success && result.staleBase) {
+              // The preview already holds newer state than the revision this
+              // tab just loaded (e.g. an agent run finished elsewhere). The
+              // preview IS current -- just show it, never overwrite it.
+              console.log('[Editor] Preview ahead of loaded revision; showing preview as-is');
+            } else if (!result.success) {
               throw new Error(result.error || 'Failed to sync preview files');
             }
 
@@ -1247,7 +1286,16 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
         let filesToUpdate = previewFiles.map((f: any) => ({ path: f.path, content: f.content }));
 
-        let result = await updateDockerPreview(projectId!, filesToUpdate);
+        let result = await updateDockerPreview(projectId!, filesToUpdate, true, previewBaseSeqRef.current);
+
+        if (!result.success && result.staleBase) {
+          // Fast-forward rejection: another session or agent run moved the
+          // preview past this tab's base. Do not retry, do not mark failed --
+          // the user's edits are saved; this tab just needs a reload to sync.
+          transitionPreviewStatus('ready', { message: 'Preview Ready' });
+          toast.info('Preview has newer changes from another session. Reload the project to sync this tab.');
+          return;
+        }
 
         // One retry path: if Docker rejects specific invalid source files,
         // replace those files from last known-good snapshot and retry once.
@@ -1257,7 +1305,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
           if (retry && retry.safeToRetry && retry.replaced > 0) {
             filesToUpdate = retry.files.map((f: any) => ({ path: f.path, content: f.content }));
-            result = await updateDockerPreview(projectId!, filesToUpdate);
+            result = await updateDockerPreview(projectId!, filesToUpdate, true, previewBaseSeqRef.current);
           }
         }
 
@@ -2344,7 +2392,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       onUsage={(_tokensUsed) => {}}
                       onAgentStreamText={handleAgentStreamText}
                       onAgentStreamClear={handleAgentStreamClear}
-                      onGeneratingChange={setIsAgentGenerating}
+                      onGeneratingChange={handleGeneratingChange}
                       onNoChangesChange={setLastRunNoChanges}
                     />
                   )}
@@ -2655,7 +2703,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               }}
               onAgentStreamText={handleAgentStreamText}
               onAgentStreamClear={handleAgentStreamClear}
-              onGeneratingChange={setIsAgentGenerating}
+              onGeneratingChange={handleGeneratingChange}
               onNoChangesChange={setLastRunNoChanges}
             />
           </div>

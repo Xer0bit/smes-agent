@@ -7,6 +7,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { WorkspaceManager, getWorkspaceManager } from '../eCG/Workspace/WorkspaceManager';
 import type { WorkspaceFile, FileChange, FileModification, WorkspaceContextType } from '../eCG/Workspace/types';
 import { supabase } from '@/integrations/supabase/client';
+import type { GeneratedFile } from '@/types/shared';
 
 const WorkspaceContext = createContext<WorkspaceContextType | null>(null);
 
@@ -83,13 +84,50 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
         return manager.getHistory();
     }, [manager]);
 
+    // M1 (agent-v2-architecture.md): the revision id this tab's workspace is
+    // based on. Set on load and after every successful save; compared by the
+    // create_revision_checked RPC so a stale tab can no longer republish old
+    // content over newer work (the 2026-08-16 05:27 clobber incident).
+    const baseRevisionIdRef = React.useRef<string | null>(null);
+    const setBaseRevisionId = useCallback((id: string | null) => {
+        baseRevisionIdRef.current = id;
+    }, []);
+
+    const fetchHeadRevisionId = useCallback(async (): Promise<string | null> => {
+        const { data } = await supabase
+            .from('revisions')
+            .select('id')
+            .eq('project_id', projectId)
+            .order('created_at', { ascending: false })
+            .limit(1);
+        return data?.[0]?.id ?? null;
+    }, [projectId]);
+
     // Persistence operations
-    const saveToDatabase = useCallback(async (carryPaths?: Set<string>): Promise<void> => {
+    const saveToDatabase = useCallback(async (pendingLazyPaths?: Set<string>): Promise<void> => {
+        // Dirty-file-only save (M1). This used to serialize the tab's ENTIRE
+        // workspace map -- so any trigger (a keystroke, a stream-rejoin
+        // completing) republished a full, possibly stale snapshot as the
+        // newest revision. Now: only user-edited files upload; every other
+        // current path is carried by manifest reference from the head, so its
+        // content comes from the head revision, not this tab's memory.
+        const { selectDirtySave } = await import('@/services/dirtySave');
+        const { dirtyFiles, carryPaths } = selectDirtySave(manager.listFiles(), pendingLazyPaths);
+
+        if (dirtyFiles.length === 0) {
+            // Nothing user-authored to persist. Agent output arrives clean
+            // (already persisted server-side), so post-run auto-saves land
+            // here and correctly become no-ops instead of duplicate
+            // "Auto-saved workspace changes" revisions.
+            console.log('[WorkspaceContext] Save skipped   no dirty files');
+            return;
+        }
+
         setIsLoading(true);
         try {
-            const filesList = manager.listFiles();
+            const filesList = dirtyFiles;
             const stripNull = (s: string) => s.replace(/\u0000/g, '');
-            const filesData = filesList.map(f => ({
+            const filesData: GeneratedFile[] = filesList.map(f => ({
                 path: f.path,
                 content: stripNull(f.content),
                 type: f.path.split('.').pop() || 'other',
@@ -113,15 +151,33 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
             // repaired (found 2026-07-22, revision 870367e0 on project CardPro,
             // three separate occurrences with created_at never changing since
             // it was always an UPDATE, never a new INSERT).
-            const { revisionService } = await import('@/services/revisionService');
-            await revisionService.createRevision({
+            const { revisionService, isStaleParentError } = await import('@/services/revisionService');
+
+            const attemptSave = () => revisionService.createRevision({
                 project_id: projectId,
                 prompt: 'Auto-saved workspace changes',
                 generated_code: '',
                 generated_files: { files: filesData },
                 user_id: user.id,
                 carry_paths: carryPaths,
+                expected_parent_id: baseRevisionIdRef.current,
             });
+
+            let newRevisionId: string;
+            try {
+                newRevisionId = await attemptSave();
+            } catch (err) {
+                if (!isStaleParentError(err)) throw err;
+                // The head moved under us (an agent run finished, or another
+                // tab saved). Rebase: adopt the new head as parent and retry
+                // once. Only this tab's dirty files ride the retry --
+                // everything else is carried by reference from the NEW head's
+                // manifest, so the newer work is preserved, not clobbered.
+                console.warn('[WorkspaceContext] Save rejected as stale   rebasing onto new head');
+                baseRevisionIdRef.current = await fetchHeadRevisionId();
+                newRevisionId = await attemptSave();
+            }
+            baseRevisionIdRef.current = newRevisionId;
 
             // Also update project's latest_generated_code for backwards compatibility
             await supabase
@@ -141,7 +197,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
         } finally {
             setIsLoading(false);
         }
-    }, [manager, projectId]);
+    }, [manager, projectId, fetchHeadRevisionId]);
 
     const loadFromDatabase = useCallback(async (): Promise<boolean> => {
         setIsLoading(true);
@@ -171,6 +227,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
                     .limit(1);
                 const latestRevisionId = latestRevisions?.[0]?.id;
                 if (latestRevisionId) {
+                    baseRevisionIdRef.current = latestRevisionId; // M1: this tab now bases on head
                     const { revisionService } = await import('@/services/revisionService');
                     const revisionFiles = await revisionService.getRevisionFiles(projectId, latestRevisionId);
                     if (revisionFiles.length > 0) {
@@ -331,6 +388,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
         getHistory,
         saveToDatabase,
         loadFromDatabase,
+        setBaseRevisionId,
     }), [
         projectId,
         files,
@@ -348,6 +406,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
         getHistory,
         saveToDatabase,
         loadFromDatabase,
+        setBaseRevisionId,
     ]);
 
     return (

@@ -3741,11 +3741,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // reported success to the user while the live preview never actually
       // received this run's work. The written content was never determined
       // to be broken, so retry the same push rather than reverting anything.
-      let firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true }));
+      let firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true, baseSeq: new Date().toISOString() }));
       for (let pushRetry = 1; pushRetry <= 3 && firstAttempt.status !== 200 && firstAttempt.status !== 422; pushRetry++) {
         console.warn(`[AgentLoop] Preview push transport failure (status ${firstAttempt.status}), retry ${pushRetry}/3...`);
         await new Promise<void>((r) => setTimeout(r, pushRetry * 1000));
-        firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true }));
+        firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true, baseSeq: new Date().toISOString() }));
       }
       if (firstAttempt.status === 200) {
         console.log(`[AgentLoop] Preview push OK: ${mergedWrites.length} files`);
@@ -4186,7 +4186,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           repairFiles = Array.from(repairedDiskMap.entries()).map(([p, c]) => ({ path: p, content: c }));
 
           // Push repaired files
-          const repairPush = await httpPost(updateUrl, JSON.stringify({ files: repairFiles, fullSync: true }));
+          const repairPush = await httpPost(updateUrl, JSON.stringify({ files: repairFiles, fullSync: true, baseSeq: new Date().toISOString() }));
           // Always update mergedWrites to latest disk state regardless of outcome
           mergedWrites.length = 0;
           repairFiles.forEach(f => mergedWrites.push(f));
@@ -4326,7 +4326,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             let lastRestoreStatus: number | undefined;
             for (let attempt = 1; attempt <= 3 && !restorePushOk; attempt++) {
               try {
-                const restoreRes = await httpPost(updateUrl, JSON.stringify({ files: preAgentFiles, fullSync: true }));
+                const restoreRes = await httpPost(updateUrl, JSON.stringify({ files: preAgentFiles, fullSync: true, baseSeq: new Date().toISOString() }));
                 lastRestoreStatus = restoreRes.status;
                 if (restoreRes.status === 200) {
                   restorePushOk = true;
@@ -4376,7 +4376,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             mergedWrites.length = 0;
             salvageFiles.forEach(f => mergedWrites.push(f));
             try {
-              await httpPost(updateUrl, JSON.stringify({ files: salvageFiles, fullSync: true }));
+              await httpPost(updateUrl, JSON.stringify({ files: salvageFiles, fullSync: true, baseSeq: new Date().toISOString() }));
             } catch {}
           }
         }

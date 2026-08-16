@@ -243,8 +243,8 @@ export async function refreshPreviewHealth(projectId: string): Promise<PreviewHe
  *                 Pass false for single-file edits during a chat turn; pass
  *                 true for structural changes (new/deleted files, multi-file).
  */
-export async function updateDockerPreview(projectId: string, files: { path: string; content: string }[], fullSync: boolean = true): Promise<{ success: boolean; error?: string }> {
-    const tryUpdate = async (attempt: number): Promise<{ success: boolean; error?: string }> => {
+export async function updateDockerPreview(projectId: string, files: { path: string; content: string }[], fullSync: boolean = true, baseSeq?: string): Promise<{ success: boolean; error?: string; staleBase?: boolean }> {
+    const tryUpdate = async (attempt: number): Promise<{ success: boolean; error?: string; staleBase?: boolean }> => {
         let timeoutId: any;
         try {
             const controller = new AbortController();
@@ -280,7 +280,7 @@ export async function updateDockerPreview(projectId: string, files: { path: stri
                     'Content-Type': 'application/json',
                     ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
                 },
-                body: JSON.stringify({ files, fullSync }),
+                body: JSON.stringify({ files, fullSync, baseSeq }),
                 signal: controller.signal,
             });
 
@@ -309,6 +309,12 @@ export async function updateDockerPreview(projectId: string, files: { path: stri
                     // Ignore parse failures and return the HTTP status.
                 }
 
+                // STALE_BASE means the preview already holds newer state than
+                // this tab's base -- a fast-forward rejection, not a failure.
+                // Callers must stop pushing and prompt a reload, not retry.
+                if (errorMessage.includes('STALE_BASE')) {
+                    return { success: false, staleBase: true, error: `HTTP ${response.status}: ${errorMessage}` };
+                }
                 return { success: false, error: `HTTP ${response.status}: ${errorMessage}` };
             }
 

@@ -189,7 +189,7 @@ router.post('/preview-update', async (req: AuthenticatedRequest, res: Response) 
         'Content-Type': 'application/json',
         ...(process.env.PREVIEW_UPDATE_SECRET ? { 'x-update-secret': process.env.PREVIEW_UPDATE_SECRET } : {}),
       },
-      body: JSON.stringify({ files, fullSync }),
+      body: JSON.stringify({ files, fullSync, baseSeq: req.body?.baseSeq }),
       // Must exceed preview-service's own internal worst-case processing
       // budget (materialize + warmupInstance's own 30s ceiling + build
       // check, all before it responds) -- see previewHealthService.ts's
@@ -206,14 +206,16 @@ router.post('/preview-update', async (req: AuthenticatedRequest, res: Response) 
       // an opaque 502 -- callers need to tell "another generation is running,
       // retry shortly" apart from "the preview host is actually down".
       let upstreamError = text;
+      let upstreamCode: string | undefined;
       try {
         const parsed = JSON.parse(text);
         if (parsed?.error) upstreamError = parsed.error;
+        if (typeof parsed?.code === 'string') upstreamCode = parsed.code;
       } catch {
         // Not JSON -- use the raw text as-is.
       }
       const status = previewRes.status >= 400 && previewRes.status < 600 ? previewRes.status : 502;
-      res.status(status).json({ success: false, error: upstreamError });
+      res.status(status).json({ success: false, error: upstreamError, code: upstreamCode });
       return;
     }
     const data = await previewRes.json().catch(() => ({}));

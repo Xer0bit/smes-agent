@@ -63,6 +63,12 @@ export interface PublishedVersion {
   prompt?: string;
 }
 
+/** True when a checked save was rejected because the head moved (M1). */
+export function isStaleParentError(err: unknown): boolean {
+  const msg = (err as { message?: string } | null)?.message ?? String(err ?? '');
+  return msg.includes('stale_parent');
+}
+
 export const revisionService = {
   async createProject(name: string, userId: string, organizationId?: string): Promise<Project> {
     // Validate userId
@@ -122,39 +128,67 @@ export const revisionService = {
      * user deleted must be excluded by the caller, or it would resurrect).
      */
     carry_paths?: Set<string>;
+    /**
+     * M1 optimistic concurrency: the revision id this save is based on
+     * (null = caller believes the project has no revisions yet). When set,
+     * the insert goes through the create_revision_checked RPC, which rejects
+     * the save with a 'stale_parent' error if the head has moved -- the fix
+     * for a stale tab republishing old content over newer work (2026-08-16
+     * clobber incident). Callers catch isStaleParentError(), refresh their
+     * base, and retry. Omitted (undefined) keeps the legacy unchecked insert
+     * for callers that intentionally append to whatever head exists (e.g.
+     * revision restore).
+     */
+    expected_parent_id?: string | null;
   }): Promise<string> {
     console.log('[RevisionService] Creating revision for project:', params.project_id);
 
-    const insertData: any = {
-      project_id: params.project_id,
-      prompt: params.prompt,
-      generated_code: params.generated_code,
-      generated_files: params.generated_files ?? params.file_attachments ?? null, // Temporary
-    };
+    const generatedFiles = params.generated_files ?? params.file_attachments ?? null; // Temporary
 
     // Auto-generate summary if not provided
-    if (!insertData.summary && params.generated_files?.files) {
+    let summary: string | undefined;
+    if (params.generated_files?.files) {
       const files = params.generated_files.files;
       const fileNames = files.map(f => f.path.split('/').pop()).join(', ');
       const operation = files.some(f => f.operation === 'create') ? 'Created' : 'Updated';
-      insertData.summary = `${operation} ${files.length} file${files.length === 1 ? '' : 's'}: ${fileNames}`;
+      summary = `${operation} ${files.length} file${files.length === 1 ? '' : 's'}: ${fileNames}`;
     }
 
-    // Add user_id if provided
-    if (params.user_id) {
-      insertData.user_id = params.user_id;
-      insertData.created_by = params.user_id;
+    let data: { id: string } | null;
+    let error: { message?: string } | null;
+
+    if (params.expected_parent_id !== undefined) {
+      const rpc = await supabase.rpc('create_revision_checked', {
+        p_project_id: params.project_id,
+        p_expected_parent: params.expected_parent_id,
+        p_prompt: params.prompt,
+        p_generated_code: params.generated_code,
+        p_generated_files: generatedFiles,
+        p_summary: summary ?? null,
+        p_user_id: params.user_id ?? null,
+      });
+      data = rpc.data as { id: string } | null;
+      error = rpc.error;
+    } else {
+      const insertData: any = {
+        project_id: params.project_id,
+        prompt: params.prompt,
+        generated_code: params.generated_code,
+        generated_files: generatedFiles,
+      };
+      if (summary) insertData.summary = summary;
+      if (params.user_id) {
+        insertData.user_id = params.user_id;
+        insertData.created_by = params.user_id;
+      }
+      const ins = await supabase.from('revisions').insert(insertData).select().single();
+      data = ins.data;
+      error = ins.error;
     }
 
-    const { data, error } = await supabase
-      .from('revisions')
-      .insert(insertData)
-      .select()
-      .single();
-
-    if (error) {
+    if (error || !data) {
       console.error('[RevisionService] Error creating revision:', error);
-      throw error;
+      throw error ?? new Error('Revision insert returned no row');
     }
 
     console.log('[RevisionService] Revision created:', data.id);
@@ -287,6 +321,22 @@ export const revisionService = {
    * Returns null for legacy revisions without a manifest -- callers fall back
    * to the full getRevisionFiles() path.
    */
+  /**
+   * Latest revision id + created_at for a project. created_at is the DB
+   * clock, which is what preview baseSeq comparisons must use -- never the
+   * browser clock (a client minutes ahead would poison the preview's
+   * fast-forward guard and 409 legitimate agent pushes).
+   */
+  async getHeadRevisionMeta(projectId: string): Promise<{ id: string; created_at: string } | null> {
+    const { data } = await supabase
+      .from('revisions')
+      .select('id, created_at')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    return data?.[0] ?? null;
+  },
+
   async getRevisionManifest(revisionId: string): Promise<RevisionManifest | null> {
     const { data, error } = await supabase
       .from('revisions')

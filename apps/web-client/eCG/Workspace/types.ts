@@ -47,7 +47,9 @@ export interface WorkspaceActions {
 
     // Sync
     /** carryPaths: never-downloaded file paths whose previous-manifest entries carry forward verbatim (lazy editor). */
-    saveToDatabase: (carryPaths?: Set<string>) => Promise<void>;
+    saveToDatabase: (pendingLazyPaths?: Set<string>) => Promise<void>;
+    /** M1: record which revision this tab's workspace is based on (optimistic concurrency). */
+    setBaseRevisionId: (id: string | null) => void;
     /** Returns true if files were actually loaded (from Storage or legacy migration), false if the project is genuinely empty. */
     loadFromDatabase: () => Promise<boolean>;
 }
