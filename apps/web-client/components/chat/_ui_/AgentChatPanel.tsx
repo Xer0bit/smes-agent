@@ -74,6 +74,11 @@ interface AgentChatPanelProps {
    * every intermediate preview push (mid-run auto-fix passes included) --
    * see MultiDevicePreview's isGenerating prop. */
   onGeneratingChange?: (isGenerating: boolean) => void;
+  /** Fires true when a run completes having written no files (server-side
+   * `ghostRun` -- a question, clarification, or refusal), false when the next
+   * run starts. Lets the preview dim itself instead of doing a reveal that
+   * implies work landed -- see MultiDevicePreview's noChanges prop. */
+  onNoChangesChange?: (noChanges: boolean) => void;
 }
 
 export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
@@ -98,6 +103,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   onResolveFileContent,
   canUseInspect = true,
   onGeneratingChange,
+  onNoChangesChange,
 }) => {
   const GREETING: Message = {
     id: 'greeting',
@@ -112,7 +118,12 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [messages, setMessages] = useState<Message[]>([GREETING]);
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  useEffect(() => { onGeneratingChange?.(isGenerating); }, [isGenerating, onGeneratingChange]);
+  // Any run starting clears the "no changes" marker -- covers every entry
+  // point (submit, retry, server-side reconnect) without touching each one.
+  useEffect(() => {
+    onGeneratingChange?.(isGenerating);
+    if (isGenerating) onNoChangesChange?.(false);
+  }, [isGenerating, onGeneratingChange, onNoChangesChange]);
   const [statusText, setStatusText] = useState('');
   // The agent's real internal reasoning (the `think` tool's actual argument)
   // shown live only, cleared on the next step/completion, never saved to the
@@ -991,6 +1002,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               : [];
 
             const noChanges = !isPlan && !isConfirmRequest && result.ghostRun === true;
+            onNoChangesChange?.(noChanges);
             setMessages(prev =>
               prev.map(m =>
                 m.id === asstId

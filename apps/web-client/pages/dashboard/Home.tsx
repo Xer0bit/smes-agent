@@ -39,6 +39,7 @@ import { getUsageColor, getProgressColor } from '@/hooks/useUsage';
 import { ProjectThumbnail } from '@/components/dashboard/ProjectThumbnail';
 import { toast } from 'sonner';
 import { uploadChatAttachment, isAllowedFile } from '@/services/chatAttachmentService';
+import { stashPendingPrompt } from '@/services/pendingPromptHandoff';
 import type { AgentAttachment } from '@/eCG/UserPrompt/types';
 
 type PendingProjectInvitation = {
@@ -321,6 +322,11 @@ export default function DashboardHome() {
           }
         }
       }
+
+      // See pendingPromptHandoff.ts: location.state alone isn't reliable
+      // through RequireAuth's redirect, so also stash a sessionStorage
+      // fallback Editor.tsx can consume if state comes back empty.
+      stashPendingPrompt(newProject.id, { initialPrompt: prompt, fileContext, attachments: attachments.length > 0 ? attachments : undefined });
 
       navigate(`/project/${newProject.id}`, { state: { initialPrompt: prompt, shouldGenerate: true, fileContext, attachments: attachments.length > 0 ? attachments : undefined } });
     } catch (error: any) {

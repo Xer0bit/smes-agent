@@ -14,7 +14,10 @@ const PREVIEW_SERVICE_URL =
 interface PreviewStatus {
   healthy: boolean;
   errors?: string[];
-    diagnosticKind?: 'healthy' | 'validation' | 'runtime' | 'build' | 'service';
+    /** 'type' = advisory TypeScript errors: reported, but the app still builds
+     * and runs (Vite strips types without checking them), so it does not mark
+     * the preview unhealthy. See previewState.getProjectDiagnostics. */
+    diagnosticKind?: 'healthy' | 'validation' | 'runtime' | 'build' | 'service' | 'type';
     updatedAt?: string | null;
     stalePreviewRetained?: boolean;
 }
@@ -79,6 +82,11 @@ interface MultiDevicePreviewProps {
      * don't flash the live-reloading Vite content on every one of them -- see
      * the cover rendered alongside the iframe below. */
     isGenerating?: boolean;
+    /** True when the last completed run wrote no files (server-side `ghostRun`:
+     * a question, clarification, or refusal). The preview is byte-identical to
+     * before the prompt, so it's dimmed with a "no changes" note rather than
+     * doing a reveal that implies work landed. Cleared when the next run starts. */
+    noChanges?: boolean;
 }
 
 function isNonFatalAssetError(errorText: string): boolean {
@@ -122,6 +130,7 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     onInspectModeChange,
     installingDependency = false,
     isGenerating = false,
+    noChanges = false,
 }) => {
     const config = DEVICE_CONFIGS[viewMode];
     const [previewDiagnostics, setPreviewDiagnostics] = useState<PreviewStatus>({ healthy: true, errors: [], diagnosticKind: 'healthy' });
@@ -356,6 +365,17 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gray-900/70 backdrop-blur-md z-10">
                             <div className="animate-spin w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full" />
                             <p className="text-white/90 text-xs font-medium">Applying changes…</p>
+                        </div>
+                    )}
+                    {/* Last run wrote no files -- the preview below is byte-identical to
+                        what was already there, so uncovering it as if something landed is
+                        a lie. Dim it and say so instead. pointer-events-none: this is a
+                        passive marker, the user can still click through into the app. */}
+                    {noChanges && !isGenerating && status !== 'building' && hasRenderableFrame && !installingDependency && (
+                        <div className="pointer-events-none absolute inset-0 flex items-start justify-center bg-gray-900/45 z-10">
+                            <span className="mt-4 rounded-full bg-gray-900/85 px-3 py-1 text-[11px] font-medium text-white/75">
+                                No changes made   preview unchanged
+                            </span>
                         </div>
                     )}
                     {blankScreen && !hasBuildErrors && !installingDependency && (

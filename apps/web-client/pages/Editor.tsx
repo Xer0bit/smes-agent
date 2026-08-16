@@ -7,6 +7,7 @@ import { useUsage } from "@/contexts/UsageContext";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { revisionService } from "@/services/revisionService";
+import { consumePendingPrompt } from "@/services/pendingPromptHandoff";
 import { RevisionPanel } from "@/components/RevisionPanel";
 import { VersionHistoryPanel } from "@/components/VersionHistoryPanel";
 import { WorkspaceLoader } from "@/components/WorkspaceLoader";
@@ -378,6 +379,9 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   // user-issued refresh), so it doesn't reliably span a run that pushes
   // multiple times mid-way (auto-fix passes). This does, unconditionally.
   const [isAgentGenerating, setIsAgentGenerating] = useState(false);
+  /** Last completed run wrote no files -- dims the preview instead of revealing
+   * an unchanged frame as if work landed. See MultiDevicePreview's noChanges. */
+  const [lastRunNoChanges, setLastRunNoChanges] = useState(false);
   const [latestPreviewUrl, setLatestPreviewUrl] = useState<string | null>(null);
   // True while the agent is mid-install of an npm dependency; suppresses the
   // preview's build-error overlay for that window (see MultiDevicePreview).
@@ -803,20 +807,36 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
       console.log('[Editor] Guest mode detected');
     }
 
-    if (state?.initialPrompt && state?.shouldGenerate) {
+    // Fallback for when router `state` didn't survive: see pendingPromptHandoff.ts
+    // for why (RequireAuth's redirect drops it) and what Home.tsx stashes.
+    let initialPrompt = state?.initialPrompt;
+    let fileContext = state?.fileContext;
+    let attachments = state?.attachments;
+    let fromSessionStorage = false;
+    if (!(initialPrompt && state?.shouldGenerate) && projectId) {
+      const pending = consumePendingPrompt(projectId);
+      if (pending) {
+        initialPrompt = pending.initialPrompt;
+        fileContext = pending.fileContext;
+        attachments = pending.attachments;
+        fromSessionStorage = true;
+      }
+    }
+
+    if (initialPrompt && (state?.shouldGenerate || fromSessionStorage)) {
       // Clear the navigation state to prevent re-triggering
       window.history.replaceState({}, document.title);
 
       // Set the prompt in the UI so user can see what they typed
-      setPrompt(state.initialPrompt);
+      setPrompt(initialPrompt);
 
       // Defer by one tick so React can flush the setPrompt update first.
       const timerId = setTimeout(() => {
-        handleGenerateWithContext(state.initialPrompt, state.fileContext, state.attachments);
+        handleGenerateWithContext(initialPrompt, fileContext, attachments);
       }, 100);
       return () => clearTimeout(timerId);
     }
-  }, [location.state]);
+  }, [location.state, projectId]);
 
   const loadProject = async () => {
     // Explicit column list   excludes latest_generated_code, which duplicates
@@ -2219,11 +2239,13 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               <div className="h-full flex flex-col">
                 <div className="h-14 flex items-center justify-between px-4 bg-[#131315]/60 backdrop-blur-xl">
                   <div className="flex items-center gap-3 min-w-0">
-                    <img
-                      src={ecgLogo}
-                      alt="eCG"
-                      className="h-5 w-auto object-contain"
-                    />
+                    <button onClick={() => navigate('/dashboard/projects')} className="flex items-center">
+                      <img
+                        src={ecgLogo}
+                        alt="eCG"
+                        className="h-5 w-auto object-contain"
+                      />
+                    </button>
                     <div className="h-4 w-px bg-white/[0.08]" />
                     <span className="text-sm font-medium text-white/80 truncate">Assistant</span>
                   </div>
@@ -2323,6 +2345,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       onAgentStreamText={handleAgentStreamText}
                       onAgentStreamClear={handleAgentStreamClear}
                       onGeneratingChange={setIsAgentGenerating}
+                      onNoChangesChange={setLastRunNoChanges}
                     />
                   )}
                 </div>
@@ -2615,6 +2638,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               onAgentStreamText={handleAgentStreamText}
               onAgentStreamClear={handleAgentStreamClear}
               onGeneratingChange={setIsAgentGenerating}
+              onNoChangesChange={setLastRunNoChanges}
             />
           </div>
         )}
@@ -3305,6 +3329,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                   onInspectModeChange={setInspectMode}
                   installingDependency={installingDependency}
                   isGenerating={isAgentGenerating}
+                  noChanges={lastRunNoChanges}
                   onRepair={(errorSummary) => {
                     setRepairPrompt(errorSummary);
                     setIsMinimized(false);
