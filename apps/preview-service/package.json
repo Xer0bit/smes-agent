@@ -112,10 +112,13 @@
         "xterm": "^5.3.0",
         "xterm-addon-fit": "^0.8.0",
         "zod": "^3.25.76",
-        "zustand": "^5.0.0"
+        "zustand": "^5.0.0",
+        "@types/papaparse": "^5.5.2",
+        "papaparse": "^5.6.0"
     },
     "overrides": {
         "@tiptap/core": "3.29.2",
         "@tiptap/pm": "3.29.2"
-    }
+    },
+    "devDependencies": {}
 }
