@@ -2166,6 +2166,23 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             'write_file', 'edit_file', 'write_edge_function', 'confirm_edge_function_deploy',
             'confirm_database_change', 'delete_edge_function', 'delete_file', 'rename_file', 'place_asset',
           ]);
+          // run_command is state-modifying ONLY for dependency installs: `npm
+          // install` mutates the project, `npx tsc --noEmit` / `npm test` are
+          // pure verification. Omitting it entirely meant a successful install
+          // never reset stepsSinceLastWrite, so a run that correctly diagnosed
+          // a missing package, installed it, then verified the fix was counted
+          // as paralysis and hard-stopped -- observed 2026-08-15 as a repeating
+          // "install papaparse" loop that could never close itself out (17 of
+          // 148 zero-file production runs hit this abort, 8 on system-generated
+          // repair prompts). Including it wholesale would be the opposite bug:
+          // a run that only ever re-runs tsc would look productive forever and
+          // escape the detector entirely.
+          const INSTALL_RESULT_RE = /^Command succeeded \((?:npm|yarn|pnpm)\s+(?:install|i|add|uninstall|remove)\b/;
+          const isStateModifying = (toolName?: string, result?: unknown): boolean => {
+            if (!toolName) return false;
+            if (STATE_MODIFYING_TOOLS.has(toolName)) return true;
+            return toolName === 'run_command' && typeof result === 'string' && INSTALL_RESULT_RE.test(result);
+          };
           // DIAGNOSTIC (2026-07-21): three consecutive Anthropic runs showed
           // write_file steps that looked successful in the log yet never reset
           // stepsSinceLastWrite   the detector then fired on productive runs.
@@ -2175,7 +2192,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // once the counter bug is confirmed fixed.
           for (const tr of (toolResults ?? []) as any[]) {
             const tn = tr?.toolName as string | undefined;
-            if (!tn || !STATE_MODIFYING_TOOLS.has(tn)) continue;
+            if (!isStateModifying(tn, tr?.output)) continue;
             const out = tr?.output;
             console.log(
               `[AgentLoop][write-audit] step=${stepCount} tool=${tn} outputType=${typeof out}` +
@@ -2187,7 +2204,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const hadSuccessfulWriteThisStep = (toolResults ?? []).some((tr: any) => {
             const toolName = tr?.toolName as string | undefined;
             const result = tr?.output;
-            if (!toolName || !STATE_MODIFYING_TOOLS.has(toolName)) return false;
+            if (!isStateModifying(toolName, result)) return false;
             // A structured (non-string) output is still a tool RESULT   only
             // string results carry our Error/BLOCKED prefixes, so treat any
             // non-string output from a state-modifying tool as success rather
@@ -2935,8 +2952,34 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // (long diagnostic detour, budget runs out, the model's last line is "I
     // will restore them immediately" with zero tool calls that turn), and it
     // was the one tier this gate didn't cover.
-    const UNFULFILLED_PROMISE_RE =
-      /\b(I('|')ll|I will|let me|I('|')m going to|I am going to|going to (go ahead and|now))\s+(build|implement|create|add|rebuild|separate|update|change|fix|restore|write|make|set up|refactor|restructure)\b/i;
+    // Closed verb list -> open pattern (2026-08-16). The original 17 verbs
+    // matched almost none of the promises production actually produces: "I
+    // will take the concrete actions", "I will resolve this immediately", "I
+    // will execute the full correction", "I'll install it now", "I'll replace
+    // the logo", "I will begin", "I'll correct". Any fixed list is a losing
+    // game -- the model paraphrases freely -- so match any first-person
+    // future-tense commitment and instead exclude the continuations that hand
+    // control BACK to the user ("let me know if...", "I'll need...", "I won't
+    // ...", "I'll be happy to..."), which are legitimate ways for a run to
+    // end without writing. Precision still comes mainly from the loop guard
+    // below: this only fires when the run wrote nothing at all.
+    // Continuations that do NOT promise a file change: either handing control
+    // back to the user, or read-only inspection the model satisfies by looking
+    // rather than writing (a "summarise this file" request legitimately ends
+    // with no writes, and forcing a corrective turn there is just waste).
+    const NON_ACTION_CONTINUATIONS = [
+      'know', 'need', 'be', 'not', 'never', 'require', 'wait', 'leave', 'avoid', 'stop', 'assume', 'clarify', 'explain',
+      'check', 'read', 'review', 'look', 'examine', 'inspect', 'see', 'find', 'search',
+      'verify', 'confirm', 'list', 'show', 'walk', 'describe',
+      String.raw`analyz\w*`, String.raw`analys\w*`, String.raw`summariz\w*`, String.raw`summaris\w*`,
+    ].join('|');
+    // Validated against 197 real zero-file production run summaries
+    // (2026-08-16): this matches 61 of them where the old verb list matched 13,
+    // while correctly ignoring "I will check", "Let me read", "let me verify".
+    const UNFULFILLED_PROMISE_RE = new RegExp(
+      String.raw`\b(?:I(?:'|’)ll|I will|I(?:'|’)m going to|I am going to|let me|going to (?:go ahead and|now))\s+(?!(?:${NON_ACTION_CONTINUATIONS})\b)\w+`,
+      'i',
+    );
     const MAX_PROMISE_VERIFY_ATTEMPTS = 1;
     let promiseVerifyAttempts = 0;
     while (

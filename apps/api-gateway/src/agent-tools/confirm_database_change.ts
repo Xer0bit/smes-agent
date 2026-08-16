@@ -51,6 +51,12 @@ export const confirmDatabaseChangeTool: ToolDefinition<z.infer<typeof schema>> =
         if (!ctx.anonPolicyTables) ctx.anonPolicyTables = new Set();
         for (const t of policyTables) ctx.anonPolicyTables.add(t);
       }
+      // See AgentContext.nonFileMutation (agent-tools/types.ts): executed DDL
+      // is a real, irreversible change with no project file to track it by.
+      // Without this, a turn whose only action was a schema change recorded
+      // files_written=0 and was flagged ghostRun ("nothing changed") -- the
+      // same gap provision_database.ts already closes for provisioning.
+      ctx.nonFileMutation = true;
       return `Confirmed and executed. ${formatQueryResult(result)}`;
     } catch (err: unknown) {
       return formatQueryError(err);

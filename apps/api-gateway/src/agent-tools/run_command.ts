@@ -318,6 +318,16 @@ export const runCommandTool: ToolDefinition<z.infer<typeof schema>> = {
       // emitted it. Emits AFTER success so a failed install shows no chip.
       if (pkgs.length > 0) {
         ctx.onXmlComplete?.(`<ecomgear-add-dependency packages="${pkgs.join(', ')}" />`);
+        // See AgentContext.nonFileMutation (agent-tools/types.ts): installing a
+        // dependency is a real, consequential change with no project file to
+        // track it by -- <ecomgear-add-dependency> feeds `dependencies`, not
+        // `filesToWrite`. Without this, a turn whose only action was fixing a
+        // blank screen by installing a missing package recorded
+        // files_written=0 and was flagged ghostRun ("nothing changed") despite
+        // having genuinely fixed the app. Measured 2026-08-16: 22 of 148
+        // zero-file production runs were real mutations mislabelled this way,
+        // including "Installed missing package to fix blank screen".
+        ctx.nonFileMutation = true;
       }
     }
 
