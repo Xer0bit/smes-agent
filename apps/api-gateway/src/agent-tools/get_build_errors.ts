@@ -98,8 +98,15 @@ export function extractMissingPackages(errorLines: string[]): string[] {
   return Array.from(found);
 }
 
+// projectId OPTIONAL: execute falls back to ctx.projectId. When it was
+// required, Gemini routinely omitted it (it's implicit from the run), the
+// SDK rejected the call on schema validation BEFORE execute ran, the
+// fix-tier diagnosis gate's buildErrorCallCount never incremented, and
+// every subsequent write was blocked with "call get_build_errors first"
+// -- the 2026-08-16 16:07 stuck-loop incident (5 blocked writes, run
+// died at step budget with zero changes).
 const schema = z.object({
-  projectId: z.string().describe('The project ID to check for build errors'),
+  projectId: z.string().optional().describe('Project ID (defaults to the current project)'),
 });
 
 export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {

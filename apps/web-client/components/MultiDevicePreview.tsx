@@ -366,17 +366,9 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
                             <span className="text-white/85 text-[11px] font-medium">Applying changes…</span>
                         </div>
                     )}
-                    {/* Last run wrote no files -- the preview below is byte-identical to
-                        what was already there, so uncovering it as if something landed is
-                        a lie. Dim it and say so instead. pointer-events-none: this is a
-                        passive marker, the user can still click through into the app. */}
-                    {noChanges && !isGenerating && status !== 'building' && hasRenderableFrame && !installingDependency && (
-                        <div className="pointer-events-none absolute inset-0 flex items-start justify-center bg-gray-900/45 z-10">
-                            <span className="mt-4 rounded-full bg-gray-900/85 px-3 py-1 text-[11px] font-medium text-white/75">
-                                No changes made   preview unchanged
-                            </span>
-                        </div>
-                    )}
+                    {/* noChanges deliberately does NOT touch the preview frame:
+                        a no-write run grays out the Publish button (Editor's
+                        isVersionPublishable), the preview stays untouched. */}
                     {blankScreen && !hasBuildErrors && !installingDependency && (
                         <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
                             <div className="text-center max-w-sm px-6">
