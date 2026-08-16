@@ -16,7 +16,11 @@ import { messageService } from '@/eCG/UserPrompt/messageService';
 import { uploadChatAttachment, isAllowedFile, formatFileSize, type ChatAttachment } from '@/services/chatAttachmentService';
 import { useUsage } from '@/contexts/UsageContext';
 import type { StepEntry, Message } from '../_utils_/agentChatHelpers';
-import Plan, { type Task } from '@/components/ui/agent-plan';
+// The Plan component is no longer rendered -- narration is shown as a live
+// line instead (see the render block below). The Task type and the mapper are
+// still used to accumulate step state; removing that machinery is follow-up
+// cleanup, deliberately not bundled into this UI change.
+import { type Task } from '@/components/ui/agent-plan';
 import { applyStepToTasks, finalizeTasks } from '../_utils_/agentPlanMapper';
 import {
   extractSummary,
@@ -1484,24 +1488,22 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             </div>
           )}
 
-          {/* ── Agent plan   real task/subtask breakdown built from the agent
-              loop's actual tool calls (see agentPlanMapper.ts). Stays visible
-              after the run finishes so the final breakdown is still readable;
-              cleared at the start of the next request. ── */}
-          {planTasks.length > 0 && (
-            <div className="ml-[20px] mb-1">
-              <Plan
-                tasks={planTasks}
-                expandedTasks={expandedPlanTasks}
-                onToggleTask={(taskId) => setExpandedPlanTasks(prev =>
-                  prev.includes(taskId) ? prev.filter(id => id !== taskId) : [...prev, taskId]
-                )}
-                expandedSubtasks={expandedPlanSubtasks}
-                onToggleSubtask={(taskId, subtaskId) => {
-                  const key = `${taskId}-${subtaskId}`;
-                  setExpandedPlanSubtasks(prev => ({ ...prev, [key]: !prev[key] }));
-                }}
-              />
+          {/* ── Live narration ──────────────────────────────────────────────
+              One line, replaced in place as the agent works, gone when it
+              stops. This replaced the task/subtask card (agentPlanMapper +
+              ui/agent-plan.tsx), which rendered the SAME narration as a
+              persistent checklist and repeated near-identical rows ("Reading
+              the code" twice) because each step appended a subtask whether or
+              not it said anything new. The narration was only ever visible
+              inside that card, so surfacing it here is what makes removing the
+              card safe rather than a silent loss of feedback. ── */}
+          {isGenerating && statusText && (
+            <div className="ml-[28px] mb-1 flex items-center gap-2" aria-live="polite">
+              <span className="relative flex h-1.5 w-1.5 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400/70" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-indigo-400" />
+              </span>
+              <p className="text-[11px] leading-snug text-white/55 truncate">{statusText}</p>
             </div>
           )}
 
