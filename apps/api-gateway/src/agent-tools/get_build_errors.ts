@@ -160,7 +160,7 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ files }),
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(30_000),
       });
     } catch (err: unknown) {
       return (
@@ -189,8 +189,12 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
     let data: { healthy?: boolean; errors?: string[]; diagnosticKind?: string };
     try {
       data = await res.json() as { healthy?: boolean; errors?: string[]; diagnosticKind?: string };
-    } catch {
-      return 'Preview service returned invalid JSON';
+    } catch (e: unknown) {
+      // An abort mid-body-read lands here too -- report it as what it is,
+      // not "invalid JSON" (misled a live fix run's diagnosis, 2026-08-16).
+      return e instanceof Error && e.name === 'AbortError'
+        ? 'Build check timed out. The check is still running server-side; do not retry immediately.'
+        : 'Preview service returned invalid JSON';
     }
 
     if (data.healthy) {

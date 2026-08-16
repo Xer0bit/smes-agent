@@ -128,6 +128,18 @@ export function formatQueryError(err: unknown): string {
   if (msg.includes('No active database')) {
     return 'No hosted database is provisioned for this project. Tell the user to provision one from Settings → Hosted Database before running queries.';
   }
+  // Tenant roles live in their own schema via search_path; "public" is
+  // intentionally off-limits. Without this hint the model concluded the
+  // database itself was broken and gave up (CardPro admin-user run,
+  // 2026-08-16: claimed success after this exact error).
+  if (/permission denied for schema (public|pg_)/i.test(msg)) {
+    return (
+      `ERROR running query: ${msg}\n\n` +
+      `This project's tables live in its OWN schema, selected automatically. ` +
+      `Write UNQUALIFIED table names (e.g. "INSERT INTO pprofiles ...") -- never "public.tablename". ` +
+      `Retry the statement with the "public." prefix removed.`
+    );
+  }
   return `ERROR running query: ${msg}`;
 }
 

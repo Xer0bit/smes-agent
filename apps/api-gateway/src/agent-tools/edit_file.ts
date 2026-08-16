@@ -211,19 +211,26 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
       try {
         const isJsx = /\.tsx$/.test(args.path);
         const tsResult = ts.transpileModule(sanitized, {
+          // jsx must be OMITTED for plain .ts -- JsxEmit.None is not a legal
+          // option value and transpileModule reports TS6046 for it, which
+          // rejected EVERY .ts edit as "invalid syntax" (CardPro fix run
+          // 2026-08-16: 7 identical failures, run died with zero changes).
           compilerOptions: {
-            jsx: isJsx ? ts.JsxEmit.ReactJSX : ts.JsxEmit.None,
+            ...(isJsx ? { jsx: ts.JsxEmit.ReactJSX } : {}),
             module: ts.ModuleKind.ESNext,
             target: ts.ScriptTarget.ES2020,
           },
           reportDiagnostics: true,
           fileName: args.path,
         });
-        if (tsResult.diagnostics && tsResult.diagnostics.length > 0) {
+        // Option-level diagnostics (no d.file, e.g. TS6046) are about our
+        // compiler flags, never about the model's code -- ignore them.
+        const fileDiags = (tsResult.diagnostics ?? []).filter(d => d.file);
+        if (fileDiags.length > 0) {
           // Same fix as write_file.ts (lifecycle audit finding): include
           // line/column/error code so the model can actually localize the
           // problem instead of guessing at a full rewrite blind.
-          const errors = tsResult.diagnostics
+          const errors = fileDiags
             .slice(0, 3)
             .map(d => {
               const msg = ts.flattenDiagnosticMessageText(d.messageText, ' ');

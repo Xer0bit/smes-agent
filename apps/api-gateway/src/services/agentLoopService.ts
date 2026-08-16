@@ -449,6 +449,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     cacheReadTokens:   0,
     cacheWriteTokens:  0,
     get total()        { return this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens; },
+    // Cap comparisons use this, not .total: cacheRead bills at ~10% of a
+    // fresh token, and counting it fully killed well-cached runs at ~30% of
+    // the cost cap (CardPro fix run 2026-08-16: aborted at 709K raw of which
+    // ~400K was cacheRead, ~$1 actual spend against the $1.50 cap).
+    get billableTotal() { return this.inputTokens + this.outputTokens + this.cacheWriteTokens + Math.round(this.cacheReadTokens * 0.1); },
   };
 
   // Per-model pricing per 1M tokens. Keyed on the ACTUAL serving model, not
@@ -2466,7 +2471,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // already deep into the budget, don't wait for more nudges to be
           // ignored   stop now, before the run burns the rest for nothing.
           const stuckAndBudgetCritical =
-            stepsSinceLastWrite >= STUCK_ANALYSIS_THRESHOLD && runTokens.total > RUN_TOKEN_CAP * 0.65;
+            stepsSinceLastWrite >= STUCK_ANALYSIS_THRESHOLD && runTokens.billableTotal > RUN_TOKEN_CAP * 0.65;
           // Content-based fast path: three consecutive `think` calls that
           // restate near-identical reasoning (>=0.55 word-overlap) is a much
           // stronger stuck signal than step-count alone, and short-circuits
@@ -2608,10 +2613,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const HARD_COST_CAP = isInternalRun
             ? parseFloat(process.env.AGENT_COST_CAP_USD_INTERNAL || process.env.AGENT_COST_CAP_USD || '1.50')
             : parseFloat(process.env.AGENT_COST_CAP_USD || '1.50');
-          if (runTokens.total > RUN_TOKEN_CAP || runCost > HARD_COST_CAP) {
+          if (runTokens.billableTotal > RUN_TOKEN_CAP || runCost > HARD_COST_CAP) {
             const reason = runCost > HARD_COST_CAP
               ? `cost cap $${HARD_COST_CAP} hit ($${runCost.toFixed(3)} spent)`
-              : `token cap ${RUN_TOKEN_CAP} hit (${runTokens.total} used)`;
+              : `token cap ${RUN_TOKEN_CAP} hit (${runTokens.billableTotal} billable-weighted, ${runTokens.total} raw)`;
             console.warn(`[AgentLoop] Run aborted   ${reason} (user=${userId ?? 'unknown'})`);
             budgetAbortReason = reason;
             generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
@@ -2760,7 +2765,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       const msg = [lastStreamError?.message, lastStreamError?.responseBody].filter(Boolean).join(' ').toLowerCase();
       return status === 404 || msg.includes('not found') || msg.includes('does not exist') || msg.includes('model_not_found') || msg.includes('invalid model');
     })();
-    if (lastStreamError && (isRetryableError(lastStreamError) || isNetworkError(lastStreamError) || isAuthOrBillingError(lastStreamError) || isModelNotFound)) {
+    // Never fail over when WE aborted the run (stuck-analysis stop, token/
+    // cost cap): the abort surfaces as a retryable-looking stream error, and
+    // failing over restarts the whole loop from step 1 on the next provider
+    // with zero context reuse. Confirmed live 2026-08-16 (CardPro fix run):
+    // stuck-stop at 556K tokens on gemini -> full restart on anthropic ->
+    // $1.44 of pure re-reading -> token cap abort. A governor stop is final.
+    const governorAborted = stuckAnalysisAbortReason !== null || budgetAbortReason !== null;
+    if (!governorAborted && lastStreamError && (isRetryableError(lastStreamError) || isNetworkError(lastStreamError) || isAuthOrBillingError(lastStreamError) || isModelNotFound)) {
       // Build a prioritised list of fallback candidates. Gemini-to-Gemini fallback is
       // now allowed (different model) so a bad gemini-2.5-pro can fall to gemini-flash-latest.
       const fallbackCandidates = buildFallbackCandidates(providerName, modelId);

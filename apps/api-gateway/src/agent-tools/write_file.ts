@@ -124,15 +124,22 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
       try {
         const isJsx = /\.tsx$/.test(args.path);
         const tsResult = ts.transpileModule(content, {
+          // jsx must be OMITTED for plain .ts -- JsxEmit.None is not a legal
+          // option value and transpileModule reports TS6046 for it, which
+          // rejected EVERY .ts write as "invalid syntax" (same bug as
+          // edit_file.ts, confirmed live 2026-08-16).
           compilerOptions: {
-            jsx: isJsx ? ts.JsxEmit.ReactJSX : ts.JsxEmit.None,
+            ...(isJsx ? { jsx: ts.JsxEmit.ReactJSX } : {}),
             module: ts.ModuleKind.ESNext,
             target: ts.ScriptTarget.ES2020,
           },
           reportDiagnostics: true,
           fileName: args.path,
         });
-        if (tsResult.diagnostics && tsResult.diagnostics.length > 0) {
+        // Option-level diagnostics (no d.file, e.g. TS6046) are about our
+        // compiler flags, never about the model's code -- ignore them.
+        const fileDiags = (tsResult.diagnostics ?? []).filter(d => d.file);
+        if (fileDiags.length > 0) {
           // Lifecycle audit finding: this message used to omit line/column/
           // error code entirely -- only the separate, narrower AST Reflection
           // Interceptor (agentToolSet.ts) included those. Whether the model got
@@ -141,7 +148,7 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
           // to localize with, which is a real contributor to the "retry the
           // identical failing write 5 times" incident (project dfe41091,
           // 2026-08-11 08:52) -- it couldn't find the actual line to fix.
-          const errors = tsResult.diagnostics
+          const errors = fileDiags
             .slice(0, 3)
             .map(d => {
               const msg = ts.flattenDiagnosticMessageText(d.messageText, ' ');
