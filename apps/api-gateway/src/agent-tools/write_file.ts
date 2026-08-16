@@ -163,6 +163,28 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
       }
     }
 
+    // A byte-identical write is not a change, and silently accepting one lets
+    // a run "succeed" having done nothing. Live case (CardPro, 2026-08-16,
+    // 249s / 370k tokens / $0.25): asked to swap a logo, the model failed to
+    // locate the asset, wrote three files with the content they already had,
+    // and reported success three times -- files_written=3, net_new_write_count=0.
+    // Say so plainly instead. Deliberately not an ERROR: the write is a no-op,
+    // not a failure, and an error string here invites a retry of the same
+    // content. Naming the no-op is what lets the model change approach.
+    if (fs.existsSync(fullPath)) {
+      try {
+        if (fs.readFileSync(fullPath, 'utf8') === content) {
+          return (
+            `NO CHANGE: ${args.path} already contains exactly this content   nothing was modified. ` +
+            `Do NOT report this as done and do NOT write the same content again. ` +
+            `Either the edit you intended is missing from the content you sent, or you are editing the wrong file. ` +
+            `Re-read the file, confirm which lines must actually differ, and write only if the new content differs. ` +
+            `If you cannot determine what to change (for example an asset you could not find), stop and ask the user rather than guessing.`
+          );
+        }
+      } catch { /* unreadable existing file -- fall through and write */ }
+    }
+
     fs.writeFileSync(fullPath, content, 'utf8');
 
     // Record in ledger so the Change Journal reflects this write

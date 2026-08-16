@@ -2072,7 +2072,16 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // write_file failure wrongly counted as progress and reset the stuck
           // counter). Confirmed live 2026-07-21: two 'PREFER EDIT' write_file
           // bounces logged as clean-looking 'tools: write_file' lines.
-          const isFailureResult = (s: string) => /^(Error|ERROR|BLOCKED|PREFER EDIT)/.test(s);
+          // NO CHANGE (write_file's byte-identical guard) counts here even
+          // though it is not an error: a write that changed nothing is not
+          // progress. Without it, no-op writes reset stepsSinceLastWrite and
+          // set anySuccessfulWriteThisRun, which suppresses the
+          // unfulfilled-promise gate -- so a run could write the same bytes
+          // repeatedly, claim success, and never be caught (CardPro,
+          // 2026-08-16: 3 no-op writes, net_new_write_count=0, reported done).
+          // Being in this set also lets the circuit breaker trip when the same
+          // no-op repeats, which is the behaviour we want.
+          const isFailureResult = (s: string) => /^(Error|ERROR|BLOCKED|PREFER EDIT|NO CHANGE)/.test(s);
           const failedEdits = (toolResults ?? [])
             .filter((tr: any) => typeof tr?.output === 'string' && isFailureResult(tr.output))
             .length;

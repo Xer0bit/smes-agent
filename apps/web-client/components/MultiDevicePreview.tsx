@@ -348,23 +348,22 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
                         className="w-full h-full border-0 bg-white"
                         onLoad={handleIframeLoad}
                     />
-                    {/* The live preview is a real, HMR-connected Vite dev server -- its own
-                        injected client script reacts to every file write on disk the instant
-                        it happens, independent of anything in this React tree. That's every
-                        push mid-generation (including intermediate auto-fix passes), each
-                        showing as a visible reload/flash even for small changes. This cover
-                        doesn't change that underlying behavior (the iframe stays mounted and
-                        keeps receiving live updates underneath) -- it just keeps the user from
-                        watching it happen: one clean reveal of the final state when the run
-                        finishes, instead of a flicker on every intermediate write.
-                        Translucent + blurred, not opaque (found 2026-08-15): a solid cover for
-                        a run's full duration -- which can run several minutes -- read as a
-                        crashed/black screen with no feedback. Blur hides the same underlying
-                        flicker without hiding that the app is still there and working. */}
+                    {/* A badge, NOT a cover. Two earlier attempts hid the whole frame while
+                        a run was in flight -- first opaque, then blurred -- to mask the
+                        reload the HMR-connected Vite server performs on each file write.
+                        Both were worse than the flicker they hid: runs last minutes, and a
+                        hidden app reads as a frozen or crashed one with the user unable to
+                        keep using the page (reported 2026-08-16: "stop getting stuck at
+                        applying changes, keep showing the view"). The app stays visible and
+                        interactive; this only signals that work is in progress.
+                        pointer-events-none so it never eats a click. Reload frequency is a
+                        server-side concern -- the preview is pushed once at the end of a run,
+                        and repair passes (the other source of mid-run pushes) no longer fire
+                        on non-blocking type errors. */}
                     {(isGenerating || status === 'building') && hasRenderableFrame && !installingDependency && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gray-900/70 backdrop-blur-md z-10">
-                            <div className="animate-spin w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full" />
-                            <p className="text-white/90 text-xs font-medium">Applying changes…</p>
+                        <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-gray-900/85 px-3 py-1.5 shadow-lg">
+                            <div className="animate-spin w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full" />
+                            <span className="text-white/85 text-[11px] font-medium">Applying changes…</span>
                         </div>
                     )}
                     {/* Last run wrote no files -- the preview below is byte-identical to
