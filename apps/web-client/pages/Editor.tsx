@@ -688,21 +688,11 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
       role: 'assistant' as const,
       content
     };
-    // Optimistic update - add to local state immediately
+    // Local-only progress ticker, not a real chat turn -- AgentChatPanel (the
+    // actual rendered chat) saves only the final response per prompt. Persisting
+    // these intermediate lines made them replay as separate bubbles ("Task: ...",
+    // "Plan: ...", "Working on agent...") every time chat history reloaded.
     setMessages(prev => [...prev, systemMessage]);
-
-    // Save to database in background (skip for guests   no DB project row)
-    if (!isGuest) {
-      try {
-        await supabase.from("messages").insert({
-          project_id: projectId,
-          role: 'assistant',
-          content,
-        });
-      } catch (err) {
-        console.error('Failed to save message:', err);
-      }
-    }
   };
 
   // Lazy per-file fetch: a tab opened before the background full-load
