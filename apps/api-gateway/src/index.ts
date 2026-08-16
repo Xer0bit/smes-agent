@@ -135,6 +135,19 @@ process.on('message', (msg) => {
     if (msg === 'shutdown') gracefulShutdown('IPC shutdown message');
 });
 
+// Orphaned-worker self-termination. Deploys kept leaking one worker that
+// outlived its replacement (confirmed live 2026-08-16: a worker from a July 9
+// deploy still running 5+ weeks later from a DELETED directory, plus one
+// leaked per deploy since) -- PM2 deregisters the old worker but its
+// shutdown message/kill never lands. A worker PM2 manages always has a live
+// IPC channel; losing it means PM2 abandoned this process, so drain and die
+// instead of serving stale code forever. Running without PM2 (bare node)
+// there is no channel and this never fires.
+process.on('disconnect', () => {
+    logger.warn('IPC channel to PM2 lost -- worker is orphaned; shutting down');
+    gracefulShutdown('IPC disconnect');
+});
+
 process.on('uncaughtException', (error) => {
     logger.error('Uncaught Exception:', error);
     process.exit(1);
