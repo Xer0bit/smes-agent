@@ -315,11 +315,29 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
         // Scoped to tier === 'fix' only: build/feature/edit runs legitimately
         // write files with no pre-existing error to diagnose.
         if (tier === 'fix' && (def.name === 'write_file' || def.name === 'edit_file') && !ctx.buildErrorCallCount) {
-          return (
-            `BLOCKED: call get_build_errors first to see the real error before making a fix. ` +
-            `This is a fix run   don't guess at the root cause from the bug report alone; confirm it against ` +
-            `the actual compiler/runtime output, then make ONE targeted change.`
-          );
+          // Self-arming: run the build check HERE instead of demanding the
+          // model do it. The demand-form of this gate deadlocked a real run
+          // (2026-08-16 16:07): the model's get_build_errors call was
+          // rejected on schema validation before execute ran, the counter
+          // never moved, and every write was blocked to the step budget.
+          // Executing the check server-side both satisfies the precondition
+          // (execute increments buildErrorCallCount) and returns the real
+          // compiler output in the same round-trip. Falls back to the plain
+          // block message only if the check itself throws.
+          try {
+            const buildCheck = await getBuildErrorsTool.execute({ projectId: ctx.projectId }, ctx);
+            return (
+              `BLOCKED this once: a fix must be grounded in the real error, so the build check was run for you. ` +
+              `Current build state:\n\n${typeof buildCheck === 'string' ? buildCheck : JSON.stringify(buildCheck)}\n\n` +
+              `Confirm your root cause against this output, then retry the write   it will go through now.`
+            );
+          } catch {
+            return (
+              `BLOCKED: call get_build_errors first to see the real error before making a fix. ` +
+              `This is a fix run   don't guess at the root cause from the bug report alone; confirm it against ` +
+              `the actual compiler/runtime output, then make ONE targeted change.`
+            );
+          }
         }
         // ── Root-cause-lock (Phase 3) ────────────────────────────────────────
         // Diagnosis-before-write above only gates the FIRST write of a run.

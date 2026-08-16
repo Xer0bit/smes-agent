@@ -12,6 +12,7 @@ import { normalizeScopePath } from '../agent-tools/declare_scope.js';
 import { scanForDeadDangerousEdgeFunctions } from './edgeFunctionSecurityScan.js';
 import { EDGE_FUNCTIONS_DIR } from '../agent-tools/write_edge_function.js';
 import { sanitizeFileContent, sanitizeConfigFile } from '../agent-tools/sanitize.js';
+import { RunTracer } from './runTrace.js';
 import ts from 'typescript';
 import { getAppBuilderBuildSystemPrompt, getAppBuilderSystemPrompt, MICRO_SYSTEM_PROMPT, getFixSystemPrompt, getEditSystemPrompt } from '../prompts/app-builder.prompt.js';
 import { PRE_INSTALLED_PACKAGES } from './baseTemplateService.js';
@@ -416,6 +417,12 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       .single();
     agentRunId = data?.id ?? null;
   }
+
+  // Full-activity trace (system prompt, every step, service calls, outcome)
+  // -- one JSONL per run under AGENT_TRACE_DIR, replayable offline. See
+  // runTrace.ts. Guests/no-DB runs get a timestamp id so they trace too.
+  const tracer = new RunTracer(agentRunId ?? `local-${Date.now()}`, projectId);
+  tracer.event('run-config', { prompt: RunTracer.clip(prompt), model: modelId, userId: userId ?? 'guest' });
 
   let stepCount = 0;
 
@@ -1324,14 +1331,30 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // still verifies imports (skipping that check is the #1 source of build errors).
   // In plan mode, tier instructions must be suppressed   they reference file-modification
   // workflows (touch, read, write) that contradict plan-mode restrictions.
+  //
+  // Narration honesty applies to every tier. The user reads ALL narration
+  // segments of a run stitched into one message, so mid-run apologies and
+  // repeated "final" summaries read as a success-apology-success sandwich
+  // (CardPro admin-user run 86ae21dc: three success claims, two apologies,
+  // and a success claim about a DB change whose tool call had failed).
+  const NARRATION_HONESTY =
+    '\n\n**Narration rules (apply to every sentence you write):**\n' +
+    '- Your reader is a business owner, not a developer. Describe changes by what they see on screen ("the login works now", "the header shows your logo"). NEVER mention file names, functions, request formats, code structure, tools, "system checks", or your own workflow. Technical detail is allowed ONLY if the user asked a technical question.\n' +
+    '- Keep every message SHORT. Progress lines: a few words. Final message: 1-2 short sentences (3 for a full build). Long messages are a failure, not thoroughness.\n' +
+    '- NEVER restate a diagnosis, plan, or status you already said. If a step gives you nothing NEW to tell the user, write nothing at all for that step.\n' +
+    '- NEVER apologize or narrate your own mistakes ("My apologies", "I misunderstood", "incorrect first attempt"). If an earlier attempt in this run was wrong, silently continue with the correct approach   the user sees only one continuous message, and apology text reads as failure.\n' +
+    '- Write ONE final summary, only after ALL work is done. Never write a wrap-up mid-run and then keep working   stacked summaries read as contradictions.\n' +
+    '- The final summary describes the END state only. Never mention or re-explain earlier attempts that you replaced.\n' +
+    '- NEVER claim an action succeeded if its tool call errored. If something failed, say plainly in ONE sentence what does not work yet   a false success claim is worse than a reported failure.';
   const tierInstruction = runtimeMode === 'plan' ? ''
     : _tier === 'micro'
-      ? '\n\n# Efficiency Mode\nDo NOT write any text before your first tool call. Call `think` once (≤40 words), read the file, make the change, done.\n\n**REQUIRED final message**   write exactly this format:\n"I\'ve [verb] [what] in [filename]. [One sentence on what the user will now see.]"\nExample: "I\'ve changed the button color to indigo in Header.tsx. The nav bar buttons now match the brand palette."\nFORBIDDEN: "Done.", "OK.", empty message, or any single-word reply.'
+      ? '\n\n# Efficiency Mode\nDo NOT write any text before your first tool call. Call `think` once (≤40 words), read the file, make the change, done.\n\n**Final message**   one short sentence in plain language on what the user will now see.\nExample: "I\'ve changed the nav buttons to indigo   they now match your brand colors."\nFORBIDDEN: "Done.", "OK.", empty message, file names, or any single-word reply.'
       : _tier === 'fix'
-        ? '\n\n# Fix Mode\nDo NOT write any text before your first tool call. Start with tools directly. Call `think` once   identify root cause, read the broken file, fix it, verify with `get_build_errors`.\n\n**SCOPE   stay on the reported problem.** `get_build_errors` reports every error in the WHOLE project, not just ones caused by this turn. If it returns errors in files you have not touched and that are unrelated to what the user described, LEAVE THEM ALONE   do not start fixing them, they are pre-existing and out of scope for this request. Only chase errors that are (a) in a file you just edited, or (b) directly block the specific thing the user reported. If unrelated errors exist, you may mention them in one sentence at the end, but do not act on them without being asked.\n\n**Progress narration**   after each file you fix, write one short sentence like "Fixed the import error in Navbar.tsx   now checking the build." before moving to the next file.\n\n**REQUIRED final message**   AT LEAST 2 sentences:\n1. What the error was and which file it was in.\n2. What you changed to fix it.\nFORBIDDEN: "Done.", "Fixed.", "OK.", or any single-word reply.'
+        ? '\n\n# Fix Mode\nDo NOT write any text before your first tool call. Start with tools directly. Call `think` once   identify root cause, read the broken file, fix it, verify with `get_build_errors`.\n\n**SCOPE   stay on the reported problem.** `get_build_errors` reports every error in the WHOLE project, not just ones caused by this turn. If it returns errors in files you have not touched and that are unrelated to what the user described, LEAVE THEM ALONE   do not start fixing them, they are pre-existing and out of scope for this request. Only chase errors that are (a) in a file you just edited, or (b) directly block the specific thing the user reported. If unrelated errors exist, you may mention them in one sentence at the end, but do not act on them without being asked.\n\n**Progress narration**   when you move to a genuinely new step, write a few plain words like "Found the problem   fixing it now." Nothing technical, nothing repeated.\n\n**Final message**   1-2 short sentences in plain language: what was broken (as the user experienced it) and that it now works. FORBIDDEN: single-word replies, file names, and re-explaining your diagnosis.'
         : _tier === 'edit'
-          ? '\n\n# Edit Mode\nDo NOT write any text before your first tool call. Start with tool calls directly. Call `think` once   list the 1–3 files you will touch. Then call `declare_scope` with that exact file list before your first write/edit   this is REQUIRED for Edit Mode, not optional. A narrow request ("update the logo", "fix this button") stays narrow: if get_build_errors or anything else surfaces an unrelated pre-existing problem outside your declared scope, leave it alone and mention it in one sentence at the end instead of fixing it. If you discover mid-task that you genuinely need more files than declared, call declare_scope again with the wider list and say why   don\'t just write outside it silently.\n\n**Progress narration (REQUIRED)**   after each file you write or edit, output one short sentence telling the user what you just did and what you\'re doing next. Examples:\n- "Updated the Navbar   now working on the hero section."\n- "Added the cart drawer to CartDrawer.tsx   updating the context next."\nThis keeps the user informed while you work.\n\n**HARD FILE LIMIT**   more than 5 files? STOP after the 5th, tell the user what changed and what remains.\n\n**REQUIRED final message**   AT LEAST 2 sentences: what changed and what the user will see differently.\nFORBIDDEN: "Done.", "OK.", any single word, or any message under 15 words.'
-          : '\n\nDo NOT write any text before your first tool call. Start with tool calls directly.\n\n**Progress narration (REQUIRED)**   after each file you write or create, output one short sentence telling the user what you just did and what comes next. Keep it brief and specific. Examples:\n- "Built the Navbar with sticky positioning and a cart icon   now creating the hero banner."\n- "Added HeroBanner.tsx with a full-width gradient   moving on to the categories section."\n- "Categories grid done   now wiring up the product cards."\nThis narration shows the user the build is progressing in real time.\n\n**REQUIRED final message**   AT LEAST 3 sentences after ALL changes:\n1. What you built and in which files.\n2. How the feature works from the user\'s perspective.\n3. Any important decisions the user should know.\nFORBIDDEN: "Done.", "Complete.", or any response under 20 words.';
+          ? '\n\n# Edit Mode\nDo NOT write any text before your first tool call. Start with tool calls directly. Call `think` once   list the 1–3 files you will touch. Then call `declare_scope` with that exact file list before your first write/edit   this is REQUIRED for Edit Mode, not optional. A narrow request ("update the logo", "fix this button") stays narrow: if get_build_errors or anything else surfaces an unrelated pre-existing problem outside your declared scope, leave it alone and mention it in one sentence at the end instead of fixing it. If you discover mid-task that you genuinely need more files than declared, call declare_scope again with the wider list and say why   don\'t just write outside it silently.\n\n**Progress narration**   after each meaningful step, a few plain words about what just changed on their site: "Updated the navbar   now the hero section." No file names, nothing repeated.\n\n**HARD FILE LIMIT**   more than 5 files? STOP after the 5th, tell the user what changed and what remains.\n\n**Final message**   1-2 short sentences in plain language: what changed and what the user will see. FORBIDDEN: single-word replies and technical detail the user didn\'t ask for.'
+          : '\n\nDo NOT write any text before your first tool call. Start with tool calls directly.\n\n**Progress narration**   after each part of the site you finish, a few plain words: "Navbar done   building the hero banner." / "Categories grid done   now the product cards." No file names. This shows the build progressing in real time.\n\n**Final message**   at most 3 short sentences after ALL changes: what was built and how it works from the user\'s perspective, in plain language. FORBIDDEN: single-word replies, file lists, and technical decisions the user didn\'t ask about.';
+  const tierInstructionWithHonesty = tierInstruction ? tierInstruction + NARRATION_HONESTY : tierInstruction;
 
   const boundedFileTree = clampContextSection('Project file tree', liveFileTree, MAX_FILE_TREE_CHARS);
 
@@ -1510,7 +1533,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // micro: no modeInstruction (MICRO_SYSTEM_PROMPT already embeds directives)
   // edit: compact instruction   no phased build, no verbose rules (saves ~1,500 tokens)
   // plan mode always wins   tier instructions must never override plan-mode restrictions
-  const EDIT_MODE_INSTRUCTION = '\n\n# Runtime Mode Instruction\nExecute immediately   start with tool calls directly. Do NOT write any text before your first tool call. No "I\'ll...", no "Let me...", no acknowledgments before tools. Do NOT ask for confirmation. Do NOT rewrite files not involved in the change. If intent is unclear, ask one short question before calling tools.\n\n**Progress narration (REQUIRED)**   after each file you edit or create, write one short sentence telling the user what you just changed and what you\'re doing next. Example: "Updated the header in Navbar.tsx   now fixing the color in HeroBanner.tsx." This keeps the user informed while you work.\n\n**REQUIRED final message**   once all changes are done, write AT LEAST 2 full sentences. Start with "I\'ve [verb]..." and name the files and exact changes. Then explain what the user will see differently. FORBIDDEN: "Done.", "OK.", "Updated.", any single word, or any message shorter than 15 words.';
+  const EDIT_MODE_INSTRUCTION = '\n\n# Runtime Mode Instruction\nExecute immediately   start with tool calls directly. Do NOT write any text before your first tool call. No "I\'ll...", no "Let me...", no acknowledgments before tools. Do NOT ask for confirmation. Do NOT rewrite files not involved in the change. If intent is unclear, ask one short question before calling tools.\n\n**Progress narration**   after each meaningful change, a few plain words: "Updated the header   now fixing the colors." No file names, nothing repeated.\n\n**Final message**   once all changes are done, 1-2 short sentences in plain language: what changed and what the user will see differently. FORBIDDEN: single-word replies, file names, and technical detail the user didn\'t ask for.';
   const effectiveModeInstruction = runtimeMode === 'plan' ? modeInstruction
     : _tier === 'micro' ? ''
     : _tier === 'edit' ? EDIT_MODE_INSTRUCTION
@@ -1530,7 +1553,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     secretsBlock +
     effectiveModeInstruction +
     approvedPlanInstruction +
-    tierInstruction +
+    tierInstructionWithHonesty +
     (boundedOlderSummary
       ? `\n\n# Earlier Conversation Summary\n\nThis is a summary of older messages in this conversation. Use it to maintain continuity:\n\n${boundedOlderSummary}`
       : '') +
@@ -1654,6 +1677,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       : [{ role: 'system' as const, content: systemPrompt }];
   }
   const systemMessages = buildSystemMessagesFor(providerName);
+  // Whole system prompt, unclipped: the single most-needed artifact when
+  // replaying a run in a test environment.
+  tracer.event('system-prompt', {
+    provider: providerName,
+    tier: _tier,
+    mode: runtimeMode,
+    messages: systemMessages.map((m) => m.content),
+  });
 
   // Use a real default timeout so upstream stalls do not leave the frontend
   // waiting indefinitely. Anthropic gets a shorter cutoff because it is the
@@ -2059,6 +2090,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           stepCount++;
           runLedger.setStep(stepCount);
           const toolNames = (toolCalls ?? []).map((tc: any) => tc.toolName);
+          tracer.event('step', {
+            step: stepCount,
+            text: RunTracer.clip(text ?? ''),
+            reasoning: reasoningText ? RunTracer.clip(reasoningText) : undefined,
+            toolCalls: (toolCalls ?? []).map((tc: any) => ({ tool: tc.toolName, args: RunTracer.clip(tc.input ?? tc.args) })),
+            toolResults: (toolResults ?? []).map((tr: any) => ({ tool: tr.toolName, output: RunTracer.clip(tr.output) })),
+            usage,
+          });
           // NOTE: AI SDK v6 renamed the tool-result field from `result` to `output`
           // (StaticToolResult/DynamicToolResult in ai/dist/index.d.ts). Both checks
           // below read `.output`   reading `.result` here would silently always be
@@ -2638,6 +2677,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               (userId ? ` | user=${userId}` : '') +
               (agentRunId ? ` | runId=${agentRunId}` : ''),
             );
+            tracer.event('run-end', {
+              inputTokens: totalIn, outputTokens: totalOut, cacheRead: totalCR, cacheWrite: totalCW,
+              costUsd: Number(totalCost.toFixed(4)), finishReason: lastFinishReason ?? 'unknown', steps: stepCount,
+            });
             // Warn when model produces nothing   helps diagnose Gemini empty-response issues
             if (totalOut === 0) {
               console.warn(
@@ -3749,6 +3792,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       }
       if (firstAttempt.status === 200) {
         console.log(`[AgentLoop] Preview push OK: ${mergedWrites.length} files`);
+        tracer.event('preview-push', { files: mergedWrites.length, paths: mergedWrites.slice(0, 50).map((f) => f.path) });
         previewPushOk = true;
       } else if (firstAttempt.status === 422) {
         // Previously this branch immediately reverted whichever files the

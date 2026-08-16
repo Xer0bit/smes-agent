@@ -640,7 +640,9 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   const canShowPublishActions = hasLoadedCode || isAlreadyPublished || Boolean(sharePreviewUrl);
   const canRenderProjectActions = Boolean(projectId);
   const canInteractWithPublishActions = canRenderProjectActions && canShowPublishActions;
-  const isVersionPublishable = previewStatus === 'ready';
+  // A run that wrote nothing leaves nothing new to publish -- gray out
+  // Publish (all 4 buttons route through this flag), never the preview.
+  const isVersionPublishable = previewStatus === 'ready' && !lastRunNoChanges;
 
   // Guest mode state
   const [isGuest, setIsGuest] = useState(false);
