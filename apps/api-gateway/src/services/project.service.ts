@@ -412,7 +412,15 @@ export class ProjectService {
     private async _cleanupPreviewService(projectId: string): Promise<void> {
         const base = (process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app').replace(/\/$/, '');
         try {
-            const res = await fetch(`${base}/control/project/${projectId}`, { method: 'DELETE' });
+            const res = await fetch(`${base}/control/project/${projectId}`, {
+                method: 'DELETE',
+                // The delete route now requires the shared update secret (it
+                // recursively removes a directory; unauthenticated + traversal
+                // was the 2026-08-17 audit's worst finding).
+                headers: process.env.PREVIEW_UPDATE_SECRET
+                    ? { 'x-update-secret': process.env.PREVIEW_UPDATE_SECRET }
+                    : {},
+            });
             if (!res.ok && res.status !== 404) {
                 logger.warn(`[cleanup] Preview-service teardown returned ${res.status} for project ${projectId}`);
             }

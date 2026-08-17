@@ -1043,7 +1043,13 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
         // run finishing mid-load, or a lazy per-tab fetch of the same content.
         // Its content wins over the fetched body, and paths deleted mid-load
         // stay deleted, so a slow background load can never clobber newer work.
-        const applyRevisionFiles = async (rev: any, latestFiles: Array<{ path: string; content: string }>, preferWorkspace = false) => {
+        // completeSet: only a set PROVEN complete (every manifest path
+        // downloaded) may push with fullSync=true, because fullSync PRUNES
+        // whatever the push omits from the live preview. An incomplete set
+        // still updates files, it just loses prune rights -- this is the fix
+        // for "my logo disappears when I reload" (a throttled binary download
+        // was silently skipped, then pruned by this very push).
+        const applyRevisionFiles = async (rev: any, latestFiles: Array<{ path: string; content: string }>, preferWorkspace = false, completeSet = true) => {
           console.log('[Editor] Loading revision with JSONB files:', latestFiles.length);
           let files = latestFiles.map((file: any) => ({
             path: file.path,
@@ -1100,7 +1106,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             }
 
             const filesToUpdate = files.map((f: any) => ({ path: f.path, content: f.content }));
-            const result = await updateDockerPreview(projectId!, filesToUpdate, true, previewBaseSeqRef.current);
+            const result = await updateDockerPreview(projectId!, filesToUpdate, completeSet, previewBaseSeqRef.current);
 
             if (!result.success && result.staleBase) {
               // The preview already holds newer state than the revision this
@@ -1150,7 +1156,13 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             try {
               const fullFiles = await revisionService.getRevisionFiles(projectId!, latestRevision.id);
               if (fullFiles.length > 0) {
-                await applyRevisionFiles(latestRevision, fullFiles, true);
+                // Prune rights only when every manifest path actually
+                // downloaded -- see applyRevisionFiles' completeSet doc.
+                const completeSet = fullFiles.length >= manifest.files.length;
+                if (!completeSet) {
+                  console.warn(`[Editor] Revision load incomplete (${fullFiles.length}/${manifest.files.length})   pushing without prune`);
+                }
+                await applyRevisionFiles(latestRevision, fullFiles, true, completeSet);
               }
             } catch (bgErr) {
               console.error('[Editor] Background full-load failed (files remain fetchable per-tab):', bgErr);

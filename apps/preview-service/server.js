@@ -1121,6 +1121,19 @@ async function startMainServer() {
     // pause/idle action a project can come back from; this is permanent.
     app.delete('/control/project/:projectId', cors(corsOptions), async (req, res) => {
         const { projectId } = req.params;
+        // This route recursively DELETES a directory derived from a URL param.
+        // It was the only /control route with neither the id-format check nor
+        // the shared secret: Express percent-decodes params, so "..%2f..%2f"
+        // was a real traversal out of PROJECTS_ROOT (audit 2026-08-17).
+        if (!isValidProjectId(projectId)) {
+            return res.status(400).json({ error: 'Invalid project ID' });
+        }
+        if (PREVIEW_UPDATE_SECRET) {
+            const provided = req.headers['x-update-secret'];
+            if (!provided || provided !== PREVIEW_UPDATE_SECRET) {
+                return res.status(401).json({ error: 'Unauthorized' });
+            }
+        }
         try {
             await closeProjectServer(projectId, 'project deleted');
             const projectRoot = path.join(PROJECTS_ROOT, projectId);

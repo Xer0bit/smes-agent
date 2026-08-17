@@ -1102,13 +1102,30 @@ export async function ensureBaseTemplate(): Promise<void> {
       fs.writeFileSync(filePath, content, 'utf8');
     }
 
-    // Run npm install
+    // Run npm install. --prefer-offline resolves versions from the LOCAL npm
+    // cache metadata; when the lockfile pins a version published after the
+    // cache last saw that package, every offline attempt fails ETARGET
+    // identically and retrying changes nothing (44 failed template inits in
+    // 48h, 2026-08-17: follow-redirects@1.16.0 existed on the registry but
+    // not in VPS1's cache). On ETARGET/notarget, retry once online.
     const start = Date.now();
-    const { stderr } = await execAsync('npm install --prefer-offline --no-audit --no-fund', {
-      cwd: BASE_TEMPLATE_DIR,
-      timeout: 300_000, // 5 min max
-      env: { ...process.env, NODE_ENV: 'development' },
-    });
+    let stderr: string;
+    try {
+      ({ stderr } = await execAsync('npm install --prefer-offline --no-audit --no-fund', {
+        cwd: BASE_TEMPLATE_DIR,
+        timeout: 300_000, // 5 min max
+        env: { ...process.env, NODE_ENV: 'development' },
+      }));
+    } catch (installErr) {
+      const message = installErr instanceof Error ? installErr.message : String(installErr);
+      if (!/ETARGET|notarget/i.test(message)) throw installErr;
+      console.warn('[BaseTemplate] offline install hit ETARGET (stale npm cache)   retrying online');
+      ({ stderr } = await execAsync('npm install --prefer-online --no-audit --no-fund', {
+        cwd: BASE_TEMPLATE_DIR,
+        timeout: 300_000,
+        env: { ...process.env, NODE_ENV: 'development' },
+      }));
+    }
     if (stderr && !stderr.includes('npm warn')) {
       console.warn('[BaseTemplate] npm install stderr:', stderr.slice(0, 500));
     }

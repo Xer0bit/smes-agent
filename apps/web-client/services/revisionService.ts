@@ -408,32 +408,45 @@ export const revisionService = {
       const manifest = data.generated_files as unknown as RevisionManifest;
       const STORAGE_BUCKET = 'user-projects-free';
 
-      // Group paths by source revision to minimise request fan-out
-      const byRevision = new Map<string, string[]>();
-      for (const f of manifest.files) {
-        const list = byRevision.get(f.source_revision) ?? [];
-        list.push(f.path);
-        byRevision.set(f.source_revision, list);
-      }
+      // Flatten to (path, storagePath) pairs, then download in bounded
+      // batches with one retry pass. The old code fired EVERY file's
+      // download concurrently (188+ parallel requests on a real project)
+      // and SILENTLY SKIPPED any that failed -- storage throttling made the
+      // largest files (base64 images) the likeliest casualties, and the
+      // Editor then pushed the incomplete set as a fullSync, whose prune
+      // DELETED the missing files from the live preview. That is the
+      // "my logo disappears when I reload" bug.
+      const targets = manifest.files.map((f) => ({
+        path: f.path,
+        storagePath: `projects/${projectId}/${f.source_revision}/${f.path}`,
+      }));
 
       const files: { path: string; content: string }[] = [];
-      await Promise.all(
-        Array.from(byRevision.entries()).map(async ([srcRevId, paths]) => {
-          await Promise.all(
-            paths.map(async (filePath) => {
-              const storagePath = `projects/${projectId}/${srcRevId}/${filePath}`;
-              const { data: blob, error: dlErr } = await supabase.storage
-                .from(STORAGE_BUCKET)
-                .download(storagePath);
-              if (dlErr || !blob) {
-                console.warn(`[RevisionService] Could not download ${storagePath}:`, dlErr?.message);
-                return;
-              }
-              files.push({ path: filePath, content: await blob.text() });
-            })
-          );
-        })
-      );
+      const downloadOne = async (t: { path: string; storagePath: string }): Promise<boolean> => {
+        const { data: blob, error: dlErr } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .download(t.storagePath);
+        if (dlErr || !blob) return false;
+        files.push({ path: t.path, content: await blob.text() });
+        return true;
+      };
+
+      const BATCH = 12;
+      let failed: Array<{ path: string; storagePath: string }> = [];
+      for (let i = 0; i < targets.length; i += BATCH) {
+        const results = await Promise.all(targets.slice(i, i + BATCH).map(downloadOne));
+        results.forEach((ok, j) => { if (!ok) failed.push(targets[i + j]); });
+      }
+      if (failed.length > 0) {
+        const retryResults = await Promise.all(failed.map(downloadOne));
+        failed = failed.filter((_, j) => !retryResults[j]);
+      }
+      if (failed.length > 0) {
+        console.warn(
+          `[RevisionService] ${failed.length}/${targets.length} file(s) failed to download after retry:`,
+          failed.slice(0, 5).map((t) => t.path),
+        );
+      }
       return files;
     }
 

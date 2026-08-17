@@ -426,12 +426,15 @@ export function seedEcgTemplate(
         continue;
       }
       let content = fs.readFileSync(full, 'utf8');
-      // Substitute placeholders
-      content = content.replace('{{CSS_VARS}}', vars);
-      content = content.replace('{{APP_NAME}}', design.appName);
-      content = content.replace('{{FONT_FAMILY}}', design.fontFamily);
-      content = content.replace('{{FONT_FAMILY_URL}}', design.fontFamily.replace(/ /g, '+'));
-      content = content.replace('{{LOGO_URL}}', design.logoUrl);
+      // Substitute placeholders. replaceAll, not replace: string-pattern
+      // replace() hits only the FIRST occurrence, which shipped a literal
+      // "{{FONT_FAMILY}}" in every seeded site's font fallback chain and
+      // would leave 5 of index.html's 6 {{APP_NAME}} slots unsubstituted.
+      content = content.replaceAll('{{CSS_VARS}}', vars);
+      content = content.replaceAll('{{APP_NAME}}', design.appName);
+      content = content.replaceAll('{{FONT_FAMILY}}', design.fontFamily);
+      content = content.replaceAll('{{FONT_FAMILY_URL}}', design.fontFamily.replace(/ /g, '+'));
+      content = content.replaceAll('{{LOGO_URL}}', design.logoUrl);
       files[rel] = content;
     }
   }
