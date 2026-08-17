@@ -3137,6 +3137,63 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         break;
       }
     }
+
+    // ── Orphaned-asset gate ─────────────────────────────────────────────────
+    // place_asset succeeded but NOTHING in the project references the placed
+    // filename -> the user's image renders nowhere, yet the run reports
+    // success. Confirmed live 2026-08-17 ("change the logo": logo.png placed,
+    // the only edit changed a text string, run ended, logo never appeared).
+    // Same one-shot corrective-continuation shape as the promise gate above.
+    // Reference check is against DISK (src/ + index.html), so replacing an
+    // already-referenced filename (logo.png over logo.png) passes untouched.
+    const placedAssetNames = (ctx.placedAssetPaths ?? [])
+      .map((p) => p.split('/').pop() ?? '')
+      .filter(Boolean);
+    if (placedAssetNames.length > 0 && !abortController.signal.aborted && (MAX_STEPS - stepCount) >= 2) {
+      const diskReferences = (name: string): boolean => {
+        const scan = (dir: string): boolean => {
+          let entries: fs.Dirent[];
+          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+          for (const entry of entries) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              if (!['node_modules', '.git', 'dist'].includes(entry.name) && scan(full)) return true;
+            } else if (/\.(tsx?|jsx?|html|css)$/.test(entry.name)) {
+              try { if (fs.readFileSync(full, 'utf8').includes(name)) return true; } catch { /* skip */ }
+            }
+          }
+          return false;
+        };
+        try { if (fs.readFileSync(path.join(appPath, 'index.html'), 'utf8').includes(name)) return true; } catch { /* skip */ }
+        return scan(path.join(appPath, 'src'));
+      };
+      const orphanedAssets = placedAssetNames.filter((n) => !diskReferences(n));
+      if (orphanedAssets.length > 0) {
+        console.warn(`[AgentLoop] Orphaned-asset gate: placed but unreferenced: ${orphanedAssets.join(', ')} -- forcing corrective continuation. user=${userId ?? 'unknown'}`);
+        conversationMessages = [
+          ...conversationMessages,
+          { role: 'assistant' as const, content: accumulatedText },
+          {
+            role: 'user' as const,
+            content:
+              `You placed ${orphanedAssets.map((n) => `"${n}"`).join(', ')} with place_asset, but NO file in the ` +
+              `project references ${orphanedAssets.length === 1 ? 'it' : 'them'} -- the image will never appear ` +
+              `anywhere on the site. Use edit_file NOW to reference ${orphanedAssets.length === 1 ? 'it' : 'them'} ` +
+              `where the user asked (src={\`\${import.meta.env.BASE_URL}assets/<name>\`}), replacing the old ` +
+              `logo/image markup if one exists. Do not end the turn until the reference is in place.`,
+          },
+        ];
+        try {
+          const assetFixStream = await attemptStream(streamingProvider, 0, providerName);
+          const assetFixConsume = await consumeResultStream(assetFixStream);
+          if (!assetFixConsume.err && assetFixConsume.text) {
+            accumulatedText = assetFixConsume.text;
+          }
+        } catch (assetFixErr: any) {
+          console.warn('[AgentLoop] Orphaned-asset corrective continuation failed (non-fatal):', assetFixErr?.message ?? assetFixErr);
+        }
+      }
+    }
     // Cap exhausted (or a plan was staged, which is a legitimate outcome --
     // propose_plan doesn't set anySuccessfulWriteThisRun since it writes to
     // agent_plans, not project files) and still no action taken: be honest

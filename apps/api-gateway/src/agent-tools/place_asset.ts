@@ -143,6 +143,7 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
       : '';
 
     ctx.placeAssetCallCount = (ctx.placeAssetCallCount ?? 0) + 1;
+    (ctx.placedAssetPaths ??= []).push(`public/assets/${safeDest}`);
 
     // ── Copy to public/assets/ ────────────────────────────────────────────────
     const assetsDir = safeJoin(ctx.appPath, 'public/assets');

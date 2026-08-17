@@ -176,6 +176,14 @@ export interface AgentContext {
   /** Counts place_asset calls this run   cheap signal for "an asset task happened", used to scope the asset-completeness closure-claim check without a false trigger on unrelated runs. */
   placeAssetCallCount?: number;
   /**
+   * Project-relative paths place_asset wrote this run (e.g.
+   * "public/assets/logo.png"). The orphaned-asset gate checks at run end
+   * that something in src/ actually references each placed filename --
+   * a placed-but-never-referenced image renders nowhere, yet the run
+   * used to report success (2026-08-17 "change the logo" incident).
+   */
+  placedAssetPaths?: string[];
+  /**
    * Set true by a tool that made a real, billable/consequential change with
    * NO corresponding project file (e.g. provision_database.ts provisioning a
    * tenant Postgres schema   there's nothing on disk to write). agentWroteFiles
