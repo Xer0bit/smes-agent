@@ -434,8 +434,13 @@ pm2 save
 # recorded pids lag PM2's own worker churn, so "unregistered" pids can be
 # the real serving processes.
 for c in $(pgrep -f "node .*/server/dist/index.js"); do
-    if [ -L "/proc/$c/cwd" ] && ! readlink -e "/proc/$c/cwd" >/dev/null 2>&1; then
-        echo "Killing stale worker $c (cwd deleted -- code no longer on disk)"
+    CWD=$(readlink "/proc/$c/cwd" 2>/dev/null || echo "")
+    # Two unambiguous stale signatures: cwd deleted (July-9 leak) or cwd in a
+    # .old backup dir -- `mv server server.old` re-points a surviving worker's
+    # cwd there, and one such worker served pre-deploy code with a stale env
+    # for a day (2026-08-17: intermittent 401s on every preview sync).
+    if { [ -L "/proc/$c/cwd" ] && ! readlink -e "/proc/$c/cwd" >/dev/null 2>&1; } || case "$CWD" in *.old|*.old/*) true;; *) false;; esac; then
+        echo "Killing stale worker $c (cwd: ${CWD:-DELETED})"
         kill "$c" 2>/dev/null; sleep 1; kill -9 "$c" 2>/dev/null || true
     fi
 done
@@ -902,8 +907,9 @@ sleep 18
 # so deleted-cwd is the only kill criterion used here.
 KILLED=""
 for c in \$(pgrep -f "node .*/server/dist/index.js"); do
-    if [ -L "/proc/\$c/cwd" ] && ! readlink -e "/proc/\$c/cwd" >/dev/null 2>&1; then
-        echo "  Killing stale worker \$c (cwd deleted -- code no longer on disk)"
+    CWD=\$(readlink "/proc/\$c/cwd" 2>/dev/null || echo "")
+    if { [ -L "/proc/\$c/cwd" ] && ! readlink -e "/proc/\$c/cwd" >/dev/null 2>&1; } || case "\$CWD" in *.old|*.old/*) true;; *) false;; esac; then
+        echo "  Killing stale worker \$c (cwd: \${CWD:-DELETED})"
         kill "\$c" 2>/dev/null; sleep 1; kill -9 "\$c" 2>/dev/null || true
         KILLED="yes"
     fi
