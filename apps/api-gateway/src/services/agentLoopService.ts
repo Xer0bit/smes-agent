@@ -635,6 +635,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     pendingEdgeFunctionDeploys: new Map(),
     anonFetchTables: new Map(),
     anonPolicyTables: new Set(),
+    attachmentPublicUrls: new Map<string, string>(),
     previewServiceUrl: process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001',
     ledger: runLedger,
     ecgMcp: (() => {
@@ -1125,6 +1126,13 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
             // ── Image stays in /tmp   agent uses place_asset tool to explicitly place it ──
             // This prevents any image from silently overwriting project assets (e.g. logos)
             // before the agent understands the user's intent.
+
+            // Register this exact tempPath -> publicUrl so place_asset can self-heal if the
+            // /tmp file goes missing between now (prompt built) and whenever the model
+            // actually calls the tool -- see attachmentPublicUrls's doc comment in types.ts.
+            if (att.publicUrl) {
+              ctx.attachmentPublicUrls!.set(resolvedPath, att.publicUrl);
+            }
 
             // Scan existing public/assets/ for image files so the agent knows what's there
             // and can delete old logos/assets before placing the new one.

@@ -250,6 +250,22 @@ export interface AgentContext {
    */
   anonFetchTables?: Map<string, string>;
   anonPolicyTables?: Set<string>;
+  /**
+   * Maps a chat-upload tempPath (exactly the string embedded in the
+   * attachmentContext prompt as place_asset's `tmpPath` instruction) to its
+   * durable Supabase Storage signed URL. agentLoopService.ts populates this
+   * while building attachmentContext, at which point it already re-validates
+   * (and, if needed, self-heals) the tempPath -- but that check runs once,
+   * before the model has even seen the attachment. If the /tmp file goes
+   * missing in the gap between that check and the model actually calling
+   * place_asset (confirmed live, project fa6fc688, 2026-08-17: valid when the
+   * prompt was built, gone ~20-40s later when place_asset ran, tool failed
+   * with no recovery and the run never retried), place_asset had no way to
+   * recover -- it only ever saw a bare tmpPath/destName pair. This lets it
+   * run the exact same publicUrl self-heal agentLoopService.ts already does,
+   * instead of failing hard on a still-valid attachment.
+   */
+  attachmentPublicUrls?: Map<string, string>;
 }
 
 // ─── Anon-fetch detection helper ─────────────────────────────────────────────

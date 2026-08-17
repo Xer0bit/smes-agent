@@ -87,11 +87,40 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
     if (!resolvedSrc.startsWith(path.resolve(UPLOAD_BASE) + path.sep)) {
       return `ERROR: tmpPath must be inside ${UPLOAD_BASE}. Received: "${args.tmpPath}"`;
     }
-    if (!fs.existsSync(resolvedSrc)) {
-      return (
-        `ERROR: Uploaded file not found at "${args.tmpPath}". ` +
-        `It may have expired (files are cleaned up after 1 hour). Ask the user to re-attach the image.`
-      );
+    let effectiveSrc = resolvedSrc;
+    if (!fs.existsSync(effectiveSrc)) {
+      // Self-heal from the durable Supabase Storage copy, same fallback
+      // agentLoopService.ts already runs when it builds the attachmentContext
+      // prompt -- but that check happens once, before the model has even seen
+      // the attachment. If the /tmp file goes missing in the gap between that
+      // check and the model actually calling this tool, this was the only
+      // recovery path left, and it didn't exist: place_asset just failed hard
+      // with no retry (confirmed live, project fa6fc688, 2026-08-17 -- valid
+      // when the prompt was built, gone by the time place_asset ran). See
+      // attachmentPublicUrls's doc comment in types.ts.
+      // Keyed by the resolved path, matching how agentLoopService.ts stores it
+      // (resolvedPath = path.resolve(att.tempPath)) -- lines up even if the
+      // model echoes the tmpPath with different (but equivalent) formatting.
+      const publicUrl = ctx.attachmentPublicUrls?.get(resolvedSrc);
+      let healed = false;
+      if (publicUrl) {
+        try {
+          fs.mkdirSync(UPLOAD_BASE, { recursive: true });
+          const refetchPath = path.join(UPLOAD_BASE, `refetched-${Date.now()}-${path.basename(args.tmpPath).replace(/[^a-zA-Z0-9._-]/g, '_')}`);
+          const resp = await fetch(publicUrl, { signal: AbortSignal.timeout(15_000) });
+          if (resp.ok) {
+            fs.writeFileSync(refetchPath, Buffer.from(await resp.arrayBuffer()));
+            effectiveSrc = refetchPath;
+            healed = true;
+          }
+        } catch { /* fall through to the error below */ }
+      }
+      if (!healed) {
+        return (
+          `ERROR: Uploaded file not found at "${args.tmpPath}". ` +
+          `It may have expired (files are cleaned up after 1 hour). Ask the user to re-attach the image.`
+        );
+      }
     }
 
     // ── Security: destName must be a plain filename   no path traversal ──────
@@ -101,13 +130,13 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
     }
 
     // ── Validate file is actually an image (magic bytes) ─────────────────────
-    const validation = validateImage(resolvedSrc);
+    const validation = validateImage(effectiveSrc);
     if (!validation.valid) {
       return `ERROR: File validation failed   ${validation.reason}. Only JPEG, PNG, GIF, WebP, and SVG files are allowed.`;
     }
 
     // ── Size check ────────────────────────────────────────────────────────────
-    const stat = fs.statSync(resolvedSrc);
+    const stat = fs.statSync(effectiveSrc);
     const sizeKB = Math.round(stat.size / 1024);
     const sizeWarning = sizeKB > 800
       ? `\n⚠ Warning: image is ${sizeKB} KB   consider using a smaller/compressed version for better page load performance.`
@@ -119,7 +148,7 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
     const assetsDir = safeJoin(ctx.appPath, 'public/assets');
     fs.mkdirSync(assetsDir, { recursive: true });
     const destPath = path.join(assetsDir, safeDest);
-    fs.copyFileSync(resolvedSrc, destPath);
+    fs.copyFileSync(effectiveSrc, destPath);
 
     // Surface the placed asset in the chat as an activity chip/steps entry AND
     // register it with the same operation-tracking pathway write_file uses.
