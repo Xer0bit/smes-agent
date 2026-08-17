@@ -43,9 +43,9 @@ const schema = z.object({
   name: z.string().describe(
     'Unique function name (alphanumeric, hyphens, underscores). ' +
     'Use the same name to overwrite an existing function. Before creating a NEW ' +
-    'function, list_files or read_file the __edge_functions__/ directory first   ' +
-    'every existing function for this project is mirrored there as __edge_functions__/' +
-    '<name>.js. Extend an existing function instead of writing a near-duplicate one.'
+    'function, call list_edge_functions first to see what already exists (name + ' +
+    'description + access flags); read_file __edge_functions__/<name>.js if you need ' +
+    'the actual code. Extend an existing function instead of writing a near-duplicate one.'
   ),
   code: z.string().describe(
     'JavaScript source that runs INSIDE an async function body   write plain statements ' +

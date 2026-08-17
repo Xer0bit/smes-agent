@@ -8,7 +8,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { ToolDefinition, AgentContext, safeJoin } from './types.js';
 
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.cache', '__edge_functions__']);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.cache']);
 const MAX_RESULTS = 100;
 const MAX_SCAN_FILES = 20000;
 
