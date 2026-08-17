@@ -33,6 +33,13 @@ getLlmControlState()
 
 const server: Server = app.listen(PORT, () => {
     logger.info(`🚀 eComGear API Server running on port ${PORT}`);
+    // Nginx fronts this with `upstream { keepalive 64 }`; Node's default 5s
+    // keepAliveTimeout is shorter than nginx's idle window, so nginx reused
+    // just-closed sockets -> intermittent 502s (same race fixed in
+    // preview-service/server.js 2026-08-17; headersTimeout > keepAliveTimeout
+    // per Node docs).
+    server.keepAliveTimeout = 75_000;
+    server.headersTimeout = 80_000;
     logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
 
     // Signal PM2 that this worker is ready to accept traffic.

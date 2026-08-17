@@ -2470,6 +2470,16 @@ export default App;
         socket.destroy();
     });
 
+    // Nginx fronts this server with `upstream { keepalive 32 }` and reuses
+    // idle upstream sockets. Node's DEFAULT keepAliveTimeout is 5s -- shorter
+    // than nginx's idle window -- so nginx regularly reused a socket this
+    // server had just closed: "recv() failed (104: Connection reset by peer)"
+    // in nginx error.log, surfacing as intermittent 502s on preview pushes
+    // and loads (confirmed live 2026-08-17: perfectly alternating 200/502 on
+    // proxied pushes). Node must always outlive nginx's idle window;
+    // headersTimeout must exceed keepAliveTimeout per Node docs.
+    mainServer.keepAliveTimeout = 75_000;
+    mainServer.headersTimeout = 80_000;
     mainServer.listen(PORT, '0.0.0.0', () => {
         console.log(`Multi-Tenant Preview Service listening at http://0.0.0.0:${PORT} (${NODE_ENV})`);
         if (IS_PRODUCTION) {
