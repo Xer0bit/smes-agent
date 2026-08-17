@@ -17,7 +17,7 @@ const {
     activeServers, projectErrors, projectDiagnostics, runtimeInstances,
     pendingServerCreations, closingServers, recentUpdateFingerprints, lastAcceptedBaseSeq,
     isUpdateRateLimited, createUpdateFingerprint, getPreviewPublicBaseUrl,
-    touchRuntime, escapeHtml, isValidProjectId, getProjectDiagnostics,
+    touchRuntime, escapeHtml, isValidProjectId, extractPreviewProjectIdFromReferer, getProjectDiagnostics,
     setProjectErrors, appendProjectError,
 } = previewState;
 const {
@@ -1265,7 +1265,6 @@ async function startMainServer() {
     // Supported asset prefixes: /assets/, /images/, /fonts/, /icons/, /media/
     //   all common names for things placed in a project's public/ directory.
     const ASSET_PATH_RE = /^\/(assets|images|fonts|icons|media)\//;
-    const PREVIEW_REFERER_RE = /\/preview\/([a-f0-9-]{36})\//i;
 
     app.use((req, res, next) => {
         if (!ASSET_PATH_RE.test(req.url)) return next();
@@ -1274,10 +1273,9 @@ async function startMainServer() {
         if (req.method !== 'GET' && req.method !== 'HEAD') return next();
 
         const referer = req.headers.referer || req.headers.referrer || '';
-        const match = referer.match(PREVIEW_REFERER_RE);
-        if (!match) return next(); // no project context   let it 404 normally
+        const projectId = extractPreviewProjectIdFromReferer(referer);
+        if (!projectId) return next(); // no project context   let it 404 normally
 
-        const projectId = match[1];
         const targetUrl = `/preview/${projectId}${req.url}`;
         console.log(`[AssetRescue] ${req.url} → ${targetUrl} (referer project: ${projectId})`);
         // Internal forward   rewrite req.url and hand off to the /preview/:projectId handler

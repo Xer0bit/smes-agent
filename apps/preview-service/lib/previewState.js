@@ -93,6 +93,18 @@ function isValidProjectId(id) {
     return typeof id === 'string' && (UUID_REGEX.test(id) || GUEST_PROJECT_REGEX.test(id));
 }
 
+// Pulls the project id out of a `Referer` header for the /assets/,/images/,
+// etc. rescue middleware in server.js. Captures the raw segment rather than
+// baking a hex-length class into the regex, then validates it with
+// isValidProjectId   guest ids (`guest-<uuid>`) are longer than a bare uuid
+// and contain non-hex letters, so a fixed-length hex class never matches them.
+const PREVIEW_REFERER_RE = /\/preview\/([^/]+)\//i;
+function extractPreviewProjectIdFromReferer(referer) {
+    const match = typeof referer === 'string' ? referer.match(PREVIEW_REFERER_RE) : null;
+    if (!match || !isValidProjectId(match[1])) return null;
+    return match[1];
+}
+
 function getProjectDiagnostics(projectId) {
     const stored = projectDiagnostics.get(projectId);
     const errors = stored?.errors || [];
@@ -168,6 +180,7 @@ module.exports = {
     touchRuntime,
     escapeHtml,
     isValidProjectId,
+    extractPreviewProjectIdFromReferer,
     getProjectDiagnostics,
     setProjectErrors,
     appendProjectError,
