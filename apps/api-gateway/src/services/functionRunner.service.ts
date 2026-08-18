@@ -213,7 +213,17 @@ export function buildDbHelper(ctx: FunctionContext) {
         try { parsed = JSON.parse(bodyText); } catch { parsed = { message: bodyText }; }
         return { data: null, error: { ...parsed, status: res.status } };
       }
-      return await res.json();
+      // SUCCESS path must match the SAME { data, error } shape the failure
+      // path above deliberately adopted (see that comment) -- returning the
+      // raw PostgREST body here instead left every `const { data, error } =
+      // await db.rpc(...)` destructure with `data` undefined on a genuine
+      // success (PostgREST's success body for a RETURNS TABLE function is a
+      // bare JSON array, which has no .data/.error properties). Confirmed
+      // live 2026-08-18: pm-auth.js's login always hit its own "!loginData"
+      // 401 branch, so login could never succeed for ANY tenant regardless
+      // of correct credentials -- the underlying RPC call was succeeding the
+      // whole time, only the wrapper's success shape was wrong.
+      return { data: await res.json(), error: null };
     },
   };
 }
