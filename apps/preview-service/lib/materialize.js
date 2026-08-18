@@ -1019,11 +1019,31 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
         // U+FFFD) and synced the soup. Writing it destroys the asset on disk
         // — confirmed live 2026-08-18: every project reload re-corrupted the
         // user's logo this way. Keep whatever is on disk instead.
+        //
+        // Council review 2026-08-18 caught the trap this created: silently
+        // "keeping existing" PERMANENTLY PINS a file that was already
+        // corrupt before this guard ever ran (from the same bug, in an
+        // earlier push, before this fix existed) — no future good push can
+        // land on it either. Check the existing file's own magic bytes; if
+        // it's ALSO invalid, log distinctly so this is diagnosable and
+        // repairable instead of silently permanent.
         if (/\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3|pdf|zip)$/i.test(safePath)) {
             hashedFiles.push({ path: safePath, content: file.content ?? '' });
             if (!dryRun) {
-                console.warn(`[Materialize] ${safePath}: binary file pushed as mangled text — keeping existing file`);
-                allFixedIssues.push(`${safePath}: Kept existing file (binary content was text-mangled)`);
+                const existingLooksValid = (() => {
+                    try {
+                        const head = fs.readFileSync(filePath).subarray(0, 8);
+                        const MAGIC = [[0x89,0x50,0x4e,0x47],[0xff,0xd8,0xff],[0x47,0x49,0x46,0x38],[0x25,0x50,0x44,0x46],[0x50,0x4b,0x03,0x04],[0x00,0x00,0x01,0x00],[0x52,0x49,0x46,0x46]];
+                        return MAGIC.some((m) => m.every((b, i) => head[i] === b));
+                    } catch { return false; }
+                })();
+                if (existingLooksValid) {
+                    console.warn(`[Materialize] ${safePath}: binary file pushed as mangled text — keeping valid existing file`);
+                    allFixedIssues.push(`${safePath}: Kept existing file (binary content was text-mangled)`);
+                } else {
+                    console.error(`[Materialize] ${safePath}: PINNED-CORRUPT — pushed content is mangled AND the existing file on disk fails magic-byte check too. This asset is stuck broken until repaired from a known-good source.`);
+                    allFixedIssues.push(`${safePath}: PINNED-CORRUPT — both pushed and on-disk content are invalid, needs manual repair`);
+                }
             }
             continue;
         }
@@ -1155,6 +1175,35 @@ function hashFileSet(files) {
     return hash.digest('hex');
 }
 
+// Binary-extension files are NEVER pruned, unconditionally -- no
+// "incomplete set" heuristic to get wrong. pruneProjectFiles used to trust
+// a client-supplied fullSync boolean with no floor check: a push claiming
+// 12 files against 188 on disk deleted the other 176 and returned 200 OK.
+// An orphaned stale logo costs nothing; a deleted one costs a customer
+// (council review 2026-08-18: 5 confirmed root causes for "images
+// disappear on reload" reduce to one missing invariant -- nothing in this
+// system can tell a good file from a bad one, so nothing should ever
+// destroy one on a guess).
+const NEVER_PRUNE_EXT_RE = /\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3|pdf|zip|svg)$/i;
+
+/** Count files a real fullSync would be expected to cover -- same walk/skip
+ *  rules as pruneProjectFiles, used as the floor check before pruning. */
+function countProjectFiles(projectRoot) {
+    const protectedTopLevel = new Set(['node_modules', '.vite-cache', '.git', '.cache', '.src-snapshot']);
+    let count = 0;
+    function walk(dir) {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            if (protectedTopLevel.has(entry.name) && dir === projectRoot) continue;
+            const absPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) { walk(absPath); continue; }
+            count++;
+        }
+    }
+    walk(projectRoot);
+    return count;
+}
+
 function pruneProjectFiles(projectRoot, userFilePaths) {
     const removed = [];
     const protectedTopLevel = new Set(['node_modules', '.vite-cache', '.git', '.cache', '.src-snapshot']);
@@ -1183,6 +1232,9 @@ function pruneProjectFiles(projectRoot, userFilePaths) {
             // came back up with no env file at all ("Database API URL is not
             // configured" / import.meta.env.VITE_* all undefined).
             if (/^\.env(\..+)?$/.test(entry.name)) continue;
+
+            // See NEVER_PRUNE_EXT_RE above.
+            if (NEVER_PRUNE_EXT_RE.test(entry.name)) continue;
 
             if (entry.isDirectory()) {
                 walk(absPath);
@@ -1304,6 +1356,7 @@ module.exports = {
     isScaffoldOnly,
     materializeProjectFiles,
     pruneProjectFiles,
+    countProjectFiles,
     collectReferencedPackages,
     harmonizePackageJson,
     packageJsonNeedsRestart,

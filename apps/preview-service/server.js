@@ -27,7 +27,7 @@ const {
 const { typeCheckProject } = require('./lib/typecheck');
 const {
     TAILWIND_CSS_BASE, ERROR_BOUNDARY_TSX, preprocessFile, ensureEssentialFiles,
-    materializeProjectFiles, pruneProjectFiles, packageJsonNeedsRestart,
+    materializeProjectFiles, pruneProjectFiles, countProjectFiles, packageJsonNeedsRestart,
 } = require('./lib/materialize');
 const { snapshotProjectSrc, rollbackProjectSrc, cleanupSnapshot } = require('./lib/snapshot');
 // buildViteConfig/COMMON_DEPS shared by both the legacy in-process path
@@ -2033,9 +2033,27 @@ export default App;
 
             let removedStaleFiles = [];
             if (fullSync) {
-                removedStaleFiles = pruneProjectFiles(projectRoot, userFilePaths);
-                if (removedStaleFiles.length > 0) {
-                    console.log(`[${projectId}] Pruned ${removedStaleFiles.length} stale file(s)`);
+                // Floor check: fullSync is a client-supplied boolean with no
+                // server-side verification that the push is actually
+                // complete. A caller that silently lost files (the exact
+                // 2026-08 incident: concurrent downloads failing quietly)
+                // believes it holds everything and asserts prune rights on
+                // a fraction of the real tree. Refuse to prune when the
+                // pushed set is implausibly smaller than what's already on
+                // disk -- a real full sync should be close to the existing
+                // file count, not a third of it.
+                let onDiskCount = 0;
+                try {
+                    onDiskCount = countProjectFiles(projectRoot);
+                } catch { /* new/empty project, no floor to check */ }
+                const PRUNE_FLOOR_RATIO = 0.5;
+                if (onDiskCount > 10 && userFilePaths.size < onDiskCount * PRUNE_FLOOR_RATIO) {
+                    console.warn(`[${projectId}] Refusing prune: push has ${userFilePaths.size} files, disk has ${onDiskCount} -- push looks incomplete, not a real full sync.`);
+                } else {
+                    removedStaleFiles = pruneProjectFiles(projectRoot, userFilePaths);
+                    if (removedStaleFiles.length > 0) {
+                        console.log(`[${projectId}] Pruned ${removedStaleFiles.length} stale file(s)`);
+                    }
                 }
             }
 
