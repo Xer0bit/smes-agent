@@ -1060,7 +1060,18 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
           if (preferWorkspace) {
             const { getWorkspaceManager } = await import('@/eCG/Workspace/WorkspaceManager');
-            const current = new Map(getWorkspaceManager(projectId!).listFiles().map((f) => [f.path, f.content]));
+            // Only DIRTY (user-edited, unsaved) files may override the fetched
+            // revision. The old "any workspace content wins" rule let stale
+            // agent intermediate states survive SPA navigation in the
+            // singleton workspace and overwrite the corrected head on the
+            // next load push -- confirmed live 2026-08-18: a mid-conversation
+            // broken Login.tsx (absolute asset path) beat the head revision's
+            // fixed version on every editor open, "reverting" the logo fix.
+            const current = new Map(
+              getWorkspaceManager(projectId!).listFiles()
+                .filter((f) => f.isDirty)
+                .map((f) => [f.path, f.content]),
+            );
             files = files
               .filter((f: any) => !deletedDuringLazyRef.current.has(f.path))
               .map((f: any) => (current.has(f.path) ? { ...f, content: current.get(f.path)! } : f));
