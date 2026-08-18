@@ -69,6 +69,29 @@ export function isStaleParentError(err: unknown): boolean {
   return msg.includes('stale_parent');
 }
 
+// Binary-safe storage download. Most writers store binaries as
+// '__ECOMGEAR_BIN64__' + base64 TEXT (safe through every JSON/utf8 hop),
+// but some revisions hold RAW binary bytes (confirmed live 2026-08-18: a
+// rollback revision stored a raw PNG; blob.text() then UTF-8-mangled it,
+// every reload full-synced the mangled soup to the preview, and the user's
+// logo corrupted on every project load -- the "disappearing logo" loop).
+// Reading raw binaries as bytes and sentinel-wrapping them HERE makes the
+// client immune to whatever format storage holds.
+const BINARY_DOWNLOAD_EXT_RE = /\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3|pdf|zip)$/i;
+const DOWNLOAD_BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+async function blobToSyncContent(filePath: string, blob: Blob): Promise<string> {
+  if (!BINARY_DOWNLOAD_EXT_RE.test(filePath)) return blob.text();
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const prefix = new TextDecoder().decode(bytes.subarray(0, DOWNLOAD_BINARY_SENTINEL.length));
+  if (prefix === DOWNLOAD_BINARY_SENTINEL) return new TextDecoder().decode(bytes);
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return DOWNLOAD_BINARY_SENTINEL + btoa(bin);
+}
+
 // Build/dependency artifacts that regenerate on their own -- comparing these
 // would make an unchanged project look "changed" on every publish check.
 const NON_SOURCE_PATH = /(^|\/)(node_modules|dist|build|\.git|\.cache)(\/|$)|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|\.DS_Store)$/;
@@ -387,7 +410,7 @@ export const revisionService = {
       console.warn(`[RevisionService] Single-file download failed for ${storagePath}:`, error?.message);
       return null;
     }
-    return blob.text();
+    return blobToSyncContent(filePath, blob);
   },
 
   async getRevisionFiles(projectId: string, revisionId: string): Promise<{ path: string; content: string }[]> {
@@ -427,7 +450,7 @@ export const revisionService = {
           .from(STORAGE_BUCKET)
           .download(t.storagePath);
         if (dlErr || !blob) return false;
-        files.push({ path: t.path, content: await blob.text() });
+        files.push({ path: t.path, content: await blobToSyncContent(t.path, blob) });
         return true;
       };
 

@@ -1014,6 +1014,20 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
             continue;
         }
 
+        // A binary-extension file WITHOUT the sentinel is a mangled push: a
+        // caller read raw bytes as UTF-8 text (every non-UTF8 byte becomes
+        // U+FFFD) and synced the soup. Writing it destroys the asset on disk
+        // — confirmed live 2026-08-18: every project reload re-corrupted the
+        // user's logo this way. Keep whatever is on disk instead.
+        if (/\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3|pdf|zip)$/i.test(safePath)) {
+            hashedFiles.push({ path: safePath, content: file.content ?? '' });
+            if (!dryRun) {
+                console.warn(`[Materialize] ${safePath}: binary file pushed as mangled text — keeping existing file`);
+                allFixedIssues.push(`${safePath}: Kept existing file (binary content was text-mangled)`);
+            }
+            continue;
+        }
+
         // __edge_functions__/*.js mirrors (see write_edge_function.ts) are raw
         // sandbox function bodies — no imports, bare top-level statements,
         // undeclared free variables (secrets/params/db) injected by the runner.
