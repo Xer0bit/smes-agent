@@ -226,6 +226,127 @@ router.post('/preview-update', async (req: AuthenticatedRequest, res: Response) 
   }
 });
 
+// ── POST /api/v1/database/preview-sync-revision ─────────────────────────────
+// Council review 2026-08-18: five confirmed "images disappear on reload"
+// root causes (concurrent download failures pruning the server, orphaned
+// asset references, UTF-8-mangled binaries, stale-workspace resurrection --
+// see docs/plans/deep-dive-2026-08-17.md) reduced to ONE architectural
+// defect, independently named by 3 of 5 council advisors: the browser sat
+// in the write path for tenant file bytes it never authored. Every incident
+// was some version of "the client downloaded N files, something went wrong
+// in the browser, and it pushed the result back over the live preview."
+//
+// This route replaces that entire class for the one operation that caused
+// every incident: syncing the preview to a project's head (or given)
+// revision on editor load. The server now does this itself --
+// server-to-server, byte-safe, no browser involved:
+//   - fetches the revision manifest from Postgres directly (service role)
+//   - downloads every file body from Storage as raw bytes via
+//     arrayBuffer(), NEVER blob.text()/response.text() -- the exact API
+//     that UTF-8-mangled binaries in the browser (root cause C) structurally
+//     cannot be called here, because the code path that called it doesn't
+//     exist in this route.
+//   - forwards to preview-service with the SAME manifest file count the
+//     server itself just verified, so the floor-check on the preview side
+//     (2026-08-18 fix) sees an honest fullSync, never a partial one.
+// The client's job shrinks to "tell the server which revision", which
+// removes an entire tier of failure modes rather than adding a guard
+// against one more of them.
+router.post('/preview-sync-revision', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const projectId = getProjectId(req);
+    if (!projectId) { res.status(400).json({ error: 'project_id is required.' }); return; }
+    if (!(await requireProjectEdit(req, res, projectId))) return;
+    if (!supabase) { res.status(500).json({ success: false, error: 'Database not configured' }); return; }
+
+    const requestedRevisionId = req.body?.revisionId as string | undefined;
+    const { data: revRow, error: revErr } = requestedRevisionId
+      ? await supabase.from('revisions').select('id, created_at, generated_files').eq('id', requestedRevisionId).eq('project_id', projectId).maybeSingle()
+      : await supabase.from('revisions').select('id, created_at, generated_files').eq('project_id', projectId).order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (revErr || !revRow) {
+      res.status(404).json({ success: false, error: 'No revision found for this project.' });
+      return;
+    }
+
+    const generatedFiles = revRow.generated_files as { format?: string; files?: Array<{ path: string; hash: string; source_revision: string }> } | null;
+    const STORAGE_BUCKET = 'user-projects-free';
+    const BINARY_EXT_RE = /\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3|pdf|zip|svg)$/i;
+    const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+
+    let files: Array<{ path: string; content: string }>;
+    if (generatedFiles?.format === 'manifest-v1' && Array.isArray(generatedFiles.files)) {
+      const manifest = generatedFiles.files;
+      const downloadOne = async (entry: { path: string; source_revision: string }): Promise<{ path: string; content: string } | null> => {
+        const storagePath = `projects/${projectId}/${entry.source_revision}/${entry.path}`;
+        const { data: blob, error: dlErr } = await supabase.storage.from(STORAGE_BUCKET).download(storagePath);
+        if (dlErr || !blob) return null;
+        if (BINARY_EXT_RE.test(entry.path)) {
+          // Raw bytes, server-side, never routed through a text decoder --
+          // the exact operation that mangled binaries when the browser did
+          // it via blob.text(). Sentinel-wrap unconditionally regardless of
+          // what the stored object already held (some historical rows hold
+          // raw bytes, not the sentinel format) so preview-service always
+          // sees the same shape.
+          const buf = Buffer.from(await blob.arrayBuffer());
+          const alreadySentineled = buf.subarray(0, BINARY_SENTINEL.length).toString('utf8') === BINARY_SENTINEL;
+          const content = alreadySentineled ? buf.toString('utf8') : `${BINARY_SENTINEL}${buf.toString('base64')}`;
+          return { path: entry.path, content };
+        }
+        return { path: entry.path, content: await blob.text() };
+      };
+
+      const BATCH = 12;
+      const results: Array<{ path: string; content: string } | null> = [];
+      for (let i = 0; i < manifest.length; i += BATCH) {
+        const batch = await Promise.all(manifest.slice(i, i + BATCH).map(downloadOne));
+        results.push(...batch);
+      }
+      const failed = manifest.filter((_, i) => results[i] === null);
+      if (failed.length > 0) {
+        logger.error(`[preview-sync-revision] ${failed.length}/${manifest.length} file(s) failed to download for project ${projectId}, revision ${revRow.id}`);
+        res.status(502).json({ success: false, error: `${failed.length} file(s) failed to download from storage; sync aborted rather than pushing a partial set.` });
+        return;
+      }
+      files = results.filter((f): f is { path: string; content: string } => f !== null);
+    } else if (generatedFiles?.files && Array.isArray((generatedFiles as any).files) && (generatedFiles as any).files[0]?.content !== undefined) {
+      // Legacy inline-JSONB format: content already in the row.
+      files = ((generatedFiles as any).files as Array<{ path: string; content: string }>);
+    } else {
+      res.status(404).json({ success: false, error: 'Revision has no file content to sync.' });
+      return;
+    }
+
+    const previewBase = (process.env.PREVIEW_SERVICE_URL || process.env.VITE_PREVIEW_SERVICE_URL || 'http://localhost:3001').replace(/\/$/, '');
+    const previewRes = await fetch(`${previewBase}/preview/${projectId}/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.PREVIEW_UPDATE_SECRET ? { 'x-update-secret': process.env.PREVIEW_UPDATE_SECRET } : {}),
+      },
+      body: JSON.stringify({ files, fullSync: true, baseSeq: revRow.created_at }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!previewRes.ok) {
+      const text = await previewRes.text().catch(() => '');
+      let upstreamError = text;
+      let upstreamCode: string | undefined;
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed?.error) upstreamError = parsed.error;
+        if (typeof parsed?.code === 'string') upstreamCode = parsed.code;
+      } catch { /* raw text */ }
+      const status = previewRes.status >= 400 && previewRes.status < 600 ? previewRes.status : 502;
+      res.status(status).json({ success: false, error: upstreamError, code: upstreamCode });
+      return;
+    }
+    const data = await previewRes.json().catch(() => ({}));
+    res.json({ success: true, revisionId: revRow.id, filesSynced: files.length, session: (data as any)?.session });
+  } catch (err) {
+    logger.error('preview-sync-revision error', err);
+    res.status(500).json({ success: false, error: safeErrorMessage(err) });
+  }
+});
+
 // ── POST /api/v1/database/provision ─────────────────────────────────────────
 router.post('/provision', dbProvisionLimiter, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const projectId = getProjectId(req);

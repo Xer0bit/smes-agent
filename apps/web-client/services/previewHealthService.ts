@@ -243,6 +243,51 @@ export async function refreshPreviewHealth(projectId: string): Promise<PreviewHe
  *                 Pass false for single-file edits during a chat turn; pass
  *                 true for structural changes (new/deleted files, multi-file).
  */
+/**
+ * Sync the preview to a specific revision entirely server-side -- the
+ * client sends only a revision id, never file bytes. Replaces the
+ * download-then-push pattern for the one operation that caused every
+ * confirmed "images disappear on reload" incident (council review,
+ * 2026-08-18): the browser is no longer in the write path at all for this
+ * flow, so a browser-side download failure, UTF-8 mangling, or stale
+ * in-memory state cannot corrupt or truncate what reaches the preview.
+ * Use this whenever syncing to a KNOWN PERSISTED revision (no unsaved
+ * client edits involved) -- updateDockerPreview remains the right call
+ * when pushing content that only exists in the browser (dirty edits,
+ * agent-run results not yet persisted).
+ */
+export async function syncPreviewFromRevision(projectId: string, revisionId?: string): Promise<{ success: boolean; error?: string; filesSynced?: number }> {
+    try {
+        const { getApiServerUrl } = await import('@/config/external-api');
+        const { lovableCloud } = await import('@/integrations/supabase/client');
+        const { data: { session } } = await lovableCloud.auth.getSession();
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
+        try {
+            const response = await fetch(getApiServerUrl(`/api/v1/database/preview-sync-revision?project_id=${encodeURIComponent(projectId)}`), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
+                },
+                body: JSON.stringify({ revisionId }),
+                signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || !data?.success) {
+                return { success: false, error: data?.error || `HTTP ${response.status}` };
+            }
+            return { success: true, filesSynced: data.filesSynced };
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to sync preview from revision' };
+    }
+}
+
 export async function updateDockerPreview(projectId: string, files: { path: string; content: string }[], fullSync: boolean = true, baseSeq?: string): Promise<{ success: boolean; error?: string; staleBase?: boolean }> {
     const tryUpdate = async (attempt: number): Promise<{ success: boolean; error?: string; staleBase?: boolean }> => {
         let timeoutId: any;

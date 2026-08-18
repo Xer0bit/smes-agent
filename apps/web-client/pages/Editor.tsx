@@ -75,7 +75,7 @@ import type { AgentAttachment } from "@/eCG/UserPrompt/types";
 import { uploadChatAttachment, isAllowedFile } from "@/services/chatAttachmentService";
 import { messageService } from "@/eCG/UserPrompt/messageService";
 import { generatePreview } from "@/eCG/Preview/previewGenerator";
-import { checkPreviewHealth, updateDockerPreview, getPreviewUrl, handlePreviewSessionExpired, createPreviewSession } from "@/services/previewHealthService";
+import { checkPreviewHealth, updateDockerPreview, syncPreviewFromRevision, getPreviewUrl, handlePreviewSessionExpired, createPreviewSession } from "@/services/previewHealthService";
 import { validateAndFixFiles, getFixedContent } from "@/services/fileValidationService";
 import { QuotaLimitDialog } from "@/components/QuotaLimitDialog";
 import { useSubscription } from "@/contexts/SubscriptionContext"; // single source   hasFeature/tier/tierLabel now on context
@@ -1080,6 +1080,11 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             operation: file.operation,
           }));
 
+          // Tracks whether any DIRTY (unsaved) client content was merged in.
+          // Only when this stays false can the preview sync skip the browser
+          // entirely and pull straight from the persisted revision server-side
+          // -- see syncPreviewFromRevision below.
+          let hasDirtyOverrides = false;
           if (preferWorkspace) {
             const { getWorkspaceManager } = await import('@/eCG/Workspace/WorkspaceManager');
             // Only DIRTY (user-edited, unsaved) files may override the fetched
@@ -1094,6 +1099,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                 .filter((f) => f.isDirty)
                 .map((f) => [f.path, f.content]),
             );
+            hasDirtyOverrides = current.size > 0;
             files = files
               .filter((f: any) => !deletedDuringLazyRef.current.has(f.path))
               .map((f: any) => (current.has(f.path) ? { ...f, content: current.get(f.path)! } : f));
@@ -1138,8 +1144,31 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               throw new Error(health.error || 'Preview service unavailable');
             }
 
-            const filesToUpdate = files.map((f: any) => ({ path: f.path, content: f.content }));
-            const result = await updateDockerPreview(projectId!, filesToUpdate, completeSet, previewBaseSeqRef.current);
+            // Server-to-server sync whenever nothing unsaved-in-browser needs
+            // pushing: the server re-fetches this exact revision's bytes
+            // itself (byte-safe, batched, never touched by a text decoder)
+            // and pushes them to preview -- the client never handles file
+            // content for this operation at all. This is the fix for the
+            // whole "images disappear on reload" incident family: it doesn't
+            // guard against a browser-side failure mode, it removes the
+            // browser from the path that could produce one. Falls back to
+            // the client-side push (already-downloaded `files`) only when
+            // there's genuinely unsaved content the server can't know about,
+            // or if the server-side path itself errors.
+            let result: { success: boolean; error?: string; staleBase?: boolean };
+            if (!hasDirtyOverrides && rev?.id) {
+              const serverSync = await syncPreviewFromRevision(projectId!, rev.id);
+              if (serverSync.success) {
+                result = { success: true };
+              } else {
+                console.warn('[Editor] Server-side revision sync failed, falling back to client push:', serverSync.error);
+                const filesToUpdate = files.map((f: any) => ({ path: f.path, content: f.content }));
+                result = await updateDockerPreview(projectId!, filesToUpdate, completeSet, previewBaseSeqRef.current);
+              }
+            } else {
+              const filesToUpdate = files.map((f: any) => ({ path: f.path, content: f.content }));
+              result = await updateDockerPreview(projectId!, filesToUpdate, completeSet, previewBaseSeqRef.current);
+            }
 
             if (!result.success && result.staleBase) {
               // The preview already holds newer state than the revision this
