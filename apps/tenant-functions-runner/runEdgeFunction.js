@@ -26,7 +26,41 @@ function toQueryString(query) {
     .join('&');
 }
 
-function buildDbHelper(ctx) {
+// ── Chainable query builder support ──────────────────────────────────────
+// Generated code overwhelmingly reaches for Supabase's real chainable syntax
+// (`db.select('t').eq('id', x).order('name').single()`) regardless of what
+// the prompt documents as the flat contract -- confirmed live 2026-08-18: 21
+// active functions across 3 tenants used this pattern against a runtime that
+// only ever exposed flat `select(table, query?)`, so every one of them threw
+// `TypeError: ... .eq is not a function` on first call, on THIS file (the
+// one actually deployed to VPS5 and serving real tenant invoke traffic --
+// functionRunner.service.ts's isolated-vm path is kill-switched off by
+// default, see functions.routes.ts's invokeKillSwitch). select/insert/
+// update/delete below now return a lazy, thenable builder: `await
+// db.select(table)` alone still resolves immediately via the exact old flat
+// path (zero behavior change for every function that never chains);
+// chaining a filter/order/limit/single method defers execution and routes
+// through runQuery() instead. Since this file runs guest code in the SAME
+// realm (vm.createContext, not a separate isolate), the builder is a real JS
+// object -- no JSON-bridge serialization needed, unlike functionRunner.
+// service.ts's isolated-vm equivalent.
+function encodeFilterValue(op, val) {
+  if (op === 'is') return val === null || val === undefined ? 'null' : String(val);
+  if (op === 'in') { const arr = Array.isArray(val) ? val : [val]; return `(${arr.map(String).join(',')})`; }
+  if (op === 'contains') { const arr = Array.isArray(val) ? val : [val]; return `{${arr.map(String).join(',')}}`; }
+  return encodeURIComponent(String(val));
+}
+const OP_TOKEN = { contains: 'cs' };
+function buildFilterParam(f) {
+  const token = OP_TOKEN[f.op] || f.op;
+  const prefix = f.negate ? 'not.' : '';
+  return `${encodeURIComponent(f.col)}=${prefix}${token}.${encodeFilterValue(f.op, f.val)}`;
+}
+
+// Exported for direct unit testing of the db.* PostgREST bridge (see
+// query-builder.selfcheck.mjs) -- mirrors functionRunner.service.ts's same
+// export for the same reason.
+export function buildDbHelper(ctx) {
   const base = `${ctx.apiUrl}/rest/v1`;
   const headers = {
     'Content-Type': 'application/json',
@@ -36,39 +70,149 @@ function buildDbHelper(ctx) {
     'Content-Profile': ctx.schema,
   };
 
-  return {
-    async select(table, query = '') {
-      const qs = toQueryString(query);
-      const url = `${base}/${table}${qs ? `?${qs}` : ''}`;
-      const res = await fetch(url, { headers });
+  async function selectFlat(table, query = '') {
+    const qs = toQueryString(query);
+    const url = `${base}/${table}${qs ? `?${qs}` : ''}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) throw new Error(`db.select failed: ${res.status} ${await res.text()}`);
+    return res.json();
+  }
+  async function insertFlat(table, data) {
+    const res = await fetch(`${base}/${table}`, {
+      method: 'POST',
+      headers: { ...headers, 'Prefer': 'return=representation' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(`db.insert failed: ${res.status} ${await res.text()}`);
+    return res.json();
+  }
+  async function updateFlat(table, data, query) {
+    const qs = toQueryString(query);
+    const res = await fetch(`${base}/${table}?${qs}`, {
+      method: 'PATCH',
+      headers: { ...headers, 'Prefer': 'return=representation' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(`db.update failed: ${res.status} ${await res.text()}`);
+    return res.json();
+  }
+  async function deleteFlat(table, query) {
+    const qs = toQueryString(query);
+    // Without return=representation, PostgREST answers a successful DELETE
+    // with 204 and an empty body -- res.json() on that throws "Unexpected
+    // end of JSON input", masking every successful delete as a generic
+    // failure. Confirmed live 2026-08-18. insert/update already set this;
+    // delete never did, despite the prompt docs promising it "returns the
+    // deleted row(s)" the same way.
+    const res = await fetch(`${base}/${table}?${qs}`, {
+      method: 'DELETE',
+      headers: { ...headers, 'Prefer': 'return=representation' },
+    });
+    if (!res.ok) throw new Error(`db.delete failed: ${res.status} ${await res.text()}`);
+    return res.json();
+  }
+
+  async function runQuery(spec) {
+    if (spec.action === 'select') {
+      const parts = [];
+      if (spec.columns) parts.push(`select=${encodeURIComponent(spec.columns)}`);
+      for (const f of spec.filters) parts.push(buildFilterParam(f));
+      if (spec.order.length) parts.push(`order=${spec.order.map(o => `${o.col}.${o.ascending ? 'asc' : 'desc'}`).join(',')}`);
+      if (typeof spec.limit === 'number') parts.push(`limit=${spec.limit}`);
+      const qs = parts.join('&');
+      const url = `${base}/${spec.table}${qs ? `?${qs}` : ''}`;
+      const reqHeaders = spec.single ? { ...headers, Accept: 'application/vnd.pgrst.object+json' } : headers;
+      const res = await fetch(url, { headers: reqHeaders });
       if (!res.ok) throw new Error(`db.select failed: ${res.status} ${await res.text()}`);
-      return res.json();
-    },
-    async insert(table, data) {
-      const res = await fetch(`${base}/${table}`, {
-        method: 'POST',
-        headers: { ...headers, 'Prefer': 'return=representation' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error(`db.insert failed: ${res.status} ${await res.text()}`);
-      return res.json();
-    },
-    async update(table, data, query) {
-      const qs = toQueryString(query);
-      const res = await fetch(`${base}/${table}?${qs}`, {
-        method: 'PATCH',
-        headers: { ...headers, 'Prefer': 'return=representation' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error(`db.update failed: ${res.status} ${await res.text()}`);
-      return res.json();
-    },
-    async delete(table, query) {
-      const qs = toQueryString(query);
-      const res = await fetch(`${base}/${table}?${qs}`, { method: 'DELETE', headers });
-      if (!res.ok) throw new Error(`db.delete failed: ${res.status} ${await res.text()}`);
-      return res.json();
-    },
+      const body = await res.json();
+      return spec.maybeSingle ? (Array.isArray(body) ? (body[0] ?? null) : body) : body;
+    }
+
+    const method = spec.action === 'insert' ? 'POST' : spec.action === 'update' ? 'PATCH' : 'DELETE';
+    const filterParts = spec.filters.map(buildFilterParam);
+    const selectPart = spec.columns ? `select=${encodeURIComponent(spec.columns)}` : '';
+    const qs = [...filterParts, selectPart].filter(Boolean).join('&');
+    const url = `${base}/${spec.table}${qs ? `?${qs}` : ''}`;
+    const res = await fetch(url, {
+      method,
+      headers: { ...headers, 'Prefer': 'return=representation' },
+      body: spec.action === 'delete' ? undefined : JSON.stringify(spec.data),
+    });
+    if (!res.ok) throw new Error(`db.${spec.action} failed: ${res.status} ${await res.text()}`);
+    const body = await res.json();
+    if (spec.single) {
+      if (!Array.isArray(body) || body.length !== 1) throw new Error(`db.${spec.action} failed: expected exactly one row, got ${Array.isArray(body) ? body.length : 'non-array'}`);
+      return body[0];
+    }
+    return spec.maybeSingle ? (Array.isArray(body) ? (body[0] ?? null) : body) : body;
+  }
+
+  function makeQueryBuilder(action, legacyArgs) {
+    const spec = {
+      action,
+      table: legacyArgs[0],
+      data: (action === 'insert' || action === 'update') ? legacyArgs[1] : undefined,
+      filters: [],
+      order: [],
+    };
+    let chained = false;
+    let promise = null;
+
+    function legacyRun() {
+      if (action === 'select') return selectFlat(...legacyArgs);
+      if (action === 'insert') return insertFlat(...legacyArgs);
+      if (action === 'update') return updateFlat(...legacyArgs);
+      return deleteFlat(...legacyArgs);
+    }
+    function run() {
+      if (!promise) promise = chained ? runQuery(spec) : legacyRun();
+      return promise;
+    }
+
+    const addFilter = (op) => (col, val) => { chained = true; spec.filters.push({ col, op, val }); return builder; };
+    const builder = {
+      eq: addFilter('eq'), neq: addFilter('neq'),
+      gt: addFilter('gt'), gte: addFilter('gte'), lt: addFilter('lt'), lte: addFilter('lte'),
+      like: addFilter('like'), ilike: addFilter('ilike'), is: addFilter('is'),
+      in: addFilter('in'), contains: addFilter('contains'),
+      not(col, op, val) { chained = true; spec.filters.push({ col, op, val, negate: true }); return builder; },
+      match(obj) { chained = true; for (const k in obj) spec.filters.push({ col: k, op: 'eq', val: obj[k] }); return builder; },
+      order(col, opts) { chained = true; spec.order.push({ col, ascending: !opts || opts.ascending !== false }); return builder; },
+      limit(n) { chained = true; spec.limit = n; return builder; },
+      range(from, to) { chained = true; spec.limit = to - from + 1; return builder; },
+      single() { chained = true; spec.single = true; return builder; },
+      maybeSingle() { chained = true; spec.maybeSingle = true; return builder; },
+      select(cols) {
+        chained = true;
+        // Two idioms seen in real generated code: `db.insert(t,data).select(cols)`
+        // narrows the returned columns; `db.select(cols).from(table)` is
+        // Supabase's real .from().select() inverted -- this runtime's
+        // db.select(table, ...) takes table first, so when .from() shows up
+        // later it means select()'s original first arg was columns, not a
+        // table (handled in from() below).
+        if (typeof cols === 'string') spec.columns = cols;
+        return builder;
+      },
+      from(t) {
+        chained = true;
+        if (action === 'select' && spec.columns === undefined && typeof legacyArgs[0] === 'string') {
+          spec.columns = legacyArgs[0];
+        }
+        spec.table = t;
+        return builder;
+      },
+      then(onFulfilled, onRejected) { return run().then(onFulfilled, onRejected); },
+      catch(onRejected) { return run().catch(onRejected); },
+      finally(onFinally) { return run().finally(onFinally); },
+    };
+    return builder;
+  }
+
+  return {
+    select: (...a) => makeQueryBuilder('select', a),
+    insert: (...a) => makeQueryBuilder('insert', a),
+    update: (...a) => makeQueryBuilder('update', a),
+    delete: (...a) => makeQueryBuilder('delete', a),
     async rpc(fn, args = {}) {
       const res = await fetch(`${base}/rpc/${fn}`, {
         method: 'POST',

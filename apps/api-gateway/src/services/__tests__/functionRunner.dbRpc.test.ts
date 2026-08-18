@@ -81,7 +81,7 @@ describe('functionRunner db.rpc', () => {
     expect(result).toEqual({ data: null, error: { message: 'Bad Gateway', status: 502 } });
   });
 
-  it('still returns the raw value AS-IS on success (unchanged behavior)', async () => {
+  it('resolves { data, error: null } on success, matching the failure shape', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -91,7 +91,7 @@ describe('functionRunner db.rpc', () => {
     const db = buildDbHelper(baseCtx as any);
     const result = await db.rpc('register_and_login', {});
 
-    expect(result).toEqual([{ user_id: 'u-1', session_token: 'tok' }]);
+    expect(result).toEqual({ data: [{ user_id: 'u-1', session_token: 'tok' }], error: null });
   });
 
   it('select still throws on failure (contract unchanged for non-rpc methods)', async () => {

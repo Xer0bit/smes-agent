@@ -126,7 +126,76 @@ function buildExtraOpsQuery(extra: Record<string, unknown> | undefined): string 
 
 function buildNoDbHelper(): Record<string, (...a: unknown[]) => never> {
   const fail = () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); };
-  return { select: fail, insert: fail, update: fail, delete: fail, count: fail, rpc: fail };
+  return { select: fail, insert: fail, update: fail, delete: fail, count: fail, rpc: fail, query: fail };
+}
+
+// ── Chainable query builder support ──────────────────────────────────────
+// Generated code overwhelmingly reaches for Supabase's real chainable syntax
+// (`db.select('t').eq('id', x).order('name').single()`) regardless of what
+// the prompt documents as the flat contract -- confirmed live 2026-08-18: 21
+// active functions across 3 tenants used this pattern against a runtime that
+// only ever exposed flat `select(table, columns?, filter?, extra?)`, so every
+// one of them threw `TypeError: ... .eq is not a function` on first call.
+// Rather than rewrite 21 functions' worth of call sites (and every future
+// one the model writes the same way), the runtime now understands the
+// query-descriptor shape the guest-side builder in GUEST_BOOTSTRAP produces.
+// The old flat select/insert/update/delete above are UNCHANGED and still the
+// only path taken when guest code never chains -- this is purely additive.
+export interface QueryFilter {
+  col: string;
+  op: string;
+  val: unknown;
+  negate?: boolean;
+}
+
+export interface QuerySpec {
+  action: 'select' | 'insert' | 'update' | 'delete';
+  table: string;
+  columns?: string;
+  filters?: QueryFilter[];
+  order?: { col: string; ascending: boolean }[];
+  limit?: number;
+  rangeFrom?: number;
+  rangeTo?: number;
+  single?: boolean;
+  maybeSingle?: boolean;
+  data?: unknown;
+}
+
+function encodeFilterValue(op: string, val: unknown): string {
+  if (op === 'is') {
+    if (val === null || val === undefined) return 'null';
+    return String(val);
+  }
+  if (op === 'in') {
+    const arr = Array.isArray(val) ? val : [val];
+    return `(${arr.map((v) => String(v)).join(',')})`;
+  }
+  if (op === 'contains') {
+    const arr = Array.isArray(val) ? val : [val];
+    return `{${arr.map((v) => String(v)).join(',')}}`;
+  }
+  return encodeURIComponent(String(val));
+}
+
+const OP_TOKEN: Record<string, string> = { contains: 'cs' };
+
+function buildFilterParam(f: QueryFilter): string {
+  const token = OP_TOKEN[f.op] ?? f.op;
+  const prefix = f.negate ? 'not.' : '';
+  return `${encodeURIComponent(f.col)}=${prefix}${token}.${encodeFilterValue(f.op, f.val)}`;
+}
+
+function buildQuerySpecUrl(base: string, spec: QuerySpec): string {
+  const parts: string[] = [];
+  if (spec.columns) parts.push(`select=${encodeURIComponent(spec.columns)}`);
+  for (const f of spec.filters ?? []) parts.push(buildFilterParam(f));
+  if (spec.order?.length) {
+    parts.push(`order=${spec.order.map((o) => `${o.col}.${o.ascending ? 'asc' : 'desc'}`).join(',')}`);
+  }
+  if (typeof spec.limit === 'number') parts.push(`limit=${spec.limit}`);
+  const qs = parts.join('&');
+  return `${base}/${spec.table}${qs ? `?${qs}` : ''}`;
 }
 
 // Exported for direct unit testing of the db.* PostgREST bridge -- the actual
@@ -182,7 +251,17 @@ export function buildDbHelper(ctx: FunctionContext) {
     },
     async delete(table: string, query: FilterArg) {
       const qs = toQueryString(query);
-      const res = await fetch(`${base}/${table}?${qs}`, { method: 'DELETE', headers, signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS) });
+      // Without return=representation, PostgREST answers a successful DELETE
+      // with 204 and an empty body -- res.json() on that throws "Unexpected
+      // end of JSON input", masking every successful delete as a generic
+      // failure. Confirmed live 2026-08-18. insert/update already set this;
+      // delete never did, despite the prompt docs promising it "returns the
+      // deleted row(s)" the same way.
+      const res = await fetch(`${base}/${table}?${qs}`, {
+        method: 'DELETE',
+        headers: { ...headers, 'Prefer': 'return=representation' },
+        signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS),
+      });
       if (!res.ok) throw new Error(`db.delete failed: ${res.status} ${await res.text()}`);
       return await res.json();
     },
@@ -224,6 +303,41 @@ export function buildDbHelper(ctx: FunctionContext) {
       // of correct credentials -- the underlying RPC call was succeeding the
       // whole time, only the wrapper's success shape was wrong.
       return { data: await res.json(), error: null };
+    },
+    // Backing call for the guest-side chainable builder (GUEST_BOOTSTRAP's
+    // `db.select(...).eq(...).order(...)` etc.) -- only reached when guest
+    // code actually chains; a bare `await db.select(table, ...)` never
+    // builds a QuerySpec and keeps using the flat `select` above.
+    async query(spec: QuerySpec) {
+      if (spec.action === 'select') {
+        const url = buildQuerySpecUrl(base, spec);
+        const reqHeaders = spec.single ? { ...headers, Accept: 'application/vnd.pgrst.object+json' } : headers;
+        const res = await fetch(url, { headers: reqHeaders, signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS) });
+        if (!res.ok) throw new Error(`db.select failed: ${res.status} ${await res.text()}`);
+        const body = await res.json();
+        if (spec.maybeSingle) return Array.isArray(body) ? (body[0] ?? null) : body;
+        return body;
+      }
+
+      const method = spec.action === 'insert' ? 'POST' : spec.action === 'update' ? 'PATCH' : 'DELETE';
+      const filterParts = (spec.filters ?? []).map(buildFilterParam);
+      const selectPart = spec.columns ? `select=${encodeURIComponent(spec.columns)}` : '';
+      const qs = [...filterParts, selectPart].filter(Boolean).join('&');
+      const url = `${base}/${spec.table}${qs ? `?${qs}` : ''}`;
+      const res = await fetch(url, {
+        method,
+        headers: { ...headers, 'Prefer': 'return=representation' },
+        body: spec.action === 'delete' ? undefined : JSON.stringify(spec.data),
+        signal: AbortSignal.timeout(DOWNSTREAM_TIMEOUT_MS),
+      });
+      if (!res.ok) throw new Error(`db.${spec.action} failed: ${res.status} ${await res.text()}`);
+      const body = await res.json();
+      if (spec.single) {
+        if (!Array.isArray(body) || body.length !== 1) throw new Error(`db.${spec.action} failed: expected exactly one row, got ${Array.isArray(body) ? body.length : 'non-array'}`);
+        return body[0];
+      }
+      if (spec.maybeSingle) return Array.isArray(body) ? (body[0] ?? null) : body;
+      return body;
     },
   };
 }
@@ -378,13 +492,86 @@ class Response {
   }
 }
 
+// Generated code overwhelmingly reaches for Supabase's real chainable syntax
+// (db.select('t').eq('id',x).order('name').single()) regardless of what the
+// prompt documents as the flat contract -- confirmed live 2026-08-18: 21
+// active functions across 3 tenants used this pattern against a runtime that
+// only ever exposed flat select(table, ...), so every one threw TypeError on
+// first call. select/insert/update/delete now return a lazy, thenable
+// builder: an unchained call still resolves via the exact old flat
+// __call('db.select', ...) path (zero behavior change); chaining a
+// filter/order/limit/single method defers execution and routes through the
+// host's db.query bridge instead.
+function __makeQueryBuilder(action, legacyArgs) {
+  var spec = {
+    action: action,
+    table: legacyArgs[0],
+    data: (action === 'insert' || action === 'update') ? legacyArgs[1] : undefined,
+    filters: [],
+    order: [],
+  };
+  var chained = false;
+  var promise = null;
+
+  function legacyRun() {
+    return __call('db.' + action, legacyArgs).then(__withDataError);
+  }
+  function run() {
+    if (!promise) promise = chained ? __call('db.query', [spec]).then(__withDataError) : legacyRun();
+    return promise;
+  }
+
+  function addFilter(op) {
+    return function (col, val) { chained = true; spec.filters.push({ col: col, op: op, val: val }); return builder; };
+  }
+  var builder = {
+    eq: addFilter('eq'), neq: addFilter('neq'),
+    gt: addFilter('gt'), gte: addFilter('gte'), lt: addFilter('lt'), lte: addFilter('lte'),
+    like: addFilter('like'), ilike: addFilter('ilike'), is: addFilter('is'),
+    in: addFilter('in'), contains: addFilter('contains'),
+    not: function (col, op, val) { chained = true; spec.filters.push({ col: col, op: op, val: val, negate: true }); return builder; },
+    match: function (obj) { chained = true; for (var k in obj) spec.filters.push({ col: k, op: 'eq', val: obj[k] }); return builder; },
+    order: function (col, opts) { chained = true; spec.order.push({ col: col, ascending: !opts || opts.ascending !== false }); return builder; },
+    limit: function (n) { chained = true; spec.limit = n; return builder; },
+    range: function (from, to) { chained = true; spec.limit = to - from + 1; return builder; },
+    single: function () { chained = true; spec.single = true; return builder; },
+    maybeSingle: function () { chained = true; spec.maybeSingle = true; return builder; },
+    select: function (cols) {
+      chained = true;
+      // Two idioms seen in real generated code: db.insert(t,data).select(cols)
+      // narrows the returned columns; db.select(cols).from(table) is
+      // Supabase's real .from().select() inverted -- select()'s original
+      // first arg was columns, not a table (handled in from() below).
+      if (typeof cols === 'string') spec.columns = cols;
+      return builder;
+    },
+    from: function (t) {
+      chained = true;
+      if (action === 'select' && spec.columns === undefined && typeof legacyArgs[0] === 'string') {
+        spec.columns = legacyArgs[0];
+      }
+      spec.table = t;
+      return builder;
+    },
+    then: function (onFulfilled, onRejected) { return run().then(onFulfilled, onRejected); },
+    catch: function (onRejected) { return run().catch(onRejected); },
+    finally: function (onFinally) { return run().finally(onFinally); },
+  };
+  return builder;
+}
+
 const db = __hasDb ? {
-  select: (...a) => __call('db.select', a).then(__withDataError),
-  insert: (...a) => __call('db.insert', a).then(__withDataError),
-  update: (...a) => __call('db.update', a).then(__withDataError),
-  delete: (...a) => __call('db.delete', a).then(__withDataError),
+  select: (...a) => __makeQueryBuilder('select', a),
+  insert: (...a) => __makeQueryBuilder('insert', a),
+  update: (...a) => __makeQueryBuilder('update', a),
+  delete: (...a) => __makeQueryBuilder('delete', a),
   count:  (...a) => __call('db.count', a),
-  rpc:    (...a) => __call('db.rpc', a).then(__withDataError),
+  // rpc's host success path already resolves { data, error: null } (matching
+  // its failure path) -- __withDataError exists to SYNTHESIZE that shape on
+  // a still-raw value, so applying it here would wrap the already-correct
+  // { data, error } object a second time, leaving .data pointing at the
+  // whole wrapper instead of the real payload. Pass through untouched.
+  rpc:    (...a) => __call('db.rpc', a),
 } : {
   select: () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); },
   insert: () => { throw new Error('No database provisioned for this project   provision one in Database settings to use db.*'); },
