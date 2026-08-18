@@ -101,4 +101,52 @@ function mockFetch(handler) {
   await db.select('renewals').not('renewal_date', 'is', null);
 }
 
+// 9. Legacy filter arg survives chaining an unrelated method (2026-08-18
+//    regression: db.update(t, data, {id}).select() lost its WHERE clause,
+//    updating every row instead of one).
+{
+  mockFetch(async (url, init) => {
+    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/orders?id=eq.5');
+    assert.equal(init.method, 'PATCH');
+    return { ok: true, json: async () => [{ id: 5 }] };
+  });
+  const db = buildDbHelper(ctx);
+  const rows = await db.update('orders', { status: 'shipped' }, { id: 5 }).select();
+  assert.deepEqual(rows, [{ id: 5 }]);
+}
+
+// 10. Same for delete() -- chaining .select() must not drop the filter.
+{
+  mockFetch(async (url, init) => {
+    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/orders?id=eq.5');
+    assert.equal(init.method, 'DELETE');
+    return { ok: true, json: async () => [{ id: 5 }] };
+  });
+  const db = buildDbHelper(ctx);
+  await db.delete('orders', { id: 5 }).select();
+}
+
+// 11. .range(from, to) must apply BOTH limit and offset (2026-08-18
+//     regression: offset was silently never sent, so every page returned
+//     page 1's rows).
+{
+  mockFetch(async (url) => {
+    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/posts?order=created_at.asc&limit=10&offset=20');
+    return { ok: true, json: async () => [] };
+  });
+  const db = buildDbHelper(ctx);
+  await db.select('posts').order('created_at').range(20, 29);
+}
+
+// 12. .in() array values are URL-encoded per-element (2026-08-18 regression:
+//     an unescaped '&' or ',' inside a value corrupted the query string).
+{
+  mockFetch(async (url) => {
+    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/t?status=in.(a%2Cb%26c,plain)');
+    return { ok: true, json: async () => [] };
+  });
+  const db = buildDbHelper(ctx);
+  await db.select('t').in('status', ['a,b&c', 'plain']);
+}
+
 console.log('query-builder.selfcheck.mjs: all checks passed');

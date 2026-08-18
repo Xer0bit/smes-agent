@@ -155,11 +155,19 @@ export interface QuerySpec {
   filters?: QueryFilter[];
   order?: { col: string; ascending: boolean }[];
   limit?: number;
-  rangeFrom?: number;
-  rangeTo?: number;
+  offset?: number;
   single?: boolean;
   maybeSingle?: boolean;
   data?: unknown;
+  // Whatever the legacy flat call already conveyed positionally, seeded by
+  // the guest-side builder at construction time -- see GUEST_BOOTSTRAP's
+  // __makeQueryBuilder. Needed because chaining a method that isn't itself a
+  // filter (e.g. db.update(t, data, {id}).select('id')) reroutes execution
+  // through db.query() instead of the flat legacy path, which is the only
+  // place these positional args were previously read.
+  legacyColumns?: string[];
+  legacyFilter?: unknown;
+  legacyExtra?: Record<string, unknown>;
 }
 
 function encodeFilterValue(op: string, val: unknown): string {
@@ -169,11 +177,11 @@ function encodeFilterValue(op: string, val: unknown): string {
   }
   if (op === 'in') {
     const arr = Array.isArray(val) ? val : [val];
-    return `(${arr.map((v) => String(v)).join(',')})`;
+    return `(${arr.map((v) => encodeURIComponent(String(v))).join(',')})`;
   }
   if (op === 'contains') {
     const arr = Array.isArray(val) ? val : [val];
-    return `{${arr.map((v) => String(v)).join(',')}}`;
+    return `{${arr.map((v) => encodeURIComponent(String(v))).join(',')}}`;
   }
   return encodeURIComponent(String(val));
 }
@@ -186,14 +194,35 @@ function buildFilterParam(f: QueryFilter): string {
   return `${encodeURIComponent(f.col)}=${prefix}${token}.${encodeFilterValue(f.op, f.val)}`;
 }
 
-function buildQuerySpecUrl(base: string, spec: QuerySpec): string {
+// Re-derives the query-string fragment the legacy flat call (table,
+// columns/filter/extra positional args) would have produced, using the same
+// toQueryString/buildExtraOpsQuery the flat select() below uses -- so a
+// spec carrying legacyFilter/legacyColumns/legacyExtra (see QuerySpec) gets
+// identical filtering whether or not it went on to chain.
+function legacyQueryParts(spec: QuerySpec): string[] {
   const parts: string[] = [];
+  if (spec.action === 'select') {
+    if (spec.legacyColumns?.length) parts.push(`select=${spec.legacyColumns.map(encodeURIComponent).join(',')}`);
+    const filterQs = toQueryString(spec.legacyFilter as FilterArg);
+    if (filterQs) parts.push(filterQs);
+    const extraQs = buildExtraOpsQuery(spec.legacyExtra);
+    if (extraQs) parts.push(extraQs);
+  } else {
+    const filterQs = toQueryString(spec.legacyFilter as FilterArg);
+    if (filterQs) parts.push(filterQs);
+  }
+  return parts;
+}
+
+function buildQuerySpecUrl(base: string, spec: QuerySpec): string {
+  const parts: string[] = [...legacyQueryParts(spec)];
   if (spec.columns) parts.push(`select=${encodeURIComponent(spec.columns)}`);
   for (const f of spec.filters ?? []) parts.push(buildFilterParam(f));
   if (spec.order?.length) {
     parts.push(`order=${spec.order.map((o) => `${o.col}.${o.ascending ? 'asc' : 'desc'}`).join(',')}`);
   }
   if (typeof spec.limit === 'number') parts.push(`limit=${spec.limit}`);
+  if (typeof spec.offset === 'number') parts.push(`offset=${spec.offset}`);
   const qs = parts.join('&');
   return `${base}/${spec.table}${qs ? `?${qs}` : ''}`;
 }
@@ -320,7 +349,7 @@ export function buildDbHelper(ctx: FunctionContext) {
       }
 
       const method = spec.action === 'insert' ? 'POST' : spec.action === 'update' ? 'PATCH' : 'DELETE';
-      const filterParts = (spec.filters ?? []).map(buildFilterParam);
+      const filterParts = [...legacyQueryParts(spec), ...(spec.filters ?? []).map(buildFilterParam)];
       const selectPart = spec.columns ? `select=${encodeURIComponent(spec.columns)}` : '';
       const qs = [...filterParts, selectPart].filter(Boolean).join('&');
       const url = `${base}/${spec.table}${qs ? `?${qs}` : ''}`;
@@ -510,6 +539,27 @@ function __makeQueryBuilder(action, legacyArgs) {
     filters: [],
     order: [],
   };
+  // Preserve whatever the legacy flat call (table, columns?, filter?,
+  // extra?) already conveyed positionally: chaining a method that isn't
+  // itself a filter (e.g. db.update(t, data, {id}).select('id')) reroutes
+  // execution through db.query() instead of the flat path below, which is
+  // the only place these args were previously read -- without this the
+  // filter/columns silently vanish and an update/delete loses its WHERE
+  // clause entirely.
+  if (action === 'select') {
+    // Mirrors buildDbHelper's select(table, columnsOrFilter, maybeFilter,
+    // maybeExtra): columnsOrFilter is only "columns" when it's an array --
+    // otherwise it IS the filter and the params shift down by one.
+    var colsOrFilter = legacyArgs[1];
+    var isColsArray = Array.isArray(colsOrFilter);
+    spec.legacyColumns = isColsArray ? colsOrFilter : undefined;
+    spec.legacyFilter = isColsArray ? legacyArgs[2] : colsOrFilter;
+    spec.legacyExtra = isColsArray ? legacyArgs[3] : legacyArgs[2];
+  } else if (action === 'update') {
+    spec.legacyFilter = legacyArgs[2];
+  } else if (action === 'delete') {
+    spec.legacyFilter = legacyArgs[1];
+  }
   var chained = false;
   var promise = null;
 
@@ -533,7 +583,7 @@ function __makeQueryBuilder(action, legacyArgs) {
     match: function (obj) { chained = true; for (var k in obj) spec.filters.push({ col: k, op: 'eq', val: obj[k] }); return builder; },
     order: function (col, opts) { chained = true; spec.order.push({ col: col, ascending: !opts || opts.ascending !== false }); return builder; },
     limit: function (n) { chained = true; spec.limit = n; return builder; },
-    range: function (from, to) { chained = true; spec.limit = to - from + 1; return builder; },
+    range: function (from, to) { chained = true; spec.limit = to - from + 1; spec.offset = from; return builder; },
     single: function () { chained = true; spec.single = true; return builder; },
     maybeSingle: function () { chained = true; spec.maybeSingle = true; return builder; },
     select: function (cols) {

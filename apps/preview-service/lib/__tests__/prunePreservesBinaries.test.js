@@ -2,7 +2,7 @@ import { test, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { pruneProjectFiles, countProjectFiles } from '../materialize.js';
+import { pruneProjectFiles, countProjectFiles, shouldSkipPrune } from '../materialize.js';
 
 // Council review 2026-08-18: "images disappear on reload" reduced to one
 // missing invariant across 5 confirmed causes -- nothing in the sync path
@@ -36,4 +36,28 @@ test('countProjectFiles matches a manual count and excludes protected dirs', () 
   fs.writeFileSync(path.join(root, 'b.tsx'), 'x');
 
   expect(countProjectFiles(root)).toBe(2);
+});
+
+// 2026-08-18 regression: the ratio-based floor only kicked in above 10
+// on-disk files, leaving small projects with zero protection against an
+// empty/truncated push wiping every file they own.
+test('shouldSkipPrune refuses an empty push against a small existing project', () => {
+  expect(shouldSkipPrune(0, 3)).toMatch(/looks incomplete/);
+});
+
+test('shouldSkipPrune allows an empty push against an empty/new project', () => {
+  expect(shouldSkipPrune(0, 0)).toBeUndefined();
+});
+
+test('shouldSkipPrune allows a small legitimate edit below the 10-file ratio floor', () => {
+  // Deleting 3 of 4 files in a tiny project is a normal edit, not corruption.
+  expect(shouldSkipPrune(1, 4)).toBeUndefined();
+});
+
+test('shouldSkipPrune refuses a push that drops below half the on-disk count once above the floor', () => {
+  expect(shouldSkipPrune(4, 18)).toMatch(/looks incomplete/);
+});
+
+test('shouldSkipPrune allows a legitimate bulk deletion at/above the ratio floor', () => {
+  expect(shouldSkipPrune(9, 18)).toBeUndefined();
 });

@@ -1071,7 +1071,14 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
         // still updates files, it just loses prune rights -- this is the fix
         // for "my logo disappears when I reload" (a throttled binary download
         // was silently skipped, then pruned by this very push).
-        const applyRevisionFiles = async (rev: any, latestFiles: Array<{ path: string; content: string }>, preferWorkspace = false, completeSet = true) => {
+        // Default false, not true: a caller must PROVE completeness to earn
+        // prune rights (see the doc above), not get them by omission. The
+        // one caller below that never passes this arg (the legacy no-manifest
+        // path) resolves generated_files through paths -- including
+        // storageService.loadProjectFiles' raw storage listing, which
+        // silently `continue`s past a per-file download failure -- so a
+        // non-empty latestFiles here is not proof every file downloaded.
+        const applyRevisionFiles = async (rev: any, latestFiles: Array<{ path: string; content: string }>, preferWorkspace = false, completeSet = false) => {
           console.log('[Editor] Loading revision with JSONB files:', latestFiles.length);
           let files = latestFiles.map((file: any) => ({
             path: file.path,

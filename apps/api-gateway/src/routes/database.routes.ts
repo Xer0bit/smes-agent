@@ -309,8 +309,19 @@ router.post('/preview-sync-revision', async (req: AuthenticatedRequest, res: Res
       }
       files = results.filter((f): f is { path: string; content: string } => f !== null);
     } else if (generatedFiles?.files && Array.isArray((generatedFiles as any).files) && (generatedFiles as any).files[0]?.content !== undefined) {
-      // Legacy inline-JSONB format: content already in the row.
-      files = ((generatedFiles as any).files as Array<{ path: string; content: string }>);
+      // Legacy inline-JSONB format: content already in the row (no storage
+      // download, so no arrayBuffer() step is possible here). Still apply
+      // the same sentinel-wrap guarantee the manifest-v1 branch above gives
+      // binaries: the browser-side writer that produced these rows always
+      // base64-encoded binary content before it ever reached JSONB (JSONB
+      // can't hold raw bytes), sentinel-prefixed via the same convention --
+      // but treat "not already sentineled" the same defensive way as above
+      // rather than assuming every historical row followed it.
+      const rawFiles = (generatedFiles as any).files as Array<{ path: string; content: string }>;
+      files = rawFiles.map((f) => {
+        if (!BINARY_EXT_RE.test(f.path) || f.content.startsWith(BINARY_SENTINEL)) return f;
+        return { path: f.path, content: `${BINARY_SENTINEL}${f.content}` };
+      });
     } else {
       res.status(404).json({ success: false, error: 'Revision has no file content to sync.' });
       return;

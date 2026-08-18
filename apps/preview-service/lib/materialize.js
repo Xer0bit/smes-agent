@@ -1204,6 +1204,32 @@ function countProjectFiles(projectRoot) {
     return count;
 }
 
+// Floor check for the fullSync prune path (server.js's /sync-revision route):
+// fullSync is a client-supplied boolean with no server-side verification
+// that the push is actually complete. A caller that silently lost files (the
+// 2026-08 incident: concurrent downloads failing quietly) believes it holds
+// everything and asserts prune rights on a fraction of the real tree.
+// Returns a skip reason string when prune should be refused, or undefined
+// when it's safe to proceed. Pulled out as its own pure function (rather
+// than left inline in the route) so the two guards are unit-testable without
+// spinning up the express app.
+function shouldSkipPrune(pushedFileCount, onDiskCount) {
+    // Absolute guard, independent of project size: an empty/all-missing push
+    // against a project that already has files on disk is never a
+    // legitimate full sync.
+    if (pushedFileCount === 0 && onDiskCount > 0) {
+        return `push has ${pushedFileCount} files, disk has ${onDiskCount} -- push looks incomplete, not a real full sync`;
+    }
+    // Ratio guard: only applied above 10 files, where the ratio math is
+    // stable -- below that, deleting most of a tiny project in one edit is
+    // common and legitimate.
+    const PRUNE_FLOOR_RATIO = 0.5;
+    if (onDiskCount > 10 && pushedFileCount < onDiskCount * PRUNE_FLOOR_RATIO) {
+        return `push has ${pushedFileCount} files, disk has ${onDiskCount} -- push looks incomplete, not a real full sync`;
+    }
+    return undefined;
+}
+
 function pruneProjectFiles(projectRoot, userFilePaths) {
     const removed = [];
     const protectedTopLevel = new Set(['node_modules', '.vite-cache', '.git', '.cache', '.src-snapshot']);
@@ -1357,6 +1383,7 @@ module.exports = {
     materializeProjectFiles,
     pruneProjectFiles,
     countProjectFiles,
+    shouldSkipPrune,
     collectReferencedPackages,
     harmonizePackageJson,
     packageJsonNeedsRestart,

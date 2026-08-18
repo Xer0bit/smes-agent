@@ -27,7 +27,7 @@ const {
 const { typeCheckProject } = require('./lib/typecheck');
 const {
     TAILWIND_CSS_BASE, ERROR_BOUNDARY_TSX, preprocessFile, ensureEssentialFiles,
-    materializeProjectFiles, pruneProjectFiles, countProjectFiles, packageJsonNeedsRestart,
+    materializeProjectFiles, pruneProjectFiles, countProjectFiles, packageJsonNeedsRestart, shouldSkipPrune,
 } = require('./lib/materialize');
 const { snapshotProjectSrc, rollbackProjectSrc, cleanupSnapshot } = require('./lib/snapshot');
 // buildViteConfig/COMMON_DEPS shared by both the legacy in-process path
@@ -2032,23 +2032,15 @@ export default App;
             ensureEssentialFiles(projectRoot, files);
 
             let removedStaleFiles = [];
+            let pruneSkippedReason;
             if (fullSync) {
-                // Floor check: fullSync is a client-supplied boolean with no
-                // server-side verification that the push is actually
-                // complete. A caller that silently lost files (the exact
-                // 2026-08 incident: concurrent downloads failing quietly)
-                // believes it holds everything and asserts prune rights on
-                // a fraction of the real tree. Refuse to prune when the
-                // pushed set is implausibly smaller than what's already on
-                // disk -- a real full sync should be close to the existing
-                // file count, not a third of it.
                 let onDiskCount = 0;
                 try {
                     onDiskCount = countProjectFiles(projectRoot);
                 } catch { /* new/empty project, no floor to check */ }
-                const PRUNE_FLOOR_RATIO = 0.5;
-                if (onDiskCount > 10 && userFilePaths.size < onDiskCount * PRUNE_FLOOR_RATIO) {
-                    console.warn(`[${projectId}] Refusing prune: push has ${userFilePaths.size} files, disk has ${onDiskCount} -- push looks incomplete, not a real full sync.`);
+                pruneSkippedReason = shouldSkipPrune(userFilePaths.size, onDiskCount);
+                if (pruneSkippedReason) {
+                    console.warn(`[${projectId}] Refusing prune: ${pruneSkippedReason}.`);
                 } else {
                     removedStaleFiles = pruneProjectFiles(projectRoot, userFilePaths);
                     if (removedStaleFiles.length > 0) {
@@ -2143,6 +2135,7 @@ export default App;
                 promoted: true,
                 filesProcessed: files.length,
                 staleFilesPruned: removedStaleFiles.length,
+                pruneSkippedReason,
                 autoFixes: allFixedIssues.length > 0 ? allFixedIssues : undefined,
                 // D-1 (sync-architecture audit, 2026-08-11): a deterministic hash
                 // of the file set this call actually materialized (post any

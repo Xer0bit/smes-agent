@@ -46,8 +46,8 @@ function toQueryString(query) {
 // service.ts's isolated-vm equivalent.
 function encodeFilterValue(op, val) {
   if (op === 'is') return val === null || val === undefined ? 'null' : String(val);
-  if (op === 'in') { const arr = Array.isArray(val) ? val : [val]; return `(${arr.map(String).join(',')})`; }
-  if (op === 'contains') { const arr = Array.isArray(val) ? val : [val]; return `{${arr.map(String).join(',')}}`; }
+  if (op === 'in') { const arr = Array.isArray(val) ? val : [val]; return `(${arr.map((v) => encodeURIComponent(String(v))).join(',')})`; }
+  if (op === 'contains') { const arr = Array.isArray(val) ? val : [val]; return `{${arr.map((v) => encodeURIComponent(String(v))).join(',')}}`; }
   return encodeURIComponent(String(val));
 }
 const OP_TOKEN = { contains: 'cs' };
@@ -116,9 +116,11 @@ export function buildDbHelper(ctx) {
     if (spec.action === 'select') {
       const parts = [];
       if (spec.columns) parts.push(`select=${encodeURIComponent(spec.columns)}`);
+      if (spec.legacyQs) parts.push(spec.legacyQs);
       for (const f of spec.filters) parts.push(buildFilterParam(f));
       if (spec.order.length) parts.push(`order=${spec.order.map(o => `${o.col}.${o.ascending ? 'asc' : 'desc'}`).join(',')}`);
       if (typeof spec.limit === 'number') parts.push(`limit=${spec.limit}`);
+      if (typeof spec.offset === 'number') parts.push(`offset=${spec.offset}`);
       const qs = parts.join('&');
       const url = `${base}/${spec.table}${qs ? `?${qs}` : ''}`;
       const reqHeaders = spec.single ? { ...headers, Accept: 'application/vnd.pgrst.object+json' } : headers;
@@ -129,7 +131,7 @@ export function buildDbHelper(ctx) {
     }
 
     const method = spec.action === 'insert' ? 'POST' : spec.action === 'update' ? 'PATCH' : 'DELETE';
-    const filterParts = spec.filters.map(buildFilterParam);
+    const filterParts = spec.legacyQs ? [spec.legacyQs, ...spec.filters.map(buildFilterParam)] : spec.filters.map(buildFilterParam);
     const selectPart = spec.columns ? `select=${encodeURIComponent(spec.columns)}` : '';
     const qs = [...filterParts, selectPart].filter(Boolean).join('&');
     const url = `${base}/${spec.table}${qs ? `?${qs}` : ''}`;
@@ -155,6 +157,14 @@ export function buildDbHelper(ctx) {
       filters: [],
       order: [],
     };
+    // Preserve whatever the legacy flat call (table, query?) already
+    // conveyed: chaining a method that isn't itself a filter (e.g.
+    // db.update(t, data, {id}).select('id')) reroutes execution through
+    // runQuery(spec) instead of the flat *Flat() functions above, which is
+    // the only place this positional filter arg was previously read --
+    // without this an update/delete silently loses its WHERE clause.
+    const legacyFilterArg = action === 'update' ? legacyArgs[2] : action !== 'insert' ? legacyArgs[1] : undefined;
+    spec.legacyQs = toQueryString(legacyFilterArg);
     let chained = false;
     let promise = null;
 
@@ -179,7 +189,7 @@ export function buildDbHelper(ctx) {
       match(obj) { chained = true; for (const k in obj) spec.filters.push({ col: k, op: 'eq', val: obj[k] }); return builder; },
       order(col, opts) { chained = true; spec.order.push({ col, ascending: !opts || opts.ascending !== false }); return builder; },
       limit(n) { chained = true; spec.limit = n; return builder; },
-      range(from, to) { chained = true; spec.limit = to - from + 1; return builder; },
+      range(from, to) { chained = true; spec.limit = to - from + 1; spec.offset = from; return builder; },
       single() { chained = true; spec.single = true; return builder; },
       maybeSingle() { chained = true; spec.maybeSingle = true; return builder; },
       select(cols) {

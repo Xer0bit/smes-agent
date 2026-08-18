@@ -98,4 +98,73 @@ describe('functionRunner db.query (chainable builder backend)', () => {
     const [, init] = fetchMock.mock.calls[0];
     expect((init.headers as Record<string, string>).Prefer).toBe('return=representation');
   });
+
+  // A spec carrying legacyFilter (what the guest-side builder seeds a bare
+  // `db.update(t, data, {id}).select()` call with) must apply that filter --
+  // previously dropped, turning a single-row update/delete into a full-table
+  // one the moment an unrelated method (here: select()) triggered chaining.
+  it('applies legacyFilter on an update spec (dropped filter regression)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [{ id: 5 }] });
+    global.fetch = fetchMock as any;
+
+    const db = buildDbHelper(baseCtx as any);
+    const spec: QuerySpec = { action: 'update', table: 'orders', data: { status: 'shipped' }, legacyFilter: { id: 5 }, filters: [], order: [] };
+    await db.query(spec);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/orders?id=eq.5');
+    expect(init.method).toBe('PATCH');
+  });
+
+  it('applies legacyFilter on a delete spec (dropped filter regression)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [{ id: 5 }] });
+    global.fetch = fetchMock as any;
+
+    const db = buildDbHelper(baseCtx as any);
+    const spec: QuerySpec = { action: 'delete', table: 'orders', legacyFilter: { id: 5 }, filters: [], order: [] };
+    await db.query(spec);
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/orders?id=eq.5');
+  });
+
+  it('applies legacyColumns/legacyFilter on a select spec', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [{ id: 5 }] });
+    global.fetch = fetchMock as any;
+
+    const db = buildDbHelper(baseCtx as any);
+    const spec: QuerySpec = { action: 'select', table: 'orders', legacyColumns: ['id', 'status'], legacyFilter: { id: 5 }, filters: [], order: [] };
+    await db.query(spec);
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/orders?select=id,status&id=eq.5');
+  });
+
+  // range(from, to) must apply both limit AND offset -- offset was silently
+  // never sent, so every requested page returned page 1's rows.
+  it('range() applies both limit and offset', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+    global.fetch = fetchMock as any;
+
+    const db = buildDbHelper(baseCtx as any);
+    const spec: QuerySpec = { action: 'select', table: 'posts', filters: [], order: [{ col: 'created_at', ascending: true }], limit: 10, offset: 20 };
+    await db.query(spec);
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/posts?order=created_at.asc&limit=10&offset=20');
+  });
+
+  // in()/contains() array values must be URL-encoded per element -- an
+  // unescaped '&' or ',' inside a value corrupted the query string.
+  it('in() URL-encodes each array value', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+    global.fetch = fetchMock as any;
+
+    const db = buildDbHelper(baseCtx as any);
+    const spec: QuerySpec = { action: 'select', table: 't', filters: [{ col: 'status', op: 'in', val: ['a,b&c', 'plain'] }], order: [] };
+    await db.query(spec);
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/t?status=in.(a%2Cb%26c,plain)');
+  });
 });
