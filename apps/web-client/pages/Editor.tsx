@@ -439,6 +439,28 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   const previewPathRef = useRef(previewPath);
   useEffect(() => { previewPathRef.current = previewPath; }, [previewPath]);
 
+  // The workspace is a module-level singleton that outlives this component,
+  // so SPA navigation used to carry a dead session's in-memory files into
+  // the next mount, where the load-time merge could assert them over the
+  // durable head revision (the 2026-08-18 stale-resurrection incidents:
+  // "opening a project" became a WRITE armed with ghost state). A workspace
+  // holding no unsaved user edits has nothing worth keeping -- drop it on
+  // exit so every mount starts from the revision store. Dirty files are
+  // preserved: losing unsaved edits on accidental navigation would be worse
+  // than the staleness risk they carry.
+  useEffect(() => {
+    const pid = projectId;
+    return () => {
+      if (!pid) return;
+      import('@/eCG/Workspace/WorkspaceManager')
+        .then(({ getWorkspaceManager, clearWorkspaceManager }) => {
+          const hasDirty = getWorkspaceManager(pid).listFiles().some((f) => f.isDirty);
+          if (!hasDirty) clearWorkspaceManager(pid);
+        })
+        .catch(() => { /* never block unmount */ });
+    };
+  }, [projectId]);
+
   // Ref so onGenerationComplete (stale closure) can check whether a preview URL
   // exists before switching to the preview tab   avoids showing a blank tab.
   const previewUrlRef = useRef<string | null>(null);
