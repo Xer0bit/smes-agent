@@ -186,7 +186,7 @@ export default function EcgConnectWizard({ emptyState }: { emptyState: boolean }
           <p className="mt-2 max-w-md text-sm text-muted-foreground">
             Paste your eCG Agent API key. We'll discover what's set up in your org, then
             you set a password and your dashboard is ready.
-            Get a key from <span className="text-foreground">app.ecomgear.ai/org/api-keys</span>.
+            Get a key from <a href="https://agents.ecomgear.ai/org/api-keys" target="_blank" rel="noopener noreferrer" className="text-foreground underline">agents.ecomgear.ai/org/api-keys</a>.
           </p>
           <div className="mt-6 flex w-full max-w-sm items-center gap-2">
             <Input

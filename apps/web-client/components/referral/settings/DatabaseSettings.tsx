@@ -412,7 +412,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
   if (!isPaid) return (
     <div className="space-y-6 w-full max-w-full overflow-hidden">
       <div>
-        <h2 className="text-xl font-semibold mb-1">ECG CLAUDE DB</h2>
+        <h2 className="text-xl font-semibold mb-1">ECG CLOUD DB</h2>
         <p className="text-sm text-white/45">Dedicated PostgreSQL database with REST API and agent access</p>
       </div>
       <Card className="bg-workspace-surface border-indigo-500/25">
@@ -480,7 +480,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
   if (!db) return (
     <div className="w-full max-w-full overflow-hidden">
       <div className="mb-5">
-        <h2 className="text-xl font-semibold mb-1">ECG CLAUDE DB</h2>
+        <h2 className="text-xl font-semibold mb-1">ECG CLOUD DB</h2>
         <p className="text-sm text-white/30">Isolated PostgreSQL schema with REST API and AI agent access</p>
       </div>
       <div className="rounded-xl border border-white/[0.07] bg-workspace-surface p-5 flex items-center justify-between gap-4">
@@ -509,7 +509,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
   // ── Error state ─────────────────────────────────────────────────────────
   if (db.status === 'error') return (
     <div className="space-y-6 w-full max-w-full overflow-hidden">
-      <div><h2 className="text-xl font-semibold mb-1">ECG CLAUDE DB</h2></div>
+      <div><h2 className="text-xl font-semibold mb-1">ECG CLOUD DB</h2></div>
       <Card className="bg-workspace-surface border-red-500/25">
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -535,7 +535,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div className="min-w-0">
-          <h2 className="text-xl font-semibold mb-1">ECG CLAUDE DB</h2>
+          <h2 className="text-xl font-semibold mb-1">ECG CLOUD DB</h2>
           <div className="flex items-center gap-2 flex-wrap">
             <code className="text-xs text-white/45 font-mono bg-white/[0.04] px-2 py-0.5 rounded truncate max-w-[200px]">{db.schema_name}</code>
             <StatusBadge status={db.status} />

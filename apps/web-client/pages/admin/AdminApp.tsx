@@ -144,7 +144,7 @@ export default function AdminApp() {
             label: 'Infrastructure',
             items: [
                 { title: 'Hosting & Domains', path: '/admin/hosting', icon: Server },
-                { title: 'ECG CLAUDE DBs', path: '/admin/database-hosting', icon: Database },
+                { title: 'ECG CLOUD DBs', path: '/admin/database-hosting', icon: Database },
                 { title: 'System Status', path: '/admin/system-status', icon: Settings },
                 { title: 'LLM Providers', path: '/admin/llm-settings', icon: Zap },
             ],

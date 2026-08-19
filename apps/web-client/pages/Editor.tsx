@@ -3112,7 +3112,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       <Database className="h-3.5 w-3.5" />
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent className="z-[300]"><p>ECG CLAUDE DB &amp; REST API</p></TooltipContent>
+                  <TooltipContent className="z-[300]"><p>ECG CLOUD DB &amp; REST API</p></TooltipContent>
                 </Tooltip>
               )}
 
@@ -3276,7 +3276,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                               onClick={() => openSettings('ecomgear-database')}
                             >
                               <Cloud className="h-3.5 w-3.5 shrink-0 text-orange-400" />
-                              <span className="flex-1 text-left">ECG CLAUDE DB</span>
+                              <span className="flex-1 text-left">ECG CLOUD DB</span>
                               <span className="px-1.5 py-0.5 text-[10px] font-bold bg-orange-500/20 text-orange-400 rounded leading-none">HOT</span>
                             </button>
                           </div>
@@ -3350,7 +3350,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                             onClick={() => openSettings('ecomgear-database')}
                           >
                             <Cloud className="h-3.5 w-3.5 shrink-0 text-orange-400" />
-                            <span className="flex-1 text-left">ECG CLAUDE DB</span>
+                            <span className="flex-1 text-left">ECG CLOUD DB</span>
                             <span className="px-1.5 py-0.5 text-[10px] font-bold bg-orange-500/20 text-orange-400 rounded leading-none">HOT</span>
                           </button>
                         </div>
