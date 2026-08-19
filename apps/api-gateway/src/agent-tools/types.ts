@@ -34,6 +34,16 @@ export interface AgentContext {
   /** Cost-routing tier for this run (micro/edit/fix/feature/build) -- set by buildToolSet so tools can tier-gate behavior. */
   tier?: string;
   /**
+   * Chat mode for this run: 'normal' (default) is regular development work,
+   * no direct database access. 'admin' additionally exposes query_database/
+   * test_database_function/provision_database -- gated here, not just
+   * documented, because those tools run arbitrary SQL against a real
+   * customer's tenant database. See buildToolSet. Named chatMode, not mode,
+   * to avoid colliding with AgentRunParams.mode ('build' | 'plan' -- a
+   * completely different, pre-existing concept: runtime orchestration mode).
+   */
+  chatMode?: 'normal' | 'admin';
+  /**
    * Reverse import graph: for each file path, the set of files that import it.
    * Used by write_file / edit_file to warn the agent about downstream breakage risk.
    */

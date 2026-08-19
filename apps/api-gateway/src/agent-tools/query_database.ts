@@ -2,19 +2,27 @@
  * query_database tool   run SQL against the project's hosted PostgreSQL database
  * with full (service-role) access: DDL for tables/migrations, DML for data.
  * See server/src/services/database.service.ts for the underlying provisioning/query logic.
+ * Admin-mode only (see agentToolSet.ts's ADMIN_ONLY_TOOLS) -- not available
+ * to a normal development chat session.
  *
  * DDL confirmation gate (2026-08 core-loop audit): schema-mutating statements
  * (CREATE/ALTER/DROP/TRUNCATE) used to execute the instant the model called
  * this tool   zero visibility, zero chance to stop a bad migration before it
- * hit the live tenant DB. Plain DML (SELECT/INSERT/UPDATE/DELETE) still runs
- * immediately; DDL is staged into ctx.pendingDbChanges and only actually runs
- * when the model makes a SEPARATE confirm_database_change call with the
- * returned confirmationId. See confirm_database_change.ts.
+ * hit the live tenant DB. Originally staged into an in-memory
+ * ctx.pendingDbChanges Map, confirmed by the model itself calling a separate
+ * confirm_database_change tool in the same run -- not a real safety gate,
+ * since a model that decided a write was safe would just as readily decide
+ * to confirm it (2026-08-19 admin-mode review). Dangerous SQL is now staged
+ * as a row in admin_sql_pending_changes instead, and can only be executed by
+ * a human clicking confirm in the chat UI (POST /api/v1/database/admin-sql/
+ * :id/confirm) -- confirm_database_change is excluded from every tier's
+ * toolset entirely (see agentToolSet.ts's AGENT_NEVER_CONFIRMS_TOOLS), so
+ * the agent has no tool that can execute its own pending change.
  */
-import crypto from 'node:crypto';
 import { z } from 'zod';
 import { ToolDefinition, AgentContext } from './types.js';
 import { databaseService } from '../services/database.service.js';
+import { supabase } from '../config/database.js';
 
 const MAX_CALLS_PER_RUN = 50;
 
@@ -143,6 +151,27 @@ export function formatQueryError(err: unknown): string {
   return `ERROR running query: ${msg}`;
 }
 
+const DB_UNAVAILABLE_MESSAGE =
+  'ERROR: could not stage this change (no project context available). Nothing was executed.';
+
+/**
+ * Persists a dangerous statement to admin_sql_pending_changes so it can only
+ * be run by a human confirming in the chat UI (see the module doc comment
+ * above for why this replaced the in-memory, agent-self-confirmed Map).
+ * Returns the new row's id, or null if there's no project/user to stage it
+ * against.
+ */
+async function stagePendingChange(ctx: AgentContext, sql: string): Promise<string | null> {
+  if (!ctx.projectId || !ctx.userId || !supabase) return null;
+  const { data, error } = await supabase
+    .from('admin_sql_pending_changes')
+    .insert({ project_id: ctx.projectId, staged_by_user_id: ctx.userId, sql_text: sql })
+    .select('id')
+    .single();
+  if (error || !data) return null;
+  return (data as { id: string }).id;
+}
+
 const schema = z.object({
   sql: z.string().describe(
     "One or more SQL statements to run against the project's hosted database. " +
@@ -160,8 +189,8 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
     "Returns the result of the last statement plus how many statements ran. " +
     "ALWAYS call get_database_schema first when you're unsure what tables exist. " +
     "SCHEMA-MUTATING SQL (CREATE/ALTER/DROP/TRUNCATE/GRANT/REVOKE) is NOT executed immediately: this call " +
-    "stages it and returns a confirmationId   you MUST call confirm_database_change with that id as a " +
-    "separate tool call before the change actually runs against the live database. The same staging applies " +
+    "stages it for review. There is no tool that lets you confirm or execute it yourself -- explain the change " +
+    "to the user and tell them to click confirm in the chat UI; only that click runs it. The same staging applies " +
     "to a DELETE or UPDATE with no WHERE clause (affects every row, as risky as a schema change). Plain, " +
     "row-scoped data statements (SELECT/INSERT, or UPDATE/DELETE with a WHERE clause) run immediately as usual. " +
     "If no database is provisioned, tell the user to provision one from Settings → Hosted Database.",
@@ -177,39 +206,39 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
     }
 
     if (isSchemaMutatingSql(args.sql)) {
-      if (!ctx.pendingDbChanges) ctx.pendingDbChanges = new Map();
-      const confirmationId = crypto.randomUUID();
-      ctx.pendingDbChanges.set(confirmationId, { sql: args.sql, createdAt: Date.now() });
+      const stagedId = await stagePendingChange(ctx, args.sql);
+      if (!stagedId) return DB_UNAVAILABLE_MESSAGE;
       const unqualified = findUnqualifiedPgcryptoCalls(args.sql);
       const pgcryptoWarning = unqualified.length > 0
         ? `\n\n⚠ POSSIBLE BUG: this SQL calls pgcrypto function(s) ${unqualified.map(f => `"${f}"`).join(', ')} without the ` +
           `"extensions." prefix. pgcrypto is installed in the extensions schema, which is NOT on this role's search_path -- ` +
           `an unqualified call fails at RUNTIME with "function ... does not exist" (this exact bug broke registration in ` +
-          `production for hours on 2026-08-13). Before confirming, check every pgcrypto call in this statement is written ` +
-          `as extensions.${unqualified[0]}(...), not bare ${unqualified[0]}(...).`
+          `production for hours on 2026-08-13). Mention this to the user before they confirm: every pgcrypto call in this ` +
+          `statement should be written as extensions.${unqualified[0]}(...), not bare ${unqualified[0]}(...).`
         : '';
       return (
-        `PENDING CONFIRMATION   this SQL was NOT executed yet. It contains a schema-mutating statement ` +
+        `PENDING CONFIRMATION   this SQL was NOT executed. It contains a schema-mutating statement ` +
         `(CREATE/ALTER/DROP/TRUNCATE/GRANT/REVOKE), which changes the live database for real users, so it ` +
-        `requires one extra confirmation step.${pgcryptoWarning}\n\n` +
-        `SQL to run:\n${args.sql}\n\n` +
-        `To actually execute it, call confirm_database_change with confirmationId: "${confirmationId}". ` +
-        `If you decide NOT to run it (e.g. after reconsidering), simply don't call confirm   nothing happens.`
+        `requires a human to confirm it.${pgcryptoWarning}\n\n` +
+        `SQL staged:\n${args.sql}\n\n` +
+        `ADMIN_SQL_PENDING_ID: ${stagedId}\n\n` +
+        `Tell the user what this does and that they need to click confirm in the chat UI to run it. ` +
+        `You cannot execute this yourself -- there is no tool for that; only the user confirming in the UI runs it.`
       );
     }
 
     if (isUnqualifiedMutation(args.sql)) {
-      if (!ctx.pendingDbChanges) ctx.pendingDbChanges = new Map();
-      const confirmationId = crypto.randomUUID();
-      ctx.pendingDbChanges.set(confirmationId, { sql: args.sql, createdAt: Date.now() });
+      const stagedId = await stagePendingChange(ctx, args.sql);
+      if (!stagedId) return DB_UNAVAILABLE_MESSAGE;
       return (
-        `PENDING CONFIRMATION   this SQL was NOT executed yet. It contains a DELETE or UPDATE with no WHERE ` +
+        `PENDING CONFIRMATION   this SQL was NOT executed. It contains a DELETE or UPDATE with no WHERE ` +
         `clause, which would affect every row in the table -- this is at least as risky as a schema change, so it ` +
-        `requires the same one extra confirmation step. If this was intentional (e.g. clearing a scratch table), ` +
-        `just confirm it. If you meant to target specific rows, add a WHERE clause and call query_database again instead.\n\n` +
-        `SQL to run:\n${args.sql}\n\n` +
-        `To actually execute it, call confirm_database_change with confirmationId: "${confirmationId}". ` +
-        `If you decide NOT to run it (e.g. after reconsidering), simply don't call confirm   nothing happens.`
+        `requires a human to confirm it. If you meant to target specific rows, add a WHERE clause and call ` +
+        `query_database again instead.\n\n` +
+        `SQL staged:\n${args.sql}\n\n` +
+        `ADMIN_SQL_PENDING_ID: ${stagedId}\n\n` +
+        `Tell the user what this does and that they need to click confirm in the chat UI to run it. ` +
+        `You cannot execute this yourself -- there is no tool for that; only the user confirming in the UI runs it.`
       );
     }
 

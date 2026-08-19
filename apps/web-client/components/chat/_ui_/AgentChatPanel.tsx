@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowUp, Square, Loader2, StopCircle, ChevronDown, Paperclip, X, FileText, RotateCcw, Sparkles, MousePointerClick } from 'lucide-react';
+import { ArrowUp, Square, Loader2, StopCircle, ChevronDown, Paperclip, X, FileText, RotateCcw, Sparkles, MousePointerClick, ShieldAlert } from 'lucide-react';
 import ecgAgentLogo from '@/assets/ecgagent.png';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
@@ -8,6 +8,7 @@ import type { MagicCursorTarget } from '@/pages/editor/types';
 import { buildMagicCursorPrompt } from '@/pages/editor/utils/magicCursorPrompt';
 import { toast } from 'sonner';
 import { streamAgentGeneration } from '@/eCG/UserPrompt/agentStreamService';
+import { fetchPendingAdminSql, confirmAdminSql, rejectAdminSql, type PendingAdminSqlChange } from '@/services/adminSqlService';
 import type { StepFinishData } from '@/eCG/UserPrompt/agentStreamService';
 import { ChatMessage } from '@/components/ChatMessage';
 import { getGenServerUrl, getGenServerCandidateUrls } from '@/config/external-api';
@@ -149,6 +150,22 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       return saved === 'plan' ? 'plan' : 'agent';
     } catch { return 'agent'; }
   });
+  // Admin mode: lets the agent stage arbitrary SQL against this project's
+  // hosted database (query_database) -- a dangerous statement still needs a
+  // human to click confirm, the agent can never execute it itself. Not
+  // persisted to localStorage on purpose: a stale "admin was on" flag
+  // silently carrying into a future session is exactly the kind of surprise
+  // this feature should never produce. Resets to 'normal' on every mount.
+  const [chatMode, setChatMode] = useState<'normal' | 'admin'>('normal');
+  const [pendingAdminSql, setPendingAdminSql] = useState<PendingAdminSqlChange[]>([]);
+  const [confirmingSqlId, setConfirmingSqlId] = useState<string | null>(null);
+  const refreshPendingAdminSql = useCallback(async () => {
+    if (!projectId) return;
+    setPendingAdminSql(await fetchPendingAdminSql(projectId));
+  }, [projectId]);
+  // Catches a change left over from a previous session (page reload before
+  // confirming), not just ones staged during this mount.
+  useEffect(() => { refreshPendingAdminSql(); }, [refreshPendingAdminSql]);
 
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
@@ -817,6 +834,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         projectId,
         orgId: currentOrganizationId,
         mode: resolvedMode,
+        chatMode,
         history,
         olderSummary,
         fingerprint: guestFingerprint,
@@ -972,6 +990,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             setStatusText('');
             setLiveThought('');
             setPlanTasks(prev => finalizeTasks(prev, false));
+
+            // Admin mode may have just staged a dangerous SQL statement --
+            // pull the authoritative pending list from the DB rather than
+            // trying to parse an id out of the model's own freeform reply.
+            if (chatMode === 'admin') refreshPendingAdminSql();
 
             // Prefer full streamed text over backend summary
             const rawContent = currentContent || result.summary || '';
@@ -1517,6 +1540,53 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           handler below stays wired to this file's own real state: multi-file
           upload with progress, Build/Plan mode, char limit, Stop-during-generation,
           paste-to-upload, drag-drop. No fake toggles were carried over. ── */}
+      {pendingAdminSql.length > 0 && (
+        <div className="px-3 pt-2.5 flex flex-col gap-2">
+          {pendingAdminSql.map((change) => (
+            <div key={change.id} className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3">
+              <div className="flex items-start gap-2 mb-1.5">
+                <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] font-semibold text-amber-300 leading-tight">
+                  Admin SQL awaiting confirmation   this was NOT executed yet
+                </p>
+              </div>
+              <pre className="text-[11px] text-white/70 font-mono whitespace-pre-wrap break-all bg-black/20 rounded-lg p-2 mb-2 max-h-32 overflow-y-auto">
+                {change.sql_text}
+              </pre>
+              <div className="flex gap-2">
+                <button
+                  disabled={confirmingSqlId === change.id}
+                  onClick={async () => {
+                    setConfirmingSqlId(change.id);
+                    const result = await confirmAdminSql(change.id);
+                    setConfirmingSqlId(null);
+                    if (result.success) {
+                      toast.success('SQL executed.');
+                    } else {
+                      toast.error(result.error || 'Failed to execute.');
+                    }
+                    refreshPendingAdminSql();
+                  }}
+                  className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black text-[12px] font-semibold py-1.5 transition-colors"
+                >
+                  {confirmingSqlId === change.id ? 'Running…' : 'Confirm & Run'}
+                </button>
+                <button
+                  disabled={confirmingSqlId === change.id}
+                  onClick={async () => {
+                    await rejectAdminSql(change.id);
+                    refreshPendingAdminSql();
+                  }}
+                  className="rounded-lg border border-white/10 hover:bg-white/[0.06] disabled:opacity-50 text-white/70 text-[12px] font-medium py-1.5 px-3 transition-colors"
+                >
+                  Reject
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div
         className="p-2.5 border-t border-white/[0.06]"
         onDragOver={handleDragOver}
@@ -1713,6 +1783,24 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Normal / Admin chat mode toggle -- admin exposes direct database
+                  access (query_database), gated server-side by chatMode, not just
+                  hidden here; this button only controls what gets sent. */}
+              <button
+                onClick={() => setChatMode(m => m === 'admin' ? 'normal' : 'admin')}
+                disabled={isGenerating}
+                title={chatMode === 'admin'
+                  ? 'Admin mode: agent can stage SQL against the database (you must confirm before it runs). Click to switch to Normal.'
+                  : 'Normal mode: development only, no database access. Click to switch to Admin.'}
+                className={`flex items-center gap-1 px-2 py-1 rounded-full text-[12px] font-medium transition-colors disabled:opacity-40 disabled:cursor-default ${
+                  chatMode === 'admin'
+                    ? 'text-amber-300 bg-amber-500/10 hover:bg-amber-500/15'
+                    : 'text-white/70 hover:text-white hover:bg-white/[0.06]'
+                }`}
+              >
+                <span>{chatMode === 'admin' ? 'Admin' : 'Normal'}</span>
+              </button>
 
               {/* Send / Stop   circular button, morphs to a Stop control while
                   generating (wired to the real cancelGeneration, unlike the

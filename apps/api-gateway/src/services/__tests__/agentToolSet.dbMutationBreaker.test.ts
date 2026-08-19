@@ -1,15 +1,24 @@
 /**
  * Verifies the mutation circuit breaker's checkpoint 1 extension (2026-08
- * orchestration hardening): query_database/confirm_database_change/
- * provision_database now share agentToolSet.ts's existing hard-block gate
- * (ctx.mutationFailureStreak, MUTATION_CIRCUIT_BREAKER_THRESHOLD), keyed via
- * the new deriveDbMutationKey (agent-tools/types.ts) instead of a raw
- * path/from field. Mirrors agentToolSet.scopeGate.test.ts's shape: seed ctx
- * state directly (the tracking loop that populates mutationFailureStreak
- * lives in agentLoopService.ts's onStepFinish, not under test here), then
- * exercise the real dispatch gate via buildToolSet.
+ * orchestration hardening): query_database/provision_database share
+ * agentToolSet.ts's existing hard-block gate (ctx.mutationFailureStreak,
+ * MUTATION_CIRCUIT_BREAKER_THRESHOLD), keyed via the new
+ * deriveDbMutationKey (agent-tools/types.ts) instead of a raw path/from
+ * field. Mirrors agentToolSet.scopeGate.test.ts's shape: seed ctx state
+ * directly (the tracking loop that populates mutationFailureStreak lives in
+ * agentLoopService.ts's onStepFinish, not under test here), then exercise
+ * the real dispatch gate via buildToolSet.
  *
- * None of these 3 tools' real execute() paths are reachable without
+ * ctx.chatMode is set to 'admin' here so these admin-only tools (see
+ * agentToolSet.adminMode.test.ts) are actually present to test against --
+ * that gate is a separate concern from the breaker under test here.
+ * confirm_database_change is no longer tested: it's excluded from every
+ * chat mode unconditionally (2026-08-19, see AGENT_NEVER_CONFIRMS_TOOLS) --
+ * a dangerous change now requires a human confirming via
+ * POST /api/v1/database/admin-sql/:id/confirm, so the tool (and this
+ * breaker path for it) is unreachable by design, not merely untested.
+ *
+ * Neither of these 2 tools' real execute() paths are reachable without
  * ctx.userId (each returns a fixed, deterministic "no user context" ERROR
  * string as its very first line, before touching any DB/network call) --
  * exploited here for a same-message failure with zero mocking of
@@ -48,8 +57,9 @@ describe('agentToolSet DB-action mutation circuit breaker (checkpoint 1)', () =>
     ctx = {
       appPath: tmpDir,
       projectId: 'test-project',
+      chatMode: 'admin',
       onXmlComplete: () => {},
-      // userId deliberately left unset: each of the 3 DB tools short-circuits
+      // userId deliberately left unset: each of the 2 DB tools short-circuits
       // to a fixed ERROR string before any real DB access when it's missing.
     };
     toolSet = buildToolSet(ctx, [], undefined);
@@ -70,24 +80,6 @@ describe('agentToolSet DB-action mutation circuit breaker (checkpoint 1)', () =>
     expect(blocked).toContain('query_database');
 
     const different = await toolSet.query_database.execute({ sql: 'SELECT * FROM gadgets' }, toolOpts);
-    expect(different).not.toContain('BLOCKED');
-    expect(different).toBe(NO_USER_CTX_DB_ERROR);
-  });
-
-  it('confirm_database_change: resolves its key from the staged SQL (not its own ephemeral confirmationId) -- 3 identical failures on the same staged SQL block the next confirm, differently-staged SQL is not blocked', async () => {
-    const sql = 'DROP TABLE widgets';
-    const key = deriveDbMutationKey('query_database', { sql }, ctx)!;
-    ctx.mutationFailureStreak = new Map([[`confirm_database_change:${key}`, { message: NO_USER_CTX_DB_ERROR, count: 3 }]]);
-
-    // A fresh confirmationId each time (as query_database.ts mints), staged
-    // for the SAME sql text -- proves the key survives the ephemeral id.
-    ctx.pendingDbChanges = new Map([['confirmation-1', { sql, createdAt: Date.now() }]]);
-    const blocked = await toolSet.confirm_database_change.execute({ confirmationId: 'confirmation-1' }, toolOpts);
-    expect(blocked).toContain('BLOCKED (repeated identical failure)');
-    expect(blocked).toContain('confirm_database_change');
-
-    ctx.pendingDbChanges.set('confirmation-2', { sql: 'DROP TABLE gadgets', createdAt: Date.now() });
-    const different = await toolSet.confirm_database_change.execute({ confirmationId: 'confirmation-2' }, toolOpts);
     expect(different).not.toContain('BLOCKED');
     expect(different).toBe(NO_USER_CTX_DB_ERROR);
   });

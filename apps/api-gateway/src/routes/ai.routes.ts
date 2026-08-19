@@ -4,7 +4,7 @@ import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { getLlmControlState, getUserPlanTier } from '../services/llm-control.service.js';
 import { testAndAutoDisableProviders, getLastHealthResults } from '../services/llm-health.service.js';
-import { runAgentLoop, restoreSnapshot } from '../services/agentLoopService.js';
+import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
 import { checkUsageQuota } from '../services/billing.service.js';
 import { checkSemanticCache } from '../services/agentSemanticCache.js';
 import { DEFAULT_FREE_MODEL } from '../config/models.js';
@@ -676,13 +676,15 @@ const HISTORY_TOKEN_BUDGET: Record<string, number> = {
 // Supports both authenticated users and guest (unauthenticated) users.
 // Guests must provide a `fingerprint` and are limited to GUEST_MAX_REQUESTS total.
 router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-    const { prompt, projectId, orgId, existingFiles, model, mode, history, olderSummary, attachments, fingerprint } = req.body as {
+    const { prompt, projectId, orgId, existingFiles, model, mode, chatMode, history, olderSummary, attachments, fingerprint } = req.body as {
         prompt?: string;
         projectId?: string;
         orgId?: string;
         existingFiles?: Array<{ path: string; content: string }>;
         model?: string;
         mode?: 'build' | 'plan';
+        /** User-selected chat mode from the editor's mode toggle -- see AgentContext.chatMode. */
+        chatMode?: 'normal' | 'admin';
         history?: Array<{ role: 'user' | 'assistant'; content: string }>;
         olderSummary?: string;
         attachments?: Array<{
@@ -1215,12 +1217,13 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             }
         }
 
-        const buildAgentLoopParams = (model: string) => ({
+        const buildAgentLoopParams = (model: string): AgentRunParams => ({
             prompt,
             projectId,
             appPath,
             model,
             mode: effectiveMode,
+            chatMode: chatMode === 'admin' ? 'admin' : 'normal',
             approvedPlanSteps,
             existingFiles: Array.isArray(existingFiles) ? existingFiles : [],
             history: (() => {

@@ -52,6 +52,19 @@ const MICRO_EXCLUDED_TOOLS = new Set([
   'push_to_github', 'publish_site',
 ]);
 
+// Direct database access (2026-08-19): query_database runs arbitrary SQL --
+// DDL and DML, service-role, no per-statement scope -- against a real
+// customer's tenant database. Available only when the chat session is
+// explicitly in admin mode (see AgentContext.chatMode); a normal development
+// session gets everything else (file edits, edge functions, secrets) but
+// never direct DB writes. confirm_database_change is EXCLUDED even in admin
+// mode -- see query_database.ts and the admin-sql routes for why: a
+// dangerous statement is staged to a durable table and can only be executed
+// by a human clicking confirm in the chat UI, never by the agent confirming
+// its own pending change in the same run.
+const ADMIN_ONLY_TOOLS = new Set(['query_database', 'test_database_function', 'provision_database']);
+const AGENT_NEVER_CONFIRMS_TOOLS = new Set(['confirm_database_change']);
+
 export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: string): ToolSet {
   // Expose the tier to tools (read_file's truncated-view-first gating needs it).
   ctx.tier = tier;
@@ -88,7 +101,10 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
     pushToGithubTool,
     publishSiteTool,
     ...(ctx.ecgMcp ? [searchOrgKnowledgeTool] : []),
-  ].filter((def) => tier !== 'micro' || !MICRO_EXCLUDED_TOOLS.has(def.name));
+  ]
+    .filter((def) => tier !== 'micro' || !MICRO_EXCLUDED_TOOLS.has(def.name))
+    .filter((def) => !AGENT_NEVER_CONFIRMS_TOOLS.has(def.name))
+    .filter((def) => ctx.chatMode === 'admin' || !ADMIN_ONLY_TOOLS.has(def.name));
 
   // ── Per-run routing/budget state (buildToolSet is called once per run) ──
   // Serial-edit detector (2026-08-09 logo incident): the agent replaced one

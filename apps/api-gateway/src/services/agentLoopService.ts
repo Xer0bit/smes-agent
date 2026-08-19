@@ -210,6 +210,14 @@ export interface AgentRunParams {
   /** Runtime mode selected by backend orchestration */
   mode?: 'build' | 'plan';
   /**
+   * Chat mode the USER explicitly selected in the editor UI: 'normal'
+   * (default) is regular development work; 'admin' additionally exposes
+   * direct database tools (query_database, etc.) for real database/user
+   * fixes -- see AgentContext.chatMode and agentToolSet.ts's ADMIN_ONLY_TOOLS.
+   * Distinct from `mode` above (build/plan orchestration), hence the name.
+   */
+  chatMode?: 'normal' | 'admin';
+  /**
    * Ordered steps from an approved agent_plans row for this project, if one
    * exists when a build run starts (see ai.routes.ts's build-mode trigger).
    * Injected as a checklist into the build system prompt -- the loop still
@@ -353,10 +361,10 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
 }
 
 async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResult> {
-  const { prompt, projectId, appPath, model, mode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, sink, userId, abortSignal, agentLockToken, approvedPlanSteps } = params;
+  const { prompt, projectId, appPath, model, mode, chatMode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, sink, userId, abortSignal, agentLockToken, approvedPlanSteps } = params;
   const _innerStartedAtMs = Date.now();
   logger.info('_runAgentLoopInner: invoked', {
-    projectId, userId, appPath, model, mode,
+    projectId, userId, appPath, model, mode, chatMode,
     promptLength: prompt?.length ?? 0,
     promptPreview: prompt?.slice(0, 300),
     existingFilesCount: existingFiles?.length ?? 0,
@@ -730,6 +738,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     appPath,
     projectId,
     userId,
+    chatMode: chatMode === 'admin' ? 'admin' : 'normal',
     readFiles: new Set<string>(),
     pendingPreviewFiles: new Map<string, string>(),
     mutationFailureStreak: new Map<string, { message: string; count: number }>(),
@@ -3633,11 +3642,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             `As written, those fetches will silently return an empty array/no rows to every visitor   the anon ` +
             `role has no SELECT grant on a table with RLS enabled and zero policies. You must do ONE of these ` +
             `before finishing:\n` +
-            `  1. If the data is genuinely meant to be public, call query_database with ` +
-            `\`CREATE POLICY <name> ON <schema>.<table> FOR SELECT TO <schema>_anon USING (<condition, e.g. true>);\` ` +
-            `then confirm it via confirm_database_change.\n` +
-            `  2. If the data should NOT be public, remove the direct fetch and move it into an edge function via ` +
-            `write_edge_function instead.\n` +
+            `  1. If \`query_database\` is in your current tools (Admin mode) AND the data is genuinely meant to be ` +
+            `public, call it with \`CREATE POLICY <name> ON <schema>.<table> FOR SELECT TO <schema>_anon USING ` +
+            `(<condition, e.g. true>);\` -- this stages the change, tell the user to confirm it in the chat UI; you ` +
+            `cannot confirm it yourself.\n` +
+            `  2. Otherwise (Normal mode, or the data should NOT be public), remove the direct fetch and move it ` +
+            `into an edge function via write_edge_function instead.\n` +
             `Do not restate your closing summary until you've done one of these for every table listed above.`,
         },
       ];

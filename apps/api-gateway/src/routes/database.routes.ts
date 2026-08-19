@@ -501,4 +501,95 @@ router.post('/query', dbQueryLimiter, async (req: AuthenticatedRequest, res: Res
   }
 });
 
+// ── Admin-mode SQL: agent stages, only a human confirms ──────────────────────
+// query_database.ts (agent tool, admin-mode only) stages a dangerous
+// statement (schema-mutating, or an unqualified UPDATE/DELETE) as a row here
+// instead of executing it. The agent has NO tool that can confirm its own
+// pending change (see agentToolSet.ts's AGENT_NEVER_CONFIRMS_TOOLS) -- only
+// this route, triggered by a real click in the chat UI, can execute it.
+
+// ── GET /api/v1/database/admin-sql/pending ───────────────────────────────────
+router.get('/admin-sql/pending', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const projectId = getProjectId(req);
+  try {
+    if (!projectId) { res.status(400).json({ error: 'project_id required' }); return; }
+    if (!(await requireProjectEdit(req, res, projectId))) return;
+    const { data, error } = await supabase
+      .from('admin_sql_pending_changes')
+      .select('id, sql_text, status, created_at, staged_by_user_id')
+      .eq('project_id', projectId)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    res.json({ pending: data ?? [] });
+  } catch (err) {
+    next(createError(safeErrorMessage(err), 500, projectId));
+  }
+});
+
+// ── POST /api/v1/database/admin-sql/:id/confirm ──────────────────────────────
+// Executes a staged admin SQL change. Requires edit access to the project the
+// change was staged against -- same bar as query_database itself (any
+// authenticated collaborator, not owner-only), re-checked here independently
+// of whoever staged it, since the confirming user may be a different
+// collaborator than the one chatting with the agent.
+router.post('/admin-sql/:id/confirm', dbQueryLimiter, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  try {
+    const { data: pending, error: fetchErr } = await supabase
+      .from('admin_sql_pending_changes')
+      .select('id, project_id, sql_text, status')
+      .eq('id', id)
+      .maybeSingle();
+    if (fetchErr) throw new Error(fetchErr.message);
+    if (!pending) { res.status(404).json({ error: 'No pending admin SQL change found for this id.' }); return; }
+    if (pending.status !== 'pending') { res.status(409).json({ error: `This change is already ${pending.status}.` }); return; }
+
+    if (!(await requireProjectEdit(req, res, pending.project_id))) return;
+    if (!(await requirePaidPlan(req, res))) return;
+
+    try {
+      const result = await databaseService.runQuery(req.user!.id, pending.sql_text, 'service', pending.project_id);
+      await supabase.from('admin_sql_pending_changes').update({
+        status: 'executed', executed_at: new Date().toISOString(), executed_by_user_id: req.user!.id,
+      }).eq('id', id);
+      res.json({ success: true, ...result });
+    } catch (execErr) {
+      const msg = (execErr as Error).message;
+      await supabase.from('admin_sql_pending_changes').update({
+        status: 'rejected', executed_at: new Date().toISOString(), executed_by_user_id: req.user!.id, error_message: msg,
+      }).eq('id', id);
+      // Raw message intentionally NOT sanitized: same reasoning as /query --
+      // the confirming user needs the real Postgres error to understand why
+      // the change they just approved failed.
+      res.status(500).json({ error: msg });
+    }
+  } catch (err) {
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ── POST /api/v1/database/admin-sql/:id/reject ───────────────────────────────
+router.post('/admin-sql/:id/reject', async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  try {
+    const { data: pending, error: fetchErr } = await supabase
+      .from('admin_sql_pending_changes')
+      .select('id, project_id, status')
+      .eq('id', id)
+      .maybeSingle();
+    if (fetchErr) throw new Error(fetchErr.message);
+    if (!pending) { res.status(404).json({ error: 'No pending admin SQL change found for this id.' }); return; }
+    if (pending.status !== 'pending') { res.status(409).json({ error: `This change is already ${pending.status}.` }); return; }
+    if (!(await requireProjectEdit(req, res, pending.project_id))) return;
+
+    await supabase.from('admin_sql_pending_changes').update({
+      status: 'rejected', executed_at: new Date().toISOString(), executed_by_user_id: req.user!.id,
+    }).eq('id', id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 export default router;

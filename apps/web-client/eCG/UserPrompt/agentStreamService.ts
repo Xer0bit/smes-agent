@@ -118,6 +118,15 @@ export async function streamAgentGeneration(params: {
   model?: string;
   /** 'build' (default) or 'plan'   handled server-side */
   mode?: 'build' | 'plan';
+  /**
+   * User-selected chat mode from the editor's mode toggle: 'normal'
+   * (default) is regular development work, no direct database access.
+   * 'admin' additionally lets the agent stage arbitrary SQL against the
+   * project's hosted database (query_database) -- any resulting dangerous
+   * statement still requires a human to click confirm, the agent can never
+   * execute it itself. See AgentContext.chatMode server-side.
+   */
+  chatMode?: 'normal' | 'admin';
   /** Recent conversation turns (last 6 messages, cleaned) */
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
   /** One-line bullet summary of turns older than the history window */
@@ -146,7 +155,7 @@ export async function streamAgentGeneration(params: {
   callbacks: AgentStreamCallbacks;
   signal?: AbortSignal;
 }): Promise<GenerationResponse> {
-  const { prompt, projectId, orgId, existingFiles, model, mode, history, olderSummary, attachments, fingerprint, retryOnLock, callbacks, signal } = params;
+  const { prompt, projectId, orgId, existingFiles, model, mode, chatMode, history, olderSummary, attachments, fingerprint, retryOnLock, callbacks, signal } = params;
 
   // Get session; if access token is missing, attempt a silent refresh before giving up.
   let sessionData = (await lovableCloud.auth.getSession()).data.session;
@@ -178,7 +187,7 @@ export async function streamAgentGeneration(params: {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const bodyPayload: Record<string, unknown> = { prompt, projectId, existingFiles, model, mode, history, olderSummary, attachments };
+  const bodyPayload: Record<string, unknown> = { prompt, projectId, existingFiles, model, mode, chatMode, history, olderSummary, attachments };
   if (orgId) {
     bodyPayload.orgId = orgId;
   }
