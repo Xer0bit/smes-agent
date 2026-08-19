@@ -2129,18 +2129,30 @@ export default App;
             // transform, and every agent push hits this route.
             // Only REAL build breakage gates preview health and the agent's
             // repair loop, and it's the only check that runs before we respond.
+            let rolledBack = false;
             if (fastCheckErrors.length > 0) {
                 console.warn(`[${projectId}] Build errors: ${fastCheckErrors.length} issue(s)   agent will repair`);
                 setProjectErrors(projectId, fastCheckErrors, 'build');
-                // Deliberately NOT reloading the browser here (see the
-                // deferReload comment above materializeProjectFiles' call) --
-                // files are on disk for the agent's own repair pass to read
-                // and fix, but the user keeps looking at the last version that
-                // was known to build, not this broken one. It goes live the
-                // moment a future push both touches a loaded module AND has
-                // zero fastCheckErrors.
+                // Restore src/ to the pre-write snapshot (2026-08-19): the
+                // agent's own working files live separately, on its own host
+                // (ctx.appPath) -- this project's copy on THIS disk exists
+                // purely to serve the live preview, so rolling it back here
+                // doesn't touch what the agent reads/fixes next. Without this,
+                // withholding the reload (below) only protected an ALREADY-
+                // OPEN tab; a hard refresh, a new tab, or this Vite instance
+                // simply restarting (LRU eviction, idle timeout) would still
+                // serve the broken files sitting on disk. Rolling back means
+                // disk always reflects the last known-good state, so ANY
+                // fresh load is genuinely stable, not just the live one.
+                if (hasSnapshot) {
+                    rolledBack = rollbackProjectSrc(projectRoot);
+                }
+                // No reload broadcast either way: if rollback succeeded,
+                // nothing actually changed from the browser's perspective;
+                // if it didn't (e.g. no prior src/ to snapshot -- first-ever
+                // build), there's still nothing good to show yet.
                 if (shouldReload) {
-                    console.log(`[${projectId}] Reload withheld -- this push has ${fastCheckErrors.length} build error(s), keeping the last stable version visible`);
+                    console.log(`[${projectId}] Reload withheld -- this push had ${fastCheckErrors.length} build error(s)${rolledBack ? ', src/ rolled back to the last stable version' : ''}`);
                 }
             } else {
                 setProjectErrors(projectId, []);
@@ -2151,10 +2163,14 @@ export default App;
             }
             cleanupSnapshot(projectRoot);
 
-            // Return success   files are promoted to live preview
+            // Return success   files are promoted to live preview, unless
+            // fastCheckErrors triggered a rollback above (rolledBack: true),
+            // in which case the LIVE preview still reflects the previous
+            // revision, not this push's content.
             res.json({
                 success: true,
-                promoted: true,
+                promoted: !rolledBack,
+                rolledBack,
                 filesProcessed: files.length,
                 staleFilesPruned: removedStaleFiles.length,
                 pruneSkippedReason,
