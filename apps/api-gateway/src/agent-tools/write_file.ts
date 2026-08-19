@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import ts from 'typescript';
-import { ToolDefinition, AgentContext, safeJoin, escapeXmlAttr, extractAnonFetchTables } from './types.js';
+import { ToolDefinition, AgentContext, safeJoin, escapeXmlAttr, extractAnonFetchTables, isOpaqueBinaryPath } from './types.js';
 import { sanitizeFileContent, checkSyntaxBalance } from './sanitize.js';
 
 // Paths that are pre-seeded by the base template   re-writing them wastes a step.
@@ -66,6 +66,16 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
     if (BLOCKED_DIRS.includes(topSegment)) {
       return `ERROR: Cannot write to "${args.path}"   writes to "${topSegment}/" are not permitted. ` +
         `Only src/, public/, and root config files are writable.`;
+    }
+
+    // ── Guard: never let generated text content clobber an opaque binary file ──
+    // write_file's content is always plain text -- there is no way for the
+    // model to produce valid bytes for an image/font/media file this way.
+    // place_asset is the correct tool for adding or replacing one.
+    if (isOpaqueBinaryPath(normalizedPath)) {
+      return `ERROR: Cannot write "${args.path}" with write_file   this is a binary asset (image/font/media), ` +
+        `and write_file only ever writes plain text, which would corrupt it. ` +
+        `Use the place_asset tool to add or replace binary assets instead.`;
     }
 
     // ── Guard: skip pre-built scaffold files that are already on disk ────────────

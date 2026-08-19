@@ -11,6 +11,39 @@ import type { GeneratedFile } from '@/types/shared';
 
 const WorkspaceContext = createContext<WorkspaceContextType | null>(null);
 
+// The head can move under a save repeatedly, not just once -- an active agent
+// run creates a burst of revisions in quick succession, and a single
+// rebase-then-retry loses that race every time (confirmed live 2026-08-19,
+// project dfe41091: a browser tab's autosave and a concurrent agent run
+// traded stale_parent rejections back and forth until the save just gave up).
+// Bounded retry with a short backoff gives a save a real chance to land once
+// the burst quiets down, instead of failing outright the moment two writers
+// overlap. Pulled out of saveToDatabase so it's unit-testable without a full
+// React/Supabase harness.
+export async function retryOnStaleParent<T>(
+  attemptSave: () => Promise<T>,
+  isStaleParentError: (err: unknown) => boolean,
+  rebase: () => Promise<void>,
+  options: { maxRetries?: number; backoffMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<T> {
+  const maxRetries = options.maxRetries ?? 5;
+  const backoffMs = options.backoffMs ?? 200;
+  const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await attemptSave();
+    } catch (err) {
+      if (!isStaleParentError(err) || attempt >= maxRetries) throw err;
+      attempt += 1;
+      console.warn(`[WorkspaceContext] Save rejected as stale   rebasing onto new head (attempt ${attempt}/${maxRetries})`);
+      await rebase();
+      await sleep(backoffMs * attempt);
+    }
+  }
+}
+
 interface WorkspaceProviderProps {
     projectId: string;
     initialFiles?: Array<{ path: string; content: string }>;
@@ -163,20 +196,14 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
                 expected_parent_id: baseRevisionIdRef.current,
             });
 
-            let newRevisionId: string;
-            try {
-                newRevisionId = await attemptSave();
-            } catch (err) {
-                if (!isStaleParentError(err)) throw err;
-                // The head moved under us (an agent run finished, or another
-                // tab saved). Rebase: adopt the new head as parent and retry
-                // once. Only this tab's dirty files ride the retry --
-                // everything else is carried by reference from the NEW head's
-                // manifest, so the newer work is preserved, not clobbered.
-                console.warn('[WorkspaceContext] Save rejected as stale   rebasing onto new head');
-                baseRevisionIdRef.current = await fetchHeadRevisionId();
-                newRevisionId = await attemptSave();
-            }
+            // Only this tab's dirty files ride any retry -- everything else is
+            // carried by reference from the NEW head's manifest each time, so
+            // concurrent work from another writer is preserved, not clobbered.
+            const newRevisionId = await retryOnStaleParent(
+                attemptSave,
+                isStaleParentError,
+                async () => { baseRevisionIdRef.current = await fetchHeadRevisionId(); },
+            );
             baseRevisionIdRef.current = newRevisionId;
 
             // Also update project's latest_generated_code for backwards compatibility

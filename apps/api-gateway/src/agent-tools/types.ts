@@ -374,6 +374,28 @@ export function safeJoin(base: string, relative: string): string {
   return resolved;
 }
 
+// ─── Opaque-binary write guard ───────────────────────────────────────────────
+// write_file/edit_file take `content: string` -- the model can only ever
+// generate text, so any write to a genuinely opaque binary format (raster
+// images, fonts, audio/video, archives) can only be a hallucinated or
+// accidental overwrite, never legitimate content. Confirmed live 2026-08-19:
+// nothing in either tool guarded this, so a stray write_file/edit_file call
+// against an existing image path silently UTF-8-mangled or blanked it --
+// place_asset.ts is the one tool that writes these correctly (raw
+// arrayBuffer bytes), and is the only legitimate way to add or replace one.
+// .svg is deliberately excluded: it's plain XML text, and the model can
+// legitimately author one directly.
+const OPAQUE_BINARY_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp', '.bmp', '.avif',
+  '.woff', '.woff2', '.ttf', '.eot', '.otf',
+  '.mp4', '.mp3', '.wav', '.ogg', '.webm', '.mov',
+  '.pdf', '.zip',
+]);
+
+export function isOpaqueBinaryPath(relativePath: string): boolean {
+  return OPAQUE_BINARY_EXTS.has(path.extname(relativePath).toLowerCase());
+}
+
 // ─── XML escape helpers ──────────────────────────────────────────────────────
 
 export function escapeXmlAttr(value: string): string {

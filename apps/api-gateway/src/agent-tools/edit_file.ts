@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import { z } from 'zod';
 import ts from 'typescript';
-import { ToolDefinition, AgentContext, safeJoin, extractAnonFetchTables } from './types.js';
+import { ToolDefinition, AgentContext, safeJoin, extractAnonFetchTables, isOpaqueBinaryPath } from './types.js';
 import { sanitizeFileContent, checkSyntaxBalance } from './sanitize.js';
 
 const schema = z.object({
@@ -150,6 +150,18 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
   getConsentPreview: (args) => `Edit ${args.path}`,
 
   execute: async (args, ctx: AgentContext) => {
+    // ── Guard: never read/rewrite an opaque binary file as text ────────────────
+    // fs.readFileSync(path, 'utf8') on an image/font/media file UTF-8-mangles
+    // its bytes into the in-memory `original` string before any search/replace
+    // even runs; a matching (or fuzzy-matching) search block would then write
+    // that corrupted content back to disk. place_asset is the correct tool for
+    // binary assets -- edit_file's content is always plain text.
+    if (isOpaqueBinaryPath(args.path)) {
+      return `ERROR: Cannot edit "${args.path}" with edit_file   this is a binary asset (image/font/media), ` +
+        `and edit_file only ever works with plain text, which would corrupt it. ` +
+        `Use the place_asset tool to replace binary assets instead.`;
+    }
+
     const fullPath = safeJoin(ctx.appPath, args.path);
 
     let original: string;
