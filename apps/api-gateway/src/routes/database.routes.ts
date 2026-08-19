@@ -533,6 +533,13 @@ router.get('/admin-sql/pending', async (req: AuthenticatedRequest, res: Response
 // authenticated collaborator, not owner-only), re-checked here independently
 // of whoever staged it, since the confirming user may be a different
 // collaborator than the one chatting with the agent.
+//
+// Deliberately NO requirePaidPlan check here (unlike /query below): the
+// agent's own query_database tool that STAGES a change has never had a
+// plan-tier gate, so requiring one only at confirm time let a free-plan
+// project stage a change through chat and then 403 the one human action
+// that was supposed to complete it (confirmed live 2026-08-19). Confirm
+// should never be MORE restrictive than the staging step it's completing.
 router.post('/admin-sql/:id/confirm', dbQueryLimiter, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   try {
@@ -546,7 +553,6 @@ router.post('/admin-sql/:id/confirm', dbQueryLimiter, async (req: AuthenticatedR
     if (pending.status !== 'pending') { res.status(409).json({ error: `This change is already ${pending.status}.` }); return; }
 
     if (!(await requireProjectEdit(req, res, pending.project_id))) return;
-    if (!(await requirePaidPlan(req, res))) return;
 
     try {
       const result = await databaseService.runQuery(req.user!.id, pending.sql_text, 'service', pending.project_id);
