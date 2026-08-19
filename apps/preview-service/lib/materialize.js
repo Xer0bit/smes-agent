@@ -917,7 +917,7 @@ function isScaffoldOnly(projectRoot) {
     return files.every(f => scaffoldNames.has(f));
 }
 
-async function materializeProjectFiles(projectId, projectRoot, files, { dryRun = false } = {}) {
+async function materializeProjectFiles(projectId, projectRoot, files, { dryRun = false, deferReload = false } = {}) {
     const userFilePaths = new Set(files.map((file) => file.path.replace(/^\/+/, '')));
     const allFixedIssues = [];
     const validationErrors = [];
@@ -1126,6 +1126,7 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
     }
 
     const wroteFiles = [...binaryWroteFiles];
+    let shouldReload = false;
     if (!dryRun) {
         for (const prepared of preparedFiles) {
             if (prepared.shouldSkipWrite) {
@@ -1161,7 +1162,24 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
             const touchesLoadedModule = isChildInstance(projectIdInstance)
                 ? true
                 : filesTouchLoadedModule(projectIdInstance.vite, wroteFiles);
-            if (touchesLoadedModule) {
+            shouldReload = touchesLoadedModule;
+            // options.deferReload (2026-08-19): the /update route's own build
+            // check (quickViteBuildCheck) only runs AFTER this write, using the
+            // files now on disk -- it can't gate a reload decision already made
+            // in here. When set, this function still writes the files (the
+            // agent's own diagnosis/fix tools need the real on-disk state to
+            // work against) but leaves the actual browser-facing reload to the
+            // caller, so a batch that just introduced a known build error never
+            // replaces the last-good version the user is looking at. Without
+            // this, a push that broke the app still went live immediately, and
+            // only the SEPARATE error-status poll surfaced it after the fact --
+            // "always show a stable version, never a broken one" requires
+            // gating the reload itself, not just reporting on it afterward.
+            if (deferReload) {
+                if (!touchesLoadedModule) {
+                    console.log(`[${projectId}] Skipped reload -- ${wroteFiles.length} file(s) written, none currently loaded by the browser`);
+                }
+            } else if (touchesLoadedModule) {
                 sendFullReload(projectIdInstance, projectId);
             } else {
                 console.log(`[${projectId}] Skipped reload -- ${wroteFiles.length} file(s) written, none currently loaded by the browser`);
@@ -1175,7 +1193,7 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
 
     const contentHash = hashFileSet(hashedFiles);
 
-    return { userFilePaths, allFixedIssues, validationErrors, wroteFiles, contentHash };
+    return { userFilePaths, allFixedIssues, validationErrors, wroteFiles, contentHash, shouldReload };
 }
 
 // Whether a full page reload is actually needed for a batch of written files

@@ -1985,8 +1985,16 @@ async function startMainServer() {
         const hasSnapshot = snapshotProjectSrc(projectRoot);
 
         try {
-            const materialized = await materializeProjectFiles(projectId, projectRoot, files);
-            const { userFilePaths, allFixedIssues, validationErrors, contentHash } = materialized;
+            // deferReload: this route runs its own build check (fastCheckErrors,
+            // below) AFTER materialize writes files -- that check can't gate a
+            // reload decision already made inside materializeProjectFiles. Files
+            // still get written unconditionally (the agent's own diagnosis/fix
+            // tools need the real on-disk state), but the actual browser-facing
+            // reload is decided below, once fastCheckErrors is known -- so a
+            // batch that just broke the build never replaces the last-good
+            // version the user is looking at with a broken one.
+            const materialized = await materializeProjectFiles(projectId, projectRoot, files, { deferReload: true });
+            const { userFilePaths, allFixedIssues, validationErrors, contentHash, shouldReload } = materialized;
 
             // D-1: now that the actual materialized content (post preprocess/
             // repair) is known, backfill it onto this update's dedupe-cache
@@ -2124,8 +2132,22 @@ export default App;
             if (fastCheckErrors.length > 0) {
                 console.warn(`[${projectId}] Build errors: ${fastCheckErrors.length} issue(s)   agent will repair`);
                 setProjectErrors(projectId, fastCheckErrors, 'build');
+                // Deliberately NOT reloading the browser here (see the
+                // deferReload comment above materializeProjectFiles' call) --
+                // files are on disk for the agent's own repair pass to read
+                // and fix, but the user keeps looking at the last version that
+                // was known to build, not this broken one. It goes live the
+                // moment a future push both touches a loaded module AND has
+                // zero fastCheckErrors.
+                if (shouldReload) {
+                    console.log(`[${projectId}] Reload withheld -- this push has ${fastCheckErrors.length} build error(s), keeping the last stable version visible`);
+                }
             } else {
                 setProjectErrors(projectId, []);
+                if (shouldReload) {
+                    const instance = activeServers.get(projectId);
+                    if (instance) sendFullReload(instance, projectId);
+                }
             }
             cleanupSnapshot(projectRoot);
 
