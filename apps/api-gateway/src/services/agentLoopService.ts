@@ -48,6 +48,7 @@ import { buildToolSet } from './agentToolSet.js';
 import { buildFileTree, getProjectFileTree, SKIP_DIRS } from './agentFileTree.js';
 import { acquireProjectLock, cleanupProjectLock } from './agentProjectLock.js';
 import { parseXmlOperation, parseXmlResponse, type OperationStore } from './agentXmlParser.js';
+import { logger } from '../utils/logger.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -71,9 +72,13 @@ const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
 function readFileForSync(fullPath: string): string {
   const ext = path.extname(fullPath).toLowerCase();
   if (BINARY_EXTS_SET.has(ext)) {
-    return `${BINARY_SENTINEL}${fs.readFileSync(fullPath).toString('base64')}`;
+    const buf = fs.readFileSync(fullPath);
+    logger.debug('readFileForSync: read binary file (base64-encoded)', { fullPath, ext, bytes: buf.length });
+    return `${BINARY_SENTINEL}${buf.toString('base64')}`;
   }
-  return fs.readFileSync(fullPath, 'utf8');
+  const content = fs.readFileSync(fullPath, 'utf8');
+  logger.debug('readFileForSync: read text file', { fullPath, ext, chars: content.length });
+  return content;
 }
 
 // Self-healing backfill for projects that had edge functions written before
@@ -83,24 +88,50 @@ function readFileForSync(fullPath: string): string {
 // actually used, instead of a one-off bulk migration touching every live
 // preview at once.
 async function backfillEdgeFunctionMirrors(appPath: string, projectId: string): Promise<void> {
-  if (!supabase) return;
+  const startedAtMs = Date.now();
+  logger.debug('backfillEdgeFunctionMirrors: invoked', { projectId, appPath, hasSupabase: Boolean(supabase) });
+  if (!supabase) {
+    logger.debug('backfillEdgeFunctionMirrors: no supabase client configured, skipping', { projectId });
+    return;
+  }
   try {
     const { data: fns } = await supabase
       .from('edge_functions')
       .select('name, code')
       .eq('project_id', projectId);
-    if (!fns || fns.length === 0) return;
+    if (!fns || fns.length === 0) {
+      logger.debug('backfillEdgeFunctionMirrors: no edge_functions rows for project, nothing to backfill', { projectId });
+      return;
+    }
+    logger.debug('backfillEdgeFunctionMirrors: found edge_functions rows', { projectId, count: fns.length });
 
+    let mirroredCount = 0;
+    let skippedExistingCount = 0;
     for (const fn of fns) {
       if (!fn.name || typeof fn.code !== 'string') continue;
       const mirrorPath = safeJoin(appPath, `${EDGE_FUNCTIONS_DIR}/${fn.name}.js`);
-      if (fs.existsSync(mirrorPath)) continue;
+      if (fs.existsSync(mirrorPath)) { skippedExistingCount++; continue; }
       try {
         fs.mkdirSync(path.dirname(mirrorPath), { recursive: true });
         fs.writeFileSync(mirrorPath, fn.code, 'utf8');
-      } catch { /* best-effort   a write failure here shouldn't block the run */ }
+        mirroredCount++;
+        logger.debug('backfillEdgeFunctionMirrors: wrote missing mirror file', { projectId, fnName: fn.name, mirrorPath });
+      } catch (writeErr: any) {
+        // best-effort   a write failure here shouldn't block the run
+        logger.debug('backfillEdgeFunctionMirrors: mirror write failed (non-fatal)', {
+          projectId, fnName: fn.name, mirrorPath, error: writeErr?.message,
+        });
+      }
     }
-  } catch { /* best-effort   DB unavailable shouldn't block the run */ }
+    logger.debug('backfillEdgeFunctionMirrors: done', {
+      projectId, mirroredCount, skippedExistingCount, durationMs: Date.now() - startedAtMs,
+    });
+  } catch (err: any) {
+    // best-effort   DB unavailable shouldn't block the run
+    logger.debug('backfillEdgeFunctionMirrors: failed (non-fatal, DB likely unavailable)', {
+      projectId, error: err?.message, durationMs: Date.now() - startedAtMs,
+    });
+  }
 }
 
 // ─── Per-project KB batch-index guard ────────────────────────────────────────
@@ -132,7 +163,9 @@ export { snapshotProject, restoreSnapshot };
 function computeEcoCost(costUsd: number): number {
   const raw = costUsd / 0.05;
   const clamped = Math.min(2.0, Math.max(0.5, raw));
-  return Math.round(clamped * 10) / 10;
+  const eco = Math.round(clamped * 10) / 10;
+  logger.debug('computeEcoCost: computed', { costUsd, raw, clamped, eco });
+  return eco;
 }
 
 // ─── Stuck-loop content signal ──────────────────────────────────────────────
@@ -149,7 +182,11 @@ export function thinkContentSimilarity(a: string, b: string): number {
   let intersection = 0;
   for (const w of setA) if (setB.has(w)) intersection++;
   const union = setA.size + setB.size - intersection;
-  return union === 0 ? 0 : intersection / union;
+  const similarity = union === 0 ? 0 : intersection / union;
+  logger.debug('thinkContentSimilarity: computed', {
+    aPreview: a.slice(0, 100), bPreview: b.slice(0, 100), setASize: setA.size, setBSize: setB.size, similarity,
+  });
+  return similarity;
 }
 
 // Language that explicitly explains why a prior diagnosis was wrong, as opposed
@@ -269,28 +306,70 @@ export interface AgentRunResult {
 }
 
 export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResult> {
-  const { projectId } = params;
+  const { projectId, userId, model, mode } = params;
+  const startedAtMs = Date.now();
+  logger.info('runAgentLoop: invoked', {
+    projectId, userId, model, mode,
+    promptLength: params.prompt?.length ?? 0,
+    promptPreview: params.prompt?.slice(0, 300),
+    historyCount: params.history?.length ?? 0,
+    attachmentCount: params.attachments?.length ?? 0,
+    hasApprovedPlanSteps: Boolean(params.approvedPlanSteps?.length),
+  });
 
   // ── Per-project mutex: prevent interleaved file writes from concurrent runs ──
   const lock = acquireProjectLock(projectId);
+  logger.debug('runAgentLoop: waiting on per-project lock', { projectId });
   await lock.ready;
+  logger.debug('runAgentLoop: acquired per-project lock', { projectId, waitMs: Date.now() - startedAtMs });
   try {
     const result = await _runAgentLoopInner(params);
+    logger.info('runAgentLoop: _runAgentLoopInner returned', {
+      projectId, userId, durationMs: Date.now() - startedAtMs,
+      filesWritten: result.filesToWrite.length, filesDeleted: result.filesToDelete.length,
+      renames: result.renames.length, costUsd: result.costUsd, ecoUsed: result.ecoUsed,
+      stuckAborted: result.stuckAborted, needsAutoContinue: result.needsAutoContinue, runtimeMode: result.runtimeMode,
+    });
     // End-of-turn dead-but-dangerous scan (auth/password edge functions
     // deployed but unreferenced by the frontend). Non-fatal on its own,
     // never blocks or fails the turn -- see edgeFunctionSecurityScan.ts.
+    logger.debug('runAgentLoop: running end-of-turn dead-but-dangerous edge function scan', { projectId });
     await scanForDeadDangerousEdgeFunctions(projectId, params.appPath);
+    logger.info('runAgentLoop: complete', { projectId, userId, durationMs: Date.now() - startedAtMs });
     return result;
+  } catch (err: any) {
+    logger.error('runAgentLoop: failed', {
+      projectId, userId, durationMs: Date.now() - startedAtMs,
+      error: err?.message, stack: err?.stack,
+    });
+    throw err;
   } finally {
     lock.release();
     endNarration(projectId);
     // Clean up the lock chain entry if we're the last in queue
     cleanupProjectLock(projectId);
+    logger.debug('runAgentLoop: released lock and cleaned up narration/lock-chain state', { projectId });
   }
 }
 
 async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResult> {
   const { prompt, projectId, appPath, model, mode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, sink, userId, abortSignal, agentLockToken, approvedPlanSteps } = params;
+  const _innerStartedAtMs = Date.now();
+  logger.info('_runAgentLoopInner: invoked', {
+    projectId, userId, appPath, model, mode,
+    promptLength: prompt?.length ?? 0,
+    promptPreview: prompt?.slice(0, 300),
+    existingFilesCount: existingFiles?.length ?? 0,
+    historyCount: history?.length ?? 0,
+    hasOlderSummary: Boolean(olderSummary),
+    promptIntent,
+    attachmentCount: attachments?.length ?? 0,
+    hasProjectKnowledge: Boolean(projectKnowledge),
+    projectSecretsCount: projectSecrets?.length ?? 0,
+    hasAbortSignal: Boolean(abortSignal),
+    hasAgentLockToken: Boolean(agentLockToken),
+    approvedPlanStepsCount: approvedPlanSteps?.length ?? 0,
+  });
 
   // Start a narration context for this run so the narrator can ground its
   // real-time descriptions in the agent's think() reasoning + user intent.
@@ -336,6 +415,9 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const RUN_TOKEN_CAP = process.env.AGENT_TOKEN_CAP
     ? Math.min(parseInt(process.env.AGENT_TOKEN_CAP, 10), TIER_TOKEN_CAP)
     : TIER_TOKEN_CAP;
+  logger.debug('_runAgentLoopInner: step/token budget resolved', {
+    projectId, tier: _tier ?? 'unset', MAX_STEPS, TIER_TOKEN_CAP, RUN_TOKEN_CAP,
+  });
 
   const boundedPrompt = clampContextSection('User prompt', prompt, MAX_PROMPT_CHARS);
   const boundedOlderSummary = olderSummary
@@ -356,6 +438,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     mode === 'plan' && EXECUTE_CONFIRM_RE.test(prompt.trim()) ? 'build'
     : mode === 'plan' ? 'plan'
     : 'build';
+  logger.debug('_runAgentLoopInner: runtime mode resolved', { projectId, requestedMode: mode, runtimeMode });
 
   let requestedModelId = canonicalizeModelId(model || process.env.AI_MODEL, DEFAULT_PRIMARY_MODEL);
 
@@ -370,18 +453,26 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   );
   if (disabledModelIds.has(requestedModelId)) {
     const substitute = canonicalizeModelId(process.env.AI_FALLBACK_MODEL, DEFAULT_FALLBACK_MODEL);
-    console.warn(`[AgentLoop] Requested model ${requestedModelId} is disabled (AI_DISABLED_MODEL_IDS)   substituting ${substitute}`);
+    logger.warn('[AgentLoop] Requested model is disabled, substituting fallback', {
+      projectId, requestedModelId, substitute, disabledModelIds: [...disabledModelIds],
+    });
     requestedModelId = substitute;
   }
 
   if (requestedModelId === 'deepseek-reasoner') {
+    logger.error('_runAgentLoopInner: requested model does not support tool calling', { projectId, requestedModelId });
     throw new Error('DeepSeek Reasoner (R1) does not support the necessary tool-calling features. Please select deepseek-chat instead.');
   }
 
+  logger.debug('_runAgentLoopInner: resolving provider for model', { projectId, requestedModelId });
   const resolvedModel = resolveProviderWithFallback(requestedModelId);
   const aiProvider = resolvedModel.provider;
   const providerName = resolvedModel.providerName;
   const modelId = resolvedModel.modelId;
+  logger.info('_runAgentLoopInner: provider resolved', {
+    projectId, requestedModelId, resolvedProviderName: providerName, resolvedModelId: modelId,
+    fellBack: modelId !== requestedModelId,
+  });
   // Tracks whether this run ends up on a different provider/model than requested
   // (either right away, e.g. a billing circuit already open, or mid-stream via the
   // recovery paths below). Used to give an honest reason when a run stops early
@@ -398,24 +489,36 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   let projectOrgId: string | null = null;
   let orgIsInternal = false;
   if (supabase) {
-    const { data: projectOrgRow } = await supabase
+    logger.debug('_runAgentLoopInner: looking up project organization', { projectId });
+    const { data: projectOrgRow, error: projectOrgErr } = await supabase
       .from('projects')
       .select('organization_id, organizations!inner(is_internal)')
       .eq('id', projectId)
       .maybeSingle();
+    if (projectOrgErr) {
+      logger.debug('_runAgentLoopInner: project org lookup errored (non-fatal)', { projectId, error: projectOrgErr.message });
+    }
     projectOrgId = (projectOrgRow as any)?.organization_id ?? null;
     orgIsInternal = Boolean((projectOrgRow as any)?.organizations?.is_internal);
+    logger.debug('_runAgentLoopInner: project organization resolved', { projectId, projectOrgId, orgIsInternal });
   }
 
   // ─── agent_runs tracking (fire-and-forget) ───────────────────────────────────
   let agentRunId: string | null = null;
   if (supabase && userId) {
-    const { data } = await supabase
+    logger.debug('_runAgentLoopInner: inserting agent_runs tracking row', { projectId, userId, modelId, projectOrgId });
+    const { data, error: agentRunInsertErr } = await supabase
       .from('agent_runs')
       .insert({ project_id: projectId, user_id: userId, prompt, model: modelId, organization_id: projectOrgId })
       .select('id')
       .single();
+    if (agentRunInsertErr) {
+      logger.warn('_runAgentLoopInner: agent_runs insert failed (non-fatal, run continues untracked)', {
+        projectId, userId, error: agentRunInsertErr.message,
+      });
+    }
     agentRunId = data?.id ?? null;
+    logger.debug('_runAgentLoopInner: agent_runs row created', { projectId, userId, agentRunId });
   }
 
   // Full-activity trace (system prompt, every step, service calls, outcome)
@@ -423,6 +526,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // runTrace.ts. Guests/no-DB runs get a timestamp id so they trace too.
   const tracer = new RunTracer(agentRunId ?? `local-${Date.now()}`, projectId);
   tracer.event('run-config', { prompt: RunTracer.clip(prompt), model: modelId, userId: userId ?? 'guest' });
+  logger.debug('_runAgentLoopInner: run tracer initialized', { projectId, agentRunId: agentRunId ?? `local-${Date.now()}` });
 
   let stepCount = 0;
 
@@ -675,26 +779,40 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // 2026-08-09 as the cause of "my logo disappears when I deploy".
   const collectBinaryAssets = (dir: string): void => {
     let entries: fs.Dirent[];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (dirErr: any) {
+      logger.debug('collectBinaryAssets: readdirSync failed (non-fatal, skipping dir)', { dir, error: dirErr?.message });
+      return;
+    }
     for (const entry of entries) {
       if (SKIP_DIRS.has(entry.name)) continue;
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) { collectBinaryAssets(fullPath); continue; }
       if (!BINARY_EXTS_SET.has(path.extname(entry.name).toLowerCase())) continue;
       const relPath = path.relative(appPath, fullPath);
-      try { preAgentDiskSnapshot.set(relPath, readFileForSync(fullPath)); } catch {}
+      try { preAgentDiskSnapshot.set(relPath, readFileForSync(fullPath)); } catch (readErr: any) {
+        logger.debug('collectBinaryAssets: failed to read binary asset (non-fatal)', { relPath, error: readErr?.message });
+      }
     }
   };
-  try { collectBinaryAssets(appPath); } catch {}
+  try {
+    collectBinaryAssets(appPath);
+    logger.debug('_runAgentLoopInner: binary asset pre-scan complete', { projectId, binaryAssetsFound: preAgentDiskSnapshot.size });
+  } catch (binScanErr: any) {
+    logger.debug('_runAgentLoopInner: binary asset pre-scan failed (non-fatal)', { projectId, error: binScanErr?.message });
+  }
 
   if (_tier === 'micro') {
     // ── MICRO FAST PATH ──────────────────────────────────────────────────────
     // A color/text/spacing change touches exactly one file. Find it with a
     // targeted scan   no full disk read, no import graph, no KB query.
+    logger.debug('_runAgentLoopInner: micro-tier fast path, targeted file scan', { projectId });
     const promptWords = promptLower.split(/[\s,./'"!?()[\]{}]+/).filter(w => w.length > 2);
     const findMentioned = (dir: string): void => {
       let entries: fs.Dirent[];
-      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (dirErr: any) {
+        logger.debug('findMentioned: readdirSync failed (non-fatal)', { dir, error: dirErr?.message });
+        return;
+      }
       for (const entry of entries) {
         if (SKIP_DIRS.has(entry.name)) continue;
         const fullPath = path.join(dir, entry.name);
@@ -703,24 +821,36 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         const relPath = path.relative(appPath, fullPath);
         const fname = entry.name.toLowerCase().replace(/\.(tsx?|jsx?|css)$/, '');
         if (fname && promptWords.some(w => fname.includes(w) || w.includes(fname))) {
-          try { preAgentDiskSnapshot.set(relPath, readFileForSync(fullPath)); } catch {}
+          try { preAgentDiskSnapshot.set(relPath, readFileForSync(fullPath)); } catch (readErr: any) {
+            logger.debug('findMentioned: failed to read matched file (non-fatal)', { relPath, error: readErr?.message });
+          }
         }
       }
     };
-    try { findMentioned(path.join(appPath, 'src')); } catch {}
+    try { findMentioned(path.join(appPath, 'src')); } catch (findErr: any) {
+      logger.debug('_runAgentLoopInner: micro-tier findMentioned scan failed (non-fatal)', { projectId, error: findErr?.message });
+    }
     // If nothing matched by name, grab App.tsx as fallback orientation
     if (preAgentDiskSnapshot.size === 0) {
+      logger.debug('_runAgentLoopInner: micro-tier scan matched nothing, falling back to App.tsx', { projectId });
       const appTsx = path.join(appPath, 'src', 'App.tsx');
       try {
         const rel = path.relative(appPath, appTsx);
         preAgentDiskSnapshot.set(rel, readFileForSync(appTsx));
-      } catch {}
+      } catch (fallbackErr: any) {
+        logger.debug('_runAgentLoopInner: micro-tier App.tsx fallback read failed (non-fatal)', { projectId, error: fallbackErr?.message });
+      }
     }
+    logger.debug('_runAgentLoopInner: micro-tier snapshot complete', { projectId, snapshotFileCount: preAgentDiskSnapshot.size });
   } else {
     // ── FULL DISK SNAPSHOT (fix / edit / feature / build) ────────────────────
+    logger.debug('_runAgentLoopInner: full-tier disk snapshot starting', { projectId, tier: _tier ?? 'unset' });
     const snapDisk = (dir: string) => {
       let entries: fs.Dirent[];
-      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (dirErr: any) {
+        logger.debug('snapDisk: readdirSync failed (non-fatal)', { dir, error: dirErr?.message });
+        return;
+      }
       for (const entry of entries) {
         if (SKIP_DIRS.has(entry.name)) continue;
         if (SNAP_SKIP_FILES.has(entry.name)) continue;
@@ -729,11 +859,18 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         else {
           if (BINARY_EXTS_SET.has(path.extname(entry.name).toLowerCase())) continue; // already collected above
           const relPath = path.relative(appPath, fullPath);
-          try { preAgentDiskSnapshot.set(relPath, readFileForSync(fullPath)); } catch {}
+          try { preAgentDiskSnapshot.set(relPath, readFileForSync(fullPath)); } catch (readErr: any) {
+            logger.debug('snapDisk: failed to read file into snapshot (non-fatal)', { relPath, error: readErr?.message });
+          }
         }
       }
     };
-    try { snapDisk(appPath); } catch {}
+    try {
+      snapDisk(appPath);
+      logger.debug('_runAgentLoopInner: full-tier disk snapshot complete', { projectId, snapshotFileCount: preAgentDiskSnapshot.size });
+    } catch (snapErr: any) {
+      logger.debug('_runAgentLoopInner: full-tier disk snapshot failed (non-fatal)', { projectId, error: snapErr?.message });
+    }
   }
 
   // Unified file source: prefer frontend-sent existingFiles, fall back to disk snapshot.
@@ -746,7 +883,10 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // Skip for micro (snapshot is partial) and fix (no benefit for error diagnosis).
   if (_tier !== 'micro' && _tier !== 'fix' && projectId && !kbBatchIndexedProjects.has(projectId) && fileSources.length > 0) {
     kbBatchIndexedProjects.add(projectId);
-    indexFiles(projectId, fileSources).catch(() => {});
+    logger.debug('_runAgentLoopInner: kicking off background KB batch index for project', { projectId, fileCount: fileSources.length });
+    indexFiles(projectId, fileSources).catch((kbIndexErr: any) => {
+      logger.debug('_runAgentLoopInner: background KB batch index failed (non-fatal)', { projectId, error: kbIndexErr?.message });
+    });
   }
 
   // Build a lightweight import graph   skip for micro (single file, no cross-file analysis needed).
@@ -777,6 +917,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       }
       importGraph.set(f.path, imports);
     }
+    logger.debug('_runAgentLoopInner: import graph built', { projectId, nodeCount: importGraph.size });
   }
 
   // Wire reverseGraph into ctx so tools can emit dependency warnings
@@ -843,6 +984,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // fix agent calls get_build_errors first and reads only the broken file).
   const kbScores = new Map<string, number>(); // path → 0-50 bonus points
   if (_tier !== 'micro' && _tier !== 'fix' && projectId) {
+    logger.debug('_runAgentLoopInner: retrieving relevant files from KB', { projectId, mentionedPathCount: directlyMentioned.size });
     try {
       const kbResults = await Promise.race([
         retrieveRelevantFiles(projectId, prompt, fileSources, {
@@ -855,8 +997,12 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       // Multiply by 80 so a strong KB hit (score 0.8) = 64 pts   enough to beat the
       // criticalFiles baseline (60) and actually influence file selection.
       for (const r of kbResults) kbScores.set(r.path, Math.round(r.score * 80));
-    } catch {
+      logger.debug('_runAgentLoopInner: KB retrieval complete', { projectId, resultCount: kbResults.length });
+    } catch (kbErr: any) {
       // Non-fatal   heuristic sort still works without KB
+      logger.debug('_runAgentLoopInner: KB retrieval failed or timed out (non-fatal, falling back to heuristic sort)', {
+        projectId, error: kbErr?.message,
+      });
     }
   }
 
@@ -937,6 +1083,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     });
   }
 
+  logger.debug('_runAgentLoopInner: context file selection complete', {
+    projectId, sortedFileCount: sortedFiles.length, cappedFileCount: cappedFiles.length,
+    totalContextChars: totalChars, MAX_CONTEXT_CHARS, MAX_CONTEXT_FILES,
+  });
+
   const existingFilesContext = cappedFiles
     .map((f) => `=== ${f.path} ===\n${f.contextContent}`)
     .join('\n\n');
@@ -967,7 +1118,8 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       if (symbols.length === 0) { signatureLines.push(f.path); continue; }
       const sig = symbols.map(s => `${s.name}:${s.kind}`).join(', ');
       signatureLines.push(`${f.path}   ${sig}`);
-    } catch {
+    } catch (symErr: any) {
+      logger.debug('_runAgentLoopInner: extractSymbols failed for excluded file (non-fatal)', { path: f.path, error: symErr?.message });
       signatureLines.push(f.path);
     }
   }
@@ -998,6 +1150,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // understands the user's intent.
   let attachmentContext = '';
   if (attachments && attachments.length > 0) {
+    logger.debug('_runAgentLoopInner: processing attachments', { projectId, attachmentCount: attachments.length, visionCapable });
     const TEXT_TYPES = new Set([
       'text/plain', 'text/csv', 'text/markdown',
       'application/json',
@@ -1038,14 +1191,19 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
             await fs.promises.writeFile(refetchPath, buf);
             resolvedPath = refetchPath;
             tempPathValid = true;
-            console.log(`[AgentLoop] Re-materialized expired attachment "${att.name}" from durable storage (${buf.length} bytes)`);
+            logger.info('[AgentLoop] Re-materialized expired attachment from durable storage', {
+              projectId, attachmentName: att.name, bytes: buf.length,
+            });
           }
-        } catch (refetchErr) {
-          console.warn(`[AgentLoop] Failed to re-materialize expired attachment "${att.name}" from publicUrl:`, refetchErr);
+        } catch (refetchErr: any) {
+          logger.warn('[AgentLoop] Failed to re-materialize expired attachment from publicUrl', {
+            projectId, attachmentName: att.name, error: refetchErr?.message, stack: refetchErr?.stack,
+          });
         }
       }
 
       if (!tempPathValid) {
+        logger.debug('_runAgentLoopInner: attachment unavailable, telling model to skip it', { projectId, attachmentName: att.name });
         // The section preamble below tells the model it MUST act on attached
         // files. Pairing that hard obligation with a file it cannot open is
         // how a run ends up inventing a plausible-looking asset URL instead
@@ -1065,7 +1223,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
 
           // Read bytes upfront   needed for both vision analysis and preview push
           let imgBytes: Buffer | null = null;
-          try { imgBytes = await fs.promises.readFile(resolvedPath); } catch { /* best-effort */ }
+          try { imgBytes = await fs.promises.readFile(resolvedPath); } catch (imgReadErr: any) {
+            logger.debug('_runAgentLoopInner: failed to read attachment image bytes (non-fatal)', {
+              projectId, attachmentName: att.name, resolvedPath, error: imgReadErr?.message,
+            });
+          }
 
           // ── Vision analysis   ALWAYS run for vision-capable models ──────────────────
           // The LLM must see the image to understand what it is:
@@ -1079,6 +1241,9 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
 
           if (visionCapable && imgBytes) {
             // Always hit the model   let it classify the image
+            logger.debug('_runAgentLoopInner: calling vision analysis for attachment', {
+              projectId, attachmentName: att.name, providerName, modelId, imgBytesLength: imgBytes.length,
+            });
             inlineAnalysis = await analyzeImageWithVision(
               imgBytes.toString('base64'), att.type, att.name, aiProvider, abortSignal,
               (usage) => {
@@ -1086,8 +1251,15 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
                 runTokens.inputTokens += usage.inputTokens;
                 runTokens.outputTokens += usage.outputTokens;
                 runCostUsd += (usage.inputTokens * p.input + usage.outputTokens * p.output) / 1_000_000;
+                logger.debug('_runAgentLoopInner: vision analysis token usage', {
+                  projectId, attachmentName: att.name, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+                  runCostUsd,
+                });
               },
             );
+            logger.debug('_runAgentLoopInner: vision analysis complete', {
+              projectId, attachmentName: att.name, analysisPreview: inlineAnalysis?.slice(0, 200), analysisLength: inlineAnalysis?.length ?? 0,
+            });
             // The user's own explicit words ("use this as my logo") win over an
             // ambiguous vision read   vision classifies what the image IS, not
             // what the user wants done with it.
@@ -1146,7 +1318,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
                   .map(f => `public/assets/${f}`);
                 if (existing.length > 0) existingAssetsList = existing.join(', ');
               }
-            } catch { /* best-effort */ }
+            } catch (assetsScanErr: any) {
+              logger.debug('_runAgentLoopInner: failed to scan existing public/assets (non-fatal)', {
+                projectId, error: assetsScanErr?.message,
+              });
+            }
 
             // NOTE: imageVisionData.push already done unconditionally above this if/else block
 
@@ -1174,6 +1350,9 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
             );
           }
         } catch (copyErr: any) {
+          logger.warn('_runAgentLoopInner: failed to process image attachment', {
+            projectId, attachmentName: att.name, error: copyErr?.message, stack: copyErr?.stack,
+          });
           parts.push(`- **Image**: "${att.name}"   failed to process: ${copyErr.message}`);
         }
       } else if (TEXT_TYPES.has(att.type)) {
@@ -1185,6 +1364,9 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
             `- **Document**: "${att.name}" (${att.type})\n\n\`\`\`\n${text}\n\`\`\``
           );
         } catch (readErr: any) {
+          logger.warn('_runAgentLoopInner: failed to read text attachment', {
+            projectId, attachmentName: att.name, error: readErr?.message,
+          });
           parts.push(`- **Document**: "${att.name}"   failed to read: ${readErr.message}`);
         }
       } else {
@@ -1231,6 +1413,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // decide the correct action without guessing from the filename alone.
   // Only runs when the selected model supports vision (Claude, Gemini   not DeepSeek).
   if (visionCapable && imageVisionData.length > 0) {
+    logger.debug('_runAgentLoopInner: pre-flight vision analysis pass starting', { projectId, imageCount: imageVisionData.length });
     const analysisParts: string[] = [];
     for (const img of imageVisionData) {
       // Skip images already described inline during attachment processing
@@ -1274,6 +1457,9 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   let semanticCacheHintBlock = '';
   try {
     const cacheResult = await semanticCachePromise;
+    logger.debug('_runAgentLoopInner: semantic cache lookup resolved', {
+      projectId, hit: cacheResult.hit, similarity: cacheResult.similarity,
+    });
     if (cacheResult.hit && cacheResult.cachedSnapshot) {
       const files = Object.entries(cacheResult.cachedSnapshot)
         .slice(0, 20)
@@ -1281,7 +1467,10 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         .join('\n\n');
       semanticCacheHintBlock = `\n\n# Reference Implementation (similarity ${cacheResult.similarity?.toFixed(2) ?? '?'})\n\nA previous request very similar to this one produced the following working implementation. Use it as a strong starting reference -- adapt it to the specifics of THIS request rather than building from zero, but verify and adjust anything that doesn't actually match what was asked for here.\n\n${files}`;
     }
-  } catch { /* non-fatal -- proceed without the hint */ }
+  } catch (semCacheErr: any) {
+    // non-fatal -- proceed without the hint
+    logger.debug('_runAgentLoopInner: semantic cache lookup failed (non-fatal)', { projectId, error: semCacheErr?.message });
+  }
 
   const modeInstruction = runtimeMode === 'plan'
     ? `\n\n# Runtime Mode Instruction
@@ -1432,10 +1621,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               ? getFixSystemPrompt()
               : getAppBuilderSystemPrompt(promptProfile);
 
-  console.log(
-    `[AgentLoop] Prompt profile=${promptProfile} tier=${_tier ?? 'unset'} maxSteps=${MAX_STEPS} staticChars=${staticSystemPrompt.length} ` +
-    `website=${promptIntent?.isWebsiteBuild === true} integration=${promptIntent?.hasIntegrationRequest === true} emptyProject=${isEmptyProject}`
-  );
+  logger.info('[AgentLoop] Prompt profile resolved', {
+    projectId, promptProfile, tier: _tier ?? 'unset', maxSteps: MAX_STEPS, staticSystemPromptChars: staticSystemPrompt.length,
+    isWebsiteBuild: promptIntent?.isWebsiteBuild === true, hasIntegrationRequest: promptIntent?.hasIntegrationRequest === true,
+    isEmptyProject,
+  });
 
   // Build the project knowledge block from KnowledgeSettings (custom_system_prompt + context_notes).
   // This is injected at the top of every request so the agent always has project-specific context.
@@ -1479,6 +1669,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // here just means no live schema block, never blocks the run.
     let liveSchemaBlock = '';
     if (hasDb && userId) {
+      logger.debug('_runAgentLoopInner: fetching live DB schema for secrets block', { projectId, userId });
       try {
         const tables = await databaseService.listTables(userId, projectId);
         liveSchemaBlock = tables.length === 0
@@ -1509,11 +1700,16 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               functions.map((f) => `- ${f.name}(${f.argTypes}) -> ${f.returnType}`).join('\n') +
               '\n\nReuse one of these if it already does what you need instead of creating a near-duplicate.';
           }
-        } catch {
+          logger.debug('_runAgentLoopInner: live schema fetch complete', {
+            projectId, tableCount: tables.length, functionCount: functions.length,
+          });
+        } catch (fnListErr: any) {
           // Non-fatal   agent can still call get_database_schema itself
+          logger.debug('_runAgentLoopInner: listFunctions failed (non-fatal)', { projectId, error: fnListErr?.message });
         }
-      } catch {
+      } catch (tableListErr: any) {
         // Non-fatal   agent can still call get_database_schema itself
+        logger.debug('_runAgentLoopInner: listTables failed (non-fatal)', { projectId, error: tableListErr?.message });
       }
     }
 
@@ -1593,6 +1789,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
   const systemPrompt = enforcePlanMode(assemblePrompt(staticSystemPrompt));
   const dynamicContext = enforcePlanMode(assemblePrompt(''));
+  logger.debug('_runAgentLoopInner: system prompt assembled', {
+    projectId, runtimeMode, systemPromptChars: systemPrompt.length, dynamicContextChars: dynamicContext.length,
+  });
 
   // Per-run brain memory   survives context compaction across steps.
   // Hoisted above the Gemini cache block because buildToolSet needs it.
@@ -1608,6 +1807,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         return full.propose_plan ? { propose_plan: full.propose_plan } : undefined;
       })()
     : buildToolSet(ctx, brainMemory, _tier);
+  logger.debug('_runAgentLoopInner: tool set built', {
+    projectId, runtimeMode, tier: _tier ?? 'unset', toolNames: toolSet ? Object.keys(toolSet) : [],
+  });
 
   // ── Gemini run-level context cache ───────────────────────────────────────
   // Plan mode has no tools   cache just the system prompt (createGeminiRunCache).
@@ -1723,7 +1925,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
   const agentTimeoutId = AGENT_TIMEOUT_MS > 0 ? setTimeout(async () => {
     if (abortController.signal.aborted) return;
-    console.warn(`[AgentLoop] Timeout hit after ${AGENT_TIMEOUT_MS}ms   salvaging files before aborting`);
+    logger.warn('[AgentLoop] Timeout hit, salvaging files before aborting', {
+      projectId, userId, AGENT_TIMEOUT_MS, stepCount,
+    });
 
     try {
       // Prefer the known-clean pre-agent snapshot over a fresh disk scan. A
@@ -1742,8 +1946,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       let salvageFiles: Array<{ path: string; content: string }>;
       if (useCleanSnapshot) {
         salvageFiles = Array.from(preAgentDiskSnapshot.entries()).map(([p, c]) => ({ path: p, content: c }));
-        console.warn(`[AgentLoop] Timeout salvage: using clean pre-agent snapshot (${salvageFiles.length} files) instead of current (possibly mid-repair) disk state`);
+        logger.warn('[AgentLoop] Timeout salvage: using clean pre-agent snapshot instead of current (possibly mid-repair) disk state', {
+          projectId, fileCount: salvageFiles.length,
+        });
       } else {
+        logger.warn('[AgentLoop] Timeout salvage: no clean pre-agent snapshot available, scanning current disk state', { projectId, tier: _tier ?? 'unset' });
         const SKIP_DIRS_TIMEOUT = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.tmp', 'coverage']);
         const SKIP_FILES_TIMEOUT = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
         const BINARY_EXTS_TIMEOUT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.webp', '.mp4', '.mp3', '.pdf', '.zip']);
@@ -1752,7 +1959,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         const salvageMap = new Map<string, string>();
         const salvageCollect = (dir: string) => {
           let entries: fs.Dirent[];
-          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (dirErr: any) {
+            logger.debug('salvageCollect: readdirSync failed (non-fatal)', { dir, error: dirErr?.message });
+            return;
+          }
           for (const entry of entries) {
             if (SKIP_DIRS_TIMEOUT.has(entry.name)) continue;
             if (SKIP_FILES_TIMEOUT.has(entry.name)) continue;
@@ -1767,12 +1977,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 } else {
                   salvageMap.set(rel, fs.readFileSync(fp, 'utf8'));
                 }
-              } catch { /* skip */ }
+              } catch (readErr: any) {
+                logger.debug('salvageCollect: failed to read file (skipped)', { rel, error: readErr?.message });
+              }
             }
           }
         };
         salvageCollect(appPath);
         salvageFiles = Array.from(salvageMap.entries()).map(([p, c]) => ({ path: p, content: c }));
+        logger.debug('_runAgentLoopInner: timeout salvage disk scan complete', { projectId, fileCount: salvageFiles.length });
       }
 
       if (salvageFiles.length > 0) {
@@ -1791,9 +2004,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           snapshotId: `${projectId}_${randomUUID().replace(/-/g, '')}`,
         });
         timeoutDoneSent = true;
+        logger.warn('[AgentLoop] Timeout: salvaged files emitted as done event', {
+          projectId, userId, fileCount: salvageFiles.length, usedCleanSnapshot: useCleanSnapshot,
+        });
       }
-    } catch (salvageErr) {
-      console.warn('[AgentLoop] File salvage on timeout failed:', salvageErr);
+    } catch (salvageErr: any) {
+      logger.warn('[AgentLoop] File salvage on timeout failed', {
+        projectId, userId, error: salvageErr?.message, stack: salvageErr?.stack,
+      });
     }
 
     // Mark the abort so the catch block knows not to emit a second 'error' SSE.
@@ -1826,7 +2044,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const snapshotId = runtimeMode !== 'plan' ? `${projectId}_${randomUUID().replace(/-/g, '')}` : null;
     const snapshotDir = snapshotId ? path.join(SNAPSHOTS_DIR, snapshotId) : null;
     if (snapshotDir) {
-      snapshotProject(appPath, snapshotDir).catch(() => {});
+      logger.debug('_runAgentLoopInner: kicking off pre-run project snapshot', { projectId, snapshotId, snapshotDir });
+      snapshotProject(appPath, snapshotDir).catch((snapErr: any) => {
+        logger.warn('_runAgentLoopInner: pre-run project snapshot failed (non-fatal)', { projectId, snapshotId, error: snapErr?.message });
+      });
     }
 
     // ── Diagnose-before-fix (harness redesign increment 3, Gap 3, 2026-08-11) ──
@@ -1879,6 +2100,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           Object.entries(buildToolSet(diagnosisCtx, [], 'fix')).filter(([name]) => DIAGNOSIS_TOOL_NAMES.has(name)),
         );
 
+        logger.debug('_runAgentLoopInner: diagnose-before-fix generateText call starting', {
+          projectId, tier: _tier, providerName, modelId, diagnosisToolNames: Object.keys(diagnosisToolSet),
+        });
+        const _diagnosisStartedAtMs = Date.now();
         const diagnosisResult = await generateText({
           model: aiProvider,
           system:
@@ -1893,6 +2118,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           tools: diagnosisToolSet,
           stopWhen: stepCountIs(8),
           abortSignal: abortController.signal,
+        });
+        logger.debug('_runAgentLoopInner: diagnose-before-fix generateText call complete', {
+          projectId, durationMs: Date.now() - _diagnosisStartedAtMs,
+          inputTokens: diagnosisResult.usage?.inputTokens, outputTokens: diagnosisResult.usage?.outputTokens,
+          stepCount: diagnosisResult.steps?.length ?? 0,
         });
 
         if (diagnosisResult.usage) {
@@ -1922,12 +2152,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             `Scope has been seeded with the file(s) above based on this investigation. Stay focused on this ` +
             `request in these files; if the task genuinely requires touching others, call declare_scope ` +
             `again with the wider set and say why.\n\n`;
-          console.log(`[AgentLoop] Diagnose-before-fix: implicated ${implicatedFiles.size} file(s), scope seeded`);
+          logger.info('[AgentLoop] Diagnose-before-fix: implicated file(s), scope seeded', {
+            projectId, implicatedFileCount: implicatedFiles.size, implicatedFiles: [...implicatedFiles],
+          });
         } else {
-          console.log(`[AgentLoop] Diagnose-before-fix: no usable result (${implicatedFiles.size} files implicated, text=${Boolean(diagnosisResult.text?.trim())}) -- falling through unscoped`);
+          logger.info('[AgentLoop] Diagnose-before-fix: no usable result, falling through unscoped', {
+            projectId, implicatedFileCount: implicatedFiles.size, hasText: Boolean(diagnosisResult.text?.trim()),
+          });
         }
       } catch (diagnosisErr: any) {
-        console.warn('[AgentLoop] Diagnose-before-fix pass failed (non-fatal, falling through to unscoped behavior):', diagnosisErr?.message ?? diagnosisErr);
+        logger.warn('[AgentLoop] Diagnose-before-fix pass failed (non-fatal, falling through to unscoped behavior)', {
+          projectId, error: diagnosisErr?.message, stack: diagnosisErr?.stack,
+        });
       }
     }
 
@@ -2002,6 +2238,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // the large-file writes already suspected (unconfirmed) of hitting this
       // ceiling. Extra room costs nothing unless actually used.
       const outputLimit = pName === 'deepseek' ? 8192 : pName === 'anthropic' ? 32768 : 16384;
+      logger.info('[AgentLoop] attemptStream: calling streamText', {
+        projectId, userId, attempt, providerName: pName, modelId, outputLimit, MAX_STEPS,
+        conversationMessageCount: conversationMessages.length,
+        runTokensSoFar: runTokens.total, runCostUsdSoFar: runCostUsd,
+      });
       return streamText({
         model: provider,
         system: buildSystemMessagesFor(pName),
@@ -2103,6 +2344,30 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           stepCount++;
           runLedger.setStep(stepCount);
           const toolNames = (toolCalls ?? []).map((tc: any) => tc.toolName);
+          logger.info('[AgentLoop] step boundary', {
+            projectId, userId, stepCount, maxSteps: MAX_STEPS,
+            elapsedRunMs: Date.now() - _innerStartedAtMs,
+            toolNames, toolCallCount: toolNames.length,
+            stepUsage: usage,
+            cumulativeRunTokens: { ...runTokens, total: runTokens.total, billableTotal: runTokens.billableTotal },
+            cumulativeRunCostUsd: runCostUsd,
+            textPreview: typeof text === 'string' ? text.slice(0, 200) : undefined,
+          });
+          // Per-tool-call dispatch summary: one debug line per tool invoked this
+          // step, pairing the call's (truncated) args with its (truncated) result
+          // so a single step's tool activity is greppable without diffing two
+          // separate arrays by index.
+          for (let _ti = 0; _ti < (toolCalls ?? []).length; _ti++) {
+            const _tc = (toolCalls ?? [])[_ti] as any;
+            const _tr = (toolResults ?? [])[_ti] as any;
+            const _argsStr = (() => { try { return JSON.stringify(_tc?.input ?? _tc?.args ?? {}); } catch { return String(_tc?.input); } })();
+            const _outStr = typeof _tr?.output === 'string' ? _tr.output : (() => { try { return JSON.stringify(_tr?.output); } catch { return String(_tr?.output); } })();
+            logger.debug('[AgentLoop] tool-call dispatched', {
+              projectId, userId, stepCount, toolName: _tc?.toolName,
+              argsPreview: _argsStr?.slice(0, 300), argsLength: _argsStr?.length ?? 0,
+              resultPreview: _outStr?.slice(0, 300), resultLength: _outStr?.length ?? 0,
+            });
+          }
           tracer.event('step', {
             step: stepCount,
             text: RunTracer.clip(text ?? ''),
@@ -2159,7 +2424,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
             const streak = toolFailureStreak.get(toolName)!;
             if (streak.count === CIRCUIT_BREAKER_THRESHOLD) {
-              console.warn(`[AgentLoop] Circuit breaker: "${toolName}" failed with the identical error ${streak.count}x in a row (user=${userId ?? 'unknown'})`);
+              logger.warn('[AgentLoop] Circuit breaker: tool failed with identical error N times in a row', {
+                projectId, userId: userId ?? 'unknown', toolName, streakCount: streak.count, errorMessagePreview: streak.message.slice(0, 300),
+              });
               circuitBreakerNote =
                 `⚠️ REPEATED FAILURE DETECTED: "${toolName}" has now failed ${streak.count} times in a row ` +
                 `with the EXACT SAME error:\n\n"${streak.message.slice(0, 300)}"\n\n` +
@@ -2232,7 +2499,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
             const mutStreak = ctx.mutationFailureStreak.get(key)!;
             if (mutStreak.count >= MUTATION_CIRCUIT_BREAKER_THRESHOLD) {
-              console.warn(`[AgentLoop] Mutation circuit breaker: "${key}" failed with the identical error ${mutStreak.count}x in a row (user=${userId ?? 'unknown'})`);
+              logger.warn('[AgentLoop] Mutation circuit breaker: key failed with identical error N times in a row', {
+                projectId, userId: userId ?? 'unknown', key, count: mutStreak.count, errorMessagePreview: mutStreak.message.slice(0, 300),
+              });
               const fingerprint = computeErrorFingerprint([`${mutationKey}::${mutStreak.message.slice(0, 80)}`]);
               const thrash = await recordThrashTrip(projectId, fingerprint);
               if (thrash.escalate) {
@@ -2293,12 +2562,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const tn = tr?.toolName as string | undefined;
             if (!isStateModifying(tn, tr?.output)) continue;
             const out = tr?.output;
-            console.log(
-              `[AgentLoop][write-audit] step=${stepCount} tool=${tn} outputType=${typeof out}` +
-              (typeof out === 'string'
-                ? ` prefix=${JSON.stringify(out.slice(0, 80))}`
-                : ` shape=${out === null ? 'null' : Array.isArray(out) ? 'array' : out && typeof out === 'object' ? `object keys=[${Object.keys(out).slice(0, 6).join(',')}]` : String(out)}`),
-            );
+            logger.debug('[AgentLoop][write-audit] state-modifying tool result', {
+              projectId, stepCount, toolName: tn, outputType: typeof out,
+              outputPrefix: typeof out === 'string' ? out.slice(0, 80) : undefined,
+              outputShape: typeof out !== 'string'
+                ? (out === null ? 'null' : Array.isArray(out) ? 'array' : out && typeof out === 'object' ? `object keys=[${Object.keys(out).slice(0, 6).join(',')}]` : String(out))
+                : undefined,
+            });
           }
           const hadSuccessfulWriteThisStep = (toolResults ?? []).some((tr: any) => {
             const toolName = tr?.toolName as string | undefined;
@@ -2385,7 +2655,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // full default streak when the code is already known not to work.
             const phantomAbortThreshold = ctx.lastBuildErrorsHealthy === false ? 2 : 3;
             if (consecutivePhantomClaimSteps >= phantomAbortThreshold) {
-              console.warn(`[AgentLoop] project=${projectId} aborting: ${consecutivePhantomClaimSteps} consecutive no-tool steps claiming completed work (phantom narration)${ctx.lastBuildErrorsHealthy === false ? ' -- build already confirmed broken' : ''}`);
+              logger.warn('[AgentLoop] Aborting: consecutive no-tool steps claiming completed work (phantom narration)', {
+                projectId, userId, stepCount, consecutivePhantomClaimSteps, phantomAbortThreshold,
+                buildAlreadyConfirmedBroken: ctx.lastBuildErrorsHealthy === false,
+              });
               budgetAbortReason = `phantom narration: ${phantomAbortThreshold} consecutive steps claimed completed work without calling any tools`;
               abortController.abort();
             } else {
@@ -2435,7 +2708,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 // falsification of the one it's replacing.
                 ctx.rootCauseLockViolation = true;
                 ctx.rootCauseLockTriggerCount = (ctx.rootCauseLockTriggerCount ?? 0) + 1;
-                console.warn(`[RootCauseLock] Silent hypothesis pivot detected (trigger #${ctx.rootCauseLockTriggerCount}) user=${userId ?? 'unknown'}`);
+                logger.warn('[RootCauseLock] Silent hypothesis pivot detected', {
+                  projectId, userId: userId ?? 'unknown', stepCount, triggerCount: ctx.rootCauseLockTriggerCount,
+                  activeHypothesisPreview: ctx.activeHypothesis?.slice(0, 200), newThoughtPreview: thought.slice(0, 200),
+                });
                 const rootCauseLockNote =
                   `You just stated a different explanation for this bug without confirming your previous one was fixed ` +
                   `and verified, or saying what evidence showed it was wrong. Before writing any more code: either (1) ` +
@@ -2509,7 +2785,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             stuckAnalysisFireCount++;
             stuckAnalysisNoteFiredAt = stepCount;
             if (stuckAndBudgetCritical || stuckAndContentRepeating || stuckAndBuildKnownBroken || stuckAnalysisFireCount >= STUCK_ANALYSIS_HARD_STOP_FIRINGS) {
-              console.warn(`[AgentLoop] Stuck-analysis hard stop: ${stepsSinceLastWrite} steps with no successful write/edit${stuckAndBudgetCritical ? ` (budget-critical: ${runTokens.total}/${RUN_TOKEN_CAP} tokens used)` : stuckAndContentRepeating ? ` (content-repeating: ${consecutiveSimilarThinkSteps} near-identical think calls)` : stuckAndBuildKnownBroken ? ` (build already confirmed broken)` : ` after ${stuckAnalysisFireCount - 1} ignored nudges`} (user=${userId ?? 'unknown'})`);
+              logger.warn('[AgentLoop] Stuck-analysis hard stop', {
+                projectId, userId: userId ?? 'unknown', stepsSinceLastWrite,
+                reasonKind: stuckAndBudgetCritical ? 'budget-critical' : stuckAndContentRepeating ? 'content-repeating' : stuckAndBuildKnownBroken ? 'build-known-broken' : 'ignored-nudges',
+                budgetCriticalTokens: stuckAndBudgetCritical ? runTokens.total : undefined,
+                runTokenCap: RUN_TOKEN_CAP,
+                nearIdenticalThinkCalls: stuckAndContentRepeating ? consecutiveSimilarThinkSteps : undefined,
+                ignoredNudges: !stuckAndBudgetCritical && !stuckAndContentRepeating && !stuckAndBuildKnownBroken ? stuckAnalysisFireCount - 1 : undefined,
+              });
               stuckAnalysisAbortReason = stuckAndContentRepeating
                 ? `stuck repeating near-identical reasoning for ${consecutiveSimilarThinkSteps} steps in a row`
                 : stuckAndBuildKnownBroken
@@ -2520,7 +2803,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               }).catch(() => {});
               abortController.abort();
             } else {
-              console.warn(`[AgentLoop] Stuck-analysis detector: ${stepsSinceLastWrite} steps with no successful write/edit (user=${userId ?? 'unknown'})`);
+              logger.warn('[AgentLoop] Stuck-analysis detector fired (soft nudge)', {
+                projectId, userId: userId ?? 'unknown', stepsSinceLastWrite, stuckAnalysisFireCount,
+              });
               const stuckNote =
                 `⚠️ STUCK IN ANALYSIS: You've spent ${stepsSinceLastWrite} steps reading/checking/reasoning without ` +
                 `a single write_file or edit_file actually landing. Re-reading the same file or re-stating the same ` +
@@ -2604,15 +2889,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             },
           });
 
-          console.log(
-            `[AgentLoop] project=${projectId} Step ${stepCount} | provider=${pName} model=${servingModelId}` +
-            ` | tools: ${toolNames.join(', ') || 'none'}` +
-            `${failedEdits > 0 ? ` (${failedEdits} failed)` : ''}` +
-            ` | tokens: in=${stepInp} out=${stepOut} cacheR=${stepCacheR} cacheW=${stepCacheW}` +
-            ` | step $${stepCost.toFixed(5)} | run total $${runCost.toFixed(4)}` +
-            (userId ? ` | user=${userId}` : '') +
-            (isInternalRun ? ' | internal=1' : ''),
-          );
+          logger.info('[AgentLoop] step summary', {
+            projectId, userId, stepCount, providerName: pName, servingModelId,
+            tools: toolNames, failedEdits,
+            tokens: { in: stepInp, out: stepOut, cacheR: stepCacheR, cacheW: stepCacheW },
+            stepCostUsd: parseFloat(stepCost.toFixed(5)), runTotalCostUsd: parseFloat(runCost.toFixed(4)),
+            isInternalRun,
+          });
 
           // ── Per-run hard caps ────────────────────────────────────────────
           // Two gates: token count + dollar cost. Whichever fires first aborts the run.
@@ -2625,7 +2908,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const reason = runCost > HARD_COST_CAP
               ? `cost cap $${HARD_COST_CAP} hit ($${runCost.toFixed(3)} spent)`
               : `token cap ${RUN_TOKEN_CAP} hit (${runTokens.billableTotal} billable-weighted, ${runTokens.total} raw)`;
-            console.warn(`[AgentLoop] Run aborted   ${reason} (user=${userId ?? 'unknown'})`);
+            logger.warn('[AgentLoop] Run aborted: budget cap hit', {
+              projectId, userId: userId ?? 'unknown', reason, runCostUsd: runCost, HARD_COST_CAP,
+              runTokensBillable: runTokens.billableTotal, RUN_TOKEN_CAP,
+            });
             budgetAbortReason = reason;
             generateStatus(projectId, { kind: 'lifecycle', phase: 'budget-reached' }).then((s) => {
               if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
@@ -2681,26 +2967,21 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // Accumulated per-step (serving-model-priced) when available;
             // calcCost only as fallback for streams onStepFinish never saw.
             const totalCost = runCostUsd > 0 ? runCostUsd : calcCost(totalIn, totalOut, totalCR, totalCW);
-            console.log(
-              `[AgentLoop] RUN COMPLETE` +
-              ` | input=${totalIn} output=${totalOut} cacheRead=${totalCR} cacheWrite=${totalCW}` +
-              ` | total tokens=${totalIn + totalOut + totalCR + totalCW}` +
-              ` | est cost $${totalCost.toFixed(4)}` +
-              ` | finishReason=${lastFinishReason ?? 'unknown'}` +
-              (userId ? ` | user=${userId}` : '') +
-              (agentRunId ? ` | runId=${agentRunId}` : ''),
-            );
+            logger.info('[AgentLoop] RUN COMPLETE', {
+              projectId, userId, agentRunId,
+              inputTokens: totalIn, outputTokens: totalOut, cacheReadTokens: totalCR, cacheWriteTokens: totalCW,
+              totalTokens: totalIn + totalOut + totalCR + totalCW,
+              estCostUsd: parseFloat(totalCost.toFixed(4)), finishReason: lastFinishReason ?? 'unknown',
+            });
             tracer.event('run-end', {
               inputTokens: totalIn, outputTokens: totalOut, cacheRead: totalCR, cacheWrite: totalCW,
               costUsd: Number(totalCost.toFixed(4)), finishReason: lastFinishReason ?? 'unknown', steps: stepCount,
             });
             // Warn when model produces nothing   helps diagnose Gemini empty-response issues
             if (totalOut === 0) {
-              console.warn(
-                `[AgentLoop] ⚠️  Model produced 0 output tokens (finishReason=${lastFinishReason ?? 'unknown'}).` +
-                ` This usually means conflicting prompt instructions or a safety filter triggered.` +
-                ` provider=${providerName} model=${modelId}`,
-              );
+              logger.warn('[AgentLoop] Model produced 0 output tokens', {
+                projectId, userId, finishReason: lastFinishReason ?? 'unknown', providerName, modelId,
+              });
             }
           } else if (part.type === 'error') {
             partError = part.error;
@@ -2719,6 +3000,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     let outerFinishReason: string | undefined;
 
     // Primary model: retry with exponential backoff (skip retries for network errors)
+    logger.debug('[AgentLoop] primary-provider retry loop starting', { projectId, userId, providerName, modelId, MAX_RETRIES });
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         result = await attemptStream(streamingProvider, attempt);
@@ -2729,7 +3011,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         lastStreamError = err;
         if (abortController.signal.aborted) throw err; // Don't retry on abort
         if (providerName === 'anthropic' && isRateLimitError(err)) {
-          console.warn('[AgentLoop] Anthropic rate-limited   skipping same-provider retries and switching to fallback');
+          logger.warn('[AgentLoop] Anthropic rate-limited, skipping same-provider retries and switching to fallback', {
+            projectId, userId, attempt, errorMessage: err?.message,
+          });
           generateStatus(projectId, { kind: 'lifecycle', phase: 'provider-fallback' }).then((s) => {
             if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
           }).catch(() => {});
@@ -2737,13 +3021,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         }
         // Network errors (DNS, connection refused) won't resolve with retries   go straight to fallback.
         if (isNetworkError(err)) {
-          console.warn(`[AgentLoop] Network error on ${providerName}   skipping retries, going to fallback: ${err?.message}`);
+          logger.warn('[AgentLoop] Network error on provider, skipping retries, going to fallback', {
+            projectId, userId, providerName, attempt, errorMessage: err?.message,
+          });
           break;
         }
         // Auth/billing errors (org disabled, 401, 403) won't resolve with retries   go straight to fallback.
         if (isAuthOrBillingError(err)) {
           tripBillingCircuit(providerName);
-          console.warn(`[AgentLoop] Auth/billing error on ${providerName}   circuit-breaking provider for this session: ${err?.message}`);
+          logger.warn('[AgentLoop] Auth/billing error on provider, circuit-breaking provider for this session', {
+            projectId, userId, providerName, attempt, errorMessage: err?.message,
+          });
           break;
         }
         if (!isRetryableError(err) || attempt === MAX_RETRIES) break;
@@ -2751,14 +3039,19 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // If retry-after is meaningfully long it's better to fall back than hold the UI open.
         const retryAfterMs = isRateLimitError(err) ? getRetryAfterMs(err) : null;
         if (retryAfterMs !== null && retryAfterMs > 10_000) {
-          console.warn(`[AgentLoop] Rate limit: retry-after=${Math.ceil(retryAfterMs / 1000)}s   skipping retries, trying fallback providers`);
+          logger.warn('[AgentLoop] Rate limit with long retry-after, skipping retries, trying fallback providers', {
+            projectId, userId, providerName, attempt, retryAfterSec: Math.ceil(retryAfterMs / 1000),
+          });
           break;
         }
         // Other retryable errors (500/529/overloaded) use shorter backoff (2s/4s/8s).
         const delay = isRateLimitError(err)
           ? (retryAfterMs ?? Math.min(3000 * Math.pow(2, attempt), 10_000)) // honor header, else 3s/6s/10s
           : Math.min(1000 * Math.pow(2, attempt), 8000);  // 1s, 2s, 4s, max 8s
-        console.warn(`[AgentLoop] Retryable error (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${err?.message ?? err}. Retrying in ${delay}ms...`);
+        logger.warn('[AgentLoop] Retryable error, retrying', {
+          projectId, userId, providerName, attempt: attempt + 1, maxRetries: MAX_RETRIES + 1,
+          errorMessage: err?.message ?? String(err), delayMs: delay,
+        });
         // Show retry status in activity log, NOT in the chat text
         generateStatus(projectId, { kind: 'lifecycle', phase: 'rate-limit-retry', detail: `${Math.round(delay / 1000)}s` }).then((s) => {
           if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
@@ -2784,10 +3077,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // Build a prioritised list of fallback candidates. Gemini-to-Gemini fallback is
       // now allowed (different model) so a bad gemini-2.5-pro can fall to gemini-flash-latest.
       const fallbackCandidates = buildFallbackCandidates(providerName, modelId);
+      logger.info('[AgentLoop] primary provider failed, trying fallback candidates', {
+        projectId, userId, primaryProviderName: providerName, primaryModelId: modelId,
+        fallbackCandidateCount: fallbackCandidates.length, fallbackCandidates,
+        lastStreamErrorMessage: lastStreamError?.message,
+      });
       for (const fallbackModelId of fallbackCandidates) {
         const fallbackInfo = createProviderForModel(fallbackModelId);
         if (!fallbackInfo) continue;
-        console.warn(`[AgentLoop] Primary provider ${providerName} failed. Falling back to ${fallbackInfo.providerName}/${fallbackModelId}`);
+        logger.warn('[AgentLoop] Primary provider failed, falling back', {
+          projectId, userId, primaryProviderName: providerName, fallbackProviderName: fallbackInfo.providerName, fallbackModelId,
+        });
         // Keep fallback behavior, but optionally suppress recovery UI noise.
         if (!SUPPRESS_RECOVERY_UI) {
           generateStatus(projectId, { kind: 'lifecycle', phase: 'provider-fallback', detail: fallbackInfo.providerName }).then((s) => {
@@ -2798,9 +3098,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           result = await attemptStream(fallbackInfo.provider, 0, fallbackInfo.providerName);
           lastStreamError = null;
           providerFellBackThisRun = true;
+          logger.info('[AgentLoop] fallback provider succeeded', { projectId, userId, fallbackProviderName: fallbackInfo.providerName, fallbackModelId });
           break; // fallback succeeded
         } catch (fallbackErr: any) {
-          console.warn(`[AgentLoop] Fallback ${fallbackInfo.providerName} also failed: ${fallbackErr?.message}`);
+          logger.warn('[AgentLoop] Fallback provider also failed', {
+            projectId, userId, fallbackProviderName: fallbackInfo.providerName, fallbackModelId, errorMessage: fallbackErr?.message,
+          });
           lastStreamError = fallbackErr;
         }
       }
@@ -2817,6 +3120,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         const detail = sanitizeErrorMessage(lastStreamError);
         errMsg = `${errMsg} Last provider error: ${detail}`;
       }
+      logger.error('[AgentLoop] Model orchestration exhausted all providers', {
+        projectId, userId, isRateLimit, retryAfterMs, lastStreamErrorMessage: lastStreamError?.message,
+      });
       const err = new Error(errMsg);
       (err as any).sseErrorEmitted = false;
       throw err;
@@ -2834,7 +3140,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       const isBillingErr = isAuthOrBillingError(streamError);
       if (isBillingErr) tripBillingCircuit(providerName);
       const recoveryReason = isBillingErr ? 'Billing/auth error mid-stream' : 'Stream interrupted';
-      console.warn(`[AgentLoop] ${recoveryReason} (${streamError?.message ?? streamError}). Trying fallback recovery once.`);
+      logger.warn('[AgentLoop] mid-stream error, trying fallback recovery once', {
+        projectId, userId, recoveryReason, errorMessage: streamError?.message ?? String(streamError),
+      });
       if (!SUPPRESS_RECOVERY_UI) {
         const statusMsg = isAuthOrBillingError(streamError)
           ? 'Provider billing issue. Switching to backup model...'
@@ -2854,13 +3162,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             accumulatedText += recoveredConsume.text;
             streamError = null;
             providerFellBackThisRun = true;
-            console.log(`[AgentLoop] Stream recovery succeeded via ${fallbackInfo.providerName}/${fallbackModelId}`);
+            logger.info('[AgentLoop] Stream recovery succeeded via fallback provider', {
+              projectId, userId, fallbackProviderName: fallbackInfo.providerName, fallbackModelId,
+            });
             break;
           }
           streamError = recoveredConsume.err;
         } catch (recoveryErr: any) {
           streamError = recoveryErr;
-          console.warn(`[AgentLoop] Recovery fallback ${fallbackInfo.providerName} failed: ${recoveryErr?.message ?? recoveryErr}`);
+          logger.warn('[AgentLoop] Recovery fallback failed', {
+            projectId, userId, fallbackProviderName: fallbackInfo.providerName, fallbackModelId,
+            errorMessage: recoveryErr?.message ?? String(recoveryErr),
+          });
         }
       }
     }
@@ -2869,9 +3182,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // If the timeout handler already sent a 'done' event, suppress re-throwing so the
       // route-level catch doesn't emit a second 'error' SSE that overwrites the done result.
       if (timeoutDoneSent || (streamError as any)?.isAgentTimeout) {
-        console.log('[AgentLoop] Timeout abort   swallowing streamError, done already sent.');
+        logger.info('[AgentLoop] Timeout abort: swallowing streamError, done already sent', { projectId, userId });
         return { filesToWrite: [], filesToDelete: [], renames: [], dependencies: [], summary: '', costUsd: 0, ecoUsed: 0, runtimeMode };
       }
+      logger.error('[AgentLoop] streamError not recovered, rethrowing', {
+        projectId, userId, errorMessage: streamError?.message, stack: streamError?.stack,
+      });
       throw streamError;
     }
 
@@ -2891,7 +3207,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     if (runtimeMode !== 'plan' && !wroteAnythingSoFar && !hasLegacyWriteTags && claimsCompletedEdit
         && stepsRemaining >= 3 && !abortController.signal.aborted) {
-      console.warn(`[AgentLoop] Hallucinated completion claim detected (zero writes, text claims a change)   forcing corrective continuation. user=${userId ?? 'unknown'}`);
+      logger.warn('[AgentLoop] Hallucinated completion claim detected (zero writes, text claims a change), forcing corrective continuation', {
+        projectId, userId: userId ?? 'unknown', stepCount, stepsRemaining, accumulatedTextPreview: accumulatedText.slice(0, 300),
+      });
       generateStatus(projectId, { kind: 'lifecycle', phase: 'post-gen-verify' }).then((s) => {
         if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
       }).catch(() => {});
@@ -2913,10 +3231,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         if (!correctiveConsume.err && correctiveConsume.text) {
           accumulatedText = correctiveConsume.text;
         } else if (correctiveConsume.err) {
-          console.warn('[AgentLoop] Corrective continuation stream errored (non-fatal):', correctiveConsume.err?.message ?? correctiveConsume.err);
+          logger.warn('[AgentLoop] Corrective continuation stream errored (non-fatal)', {
+            projectId, userId, errorMessage: correctiveConsume.err?.message ?? String(correctiveConsume.err),
+          });
         }
       } catch (correctiveErr: any) {
-        console.warn('[AgentLoop] Corrective continuation failed (non-fatal):', correctiveErr?.message ?? correctiveErr);
+        logger.warn('[AgentLoop] Corrective continuation failed (non-fatal)', {
+          projectId, userId, errorMessage: correctiveErr?.message ?? String(correctiveErr),
+        });
       }
     }
 
@@ -2983,7 +3305,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       closureVerifyAttempts < MAX_CLOSURE_VERIFY_ATTEMPTS
     ) {
       closureVerifyAttempts++;
-      console.warn(`[AgentLoop] Unverified resolution claim detected (attempt ${closureVerifyAttempts}/${MAX_CLOSURE_VERIFY_ATTEMPTS}, no passing get_build_errors this run)   forcing corrective continuation. user=${userId ?? 'unknown'}`);
+      logger.warn('[AgentLoop] Unverified resolution claim detected, forcing corrective continuation', {
+        projectId, userId: userId ?? 'unknown', closureVerifyAttempts, MAX_CLOSURE_VERIFY_ATTEMPTS,
+      });
       generateStatus(projectId, { kind: 'lifecycle', phase: 'post-gen-verify' }).then((s) => {
         if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
       }).catch(() => {});
@@ -3011,11 +3335,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         if (!verifyConsume.err && verifyConsume.text) {
           accumulatedText = verifyConsume.text;
         } else if (verifyConsume.err) {
-          console.warn('[AgentLoop] Verified-fix corrective continuation errored (non-fatal):', verifyConsume.err?.message ?? verifyConsume.err);
+          logger.warn('[AgentLoop] Verified-fix corrective continuation errored (non-fatal)', {
+            projectId, userId, errorMessage: verifyConsume.err?.message ?? String(verifyConsume.err),
+          });
           break;
         }
       } catch (verifyErr: any) {
-        console.warn('[AgentLoop] Verified-fix corrective continuation failed (non-fatal):', verifyErr?.message ?? verifyErr);
+        logger.warn('[AgentLoop] Verified-fix corrective continuation failed (non-fatal)', {
+          projectId, userId, errorMessage: verifyErr?.message ?? String(verifyErr),
+        });
         break;
       }
     }
@@ -3029,7 +3357,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       ctx.lastBuildErrorsHealthy !== true &&
       closureVerifyAttempts >= MAX_CLOSURE_VERIFY_ATTEMPTS
     ) {
-      console.warn(`[AgentLoop] Resolution claim still unverified after ${closureVerifyAttempts} corrective attempts   overriding with honest-fail message. user=${userId ?? 'unknown'}`);
+      logger.warn('[AgentLoop] Resolution claim still unverified after corrective attempts, overriding with honest-fail message', {
+        projectId, userId: userId ?? 'unknown', closureVerifyAttempts,
+      });
       accumulatedText =
         `I made changes aimed at this issue, but I was not able to confirm with get_build_errors that the build/preview ` +
         `is actually healthy after ${closureVerifyAttempts} verification attempts. I don't want to tell you it's fixed ` +
@@ -3102,7 +3432,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       promiseVerifyAttempts < MAX_PROMISE_VERIFY_ATTEMPTS
     ) {
       promiseVerifyAttempts++;
-      console.warn(`[AgentLoop] Unfulfilled-promise detected (attempt ${promiseVerifyAttempts}/${MAX_PROMISE_VERIFY_ATTEMPTS})   forcing corrective continuation. user=${userId ?? 'unknown'}`);
+      logger.warn('[AgentLoop] Unfulfilled-promise detected, forcing corrective continuation', {
+        projectId, userId: userId ?? 'unknown', promiseVerifyAttempts, MAX_PROMISE_VERIFY_ATTEMPTS,
+      });
       generateStatus(projectId, { kind: 'lifecycle', phase: 'post-gen-verify' }).then((s) => {
         if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
       }).catch(() => {});
@@ -3129,11 +3461,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         if (!promiseVerifyConsume.err && promiseVerifyConsume.text) {
           accumulatedText = promiseVerifyConsume.text;
         } else if (promiseVerifyConsume.err) {
-          console.warn('[AgentLoop] Unfulfilled-promise corrective continuation errored (non-fatal):', promiseVerifyConsume.err?.message ?? promiseVerifyConsume.err);
+          logger.warn('[AgentLoop] Unfulfilled-promise corrective continuation errored (non-fatal)', {
+            projectId, userId, errorMessage: promiseVerifyConsume.err?.message ?? String(promiseVerifyConsume.err),
+          });
           break;
         }
       } catch (promiseVerifyErr: any) {
-        console.warn('[AgentLoop] Unfulfilled-promise corrective continuation failed (non-fatal):', promiseVerifyErr?.message ?? promiseVerifyErr);
+        logger.warn('[AgentLoop] Unfulfilled-promise corrective continuation failed (non-fatal)', {
+          projectId, userId, errorMessage: promiseVerifyErr?.message ?? String(promiseVerifyErr),
+        });
         break;
       }
     }
@@ -3153,23 +3489,32 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       const diskReferences = (name: string): boolean => {
         const scan = (dir: string): boolean => {
           let entries: fs.Dirent[];
-          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (dirErr: any) {
+            logger.debug('diskReferences scan: readdirSync failed (non-fatal)', { dir, error: dirErr?.message });
+            return false;
+          }
           for (const entry of entries) {
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) {
               if (!['node_modules', '.git', 'dist'].includes(entry.name) && scan(full)) return true;
             } else if (/\.(tsx?|jsx?|html|css)$/.test(entry.name)) {
-              try { if (fs.readFileSync(full, 'utf8').includes(name)) return true; } catch { /* skip */ }
+              try { if (fs.readFileSync(full, 'utf8').includes(name)) return true; } catch (readErr: any) {
+                logger.debug('diskReferences scan: failed to read file (skipped)', { full, error: readErr?.message });
+              }
             }
           }
           return false;
         };
-        try { if (fs.readFileSync(path.join(appPath, 'index.html'), 'utf8').includes(name)) return true; } catch { /* skip */ }
+        try { if (fs.readFileSync(path.join(appPath, 'index.html'), 'utf8').includes(name)) return true; } catch (idxErr: any) {
+          logger.debug('diskReferences: failed to read index.html (non-fatal)', { projectId, error: idxErr?.message });
+        }
         return scan(path.join(appPath, 'src'));
       };
       const orphanedAssets = placedAssetNames.filter((n) => !diskReferences(n));
       if (orphanedAssets.length > 0) {
-        console.warn(`[AgentLoop] Orphaned-asset gate: placed but unreferenced: ${orphanedAssets.join(', ')} -- forcing corrective continuation. user=${userId ?? 'unknown'}`);
+        logger.warn('[AgentLoop] Orphaned-asset gate: placed but unreferenced, forcing corrective continuation', {
+          projectId, userId: userId ?? 'unknown', orphanedAssets,
+        });
         conversationMessages = [
           ...conversationMessages,
           { role: 'assistant' as const, content: accumulatedText },
@@ -3190,7 +3535,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             accumulatedText = assetFixConsume.text;
           }
         } catch (assetFixErr: any) {
-          console.warn('[AgentLoop] Orphaned-asset corrective continuation failed (non-fatal):', assetFixErr?.message ?? assetFixErr);
+          logger.warn('[AgentLoop] Orphaned-asset corrective continuation failed (non-fatal)', {
+            projectId, userId, errorMessage: assetFixErr?.message ?? String(assetFixErr),
+          });
         }
       }
     }
@@ -3204,7 +3551,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       promiseVerifyAttempts > 0 &&
       UNFULFILLED_PROMISE_RE.test(accumulatedText)
     ) {
-      console.warn(`[AgentLoop] Unfulfilled-promise still unresolved after ${promiseVerifyAttempts} corrective attempt(s)   appending honest note. user=${userId ?? 'unknown'}`);
+      logger.warn('[AgentLoop] Unfulfilled-promise still unresolved after corrective attempts, appending honest note', {
+        projectId, userId: userId ?? 'unknown', promiseVerifyAttempts,
+      });
       // Real-signal gating (harness redesign, increment 1): if get_build_errors
       // already confirmed this run's build is broken, say so plainly instead of
       // the generic note -- "let me know if you'd like me to go ahead" invites
@@ -3266,7 +3615,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       const gapDetail = gapTables
         .map((t) => `  • "${t}" (fetched directly in ${ctx.anonFetchTables!.get(t)})`)
         .join('\n');
-      console.warn(`[AgentLoop] Anon-fetch-without-policy gap detected (attempt ${anonPolicyVerifyAttempts}/${MAX_ANON_POLICY_VERIFY_ATTEMPTS}, tables: ${gapTables.join(', ')})   forcing corrective continuation. user=${userId ?? 'unknown'}`);
+      logger.warn('[AgentLoop] Anon-fetch-without-policy gap detected, forcing corrective continuation', {
+        projectId, userId: userId ?? 'unknown', anonPolicyVerifyAttempts, MAX_ANON_POLICY_VERIFY_ATTEMPTS, gapTables,
+      });
       generateStatus(projectId, { kind: 'lifecycle', phase: 'post-gen-verify' }).then((s) => {
         if (s) sink.emit('step-finish', { step: stepCount, toolCount: 0, tools: [], status: s });
       }).catch(() => {});
@@ -3297,11 +3648,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         if (!anonVerifyConsume.err && anonVerifyConsume.text) {
           accumulatedText = anonVerifyConsume.text;
         } else if (anonVerifyConsume.err) {
-          console.warn('[AgentLoop] Anon-fetch-policy corrective continuation errored (non-fatal):', anonVerifyConsume.err?.message ?? anonVerifyConsume.err);
+          logger.warn('[AgentLoop] Anon-fetch-policy corrective continuation errored (non-fatal)', {
+            projectId, userId, errorMessage: anonVerifyConsume.err?.message ?? String(anonVerifyConsume.err),
+          });
           break;
         }
       } catch (anonVerifyErr: any) {
-        console.warn('[AgentLoop] Anon-fetch-policy corrective continuation failed (non-fatal):', anonVerifyErr?.message ?? anonVerifyErr);
+        logger.warn('[AgentLoop] Anon-fetch-policy corrective continuation failed (non-fatal)', {
+          projectId, userId, errorMessage: anonVerifyErr?.message ?? String(anonVerifyErr),
+        });
         break;
       }
     }
@@ -3311,7 +3666,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     {
       const remainingGapTables = anonFetchGapTables();
       if (!ctx.thrashEscalated && anySuccessfulWriteThisRun && remainingGapTables.length > 0) {
-        console.warn(`[AgentLoop] Anon-fetch-without-policy gap still open after ${anonPolicyVerifyAttempts} corrective attempts (tables: ${remainingGapTables.join(', ')})   appending caveat. user=${userId ?? 'unknown'}`);
+        logger.warn('[AgentLoop] Anon-fetch-without-policy gap still open after corrective attempts, appending caveat', {
+          projectId, userId: userId ?? 'unknown', anonPolicyVerifyAttempts, remainingGapTables,
+        });
         accumulatedText +=
           `\n\n(Note: the frontend fetches ${remainingGapTables.map((t) => `"${t}"`).join(', ')} directly with the anon key, ` +
           `but no read policy exists for the anon role yet, so those fetches will currently return no rows. Add a ` +
@@ -3341,7 +3698,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         ctx.assetReferencesChecked.size === 0 ||
         [...ctx.assetReferencesChecked.values()].some((v) => !v.fullyResolved))
     ) {
-      console.warn(`[AgentLoop] Asset-replacement completeness claim without a verified replace_asset_references pass   appending caveat. user=${userId ?? 'unknown'}`);
+      logger.warn('[AgentLoop] Asset-replacement completeness claim without a verified replace_asset_references pass, appending caveat', {
+        projectId, userId: userId ?? 'unknown',
+      });
       accumulatedText +=
         `\n\n(Note: I placed a new asset this run but haven't run a verified replace_asset_references pass confirming ` +
         `every reference to the old one was found and updated, so I can't confirm "everywhere" is actually complete. ` +
@@ -3356,7 +3715,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // success anyway or produced nothing usable.
     if (ctx.thrashEscalated && (RESOLUTION_CLAIM_RE.test(accumulatedText) || !accumulatedText.trim())) {
       const fileHint = (ctx.thrashFingerprint ?? '').split('::')[0];
-      console.warn(`[AgentLoop] Thrash-escalated run still produced a resolution claim (or nothing)   overriding with honest-fail message. user=${userId ?? 'unknown'}`);
+      logger.warn('[AgentLoop] Thrash-escalated run still produced a resolution claim (or nothing), overriding with honest-fail message', {
+        projectId, userId: userId ?? 'unknown', thrashTripCount: ctx.thrashTripCount, fileHint,
+      });
       accumulatedText =
         `I've now attempted to fix this ${ctx.thrashTripCount ?? 2} times${fileHint && fileHint !== 'unknown-file' ? ` (repeatedly in ${fileHint})` : ''} ` +
         `and the same error keeps coming back. I don't want to keep trying the same kind of fix without new information, ` +
@@ -3377,7 +3738,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       const suspiciousFinish = outerFinishReason === 'error' || outerFinishReason === 'other' || outerFinishReason === 'content-filter';
       const producedNothing = !accumulatedText.trim() && !wroteAnythingSoFar && !hasLegacyWriteTags;
       if (producedNothing && suspiciousFinish && !abortController.signal.aborted) {
-        console.warn(`[AgentLoop] Empty run detected (finishReason=${outerFinishReason}, zero text/tools/writes)   retrying once via fallback provider. user=${userId ?? 'unknown'}`);
+        logger.warn('[AgentLoop] Empty run detected (zero text/tools/writes), retrying once via fallback provider', {
+          projectId, userId: userId ?? 'unknown', finishReason: outerFinishReason,
+        });
         let recovered = false;
         for (const fallbackModelId of buildFallbackCandidates(providerName, modelId)) {
           const fallbackInfo = createProviderForModel(fallbackModelId);
@@ -3387,12 +3750,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const retryConsume = await consumeResultStream(retryStream);
             if (!retryConsume.err && retryConsume.text.trim()) {
               accumulatedText = retryConsume.text;
-              console.log(`[AgentLoop] Empty-run retry succeeded via ${fallbackInfo.providerName}/${fallbackModelId}`);
+              logger.info('[AgentLoop] Empty-run retry succeeded via fallback provider', {
+                projectId, userId, fallbackProviderName: fallbackInfo.providerName, fallbackModelId,
+              });
               recovered = true;
               break;
             }
           } catch (retryErr: any) {
-            console.warn(`[AgentLoop] Empty-run retry via ${fallbackInfo.providerName} failed: ${retryErr?.message ?? retryErr}`);
+            logger.warn('[AgentLoop] Empty-run retry failed', {
+              projectId, userId, fallbackProviderName: fallbackInfo.providerName, fallbackModelId,
+              errorMessage: retryErr?.message ?? String(retryErr),
+            });
           }
         }
         if (!recovered && !accumulatedText.trim()) {
@@ -3449,7 +3817,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           `instead of burning more of your budget. ${madeNoChanges ? 'Nothing was changed.' : 'What I did change so far is saved.'} ` +
           `This is a platform-side issue, not a problem with your instruction   retrying the same request may work, ` +
           `and this has been logged for the team.\n\nRejected attempts:\n${attemptsNote}`;
-        console.warn(`[AgentLoop] Stuck-abort WITH rejected write attempts (${rejectedWriteAttempts.length})   guard-caused, not analysis paralysis (user=${userId ?? 'unknown'})`);
+        logger.warn('[AgentLoop] Stuck-abort WITH rejected write attempts (guard-caused, not analysis paralysis)', {
+          projectId, userId: userId ?? 'unknown', rejectedWriteAttemptCount: rejectedWriteAttempts.length,
+        });
       } else {
         summary = `I got stuck re-analyzing this without actually making a change, so I stopped instead of ` +
           `continuing to spin. ${madeNoChanges ? 'Nothing was changed.' : 'What I did change so far is saved.'} ` +
@@ -3490,7 +3860,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         );
 
       if (newPageFiles.length > 0 && !appTsxWasUpdated) {
-        console.log(`[AgentLoop] Post-gen validation: ${newPageFiles.length} page(s) written but App.tsx not updated   codegenerating App.tsx`);
+        logger.info('[AgentLoop] Post-gen validation: page(s) written but App.tsx not updated, codegenerating App.tsx', {
+          projectId, pageCount: newPageFiles.length, newPageFiles,
+        });
         generateStatus(projectId, { kind: 'lifecycle', phase: 'router-wiring', detail: `${newPageFiles.length} ${newPageFiles.length === 1 ? 'page' : 'pages'}` }).then((s) => {
           if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
         }).catch(() => {});
@@ -3503,7 +3875,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               .filter(f => /\.(tsx|jsx)$/.test(f))
               .map(f => `src/pages/${f}`);
           }
-        } catch { /* ignore */ }
+        } catch (pagesDirErr: any) {
+          logger.debug('_runAgentLoopInner: failed to list src/pages for App.tsx codegen (non-fatal)', { projectId, error: pagesDirErr?.message });
+        }
 
         const pagesForRouter = allPagesOnDisk.length > 0 ? allPagesOnDisk : newPageFiles;
 
@@ -3518,9 +3892,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           if (existing >= 0) filesToWrite[existing].content = generatedAppTsx;
           else filesToWrite.push({ path: 'src/App.tsx', content: generatedAppTsx });
           if (ctx.pendingPreviewFiles) ctx.pendingPreviewFiles.set('src/App.tsx', generatedAppTsx);
-          console.log(`[AgentLoop] App.tsx codegen completed   ${pagesForRouter.length} route(s) wired`);
-        } catch (appFixErr) {
-          console.warn('[AgentLoop] App.tsx codegen failed (non-fatal):', appFixErr);
+          logger.info('[AgentLoop] App.tsx codegen completed', { projectId, routesWired: pagesForRouter.length });
+        } catch (appFixErr: any) {
+          logger.warn('[AgentLoop] App.tsx codegen failed (non-fatal)', { projectId, error: appFixErr?.message, stack: appFixErr?.stack });
         }
       }
     }
@@ -3550,8 +3924,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         if (fs.existsSync(fullPath)) {
           return { path: relativePath, content: fs.readFileSync(fullPath, 'utf8') };
         }
-      } catch {
+      } catch (rereadErr: any) {
         // Fall back to tracked content if path validation/read fails.
+        logger.debug('_runAgentLoopInner: failed to re-read agent-written file from disk, using tracked content', {
+          projectId, relativePath, error: rereadErr?.message,
+        });
       }
       return { path: relativePath, content: fallbackContent };
     });
@@ -3562,7 +3939,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const collectDiskFiles = (dir: string) => {
       if (diskFilesMap.size >= MAX_DISK_FILES) return;
       let entries: fs.Dirent[];
-      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (dirErr: any) {
+        logger.debug('collectDiskFiles: readdirSync failed (non-fatal)', { dir, error: dirErr?.message });
+        return;
+      }
       for (const entry of entries) {
         if (diskFilesMap.size >= MAX_DISK_FILES) return;
         if (SKIP_DIRS.has(entry.name)) continue;
@@ -3585,12 +3965,19 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               } else {
                 diskFilesMap.set(relPath, fs.readFileSync(fullPath, 'utf8'));
               }
-            } catch { /* skip unreadable */ }
+            } catch (readErr: any) {
+              logger.debug('collectDiskFiles: failed to read/stat file (skipped)', { relPath, error: readErr?.message });
+            }
           }
         }
       }
     };
-    try { collectDiskFiles(appPath); } catch { /* skip if project dir missing */ }
+    try {
+      collectDiskFiles(appPath);
+      logger.debug('_runAgentLoopInner: post-run disk file collection complete', { projectId, diskFileCount: diskFilesMap.size });
+    } catch (collectErr: any) {
+      logger.debug('_runAgentLoopInner: post-run disk file collection failed (non-fatal, project dir may be missing)', { projectId, error: collectErr?.message });
+    }
 
     for (const { path: p, content: c } of agentWrittenFiles) {
       diskFilesMap.set(p, c);
@@ -3637,8 +4024,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           fileName: path,
         });
         return (result.diagnostics ?? []).length;
-      } catch {
-        return 0; // transpileModule exceptions are rare   don't treat as an error signal
+      } catch (transpileErr: any) {
+        // transpileModule exceptions are rare   don't treat as an error signal
+        logger.debug('countSyntaxErrors: transpileModule threw (treated as 0 errors)', { path, error: transpileErr?.message });
+        return 0;
       }
     };
 
@@ -3651,16 +4040,20 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const errorsBefore = countSyntaxErrors(f.path, f.content);
           const errorsAfter = countSyntaxErrors(f.path, sanitized);
           if (errorsAfter > errorsBefore) {
-            // The "fix" made things worse (or broke a previously-valid file)  
+            // The "fix" made things worse (or broke a previously-valid file)
             // reject it and keep the original content untouched.
-            console.warn(`[AgentLoop] Final sanitize REJECTED for ${f.path}   would have made syntax errors worse (${errorsBefore} → ${errorsAfter}); keeping original content. Attempted fixes: ${fixes.join(', ')}`);
+            logger.warn('[AgentLoop] Final sanitize REJECTED: would have made syntax errors worse, keeping original content', {
+              projectId, path: f.path, errorsBefore, errorsAfter, attemptedFixes: fixes,
+            });
           } else {
             f.content = sanitized;
             try {
               const fullPath = safeJoin(appPath, f.path);
               fs.writeFileSync(fullPath, sanitized, 'utf8');
-            } catch {}
-            console.log(`[AgentLoop] Final sanitize: ${f.path}   ${fixes.join(', ')}`);
+            } catch (writeErr: any) {
+              logger.debug('_runAgentLoopInner: failed to write sanitized file to disk (non-fatal)', { projectId, path: f.path, error: writeErr?.message });
+            }
+            logger.info('[AgentLoop] Final sanitize applied', { projectId, path: f.path, fixes });
           }
         }
 
@@ -3684,9 +4077,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 .slice(0, 2)
                 .map(d => ts.flattenDiagnosticMessageText(d.messageText, ' '))
                 .join('; ');
-              console.warn(`[AgentLoop] Final syntax check failed for ${f.path}: ${errors}   repair loop will fix`);
+              logger.warn('[AgentLoop] Final syntax check failed, repair loop will fix', { projectId, path: f.path, errors });
             }
-          } catch { /* don't block push on transpileModule exceptions */ }
+          } catch (transpileErr: any) {
+            // don't block push on transpileModule exceptions
+            logger.debug('_runAgentLoopInner: final syntax check transpile threw (non-fatal)', { projectId, path: f.path, error: transpileErr?.message });
+          }
         }
       }
       if (/\.json$/i.test(f.path) && !f.path.startsWith('node_modules')) {
@@ -3696,8 +4092,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           try {
             const fullPath = safeJoin(appPath, f.path);
             fs.writeFileSync(fullPath, repaired, 'utf8');
-          } catch {}
-          console.log(`[AgentLoop] Config repair: ${f.path}   ${fixes.join(', ')}`);
+          } catch (writeErr: any) {
+            logger.debug('_runAgentLoopInner: failed to write config-repaired file to disk (non-fatal)', { projectId, path: f.path, error: writeErr?.message });
+          }
+          logger.info('[AgentLoop] Config repair applied', { projectId, path: f.path, fixes });
         }
       }
     }
@@ -3763,10 +4161,23 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             timeout: timeoutMs,
           }, (r) => {
             r.on('data', (chunk: Buffer) => { responseBody += chunk.toString(); });
-            r.on('end', () => resolve({ status: r.statusCode ?? 0, body: responseBody }));
+            r.on('end', () => {
+              logger.debug('_runAgentLoopInner: httpPost response', {
+                projectId, url, status: r.statusCode ?? 0, bodyLength: responseBody.length,
+              });
+              resolve({ status: r.statusCode ?? 0, body: responseBody });
+            });
           });
-          req.on('error', (e: Error) => { resolve({ status: 0, body: e.message }); });
-          req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: 'timeout' }); });
+          req.on('error', (e: Error) => {
+            logger.warn('_runAgentLoopInner: httpPost request errored', { projectId, url, error: e.message });
+            resolve({ status: 0, body: e.message });
+          });
+          req.on('timeout', () => {
+            logger.warn('_runAgentLoopInner: httpPost request timed out', { projectId, url, timeoutMs });
+            req.destroy();
+            resolve({ status: 0, body: 'timeout' });
+          });
+          logger.debug('_runAgentLoopInner: httpPost request starting', { projectId, url, bodyLength: body.length, timeoutMs });
           req.write(body);
           req.end();
         });
@@ -3786,7 +4197,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             r.on('data', (chunk: Buffer) => { responseBody += chunk.toString(); });
             r.on('end', () => resolve({ status: r.statusCode ?? 0, body: responseBody }));
           });
-          req.on('error', (e: Error) => { resolve({ status: 0, body: e.message }); });
+          req.on('error', (e: Error) => {
+            logger.debug('_runAgentLoopInner: httpGet request errored', { projectId, url, error: e.message });
+            resolve({ status: 0, body: e.message });
+          });
           req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: 'timeout' }); });
           req.end();
         });
@@ -3826,7 +4240,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             errors: baseErrors,
             diagnosticKind: typeof parsed.diagnosticKind === 'string' ? parsed.diagnosticKind : undefined,
           };
-        } catch {
+        } catch (parseErr: any) {
+          logger.warn('_runAgentLoopInner: preview status response JSON parse failed', { projectId, error: parseErr?.message });
           return { healthy: false, errors: ['status_parse_failed'], diagnosticKind: 'service' };
         }
       };
@@ -3851,11 +4266,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           if (envSecrets.length > 0) {
             const envRes = await httpPost(`${previewServiceUrl}/preview/${projectId}/secrets`, JSON.stringify({ secrets: envSecrets }));
             if (envRes.status !== 200) {
-              console.warn(`[AgentLoop] preview env-secrets sync returned ${envRes.status}: ${envRes.body.slice(0, 200)}`);
+              logger.warn('[AgentLoop] preview env-secrets sync returned non-200', {
+                projectId, status: envRes.status, bodyPreview: envRes.body.slice(0, 200),
+              });
             }
           }
-        } catch (envErr) {
-          console.warn('[AgentLoop] preview env-secrets sync failed (continuing):', envErr);
+        } catch (envErr: any) {
+          logger.warn('[AgentLoop] preview env-secrets sync failed (continuing)', { projectId, error: envErr?.message, stack: envErr?.stack });
         }
       }
 
@@ -3868,14 +4285,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // reported success to the user while the live preview never actually
       // received this run's work. The written content was never determined
       // to be broken, so retry the same push rather than reverting anything.
+      logger.info('[AgentLoop] preview push starting', { projectId, updateUrl, fileCount: mergedWrites.length });
       let firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true, baseSeq: new Date().toISOString() }), 120_000);
       for (let pushRetry = 1; pushRetry <= 3 && firstAttempt.status !== 200 && firstAttempt.status !== 422; pushRetry++) {
-        console.warn(`[AgentLoop] Preview push transport failure (status ${firstAttempt.status}), retry ${pushRetry}/3...`);
+        logger.warn('[AgentLoop] Preview push transport failure, retrying', {
+          projectId, status: firstAttempt.status, pushRetry, maxPushRetries: 3,
+        });
         await new Promise<void>((r) => setTimeout(r, pushRetry * 1000));
         firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true, baseSeq: new Date().toISOString() }), 120_000);
       }
       if (firstAttempt.status === 200) {
-        console.log(`[AgentLoop] Preview push OK: ${mergedWrites.length} files`);
+        logger.info('[AgentLoop] Preview push OK', { projectId, fileCount: mergedWrites.length });
         tracer.event('preview-push', { files: mergedWrites.length, paths: mergedWrites.slice(0, 50).map((f) => f.path) });
         previewPushOk = true;
       } else if (firstAttempt.status === 422) {
@@ -3891,9 +4311,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // with actual build-error context) -- reverting to pre-agent state is
         // now only the last resort after repair is exhausted, not the first
         // response to a validation error.
-        console.warn(`[AgentLoop] Preview validation failed (422). Routing to repair loop before considering any revert.`);
+        logger.warn('[AgentLoop] Preview validation failed (422), routing to repair loop before considering any revert', { projectId });
       } else {
-        console.warn(`[AgentLoop] Preview push returned ${firstAttempt.status}`);
+        logger.warn('[AgentLoop] Preview push returned unexpected status', { projectId, status: firstAttempt.status });
       }
 
       const pushWasTransportFailure = firstAttempt.status !== 200 && firstAttempt.status !== 422 && !previewPushOk;
@@ -3912,7 +4332,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           previewPushOk = false;
           repairDiagnosticKind = status.diagnosticKind ?? 'build';
           const hint = status.errors.slice(0, 1).join('\n') || 'unknown preview error';
-          console.warn(`[AgentLoop] Preview reported unhealthy after successful push (${repairDiagnosticKind}): ${hint}`);
+          logger.warn('[AgentLoop] Preview reported unhealthy after successful push', { projectId, repairDiagnosticKind, hint });
         } else {
           // Second check at 1.2s total   catches slower Vite transforms on production
           await new Promise<void>(r => setTimeout(r, 600));
@@ -3921,7 +4341,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             previewPushOk = false;
             repairDiagnosticKind = status.diagnosticKind ?? 'build';
             const hint = status.errors.slice(0, 1).join('\n') || 'unknown preview error';
-            console.warn(`[AgentLoop] Preview reported unhealthy on second check (${repairDiagnosticKind}): ${hint}`);
+            logger.warn('[AgentLoop] Preview reported unhealthy on second check', { projectId, repairDiagnosticKind, hint });
           }
         }
 
@@ -3977,14 +4397,18 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 smokeTriggeredFailure = true;
                 previewPushOk = false;
                 repairDiagnosticKind = 'runtime';
-                console.warn(`[AgentLoop] Smoke check confirmed failure project=${projectId} -- triggering repair: ${pendingSmokeErrors.join('; ').slice(0, 300)}`);
+                logger.warn('[AgentLoop] Smoke check confirmed failure, triggering repair', {
+                  projectId, errorsPreview: pendingSmokeErrors.join('; ').slice(0, 300),
+                });
               } else {
-                console.log(`[AgentLoop] Smoke check recovered on confirm pass project=${projectId} (first reading was a false positive)`);
+                logger.info('[AgentLoop] Smoke check recovered on confirm pass (first reading was a false positive)', { projectId });
               }
             }
-          } catch (e) {
+          } catch (e: any) {
             // Never let this block a run every other signal calls healthy.
-            console.warn(`[AgentLoop] Smoke-check gate errored (ignored): ${e instanceof Error ? e.message : String(e)}`);
+            logger.warn('[AgentLoop] Smoke-check gate errored (ignored)', {
+              projectId, error: e instanceof Error ? e.message : String(e),
+            });
           }
         }
       }
@@ -3997,7 +4421,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         }
         // Skip all repair attempts if already over token budget
         if (abortController.signal.aborted || runTokens.total >= RUN_TOKEN_CAP) {
-          console.warn('[AgentLoop] Skipping build repair   token budget already exhausted');
+          logger.warn('[AgentLoop] Skipping build repair: token budget already exhausted', {
+            projectId, runTokensTotal: runTokens.total, RUN_TOKEN_CAP,
+          });
         } else {
         let repairFiles = [...mergedWrites];
         let prevErrorCount = Infinity;
@@ -4038,13 +4464,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             .sort()
             .join('|');
           if (prevErrorSignature && errorSignature === prevErrorSignature) {
-            console.warn(`[AgentLoop] Repair repeating identical error signature (${errors.length} errors)   stopping early`);
+            logger.warn('[AgentLoop] Repair repeating identical error signature, stopping early', {
+              projectId, repairAttempt, errorCount: errors.length,
+            });
             break;
           }
 
           // Progress check: if error count didn't decrease, bail early
           if (repairAttempt > 0 && errors.length >= prevErrorCount) {
-            console.warn(`[AgentLoop] Repair made no progress (${errors.length} errors, was ${prevErrorCount})   stopping`);
+            logger.warn('[AgentLoop] Repair made no progress, stopping', {
+              projectId, repairAttempt, errorCount: errors.length, prevErrorCount,
+            });
             break;
           }
           prevErrorCount = errors.length;
@@ -4085,7 +4515,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           }
 
           const currentKind = repairDiagnosticKind === 'runtime' ? 'runtime' : 'build';
-          console.log(`[AgentLoop] Auto-repair attempt ${repairAttempt + 1}: ${errors.length} ${currentKind} error(s) in ${brokenFileLocations.size} file(s)`);
+          logger.info('[AgentLoop] Auto-repair attempt starting', {
+            projectId, repairAttempt: repairAttempt + 1, errorCount: errors.length, currentKind, brokenFileCount: brokenFileLocations.size,
+          });
           if (!SUPPRESS_RECOVERY_UI) {
             generateStatus(projectId, { kind: 'lifecycle', phase: 'repair', detail: `${currentKind}, attempt ${repairAttempt + 1}` }).then((s) => {
               if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
@@ -4119,14 +4551,19 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                   await new Promise<void>(r => setTimeout(r, 400));
                   const memHealth = await getPreviewStatus();
                   if (memHealth.healthy) {
-                    console.log(`[AgentLoop] Failure-memory fix applied for ${relPath} (hit #${remembered.hitCount + 1})   LLM repair skipped`);
+                    logger.info('[AgentLoop] Failure-memory fix applied, LLM repair skipped', {
+                      projectId, relPath, hitCount: remembered.hitCount + 1,
+                    });
                     const idx = mergedWrites.findIndex(f => f.path === relPath);
                     if (idx >= 0) mergedWrites[idx].content = patched;
                     else mergedWrites.push({ path: relPath, content: patched });
                     previewPushOk = true;
                   }
                 }
-              } catch { /* remembered fix didn't apply cleanly   fall through to normal repair passes */ }
+              } catch (memErr: any) {
+                // remembered fix didn't apply cleanly   fall through to normal repair passes
+                logger.debug('_runAgentLoopInner: failure-memory fix failed to apply cleanly (non-fatal)', { projectId, relPath, error: memErr?.message });
+              }
               if (previewPushOk) break;
             }
           }
@@ -4147,9 +4584,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 if (fixes.length > 0) {
                   fs.writeFileSync(fullFilePath, fixed, 'utf8');
                   mechPatched.push({ path: relPath, content: fixed });
-                  console.log(`[AgentLoop] Mechanical fix: ${relPath}   ${fixes.join(', ')}`);
+                  logger.info('[AgentLoop] Mechanical fix applied', { projectId, relPath, fixes });
                 }
-              } catch { /* skip unreadable */ }
+              } catch (mechErr: any) {
+                logger.debug('_runAgentLoopInner: mechanical repair failed to read/fix file (skipped)', { projectId, relPath, error: mechErr?.message });
+              }
             }
             if (mechPatched.length > 0) {
               // Push only the patched files (partial update, no fullSync needed)
@@ -4158,7 +4597,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 await new Promise<void>(r => setTimeout(r, 400));
                 const mechHealth = await getPreviewStatus();
                 if (mechHealth.healthy) {
-                  console.log(`[AgentLoop] Mechanical repair cleared all errors   LLM skipped`);
+                  logger.info('[AgentLoop] Mechanical repair cleared all errors, LLM skipped', { projectId, repairAttempt: repairAttempt + 1 });
                   for (const p of mechPatched) {
                     const idx = mergedWrites.findIndex(f => f.path === p.path);
                     if (idx >= 0) mergedWrites[idx].content = p.content;
@@ -4269,11 +4708,19 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // can be diffed and stored in failure memory for future occurrences.
           const preRepairContent = new Map<string, string>();
           for (const [relPath] of brokenFileLocations) {
-            try { preRepairContent.set(relPath, fs.readFileSync(safeJoin(appPath, relPath), 'utf8')); } catch { /* file may not exist yet */ }
+            try { preRepairContent.set(relPath, fs.readFileSync(safeJoin(appPath, relPath), 'utf8')); } catch (preRepairErr: any) {
+              // file may not exist yet
+              logger.debug('_runAgentLoopInner: pre-repair content read failed (non-fatal)', { projectId, relPath, error: preRepairErr?.message });
+            }
           }
 
           try {
-            await generateText({
+            logger.debug('[AgentLoop] LLM repair pass: calling generateText', {
+              projectId, repairAttempt: repairAttempt + 1, providerName, modelId, repairDiagnosticKind, currentKind,
+              brokenFileCount: brokenFileLocations.size,
+            });
+            const _repairStartedAtMs = Date.now();
+            const repairResult = await generateText({
               model: aiProvider,
               system: repairSystemPrompt,
               messages: [{ role: 'user', content: `Fix these ${currentKind} errors:\n\n${condensedErrors}${brokenFileContext}` }],
@@ -4281,8 +4728,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               stopWhen: stepCountIs(12),
               abortSignal: abortController.signal,
             });
-          } catch (repairErr) {
-            console.warn(`[AgentLoop] Repair pass ${repairAttempt + 1} failed:`, repairErr);
+            logger.debug('[AgentLoop] LLM repair pass: generateText complete', {
+              projectId, repairAttempt: repairAttempt + 1, durationMs: Date.now() - _repairStartedAtMs,
+              inputTokens: repairResult.usage?.inputTokens, outputTokens: repairResult.usage?.outputTokens,
+              stepCount: repairResult.steps?.length ?? 0,
+            });
+          } catch (repairErr: any) {
+            logger.warn('[AgentLoop] Repair pass failed', {
+              projectId, repairAttempt: repairAttempt + 1, error: repairErr?.message, stack: repairErr?.stack,
+            });
             break;
           }
 
@@ -4290,7 +4744,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           const repairedDiskMap = new Map<string, string>();
           const reCollectDisk = (dir: string) => {
             let entries: fs.Dirent[];
-            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (dirErr: any) {
+              logger.debug('reCollectDisk: readdirSync failed (non-fatal)', { dir, error: dirErr?.message });
+              return;
+            }
             for (const entry of entries) {
               if (SKIP_DIRS.has(entry.name)) continue;
               if (SKIP_FILES.has(entry.name)) continue;
@@ -4306,11 +4763,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                   } else {
                     repairedDiskMap.set(relPath, fs.readFileSync(fullPath, 'utf8'));
                   }
-                } catch {}
+                } catch (readErr: any) {
+                  logger.debug('reCollectDisk: failed to read file (skipped)', { relPath, error: readErr?.message });
+                }
               }
             }
           };
-          try { reCollectDisk(appPath); } catch {}
+          try {
+            reCollectDisk(appPath);
+          } catch (reCollectErr: any) {
+            logger.debug('_runAgentLoopInner: reCollectDisk after repair failed (non-fatal)', { projectId, error: reCollectErr?.message });
+          }
           repairFiles = Array.from(repairedDiskMap.entries()).map(([p, c]) => ({ path: p, content: c }));
 
           // Push repaired files
@@ -4325,9 +4788,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             await new Promise<void>(r => setTimeout(r, 800));
             const repairHealth = await getPreviewStatus();
             if (repairHealth.healthy) {
-              console.log(`[AgentLoop] Auto-repair ${repairAttempt + 1} succeeded and preview confirmed healthy`);
+              logger.info('[AgentLoop] Auto-repair succeeded and preview confirmed healthy', { projectId, repairAttempt: repairAttempt + 1 });
               previewPushOk = true;
-              console.log(`[AgentLoop] Auto-repair ${repairAttempt + 1} resolved all errors (silent).`);
 
               // ── Store verified fix in failure memory for next occurrence ──────
               // Only store when the diff is small and clean   a full-file rewrite
@@ -4347,10 +4809,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             } else {
               // Update kind for the next repair pass
               if (repairHealth.diagnosticKind) repairDiagnosticKind = repairHealth.diagnosticKind;
-              console.warn(`[AgentLoop] Auto-repair ${repairAttempt + 1} push OK but preview still unhealthy (${repairHealth.errors.slice(0, 1).join('; ')})   continuing repair`);
+              logger.warn('[AgentLoop] Auto-repair push OK but preview still unhealthy, continuing repair', {
+                projectId, repairAttempt: repairAttempt + 1, hint: repairHealth.errors.slice(0, 1).join('; '),
+              });
             }
           } else {
-            console.warn(`[AgentLoop] Auto-repair ${repairAttempt + 1} did not pass validation (${repairPush.status})`);
+            logger.warn('[AgentLoop] Auto-repair did not pass validation', {
+              projectId, repairAttempt: repairAttempt + 1, status: repairPush.status,
+            });
           }
         }
         } // end token-budget guard for repair loop
@@ -4367,7 +4833,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // and the post-response pass still records preview_errors, so the signal is
       // not lost -- only its power to destroy work is.
       if (smokeTriggeredFailure && !previewPushOk) {
-        console.warn('[AgentLoop] Smoke-triggered failure survived repair -- NOT reverting (unproven signal); surfacing to the user instead');
+        logger.warn('[AgentLoop] Smoke-triggered failure survived repair, NOT reverting (unproven signal), surfacing to the user instead', { projectId });
         smokeFailureSurvivedRepair = true;
         if (lastRepairErrors.length > 0) sink.emit('repair-failed', { errors: lastRepairErrors.slice(0, 5) });
         // Same house style as the droppedFiles/genuinelyOutOfSteps honest-copy
@@ -4390,7 +4856,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       if (!previewPushOk && !pushWasTransportFailure) {
           // All repair attempts exhausted. Silently restore the pre-agent state so
           // the user sees a clean working preview instead of broken generated code.
-          console.warn('[AgentLoop] All repair attempts exhausted   silently restoring pre-agent state');
+          logger.warn('[AgentLoop] All repair attempts exhausted, silently restoring pre-agent state', {
+            projectId, userId, preAgentSnapshotSize: preAgentDiskSnapshot.size,
+          });
 
           // Notify frontend so it can show the Auto-fix button
           if (lastRepairErrors.length > 0) {
@@ -4419,13 +4887,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 } else {
                   fs.writeFileSync(fullFilePath, preContent, 'utf8');
                 }
-              } catch (diskErr) {
+              } catch (diskErr: any) {
                 diskRestoreFailures++;
-                console.error(`[AgentLoop] Pre-agent disk restore FAILED for ${relPath}   this server's own copy may still hold broken content`, diskErr);
+                logger.error('[AgentLoop] Pre-agent disk restore FAILED, this server\'s own copy may still hold broken content', {
+                  projectId, relPath, error: diskErr?.message, stack: diskErr?.stack,
+                });
               }
             }
             if (diskRestoreFailures > 0) {
-              console.error(`[AgentLoop] Pre-agent disk restore: ${diskRestoreFailures}/${preAgentDiskSnapshot.size} file(s) failed to restore locally for project=${projectId}`);
+              logger.error('[AgentLoop] Pre-agent disk restore: some files failed to restore locally', {
+                projectId, diskRestoreFailures, totalFiles: preAgentDiskSnapshot.size,
+              });
             }
             // Every file this run actually changed is about to vanish along with
             // the rest of the revert -- capture those paths for the caveat below
@@ -4461,25 +4933,33 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 } else if (attempt < 3) {
                   await new Promise((r) => setTimeout(r, attempt * 1000));
                 }
-              } catch (restoreErr) {
-                console.warn(`[AgentLoop] Pre-agent restore push attempt ${attempt}/3 threw`, restoreErr);
+              } catch (restoreErr: any) {
+                logger.warn('[AgentLoop] Pre-agent restore push attempt threw', {
+                  projectId, attempt, maxAttempts: 3, error: restoreErr?.message,
+                });
                 if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 1000));
               }
             }
             if (restorePushOk) {
-              console.log(`[AgentLoop] Pre-agent state restored to preview (${preAgentFiles.length} files)`);
+              logger.info('[AgentLoop] Pre-agent state restored to preview', { projectId, fileCount: preAgentFiles.length });
             } else {
-              console.error(`[AgentLoop] Pre-agent restore push FAILED after 3 attempts (last status: ${lastRestoreStatus ?? 'none'})   live preview may still show broken code for project=${projectId}`);
+              logger.error('[AgentLoop] Pre-agent restore push FAILED after 3 attempts, live preview may still show broken code', {
+                projectId, lastRestoreStatus: lastRestoreStatus ?? 'none',
+              });
               sink.emit('repair-failed', {
                 errors: ['Restore to last known-good state failed to reach the preview service   the preview may still show broken code. Try again or manually refresh.'],
               });
             }
           } else {
             // No pre-agent snapshot available   scan disk and push whatever is there
+            logger.warn('[AgentLoop] No pre-agent snapshot available, scanning disk and pushing whatever is there', { projectId });
             const salvageDiskMap = new Map<string, string>();
             const collectSalvage = (dir: string) => {
               let entries: fs.Dirent[];
-              try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+              try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (dirErr: any) {
+                logger.debug('collectSalvage: readdirSync failed (non-fatal)', { dir, error: dirErr?.message });
+                return;
+              }
               for (const entry of entries) {
                 if (SKIP_DIRS.has(entry.name)) continue;
                 if (SKIP_FILES.has(entry.name)) continue;
@@ -4495,25 +4975,31 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                     } else {
                       salvageDiskMap.set(relPath, fs.readFileSync(fullPath, 'utf8'));
                     }
-                  } catch {}
+                  } catch (readErr: any) {
+                    logger.debug('collectSalvage: failed to read file (skipped)', { relPath, error: readErr?.message });
+                  }
                 }
               }
             };
-            try { collectSalvage(appPath); } catch {}
+            try { collectSalvage(appPath); } catch (salvageErr: any) {
+              logger.debug('_runAgentLoopInner: collectSalvage failed (non-fatal)', { projectId, error: salvageErr?.message });
+            }
             const salvageFiles = Array.from(salvageDiskMap.entries()).map(([p, c]) => ({ path: p, content: c }));
             mergedWrites.length = 0;
             salvageFiles.forEach(f => mergedWrites.push(f));
             try {
               await httpPost(updateUrl, JSON.stringify({ files: salvageFiles, fullSync: true, baseSeq: new Date().toISOString() }), 120_000);
-            } catch {}
+            } catch (salvagePushErr: any) {
+              logger.warn('_runAgentLoopInner: no-snapshot salvage push failed (non-fatal)', { projectId, error: salvagePushErr?.message });
+            }
           }
         }
-      } catch (pushErr) {
-        console.warn('[AgentLoop] Preview push error:', pushErr);
+      } catch (pushErr: any) {
+        logger.warn('[AgentLoop] Preview push error', { projectId, userId, error: pushErr?.message, stack: pushErr?.stack });
         throw pushErr;
       }
     } else if (runtimeMode === 'build' && !agentWroteFiles) {
-      console.log(`[AgentLoop] No file operations   skipping preview push`);
+      logger.info('[AgentLoop] No file operations, skipping preview push', { projectId, outerFinishReason });
       if (outerFinishReason === 'tool-calls') {
         // finishReason 'tool-calls' with zero files written can mean two very
         // different things, and telling them apart matters for what the user
@@ -4624,6 +5110,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     });
 
     // ── Background: save token usage + npm install (non-blocking) ───────────
+    logger.debug('[AgentLoop] background post-response tasks starting', { projectId, userId, agentRunId, stepCount });
     void (async () => {
       // runTokens is already populated by onStepFinish at this point.
       // Fall back to result.usage only if onStepFinish captured nothing (e.g. non-Anthropic provider).
@@ -4634,7 +5121,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           tokensUsed = usage?.totalTokens ?? 0;
           runTokens.inputTokens  = (usage as any)?.promptTokens     ?? (usage as any)?.inputTokens     ?? 0;
           runTokens.outputTokens = (usage as any)?.completionTokens ?? (usage as any)?.outputTokens    ?? 0;
-        } catch {}
+        } catch (usageErr: any) {
+          logger.debug('_runAgentLoopInner: fallback result.usage read failed (non-fatal)', { projectId, error: usageErr?.message });
+        }
       }
 
       const finalCost = runCostUsd > 0 ? runCostUsd : calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens);
@@ -4673,10 +5162,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           }
           if (!smokeResult.skipped && !smokeResult.ok) {
             previewSmokeErrors = smokeResult.errors.join('; ').slice(0, 2000);
-            console.warn(`[AgentLoop] Preview smoke check failed for project=${projectId}: ${previewSmokeErrors}`);
+            logger.warn('[AgentLoop] Preview smoke check failed (post-response)', { projectId, previewSmokeErrors });
           }
-        } catch (smokeErr) {
-          console.warn(`[AgentLoop] Preview smoke check errored (non-fatal) for project=${projectId}:`, smokeErr);
+        } catch (smokeErr: any) {
+          logger.warn('[AgentLoop] Preview smoke check errored (non-fatal, post-response)', { projectId, error: smokeErr?.message });
         }
       }
 
@@ -4738,8 +5227,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           net_new_write_count:                    ctx.netNewWriteCount ?? 0,
           net_new_write_without_retrieval_count:   ctx.netNewWriteWithoutRetrievalCount ?? 0,
         }).eq('id', agentRunId).then(
-          ({ error }) => { if (error) console.warn(`[AgentLoop] agent_runs update failed: ${error.message}`); },
-          (e: any) => console.warn('[AgentLoop] agent_runs update rejected:', e?.message)
+          ({ error }) => {
+            if (error) {
+              logger.warn('[AgentLoop] agent_runs update failed', { projectId, agentRunId, error: error.message });
+            } else {
+              logger.debug('_runAgentLoopInner: agent_runs update succeeded', { projectId, agentRunId });
+            }
+          },
+          (e: any) => logger.warn('[AgentLoop] agent_runs update rejected', { projectId, agentRunId, error: e?.message }),
         );
       }
 
@@ -4758,12 +5253,16 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             summary || `Agent run: ${stepCount} step(s)`, prompt,
           );
           if (persistResult.ok) {
-            console.log(`[AgentLoop] Revision persisted server-side: ${persistResult.revisionId} (${doneFilesToWrite.length} files in manifest)`);
+            logger.info('[AgentLoop] Revision persisted server-side', {
+              projectId, userId, revisionId: persistResult.revisionId, fileCount: doneFilesToWrite.length,
+            });
           } else {
-            console.warn(`[AgentLoop] Server-side revision persist FAILED: ${persistResult.error} -- durable state may lag the live preview until the next successful save.`);
+            logger.warn('[AgentLoop] Server-side revision persist FAILED, durable state may lag the live preview', {
+              projectId, userId, error: persistResult.error,
+            });
           }
         } catch (persistErr: any) {
-          console.warn('[AgentLoop] Server-side revision persist threw:', persistErr?.message);
+          logger.warn('[AgentLoop] Server-side revision persist threw', { projectId, userId, error: persistErr?.message });
         }
       }
 
@@ -4781,8 +5280,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           .update({ preview_url: revisionPreviewUrl, preview_status: 'ready' })
           .eq('project_id', projectId)
           .then(
-            ({ error }) => { if (error) console.warn(`[AgentLoop] revision preview_url update failed: ${error.message}`); },
-            (e: any) => console.warn('[AgentLoop] revision preview_url update rejected:', e?.message)
+            ({ error }) => {
+              if (error) logger.warn('[AgentLoop] revision preview_url update failed', { projectId, error: error.message });
+            },
+            (e: any) => logger.warn('[AgentLoop] revision preview_url update rejected', { projectId, error: e?.message }),
           );
 
         // Capture a screenshot thumbnail   fire-and-forget, never blocks the response
@@ -4812,7 +5313,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // Delete snapshot directories from disk
             for (const sid of pruneSnapshotIds) {
               const dir = path.join(SNAPSHOTS_DIR, sid);
-              try { await fs.promises.rm(dir, { recursive: true, force: true }); } catch { /* skip */ }
+              try { await fs.promises.rm(dir, { recursive: true, force: true }); } catch (rmErr: any) {
+                logger.debug('_runAgentLoopInner: snapshot dir removal failed (skipped)', { projectId, snapshotId: sid, error: rmErr?.message });
+              }
             }
 
             // Clear snapshot_id from those DB rows (they're gone from disk)
@@ -4820,8 +5323,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               .from('agent_runs')
               .update({ snapshot_id: null })
               .in('id', pruneIds);
-          } catch (pruneErr) {
-            console.warn('[AgentLoop] Snapshot pruning failed:', pruneErr);
+            logger.debug('_runAgentLoopInner: snapshot pruning complete', { projectId, prunedCount: pruneIds.length });
+          } catch (pruneErr: any) {
+            logger.warn('[AgentLoop] Snapshot pruning failed', { projectId, error: pruneErr?.message });
           }
         })();
       }
@@ -4842,6 +5346,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     if (agentTimeoutId) clearTimeout(agentTimeoutId);
     clearInterval(heartbeatId);
+    logger.info('_runAgentLoopInner: returning successfully', {
+      projectId, userId, durationMs: Date.now() - _innerStartedAtMs, stepCount,
+      filesWritten: doneFilesToWrite.length, filesDeleted: doneFilesToDelete.length, renames: doneRenames.length,
+      costUsd: finalCostUsd, ecoUsed: finalEcoUsed, needsAutoContinue: Boolean(needsAutoContinue),
+      stuckAborted: Boolean(stuckAnalysisAbortReason), runtimeMode,
+    });
     return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed, needsAutoContinue, continuationPrompt, stuckAborted: Boolean(stuckAnalysisAbortReason), runtimeMode };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
@@ -4851,9 +5361,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const isAbort = abortController.signal.aborted || err?.name === 'AbortError';
     if (isAbort) {
       if (abortSignal?.aborted) {
-        console.warn('[AgentLoop] Aborted due to client disconnect');
+        logger.warn('[AgentLoop] Aborted due to client disconnect', { projectId, userId, stepCount, durationMs: Date.now() - _innerStartedAtMs });
       } else {
-        console.warn('[AgentLoop] Aborted due to timeout/cancellation');
+        logger.warn('[AgentLoop] Aborted due to timeout/cancellation', { projectId, userId, stepCount, durationMs: Date.now() - _innerStartedAtMs });
       }
 
       const abortError = err instanceof Error ? err : new Error('Generation cancelled');
@@ -4883,7 +5393,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       throw abortError;
     }
 
-    console.error('[AgentLoop] Error:', err);
+    logger.error('[AgentLoop] Error', {
+      projectId, userId, stepCount, durationMs: Date.now() - _innerStartedAtMs,
+      error: err?.message, stack: err?.stack,
+    });
 
     let errorMessage = err?.message ?? 'Agent loop failed';
 
@@ -4904,11 +5417,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // end users (observed in production logs, 18 occurrences Jun 12 - Jul 17).
     const isOutage = isAuthOrBillingError(err);
     if (isOutage) {
-      console.error(
-        `[ProviderOutage] severity=critical all providers failed with billing/credit/quota errors` +
-        ` | project=${projectId}` + (userId ? ` user=${userId}` : '') +
-        ` | raw=${String(err?.message ?? err).slice(0, 300)}`,
-      );
+      logger.error('[ProviderOutage] severity=critical, all providers failed with billing/credit/quota errors', {
+        projectId, userId, rawErrorMessage: String(err?.message ?? err).slice(0, 300),
+      });
       errorMessage = 'The AI service is temporarily unavailable   this is an issue on our side, not with your project. Your work is safe. Please try again in a little while.';
     } else {
       // Extract inner AI SDK APICallError messages if present
@@ -4925,11 +5436,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           if (body.error?.message) {
             errorMessage = body.error.message;
           }
-        } catch {
+        } catch (parseErr: any) {
           // ignore JSON parse error
+          logger.debug('_runAgentLoopInner: err.responseBody JSON parse failed (ignored)', { projectId, error: parseErr?.message });
         }
       }
     }
+    logger.error('[AgentLoop] emitting error to sink and marking agent_runs failed', {
+      projectId, userId, agentRunId, errorMessage,
+    });
 
     sink.emit('error', { message: errorMessage });
     if (err && typeof err === 'object') {
