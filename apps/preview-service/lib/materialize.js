@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { activeServers } = require('./previewState');
 const { validateSourceFile, repairMalformedDefaultStringParams, trimTrailingOrphanClosers } = require('./validation');
-const { sendFullReload } = require('./instanceOps');
+const { sendFullReload, isChildInstance } = require('./instanceOps');
 
 // Base Tailwind + shadcn CSS — plain CSS vars, no @apply color-tokens
 const TAILWIND_CSS_BASE = `@tailwind base;
@@ -1146,7 +1146,26 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
             // triggered its own 'full-reload' WebSocket message (26 files = 26
             // 'page reload' log entries). The Vite client debounces but the module
             // graph ends in a partially-stale state causing cascading re-requests.
-            sendFullReload(projectIdInstance, projectId);
+            //
+            // But a full reload on EVERY agent response, for EVERY project, was
+            // itself the wrong default: an agent very commonly writes files the
+            // currently-viewed page hasn't imported yet (new components staged for
+            // a later step, files behind a route the user isn't on) -- none of
+            // that is visible, so reloading for it is pure disruption. Only
+            // reload when at least one written file is actually part of the
+            // browser's already-loaded module graph; a child-process instance's
+            // Vite lives in a separate process with no graph to inspect here, so
+            // it keeps the original always-reload behavior (confirmed live
+            // 2026-08-19: reload-on-every-response reported across every project,
+            // not one -- this is the shared cause).
+            const touchesLoadedModule = isChildInstance(projectIdInstance)
+                ? true
+                : filesTouchLoadedModule(projectIdInstance.vite, wroteFiles);
+            if (touchesLoadedModule) {
+                sendFullReload(projectIdInstance, projectId);
+            } else {
+                console.log(`[${projectId}] Skipped reload -- ${wroteFiles.length} file(s) written, none currently loaded by the browser`);
+            }
         }
     }
     // dryRun (used by /preview/:projectId/check): validation above already ran
@@ -1157,6 +1176,29 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
     const contentHash = hashFileSet(hashedFiles);
 
     return { userFilePaths, allFixedIssues, validationErrors, wroteFiles, contentHash };
+}
+
+// Whether a full page reload is actually needed for a batch of written files
+// (2026-08-19): a full-reload-on-every-push default meant an agent response
+// that only touched files the currently-viewed page hasn't imported yet --
+// new components staged for a later step, files behind a route the user
+// isn't on -- still blew away the whole page for no visible change, on
+// every project. `vite` is Vite's live in-process dev-server object (only
+// available for a legacy, non-child-process instance; a child-process
+// instance's Vite lives in another process with no graph to inspect here,
+// so callers should treat that case as always-reload). Defaults to true
+// (reload) whenever the check itself can't be trusted -- staying silently
+// stale is worse than one unnecessary reload.
+function filesTouchLoadedModule(vite, wroteFiles) {
+    if (!vite?.moduleGraph?.getModulesByFile) return true;
+    return wroteFiles.some((filePath) => {
+        try {
+            const mods = vite.moduleGraph.getModulesByFile(filePath);
+            return Boolean(mods && mods.size > 0);
+        } catch {
+            return true;
+        }
+    });
 }
 
 // D-1: deterministic content hash over a {path, content}[] set, order-
@@ -1387,4 +1429,5 @@ module.exports = {
     collectReferencedPackages,
     harmonizePackageJson,
     packageJsonNeedsRestart,
+    filesTouchLoadedModule,
 };
