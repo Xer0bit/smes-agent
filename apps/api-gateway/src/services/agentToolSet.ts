@@ -695,6 +695,34 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
             );
           }
 
+          // ── Root-relative Supabase-shape fetch guard ───────────────────────────
+          // Same failure class as the /api/* guard above, different shape: a model
+          // trained on real Supabase apps (where these paths sit behind a proxy or
+          // supabase-js, which prepends the project URL for you) reaches for the
+          // bare path -- `fetch('/rest/v1/products')`, `fetch('/auth/v1/token')`,
+          // `fetch('/functions/v1/foo')` -- with no base URL at all. Unlike a typo'd
+          // env var, there's no `undefined` in the string to catch: it's valid JS
+          // that resolves against whatever origin the browser currently has loaded
+          // (the preview page, or the published site), not the tenant DB/auth host,
+          // so it silently 404s or hits the wrong server. Same "quote immediately
+          // before the path" precision as the /api/* guard so a correctly composed
+          // `${import.meta.env.VITE_DB_API_URL}/rest/v1/...` never matches.
+          const rootRelativeBackendFetch = newContent.match(/\b(?:fetch|axios(?:\.\w+)?)\(\s*(['"`])\/(rest\/v1|auth\/v1|functions)\//);
+          if (rootRelativeBackendFetch) {
+            const kind = rootRelativeBackendFetch[2];
+            const fix = kind === 'rest/v1'
+              ? 'the hosted database: `fetch(`${import.meta.env.VITE_DB_API_URL}/rest/v1/<table>`, ...)`'
+              : kind === 'auth/v1'
+              ? 'auth: `fetch(`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/...`, ...)` (or use the Supabase client, which builds this URL for you)'
+              : 'an edge function: `fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/<function-name>/invoke`, ...)`';
+            return (
+              `BLOCKED: "${args.path}" calls a root-relative "/${kind}/..." URL with no base-URL prefix. This app ` +
+              `has no backend at its own origin -- a bare path like this resolves against whatever URL is currently ` +
+              `loaded (the preview page, or the published site), not the real host, so it silently 404s or hits the ` +
+              `wrong server. Prefix it with the correct env var for ${fix}. Rewrite and retry.`
+            );
+          }
+
           // ── Hardcoded-undefined auth/DB config guard ───────────────────────────
           // Confirmed live incident (2026-08-06 audit, 3 separate projects): an
           // agent turn wrote `const supabaseUrl = undefined;` / `const
