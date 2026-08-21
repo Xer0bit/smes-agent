@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, RequestHandler } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -148,13 +148,42 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(morgan('combined'));
 app.use(requestLogger);
 
-// Health check endpoint
+// Which route groups this process serves. VPS3 (gen server) runs SERVICE_ROLE=gen
+// and only handles LLM/agent generation traffic; VPS1 runs SERVICE_ROLE=api and
+// handles everything else. Unset/'all' (local dev, tests) mounts both so nothing
+// else has to change to run the full stack in one process.
+//
+// Computed HERE, above /health, rather than beside the route mounting below:
+// the health endpoint reports it, and a deploy that lands correct code on the
+// wrong-role host is otherwise indistinguishable from a good one (2026-08-12
+// gap register G27 -- an entire session's agent fixes were deployed to VPS1,
+// where /api/v1/ai never mounts, with a green health check every single time).
+const SERVICE_ROLE = process.env.SERVICE_ROLE || 'all';
+const servesGen = SERVICE_ROLE === 'gen' || SERVICE_ROLE === 'all';
+const servesApi = SERVICE_ROLE === 'api' || SERVICE_ROLE === 'all';
+
+// Every prefix actually handed to app.use() below, recorded as it is mounted.
+// Deliberately NOT a hand-written list duplicated into the health response --
+// that copy would drift from reality the first time a route is added or
+// re-gated, which is the exact class of bug this endpoint exists to catch.
+const mountedRoutes: string[] = [];
+function mount(path: string, ...handlers: RequestHandler[]): void {
+    mountedRoutes.push(path);
+    app.use(path, ...handlers);
+}
+
+// Health check endpoint. Reports WHICH deployment this process is, not just
+// that it is up -- see the SERVICE_ROLE comment above. mountedRoutes is read
+// at request time, by which point all mounting below has run.
 app.get('/health', (req: Request, res: Response) => {
     res.json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        version: '1.0.0'
+        version: '1.0.0',
+        serviceRole: SERVICE_ROLE,
+        serves: { gen: servesGen, api: servesApi },
+        mountedRoutes: [...mountedRoutes].sort(),
     });
 });
 
@@ -168,45 +197,38 @@ const aiRateLimiter = rateLimit({
     message: { error: 'Too many AI requests   please wait a moment' },
 });
 
-// Which route groups this process serves. VPS3 (gen server) runs SERVICE_ROLE=gen
-// and only handles LLM/agent generation traffic; VPS1 runs SERVICE_ROLE=api and
-// handles everything else. Unset/'all' (local dev, tests) mounts both so nothing
-// else has to change to run the full stack in one process.
-const SERVICE_ROLE = process.env.SERVICE_ROLE || 'all';
-const servesGen = SERVICE_ROLE === 'gen' || SERVICE_ROLE === 'all';
-const servesApi = SERVICE_ROLE === 'api' || SERVICE_ROLE === 'all';
-
-// API routes
+// API routes. Mounted via mount() (declared above the health endpoint) so the
+// set of live prefixes is recorded as a fact rather than re-described by hand.
 if (servesGen) {
-    app.use('/api/v1/ai', aiRateLimiter, aiRoutes);
+    mount('/api/v1/ai', aiRateLimiter, aiRoutes);
 }
 if (servesApi) {
-    app.use('/api/v1/auth', authRoutes);
-    app.use('/api/v1/auth/ecg', ecgAuthRoutes);
-    app.use('/api/v1/projects', projectRoutes);
-    app.use('/api/v1/files', fileRoutes);
-    app.use('/api/v1/preview', previewRoutes);
-    app.use('/api/v1/system', systemRoutes);
-    app.use('/api/v1/runtime', runtimeRoutes);
-    app.use('/api/v1/database', databaseRoutes);
-    app.use('/api/v1/admin/database', adminDatabaseRoutes);
-    app.use('/api/v1/hosting', hostingRoutes);
-    app.use('/api/v1/seo', seoRoutes);
-    app.use('/api/v1/header-integrations', headerIntegrationsRoutes);
-    app.use('/api/v1/github', githubRoutes);
-    app.use('/api/v1/stripe', stripeRoutes);
-    app.use('/api/v1/billing', billingRoutes);
+    mount('/api/v1/auth', authRoutes);
+    mount('/api/v1/auth/ecg', ecgAuthRoutes);
+    mount('/api/v1/projects', projectRoutes);
+    mount('/api/v1/files', fileRoutes);
+    mount('/api/v1/preview', previewRoutes);
+    mount('/api/v1/system', systemRoutes);
+    mount('/api/v1/runtime', runtimeRoutes);
+    mount('/api/v1/database', databaseRoutes);
+    mount('/api/v1/admin/database', adminDatabaseRoutes);
+    mount('/api/v1/hosting', hostingRoutes);
+    mount('/api/v1/seo', seoRoutes);
+    mount('/api/v1/header-integrations', headerIntegrationsRoutes);
+    mount('/api/v1/github', githubRoutes);
+    mount('/api/v1/stripe', stripeRoutes);
+    mount('/api/v1/billing', billingRoutes);
     // Also mounted at the registered GitHub OAuth App callback path   the
     // App's "Authorization callback URL" is /auth/github/callback, which
     // must match REDIRECT_URI in github.routes.ts exactly.
-    app.use('/auth/github', githubRoutes);
-    app.use('/api/v1/functions', functionsRoutes);
-    app.use('/api/v1/ecg-connect', ecgCustomizeRoutes);
-    app.use('/api/v1/ecg-dev-agent', ecgDevAgentRoutes);
-    app.use('/api/v1/ecg-proxy', ecgProxyRoutes);
-    app.use('/api/v1/ecg-chat', ecgChatRoutes);
-    app.use('/api/v1/ecg-access', ecgAccessRoutes);
-    app.use('/api/v1/deploy', deploymentRoutes);
+    mount('/auth/github', githubRoutes);
+    mount('/api/v1/functions', functionsRoutes);
+    mount('/api/v1/ecg-connect', ecgCustomizeRoutes);
+    mount('/api/v1/ecg-dev-agent', ecgDevAgentRoutes);
+    mount('/api/v1/ecg-proxy', ecgProxyRoutes);
+    mount('/api/v1/ecg-chat', ecgChatRoutes);
+    mount('/api/v1/ecg-access', ecgAccessRoutes);
+    mount('/api/v1/deploy', deploymentRoutes);
 }
 
 // 404 handler
