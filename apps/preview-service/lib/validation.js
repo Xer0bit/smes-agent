@@ -261,7 +261,18 @@ function checkCrossFileImports(projectRoot, requestFiles, fullSync) {
 // ── Stable Architecture: Post-write Vite transform check ─────────────────────
 // After files are written, attempt to load the entry point through Vite's
 // module graph. If it fails to transform, the project is broken.
-async function quickViteBuildCheck(projectId, projectRoot) {
+//
+// changedPaths (optional): relative paths this push actually wrote. A file
+// that isn't touched by the push can't have just become broken -- it either
+// passed this same check on a prior push or was scaffolded from a known-good
+// template -- so a partial push only needs to re-check what it wrote instead
+// of every script file in the project. Without this, a 1-file repair-loop
+// push on a 300-file project paid for transforming all 300 on the blocking
+// response path, which is what turned into request timeouts ("Something
+// needs fixing") on larger projects. Omit changedPaths (or pass a fullSync
+// push's own file list, which already covers ~the whole tree) to fall back
+// to the full walk.
+async function quickViteBuildCheck(projectId, projectRoot, changedPaths) {
     const instance = activeServers.get(projectId);
     // Guard is on instance existence only, not `.vite`   this check never
     // touches instance.vite (it only needs getViteApi()'s transformWithEsbuild
@@ -269,21 +280,29 @@ async function quickViteBuildCheck(projectId, projectRoot) {
     // at all despite being just as real/running as a legacy in-process one.
     if (!instance) return { ok: true, errors: [] };
 
-    // Scan ALL source files — not just entry points — so syntax errors in
-    // pages / components are caught immediately (before the agent health-checks).
-    const srcDir = path.join(projectRoot, 'src');
     const candidateFiles = [];
-    if (fs.existsSync(srcDir)) {
-        const walk = (dir) => {
-            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-                if (entry.isDirectory()) {
-                    walk(path.join(dir, entry.name));
-                } else if (/\.(tsx|jsx|ts|js)$/.test(entry.name)) {
-                    candidateFiles.push(path.join(dir, entry.name));
+    if (Array.isArray(changedPaths) && changedPaths.length > 0) {
+        for (const relPath of changedPaths) {
+            if (!/\.(tsx|jsx|ts|js)$/.test(relPath)) continue;
+            const absPath = path.join(projectRoot, relPath.replace(/^\/+/, ''));
+            if (fs.existsSync(absPath)) candidateFiles.push(absPath);
+        }
+    } else {
+        // Scan ALL source files — not just entry points — so syntax errors in
+        // pages / components are caught immediately (before the agent health-checks).
+        const srcDir = path.join(projectRoot, 'src');
+        if (fs.existsSync(srcDir)) {
+            const walk = (dir) => {
+                for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                    if (entry.isDirectory()) {
+                        walk(path.join(dir, entry.name));
+                    } else if (/\.(tsx|jsx|ts|js)$/.test(entry.name)) {
+                        candidateFiles.push(path.join(dir, entry.name));
+                    }
                 }
-            }
-        };
-        walk(srcDir);
+            };
+            walk(srcDir);
+        }
     }
 
     const errors = [];

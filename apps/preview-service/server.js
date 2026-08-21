@@ -2110,7 +2110,12 @@ export default App;
             // both into one real signal so undefined-symbol bugs (e.g. a page
             // referencing `localDb`/`localAuth` that was never imported) actually
             // mark the preview unhealthy instead of being reported as clean.
-            const buildCheck = await quickViteBuildCheck(projectId, projectRoot);
+            // Partial pushes (repair-loop single-file fixes, code-editor edits)
+            // only need their own files re-checked -- see quickViteBuildCheck's
+            // doc comment. Full syncs keep the full-tree walk since `files`
+            // there already covers ~everything and existing behavior shouldn't
+            // change for that path.
+            const buildCheck = await quickViteBuildCheck(projectId, projectRoot, fullSync ? undefined : files.map((f) => f.path));
             const fastCheckErrors = [
                 ...validationErrors.map((e) => e.summary),
                 ...(buildCheck.ok ? [] : buildCheck.errors.map((e) => e.summary)),
