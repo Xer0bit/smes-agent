@@ -30,6 +30,7 @@ const {
     materializeProjectFiles, pruneProjectFiles, countProjectFiles, packageJsonNeedsRestart, shouldSkipPrune,
 } = require('./lib/materialize');
 const { snapshotProjectSrc, rollbackProjectSrc, cleanupSnapshot } = require('./lib/snapshot');
+const { decidePushOutcome } = require('./lib/pushOutcome');
 // buildViteConfig/COMMON_DEPS shared by both the legacy in-process path
 // (below) and the per-project child-process runner (lib/viteChildRunner.js)
 // so the two can never drift apart   see lib/viteConfig.js.
@@ -2134,37 +2135,31 @@ export default App;
             // transform, and every agent push hits this route.
             // Only REAL build breakage gates preview health and the agent's
             // repair loop, and it's the only check that runs before we respond.
+            // Decision extracted to lib/pushOutcome.js so it can actually be
+            // tested -- see that file for the invariant and why the route
+            // itself is not importable. This block is now just the I/O.
+            const outcome = decidePushOutcome({
+                hasBuildErrors: fastCheckErrors.length > 0,
+                hasSnapshot,
+                wouldReload: shouldReload,
+            });
+
             let rolledBack = false;
             if (fastCheckErrors.length > 0) {
                 console.warn(`[${projectId}] Build errors: ${fastCheckErrors.length} issue(s)   agent will repair`);
                 setProjectErrors(projectId, fastCheckErrors, 'build');
-                // Restore src/ to the pre-write snapshot (2026-08-19): the
-                // agent's own working files live separately, on its own host
-                // (ctx.appPath) -- this project's copy on THIS disk exists
-                // purely to serve the live preview, so rolling it back here
-                // doesn't touch what the agent reads/fixes next. Without this,
-                // withholding the reload (below) only protected an ALREADY-
-                // OPEN tab; a hard refresh, a new tab, or this Vite instance
-                // simply restarting (LRU eviction, idle timeout) would still
-                // serve the broken files sitting on disk. Rolling back means
-                // disk always reflects the last known-good state, so ANY
-                // fresh load is genuinely stable, not just the live one.
-                if (hasSnapshot) {
-                    rolledBack = rollbackProjectSrc(projectRoot);
-                }
-                // No reload broadcast either way: if rollback succeeded,
-                // nothing actually changed from the browser's perspective;
-                // if it didn't (e.g. no prior src/ to snapshot -- first-ever
-                // build), there's still nothing good to show yet.
-                if (shouldReload) {
-                    console.log(`[${projectId}] Reload withheld -- this push had ${fastCheckErrors.length} build error(s)${rolledBack ? ', src/ rolled back to the last stable version' : ''}`);
-                }
             } else {
                 setProjectErrors(projectId, []);
-                if (shouldReload) {
-                    const instance = activeServers.get(projectId);
-                    if (instance) sendFullReload(instance, projectId);
-                }
+            }
+
+            if (outcome.attemptRollback) {
+                rolledBack = rollbackProjectSrc(projectRoot);
+            }
+            if (outcome.reload) {
+                const instance = activeServers.get(projectId);
+                if (instance) sendFullReload(instance, projectId);
+            } else if (shouldReload) {
+                console.log(`[${projectId}] Reload withheld -- this push had ${fastCheckErrors.length} build error(s)${rolledBack ? ', src/ rolled back to the last stable version' : ''}`);
             }
             cleanupSnapshot(projectRoot);
 
