@@ -13,6 +13,26 @@ import { DEFAULT_FREE_MODEL, DEFAULT_PRIMARY_MODEL } from '../config/models.js';
 // embedder.ts's isGoogleCircuitOpen/tripGoogleCircuit (30 min TTL).
 const BILLING_CIRCUIT_TTL_MS = 15 * 60 * 1000; // shorter than the embedder's 30min   this blocks a whole model, not just embeddings
 const billingFailedProviders = new Map<string, number>(); // provider -> resetAt timestamp
+
+// Cross-worker propagation (2026-08-22, gap register G15). This Map is
+// per-process, and PM2 runs 2 workers: worker A tripping the circuit did
+// nothing for worker B, which kept hammering a provider known to be out of
+// quota for the full 15-minute TTL. Observed cost: sustained failed spend
+// through an 11-hour Anthropic outage.
+//
+// Redis is the shared store because it is already a live dependency here
+// (agentProjectLock.ts's client, same connect/degrade posture) -- no new
+// infrastructure. Reads stay SYNCHRONOUS against the local Map rather than
+// awaiting Redis: isBillingCircuitOpen is called from inside the sync
+// provider fallback chain below, and making it async would ripple through
+// five call sites of selection logic for no real benefit. A worker instead
+// pulls peer state on an interval, so the worst case degrades from "never
+// learns" to "learns within BILLING_CIRCUIT_SYNC_MS" -- 20s against a 15min
+// TTL. If Redis is unreachable, every path below falls back to exactly the
+// old per-process behavior rather than failing.
+const BILLING_CIRCUIT_REDIS_PREFIX = 'ecg:billing-circuit:';
+const BILLING_CIRCUIT_SYNC_MS = 20_000;
+
 export function isBillingCircuitOpen(provider: string): boolean {
   const resetAt = billingFailedProviders.get(provider);
   if (resetAt === undefined) return false;
@@ -22,8 +42,56 @@ export function isBillingCircuitOpen(provider: string): boolean {
   }
   return true;
 }
+
 export function tripBillingCircuit(provider: string): void {
-  billingFailedProviders.set(provider, Date.now() + BILLING_CIRCUIT_TTL_MS);
+  const resetAt = Date.now() + BILLING_CIRCUIT_TTL_MS;
+  billingFailedProviders.set(provider, resetAt);
+  // Fire-and-forget: this runs on an error path that is already degraded, and
+  // a Redis hiccup must never turn a provider failure into a thrown request.
+  void shareBillingTrip(provider, resetAt);
+}
+
+async function shareBillingTrip(provider: string, resetAt: number): Promise<void> {
+  try {
+    const { redisClient } = await import('./agentProjectLock.js');
+    // PX so the key self-expires on the same clock as the local entry -- no
+    // sweeper needed, and a worker that reads it late still sees a correct
+    // remaining window rather than a stale-forever block (the exact failure
+    // the 2026-07-14 no-expiry incident above produced in-process).
+    await redisClient.set(`${BILLING_CIRCUIT_REDIS_PREFIX}${provider}`, String(resetAt), 'PX', BILLING_CIRCUIT_TTL_MS);
+  } catch {
+    // Redis down/absent: local Map still holds the trip, which is the
+    // pre-2026-08-22 behavior. Degraded, not broken.
+  }
+}
+
+/** Pull peer workers' trips into this process's Map. Exported for testing. */
+export async function syncBillingCircuitFromPeers(providers: string[]): Promise<void> {
+  try {
+    const { redisClient } = await import('./agentProjectLock.js');
+    const keys = providers.map((p) => `${BILLING_CIRCUIT_REDIS_PREFIX}${p}`);
+    const values = await redisClient.mget(...keys);
+    values.forEach((raw, i) => {
+      if (!raw) return;
+      const resetAt = Number(raw);
+      if (!Number.isFinite(resetAt) || Date.now() > resetAt) return;
+      const existing = billingFailedProviders.get(providers[i]);
+      // Never shorten a local trip with a peer's earlier expiry.
+      if (existing === undefined || resetAt > existing) {
+        billingFailedProviders.set(providers[i], resetAt);
+      }
+    });
+  } catch {
+    // Same posture as shareBillingTrip: absent Redis means local-only.
+  }
+}
+
+const CIRCUIT_PROVIDERS = ['anthropic', 'openai', 'gemini', 'deepseek', 'zai'];
+
+// unref() so this never holds the process open (matters for tests and for a
+// clean PM2 shutdown). Skipped under test to keep runs deterministic.
+if (process.env.NODE_ENV !== 'test' && process.env.VITEST !== 'true') {
+  setInterval(() => { void syncBillingCircuitFromPeers(CIRCUIT_PROVIDERS); }, BILLING_CIRCUIT_SYNC_MS).unref();
 }
 
 // Reads prompt-cache usage out of AI SDK v6's providerMetadata shape, for
