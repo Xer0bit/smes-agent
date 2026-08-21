@@ -39,7 +39,11 @@ module.exports = {
             autorestart: true,
             watch: false,
             max_restarts: 10,
-            restart_delay: 5000,
+            // Single fork instance, no overlap during restart -- port 3001 is
+            // unbound for this whole delay on every restart (deploy or crash),
+            // which nginx surfaces to users as a 502 (connect() refused).
+            // Was 5000ms; the process itself binds in well under 1s.
+            restart_delay: 300,
             exp_backoff_restart_delay: 100,
             kill_timeout: 20000,
         },
