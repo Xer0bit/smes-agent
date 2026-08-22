@@ -25,6 +25,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { writeProjectFileSync } from '../services/projectFileWriter.js';
 import { z } from 'zod';
 import {
   ToolDefinition,
@@ -105,10 +106,11 @@ function classifyLine(line: string, ext: string, baseName: string): RefType | nu
 }
 
 function scanAndRewrite(
-  appPath: string,
+  writeCtx: { appPath: string; projectId?: string; runId?: string },
   oldAssetPath: string,
   newAssetPath: string
 ): { found: FoundEntry[]; skipped: SkippedEntry[]; filesScanned: number } {
+  const appPath = writeCtx.appPath;
   const pairs = buildNeedlePairs(oldAssetPath, newAssetPath);
   const found: FoundEntry[] = [];
   const skipped: SkippedEntry[] = [];
@@ -193,7 +195,8 @@ function scanAndRewrite(
           rewrittenContent = rewrittenLines.join('\n');
           if (rewrittenContent !== content) {
             try {
-              fs.writeFileSync(fullPath, rewrittenContent, 'utf8');
+              // Single-owner write path -- see projectFileWriter.ts.
+              writeProjectFileSync(writeCtx, relPath, rewrittenContent);
             } catch {
               for (const f of fileFound) { if (f.rewritten) { f.rewritten = false; f.reason = 'write failed'; } }
             }
@@ -245,7 +248,7 @@ export const replaceAssetReferencesTool: ToolDefinition<z.infer<typeof schema>> 
 
     let scan: ReturnType<typeof scanAndRewrite>;
     try {
-      scan = scanAndRewrite(ctx.appPath, oldAssetPath, newAssetPath);
+      scan = scanAndRewrite({ appPath: ctx.appPath, projectId: ctx.projectId, runId: ctx.runId }, oldAssetPath, newAssetPath);
     } catch (err: unknown) {
       return `ERROR: reference scan failed -- ${err instanceof Error ? err.message : String(err)}`;
     }

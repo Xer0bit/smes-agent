@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { ToolDefinition, AgentContext, safeJoin } from './types.js';
 import { supabase } from '../config/database.js';
 import { databaseService } from '../services/database.service.js';
+import { writeProjectFileSync } from '../services/projectFileWriter.js';
 import { logger } from '../utils/logger.js';
 import { EDGE_FUNCTIONS_DIR, MAX_FUNCTIONS_PER_PROJECT } from './write_edge_function.js';
 
@@ -115,9 +116,8 @@ export const confirmEdgeFunctionDeployTool: ToolDefinition<z.infer<typeof schema
       // excludes this directory from the Vite build (see server.js).
       const mirrorRelPath = `${EDGE_FUNCTIONS_DIR}/${name}.js`;
       try {
-        const mirrorFullPath = safeJoin(ctx.appPath, mirrorRelPath);
-        fs.mkdirSync(path.dirname(mirrorFullPath), { recursive: true });
-        fs.writeFileSync(mirrorFullPath, code, 'utf8');
+        // Single-owner write path -- see projectFileWriter.ts.
+        writeProjectFileSync({ appPath: ctx.appPath, projectId: ctx.projectId, runId: ctx.runId }, mirrorRelPath, code);
         ctx.pendingPreviewFiles?.set(mirrorRelPath, code);
       } catch (mirrorErr) {
         // Non-fatal   the DB row (the actual invocation source) already

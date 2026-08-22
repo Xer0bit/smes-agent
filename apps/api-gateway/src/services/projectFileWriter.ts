@@ -133,6 +133,52 @@ export async function writeProjectFile(
 }
 
 /**
+ * Synchronous variant, for the many existing call sites that write inside
+ * synchronous control flow. Threading `await` through those would change their
+ * ordering semantics, which is a bigger and riskier edit than this migration
+ * should be.
+ *
+ * The ledger insert is intentionally NOT awaited here. It is best-effort
+ * anyway, and recordEffect catches its own failures, so there is no unhandled
+ * rejection. Ordering is still exact: `seq` is assigned synchronously by
+ * nextSeq before the insert is dispatched, so recovery's LIFO order is fixed at
+ * call time even if the inserts themselves land out of order.
+ */
+export function writeProjectFileSync(
+  ctx: ProjectFileWriteContext,
+  relPath: string,
+  content: string | Buffer,
+): WriteProjectFileResult {
+  const fullPath = safeJoin(ctx.appPath, relPath);
+  const { existed, captured, tooLarge } = captureBefore(fullPath);
+  const boundary: Boundary = !existed || captured !== null ? EFFECT_KINDS.file_write : 'barrier';
+
+  if (tooLarge) {
+    logger.warn(
+      `[project-writer] prior content of ${relPath} is ${MAX_CAPTURED_BEFORE_BYTES} bytes or more; ` +
+      `recording this overwrite as irreversible rather than claiming a compensation we cannot perform.`,
+    );
+  }
+
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.writeFileSync(fullPath, content as never);
+
+  if (ctx.runId && ctx.projectId) {
+    void recordEffect({
+      runId: ctx.runId,
+      projectId: ctx.projectId,
+      kind: 'file_write',
+      target: relPath,
+      boundary,
+      beforeState: existed ? { existed: true, content: captured } : { existed: false },
+      afterState: { appPath: ctx.appPath },
+    });
+  }
+
+  return { fullPath, existed, boundary, effectId: null };
+}
+
+/**
  * Compensation for a tracked file write: restore the prior bytes, or delete the
  * file when the write created it.
  *

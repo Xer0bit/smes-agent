@@ -49,6 +49,7 @@ import { buildFileTree, getProjectFileTree, SKIP_DIRS } from './agentFileTree.js
 import { acquireProjectLock, cleanupProjectLock } from './agentProjectLock.js';
 import { parseXmlOperation, parseXmlResponse, type OperationStore } from './agentXmlParser.js';
 import { logger } from '../utils/logger.js';
+import { writeProjectFileSync } from './projectFileWriter.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -112,8 +113,10 @@ async function backfillEdgeFunctionMirrors(appPath: string, projectId: string): 
       const mirrorPath = safeJoin(appPath, `${EDGE_FUNCTIONS_DIR}/${fn.name}.js`);
       if (fs.existsSync(mirrorPath)) { skippedExistingCount++; continue; }
       try {
-        fs.mkdirSync(path.dirname(mirrorPath), { recursive: true });
-        fs.writeFileSync(mirrorPath, fn.code, 'utf8');
+        // Single-owner write path. No runId: this backfill reconstructs a
+        // missing mirror from the DB and is not an agent-run effect, so it must
+        // not enter the ledger as something a later recovery could "undo".
+        writeProjectFileSync({ appPath, projectId }, `${EDGE_FUNCTIONS_DIR}/${fn.name}.js`, fn.code);
         mirroredCount++;
         logger.debug('backfillEdgeFunctionMirrors: wrote missing mirror file', { projectId, fnName: fn.name, mirrorPath });
       } catch (writeErr: any) {
@@ -3898,7 +3901,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         try {
           const generatedAppTsx = generateAppTsxFromPages(pagesForRouter);
           const fullPath = safeJoin(appPath, 'src/App.tsx');
-          fs.writeFileSync(fullPath, generatedAppTsx, 'utf8');
+          writeProjectFileSync({ appPath, projectId, runId: agentLockToken }, 'src/App.tsx', generatedAppTsx);
           const existing = filesToWrite.findIndex(f => f.path === 'src/App.tsx');
           if (existing >= 0) filesToWrite[existing].content = generatedAppTsx;
           else filesToWrite.push({ path: 'src/App.tsx', content: generatedAppTsx });
@@ -4060,7 +4063,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             f.content = sanitized;
             try {
               const fullPath = safeJoin(appPath, f.path);
-              fs.writeFileSync(fullPath, sanitized, 'utf8');
+              writeProjectFileSync({ appPath, projectId, runId: agentLockToken }, f.path, sanitized);
             } catch (writeErr: any) {
               logger.debug('_runAgentLoopInner: failed to write sanitized file to disk (non-fatal)', { projectId, path: f.path, error: writeErr?.message });
             }
@@ -4102,7 +4105,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           f.content = repaired;
           try {
             const fullPath = safeJoin(appPath, f.path);
-            fs.writeFileSync(fullPath, repaired, 'utf8');
+            writeProjectFileSync({ appPath, projectId, runId: agentLockToken }, f.path, repaired);
           } catch (writeErr: any) {
             logger.debug('_runAgentLoopInner: failed to write config-repaired file to disk (non-fatal)', { projectId, path: f.path, error: writeErr?.message });
           }
@@ -4556,7 +4559,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 const [, searchText, replaceText] = diffMatch;
                 if (!original.includes(searchText)) continue; // signature matched but file content differs too much   skip, let normal passes handle it
                 const patched = original.replace(searchText, replaceText);
-                fs.writeFileSync(fullFilePath, patched, 'utf8');
+                writeProjectFileSync({ appPath, projectId, runId: agentLockToken }, relPath, patched);
                 const memPush = await httpPost(updateUrl, JSON.stringify({ files: [{ path: relPath, content: patched }], fullSync: false }));
                 if (memPush.status === 200) {
                   await new Promise<void>(r => setTimeout(r, 400));
@@ -4593,7 +4596,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 const raw = fs.readFileSync(fullFilePath, 'utf8');
                 const { content: fixed, fixes } = sanitizeFileContent(relPath, raw);
                 if (fixes.length > 0) {
-                  fs.writeFileSync(fullFilePath, fixed, 'utf8');
+                  writeProjectFileSync({ appPath, projectId, runId: agentLockToken }, relPath, fixed);
                   mechPatched.push({ path: relPath, content: fixed });
                   logger.info('[AgentLoop] Mechanical fix applied', { projectId, relPath, fixes });
                 }
@@ -4893,11 +4896,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 // Binary content is BINARY_SENTINEL-prefixed base64 (see
                 // readFileForSync) -- writing it as 'utf8' text would corrupt
                 // the actual image/font bytes on disk. Decode back to a Buffer.
-                if (preContent.startsWith(BINARY_SENTINEL)) {
-                  fs.writeFileSync(fullFilePath, Buffer.from(preContent.slice(BINARY_SENTINEL.length), 'base64'));
-                } else {
-                  fs.writeFileSync(fullFilePath, preContent, 'utf8');
-                }
+                // Single-owner write path. Deliberately NO runId: this loop
+                // restores the pre-agent snapshot, so it is itself a
+                // compensation. Recording it as a fresh file_write would let a
+                // later recovery treat the undo as something to undo.
+                writeProjectFileSync(
+                  { appPath },
+                  relPath,
+                  preContent.startsWith(BINARY_SENTINEL)
+                    ? Buffer.from(preContent.slice(BINARY_SENTINEL.length), 'base64')
+                    : preContent,
+                );
               } catch (diskErr: any) {
                 diskRestoreFailures++;
                 logger.error('[AgentLoop] Pre-agent disk restore FAILED, this server\'s own copy may still hold broken content', {

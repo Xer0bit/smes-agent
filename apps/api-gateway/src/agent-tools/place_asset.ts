@@ -15,6 +15,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { z } from 'zod';
 import { ToolDefinition, AgentContext, safeJoin, escapeXmlAttr } from './types.js';
+import { writeProjectFileSync } from '../services/projectFileWriter.js';
 
 const UPLOAD_BASE = path.join(os.tmpdir(), 'ecomgear-chat-uploads');
 
@@ -149,7 +150,13 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
     const assetsDir = safeJoin(ctx.appPath, 'public/assets');
     fs.mkdirSync(assetsDir, { recursive: true });
     const destPath = path.join(assetsDir, safeDest);
-    fs.copyFileSync(effectiveSrc, destPath);
+    // Single-owner write path: a copy into the project tree is a project file
+    // write like any other, and must be tracked so it can be compensated.
+    writeProjectFileSync(
+      { appPath: ctx.appPath, projectId: ctx.projectId, runId: ctx.runId },
+      `public/assets/${path.basename(destPath)}`,
+      fs.readFileSync(effectiveSrc),
+    );
 
     // Surface the placed asset in the chat as an activity chip/steps entry AND
     // register it with the same operation-tracking pathway write_file uses.
