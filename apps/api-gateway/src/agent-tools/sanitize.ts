@@ -280,6 +280,29 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
     fixes.push('Stripped .tsx/.ts/.jsx extensions from local imports (Vite resolves them automatically)');
   }
 
+  // ── Rule 2b: fake `${'/'}` interpolation in asset paths ──────────────────────
+  // Detects: `${'/'}assets/logo.png`  →  `${import.meta.env.BASE_URL}assets/logo.png`
+  //
+  // `${'/'}` LOOKS like an interpolation but is a hardcoded slash, so the URL
+  // resolves to the domain root instead of the project's base path. Preview
+  // apps are served under `/preview/<projectId>/` (viteConfig.js sets Vite's
+  // `base` to exactly that), so a root-relative asset URL misses.
+  //
+  // It is auto-fixed rather than blocked because it is mechanical and the
+  // model reaches for it repeatedly -- blocking would just burn a step to
+  // re-emit the same file. Measured live 2026-08-22: 27 files across 9
+  // separate customer projects carried this, and it is the root cause of the
+  // recurring "the logo disappeared again" reports. Those only appear
+  // intermittently because nginx's referer-based asset rescue covers the miss
+  // whenever a usable Referer is present, and silently does not when it
+  // isn't -- so the same page works or breaks depending on the request.
+  const fakeRootInterp = /\$\{\s*['"]\/['"]\s*\}(?=(assets|images|fonts|icons|media)\/)/g;
+  const beforeFakeRoot = content;
+  content = content.replace(fakeRootInterp, '${import.meta.env.BASE_URL}');
+  if (content !== beforeFakeRoot) {
+    fixes.push("Replaced `${'/'}` with `${import.meta.env.BASE_URL}` in asset path(s) (a hardcoded slash resolves to the domain root, not the project's base path)");
+  }
+
   // ── Rule 3: Ensure React namespace import in forwardRef/ElementRef files ─────
   // When a JSX file uses React.forwardRef or React.ElementRef but has no
   // `import * as React` line, add it.
