@@ -172,8 +172,15 @@ const CANCEL_CHANNEL = 'runcancel';
 export async function publishRunCancel(projectId: string): Promise<boolean> {
   if (!redisUsable()) return false;
   try {
-    await redisClient.publish(CANCEL_CHANNEL, projectId);
-    return true;
+    // PUBLISH returns how many subscribers received it. Reporting success on a
+    // publish nobody heard is how a dead cancel path looks healthy: the first
+    // deploy of this endpoint answered {"cancelled":true,"scope":"relayed"}
+    // while zero workers were subscribed.
+    const receivers = await redisClient.publish(CANCEL_CHANNEL, projectId);
+    if (receivers === 0) {
+      logger.warn('[run-broker] cancel published but no worker was listening', { projectId });
+    }
+    return receivers > 0;
   } catch (err) {
     logger.warn('[run-broker] cancel publish failed', { projectId, error: (err as Error).message });
     return false;
@@ -187,8 +194,20 @@ export async function publishRunCancel(projectId: string): Promise<boolean> {
  * commands, so sharing the main one would break the project lock.
  */
 export function subscribeRunCancel(onCancel: (projectId: string) => void): () => void {
-  if (!redisUsable()) return () => {};
-  const sub = redisClient.duplicate({ maxRetriesPerRequest: null, enableOfflineQueue: true });
+  // Deliberately NOT gated on redisUsable(). This runs at module load, and the
+  // shared client is lazyConnect, so its status is 'wait' at that moment --
+  // gating here made every worker skip subscribing, leaving the cross-worker
+  // cancel permanently dead while the endpoint still reported success.
+  // lazyConnect is also cleared on the duplicate so it dials immediately
+  // instead of waiting for a command that a subscriber never issues.
+  const sub = redisClient.duplicate({
+    maxRetriesPerRequest: null,
+    enableOfflineQueue: true,
+    lazyConnect: false,
+  });
+  sub.on('error', (err: Error) => {
+    logger.debug('[run-broker] cancel subscriber error', { error: err.message });
+  });
   sub.subscribe(CANCEL_CHANNEL).catch((err) => {
     logger.warn('[run-broker] cancel subscribe failed', { error: (err as Error).message });
   });
