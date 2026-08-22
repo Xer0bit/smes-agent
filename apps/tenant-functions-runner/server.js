@@ -2,6 +2,7 @@ import express from 'express';
 import pg from 'pg';
 import { createHmac } from 'node:crypto';
 import { runEdgeFunction } from './runEdgeFunction.js';
+import { resolveInvokeParams } from './invokeParams.js';
 
 const PORT = process.env.PORT || 4001;
 const TENANT_DB_JWT_SECRET = process.env.TENANT_DB_JWT_SECRET;
@@ -184,7 +185,8 @@ async function handleInvoke(req, res) {
       llmProvider: secrets.ECG_LLM_PROVIDER,
     } : undefined;
 
-    const params = req.body?.params ?? {};
+    // See invokeParams.js for why a flat body is tolerated here.
+    const params = resolveInvokeParams(req.body);
     const result = await runEdgeFunction(fn.code, params, dbCtx, ecgCtx, secrets);
     res.status(result.error ? 422 : 200).json(result);
   } catch (err) {
