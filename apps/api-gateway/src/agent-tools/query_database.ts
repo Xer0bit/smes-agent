@@ -21,6 +21,7 @@
  */
 import { z } from 'zod';
 import { ToolDefinition, AgentContext } from './types.js';
+import { preflightSql } from './sqlPreflight.js';
 import { databaseService } from '../services/database.service.js';
 import { supabase } from '../config/database.js';
 
@@ -206,15 +207,25 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
     }
 
     if (isSchemaMutatingSql(args.sql)) {
+      // Preflight BEFORE staging. Anything guaranteed to fail must not reach a
+      // human's confirm button: on 2026-08-22 three of four staged statements
+      // were rejected at confirm time for reasons visible in the text, which
+      // pulls the owner in to approve something that cannot work and teaches
+      // the agent nothing until they relay the error back.
+      const preflight = preflightSql(args.sql);
+      if (preflight.blocking.length > 0) {
+        return (
+          `REJECTED   this SQL was NOT staged, because it cannot succeed on this database:\n\n` +
+          preflight.blocking.map((b) => `- ${b.message}`).join('\n') +
+          `\n\nFix the SQL and call query_database again. Do not ask the user to confirm this version.`
+        );
+      }
+
       const stagedId = await stagePendingChange(ctx, args.sql);
       if (!stagedId) return DB_UNAVAILABLE_MESSAGE;
-      const unqualified = findUnqualifiedPgcryptoCalls(args.sql);
-      const pgcryptoWarning = unqualified.length > 0
-        ? `\n\n⚠ POSSIBLE BUG: this SQL calls pgcrypto function(s) ${unqualified.map(f => `"${f}"`).join(', ')} without the ` +
-          `"extensions." prefix. pgcrypto is installed in the extensions schema, which is NOT on this role's search_path -- ` +
-          `an unqualified call fails at RUNTIME with "function ... does not exist" (this exact bug broke registration in ` +
-          `production for hours on 2026-08-13). Mention this to the user before they confirm: every pgcrypto call in this ` +
-          `statement should be written as extensions.${unqualified[0]}(...), not bare ${unqualified[0]}(...).`
+      const pgcryptoWarning = preflight.warnings.length > 0
+        ? `\n\n⚠ LIKELY BUG(S) -- mention these to the user before they confirm:\n` +
+          preflight.warnings.map((w) => `- ${w.message}`).join('\n')
         : '';
       return (
         `PENDING CONFIRMATION   this SQL was NOT executed. It contains a schema-mutating statement ` +
