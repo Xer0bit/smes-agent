@@ -158,3 +158,42 @@ export async function runStreamExists(projectId: string, runId: string): Promise
     return false;
   }
 }
+
+// ─── Cross-worker cancellation ───────────────────────────────────────────────
+// A run's abort handle lives in the memory of the worker that started it, so a
+// cancel request landing on the OTHER PM2 worker had nothing to call. Combined
+// with there being no cancel endpoint at all, a user who refreshed mid-run
+// could not stop it: the run kept its project lock and their next message just
+// attached to the run they were trying to end.
+
+const CANCEL_CHANNEL = 'runcancel';
+
+/** Ask whichever worker owns this project's run to abort it. */
+export async function publishRunCancel(projectId: string): Promise<boolean> {
+  if (!redisUsable()) return false;
+  try {
+    await redisClient.publish(CANCEL_CHANNEL, projectId);
+    return true;
+  } catch (err) {
+    logger.warn('[run-broker] cancel publish failed', { projectId, error: (err as Error).message });
+    return false;
+  }
+}
+
+/**
+ * Listen for cancel requests aimed at runs this worker owns.
+ *
+ * Uses its own connection: a subscribed ioredis client refuses ordinary
+ * commands, so sharing the main one would break the project lock.
+ */
+export function subscribeRunCancel(onCancel: (projectId: string) => void): () => void {
+  if (!redisUsable()) return () => {};
+  const sub = redisClient.duplicate({ maxRetriesPerRequest: null, enableOfflineQueue: true });
+  sub.subscribe(CANCEL_CHANNEL).catch((err) => {
+    logger.warn('[run-broker] cancel subscribe failed', { error: (err as Error).message });
+  });
+  sub.on('message', (channel: string, payload: string) => {
+    if (channel === CANCEL_CHANNEL && payload) onCancel(payload);
+  });
+  return () => { try { sub.disconnect(); } catch { /* already gone */ } };
+}

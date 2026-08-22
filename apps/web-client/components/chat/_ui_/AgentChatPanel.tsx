@@ -1325,7 +1325,40 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   };
 
   const cancelGeneration = () => {
+    // Abort EVERY channel that can hold this panel in a generating state, not
+    // just the one a fresh submit uses. After a page refresh there is no
+    // abortRef -- the live stream is the RECONNECT one, and the wait-it-out
+    // poller has no stream at all. Aborting only abortRef left Stop looking
+    // like it worked while the reconnect stream carried on writing into the
+    // UI, so the composer never really came back. Reported 2026-08-22:
+    // "I can't click send when I refresh and a session is already running".
     abortRef.current?.abort();
+    reconnectAbortRef.current?.abort();
+    if (activeRunPollRef.current) {
+      clearInterval(activeRunPollRef.current);
+      activeRunPollRef.current = null;
+    }
+    // Tell the SERVER to stop too. Aborting locally only closes our own stream:
+    // the run keeps going, keeps the project lock, and the next message the
+    // user sends just attaches to the run they were trying to end.
+    // Fire-and-forget -- Stop must clear the UI whether or not this lands.
+    if (projectId) {
+      (async () => {
+        try {
+          const { data: { session } } = await lovableCloud.auth.getSession();
+          if (!session) return;
+          for (const url of getGenServerCandidateUrls(`/api/v1/ai/cancel-run/${projectId}`)) {
+            try {
+              const r = await fetch(url, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${session.access_token}` },
+              });
+              if (r.ok) break;
+            } catch { /* try the next candidate */ }
+          }
+        } catch { /* never block the UI on this */ }
+      })();
+    }
     setIsGenerating(false);
     setStatusText('');
     setPlanTasks(prev => finalizeTasks(prev, false)); // work already landed stays landed

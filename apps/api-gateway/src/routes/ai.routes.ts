@@ -4,7 +4,7 @@ import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { recordEffect, markReverted, recoverRun, forgetRun, EFFECT_KINDS } from '../services/effectLedger.js';
 import { compensateFileWrite } from '../services/projectFileWriter.js';
-import { publishRunChunk, publishRunEnd, relayRunStream, runStreamExists } from '../services/runStreamBroker.js';
+import { publishRunChunk, publishRunEnd, relayRunStream, runStreamExists, publishRunCancel, subscribeRunCancel } from '../services/runStreamBroker.js';
 import { getLlmControlState, getUserPlanTier } from '../services/llm-control.service.js';
 import { testAndAutoDisableProviders, getLastHealthResults } from '../services/llm-health.service.js';
 import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
@@ -1707,6 +1707,38 @@ Rules:
         logger.warn('[/suggestions] Gemini call failed:', (err as Error)?.message);
         res.json({ suggestions: [] });
     }
+});
+
+/**
+ * Abort whatever run is in flight for this project.
+ *
+ * Aborts locally when this worker owns the run; otherwise asks the other
+ * cluster worker over Redis, since the abort handle only exists in the memory
+ * of the process that started the run. Always answers 200: "there was nothing
+ * to stop" is a success from the caller's point of view, and a Stop button
+ * that can fail is worse than one that is idempotent.
+ */
+router.post('/cancel-run/:projectId', optionalAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    const { projectId } = req.params;
+    const local = activeAgentRuns.get(projectId);
+    if (local) {
+        local.abort();
+        logger.info('[agent-stream] Run cancelled by request (local worker)', { projectId });
+        res.json({ cancelled: true, scope: 'local' });
+        return;
+    }
+    const relayed = await publishRunCancel(projectId);
+    logger.info('[agent-stream] Run cancel relayed to peers', { projectId, relayed });
+    res.json({ cancelled: relayed, scope: relayed ? 'relayed' : 'none' });
+});
+
+// Honour cancels aimed at runs THIS worker owns. Registered once at module
+// load; the abort handle is per-process, so each worker listens for itself.
+subscribeRunCancel((projectId) => {
+    const run = activeAgentRuns.get(projectId);
+    if (!run) return;
+    logger.info('[agent-stream] Run cancelled by peer request', { projectId });
+    run.abort();
 });
 
 // Check if a project has an active agent run (used by frontend to auto-reconnect)
