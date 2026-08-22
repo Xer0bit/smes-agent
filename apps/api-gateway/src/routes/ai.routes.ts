@@ -1495,12 +1495,25 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         // every edit-tier request straight to Claude, and most requests won't
         // need to escalate at all. Never escalates above the entitled model,
         // and never escalates more than once (no cascades).
+        // "Wrote nothing" is NOT the same as "failed". A run that investigated
+        // with live tools and correctly concluded nothing needed changing is a
+        // correct outcome, and re-running the entire loop on a stronger model
+        // is pure waste -- measured at $1.42 and 110 seconds on 2026-08-22 for
+        // a second attempt that also (correctly) wrote nothing. Worse, forcing
+        // a second attempt leaves the model needing to explain why it produced
+        // no work, and the nearest explanation on hand was a two-hour-old
+        // rollback in the chat history, which it reported as current.
+        //
+        // So escalate only on evidence of actual failure: the stuck detector
+        // fired, or the run ended with a build we know is broken. A healthy
+        // build plus zero writes terminates here.
+        const zeroChanges = agentResult
+            && (agentResult.filesToWrite?.length ?? 0) === 0
+            && (agentResult.filesToDelete?.length ?? 0) === 0
+            && (agentResult.renames?.length ?? 0) === 0;
         const cheapFirstMadeNoProgress = agentResult && (
-            agentResult.stuckAborted === true || (
-                (agentResult.filesToWrite?.length ?? 0) === 0 &&
-                (agentResult.filesToDelete?.length ?? 0) === 0 &&
-                (agentResult.renames?.length ?? 0) === 0
-            )
+            agentResult.stuckAborted === true
+            || (zeroChanges && agentResult.buildHealthy !== true)
         );
         if (
             effectiveModel !== entitledModel &&

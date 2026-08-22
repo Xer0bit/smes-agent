@@ -52,6 +52,7 @@ import { logger } from '../utils/logger.js';
 import { writeProjectFileSync } from './projectFileWriter.js';
 import { interpretPreviewPush } from './previewPushResult.js';
 import { NarrationFilter } from './narrationFilter.js';
+import { arbitrateFailureClaim } from './staleFailureClaim.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -307,6 +308,12 @@ export interface AgentRunResult {
   continuationPrompt?: string;
   /** True when the stuck-analysis detector killed the run   the model spun without landing changes */
   stuckAborted?: boolean;
+  /**
+   * What a real get_build_errors call reported, if one ran. Exposed so callers
+   * can tell "nothing needed changing" apart from "failed to change anything":
+   * a healthy build plus zero writes is a correct outcome, not a failure.
+   */
+  buildHealthy?: boolean;
   /**
    * The mode this run actually executed under -- may differ from the
    * client-requested mode when an execute-confirmation phrase ("yes",
@@ -3807,7 +3814,26 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       }
     }
 
-    const finalText = accumulatedText;
+    // Arbitrate a claimed FAILURE against what this run actually observed.
+    // Mirror of the resolution-claim gate above: that one catches success
+    // asserted over a broken build, this catches failure asserted over a
+    // healthy one. Fires only when the harness positively knows better -- the
+    // run changed nothing AND a real get_build_errors call reported healthy --
+    // because silencing a TRUE failure report would be far worse than leaving
+    // a false one. See staleFailureClaim.ts for the incident this comes from.
+    const failureArbitration = arbitrateFailureClaim(accumulatedText, {
+      wroteNothing: !anySuccessfulWriteThisRun,
+      buildHealthy: ctx.lastBuildErrorsHealthy === true,
+    });
+    if (failureArbitration.stripped > 0) {
+      logger.warn('[AgentLoop] Suppressed a failure claim contradicted by observation', {
+        projectId, userId: userId ?? 'unknown',
+        sentences: failureArbitration.stripped,
+        wroteNothing: !anySuccessfulWriteThisRun,
+        buildHealthy: ctx.lastBuildErrorsHealthy === true,
+      });
+    }
+    const finalText = failureArbitration.text;
 
     // Extract summary from <ecomgear-chat-summary> if present
     const summaryMatch = /<ecomgear-chat-summary>([\s\S]*?)<\/ecomgear-chat-summary>/.exec(finalText);
@@ -5417,7 +5443,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       costUsd: finalCostUsd, ecoUsed: finalEcoUsed, needsAutoContinue: Boolean(needsAutoContinue),
       stuckAborted: Boolean(stuckAnalysisAbortReason), runtimeMode,
     });
-    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed, needsAutoContinue, continuationPrompt, stuckAborted: Boolean(stuckAnalysisAbortReason), runtimeMode };
+    return { filesToWrite: doneFilesToWrite, filesToDelete: doneFilesToDelete, renames: doneRenames, dependencies: doneDependencies, summary, costUsd: finalCostUsd, ecoUsed: finalEcoUsed, needsAutoContinue, continuationPrompt, buildHealthy: ctx.lastBuildErrorsHealthy === true, stuckAborted: Boolean(stuckAnalysisAbortReason), runtimeMode };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     if (agentTimeoutId) clearTimeout(agentTimeoutId);
