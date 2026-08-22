@@ -52,18 +52,42 @@ const MICRO_EXCLUDED_TOOLS = new Set([
   'push_to_github', 'publish_site',
 ]);
 
-// Direct database access (2026-08-19): query_database runs arbitrary SQL --
-// DDL and DML, service-role, no per-statement scope -- against a real
-// customer's tenant database. Available only when the chat session is
-// explicitly in admin mode (see AgentContext.chatMode); a normal development
-// session gets everything else (file edits, edge functions, secrets) but
-// never direct DB writes. confirm_database_change is EXCLUDED even in admin
-// mode -- see query_database.ts and the admin-sql routes for why: a
-// dangerous statement is staged to a durable table and can only be executed
-// by a human clicking confirm in the chat UI, never by the agent confirming
-// its own pending change in the same run.
-const ADMIN_ONLY_TOOLS = new Set(['query_database', 'test_database_function', 'provision_database']);
+// Direct database tools. These were briefly gated on AgentContext.chatMode
+// === 'admin' (2026-08-19); that gate is removed because it bought no security
+// while breaking the core product flow:
+//
+//   - No security: `chatMode` is read verbatim off the request body in
+//     ai.routes.ts with no authorization check, so any caller can simply send
+//     {"chatMode":"admin"} and self-grant the tools. It gated the UI toggle,
+//     not the capability.
+//   - Real breakage: a normal-mode run could write an edge function but could
+//     not CREATE the table that function queries, and could not provision the
+//     database at all -- and provisioning is what supplies the frontend's
+//     VITE_FUNCTIONS_API_URL / VITE_DB_ANON_KEY, so generated apps had no way
+//     to call their own backend. The prompt still told the agent to call
+//     provision_database, which was no longer in its toolset: a dead end.
+//
+// The actual gate is statement-level and human-enforced, and is unaffected by
+// any of this: query_database stages schema-mutating SQL (and unqualified
+// UPDATE/DELETE) into admin_sql_pending_changes, and confirm_database_change
+// is excluded from EVERY tier below, so nothing the agent can call executes a
+// staged change -- only a human clicking confirm in the chat UI does.
+// test_database_function runs inside a transaction that always rolls back.
+//
+// Guests ARE excluded: they are the one caller class that never passes a
+// project access check. ai.routes.ts runs getProject() + the viewer/client role
+// check only on the authenticated branch, so for a guest the request-body
+// projectId is unvalidated input, and these tools resolve a tenant database
+// from exactly that value. Guests keep every other tool.
+const DB_TOOLS = new Set(['query_database', 'test_database_function', 'provision_database']);
 const AGENT_NEVER_CONFIRMS_TOOLS = new Set(['confirm_database_change']);
+
+/** Guests are identified by the `guest:<fingerprint>` userId that
+ *  ai.routes.ts assigns when there is no authenticated req.user -- the same
+ *  convention its rate limiter uses. */
+function isGuestContext(ctx: AgentContext): boolean {
+  return (ctx.userId ?? '').startsWith('guest:');
+}
 
 export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: string): ToolSet {
   // Expose the tier to tools (read_file's truncated-view-first gating needs it).
@@ -104,7 +128,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
   ]
     .filter((def) => tier !== 'micro' || !MICRO_EXCLUDED_TOOLS.has(def.name))
     .filter((def) => !AGENT_NEVER_CONFIRMS_TOOLS.has(def.name))
-    .filter((def) => ctx.chatMode === 'admin' || !ADMIN_ONLY_TOOLS.has(def.name));
+    .filter((def) => !isGuestContext(ctx) || !DB_TOOLS.has(def.name));
 
   // ── Per-run routing/budget state (buildToolSet is called once per run) ──
   // Serial-edit detector (2026-08-09 logo incident): the agent replaced one

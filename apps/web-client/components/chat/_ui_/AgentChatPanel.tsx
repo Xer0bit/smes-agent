@@ -1044,10 +1044,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             setLiveThought('');
             setPlanTasks(prev => finalizeTasks(prev, false));
 
-            // Admin mode may have just staged a dangerous SQL statement --
-            // pull the authoritative pending list from the DB rather than
-            // trying to parse an id out of the model's own freeform reply.
-            if (chatMode === 'admin') refreshPendingAdminSql();
+            // The run may have just staged a dangerous SQL statement -- pull the
+            // authoritative pending list from the DB rather than trying to parse
+            // an id out of the model's own freeform reply. NOT conditional on
+            // chatMode: query_database is available in both modes, so gating this
+            // on admin left a normal-mode user told to "click confirm" with no
+            // panel rendered until the next remount.
+            refreshPendingAdminSql();
 
             // Prefer full streamed text over backend summary
             const rawContent = currentContent || result.summary || '';
@@ -1861,15 +1864,20 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 )}
               </div>
 
-              {/* Normal / Admin chat mode toggle -- admin exposes direct database
-                  access (query_database), gated server-side by chatMode, not just
-                  hidden here; this button only controls what gets sent. */}
+              {/* Normal / Admin chat mode toggle. NOTE: this no longer changes
+                  what the agent can do. It used to gate query_database server-side,
+                  but chatMode is read straight off the request body with no
+                  authorization check, so it gated the toggle rather than the
+                  capability while breaking database work in the default mode.
+                  Database tools are available in both modes now; the real gate is
+                  that dangerous SQL stages for human confirmation. This control is
+                  effectively decorative and is a candidate for removal. */}
               <button
                 onClick={() => setChatMode(m => m === 'admin' ? 'normal' : 'admin')}
                 disabled={isGenerating}
                 title={chatMode === 'admin'
-                  ? 'Admin mode: agent can stage SQL against the database (you must confirm before it runs). Click to switch to Normal.'
-                  : 'Normal mode: development only, no database access. Click to switch to Admin.'}
+                  ? 'Admin mode. The agent can stage SQL against the database and you confirm before it runs   the same as Normal mode. Click to switch to Normal.'
+                  : 'Normal mode. The agent can stage SQL against the database and you confirm before it runs. Click to switch to Admin.'}
                 className={`flex items-center gap-1 px-2 py-1 rounded-full text-[12px] font-medium transition-colors disabled:opacity-40 disabled:cursor-default ${
                   chatMode === 'admin'
                     ? 'text-amber-300 bg-amber-500/10 hover:bg-amber-500/15'
