@@ -159,6 +159,31 @@ function preprocessFile(filePath, content) {
     let fixed = content;
     const issues = [];
 
+    // Fake `${'/'}` interpolation in asset paths (2026-08-22). It LOOKS like an
+    // interpolation but is a hardcoded slash, so the URL resolves to the domain
+    // root instead of this project's Vite base (/preview/<projectId>/) and the
+    // image 404s -- or worse, gets index.html from the SPA fallback.
+    //
+    // The identical repair exists in api-gateway's sanitize.ts, but that only
+    // runs on the AGENT's write path. The editor's revision->preview sync
+    // pushes stored file content straight to /update, so a project whose saved
+    // revision still holds the old pattern reintroduces it on every sync --
+    // observed the same day: a swept file was overwritten with the broken
+    // version minutes later. preprocessFile is the one chokepoint EVERY writer
+    // passes through to land a file on preview disk, so the repair belongs
+    // here too rather than only in front of one of them.
+    //
+    // Matches an asset directory or a filename with a static-asset extension;
+    // an extensionless route (`${'/'}dashboard`) has neither and is untouched.
+    if (/\.(tsx?|jsx?)$/.test(filePath)) {
+        const fakeRootInterp = /\$\{\s*['"]\/['"]\s*\}(?=(?:(?:assets|images|fonts|icons|media)\/|[^`'"\s)]*\.(?:jpe?g|png|svg|webp|gif|ico|avif|woff2?|ttf|otf|mp4|mp3|pdf)\b))/g;
+        const beforeFakeRoot = fixed;
+        fixed = fixed.replace(fakeRootInterp, '${import.meta.env.BASE_URL}');
+        if (fixed !== beforeFakeRoot) {
+            issues.push(`${filePath}: replaced \`\${'/'}\` with \`\${import.meta.env.BASE_URL}\` in asset path(s)`);
+        }
+    }
+
     // CSS files: ensure @tailwind directives + fix @apply color-token directives
     if (filePath.endsWith('.css')) {
         const isIndexCss = filePath === 'src/index.css' || filePath.endsWith('/src/index.css') || filePath === 'index.css';
