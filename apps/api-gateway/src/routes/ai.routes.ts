@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authMiddleware, optionalAuthMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
+import { recordEffect, markReverted, recoverRun, forgetRun, EFFECT_KINDS } from '../services/effectLedger.js';
 import { getLlmControlState, getUserPlanTier } from '../services/llm-control.service.js';
 import { testAndAutoDisableProviders, getLastHealthResults } from '../services/llm-health.service.js';
 import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
@@ -236,7 +237,7 @@ async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
     // killed without reaching the finally-block release below).
     const { data: existing, error: selectError } = await supabase
         .from('agent_locks')
-        .select('acquired_at')
+        .select('acquired_at, token')
         .eq('project_id', projectId)
         .maybeSingle();
 
@@ -268,11 +269,62 @@ async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
             .from('agent_locks')
             .update({ token, owner: `pid:${process.pid}`, acquired_at: new Date().toISOString() })
             .eq('project_id', projectId);
-        if (!updateError) return token;
+        if (updateError) return null;
+
+        // The lock we just took belonged to a run that died without reaching
+        // its finally block. Taking the lock is only half of that cleanup: the
+        // dead run may also have set secrets, pushed a preview, or deployed a
+        // function, and before the effect ledger nothing anywhere reverted any
+        // of it -- those effects simply stayed, unattributed, forever. Recover
+        // them now, while we hold the lock and no other run can interleave.
+        //
+        // Deliberately awaited rather than fire-and-forget: starting a new run
+        // on top of a half-recovered project is the interleaving this lock
+        // exists to prevent. Deliberately non-fatal: recovery halting at a
+        // barrier is an expected outcome (see recoverRun), not a reason to deny
+        // the caller a lock it legitimately reclaimed.
+        if (typeof existing.token === 'string' && existing.token.length > 0) {
+            try {
+                const outcome = await recoverRun(existing.token, AGENT_EFFECT_COMPENSATORS);
+                if (outcome.reverted > 0 || outcome.haltedAtBarrier || outcome.failures.length > 0) {
+                    logger.warn(
+                        `[agent-lock] Recovered ${outcome.reverted} orphaned effect(s) from dead run ` +
+                        `${existing.token} on ${projectId}` +
+                        (outcome.haltedAtBarrier ? '; halted at an irreversible effect' : '') +
+                        (outcome.failures.length ? `; ${outcome.failures.length} compensation(s) FAILED` : ''),
+                    );
+                }
+            } catch (err) {
+                logger.warn(`[agent-lock] Orphan recovery errored for ${projectId}: ${(err as Error).message}`);
+            }
+        }
+        return token;
     }
 
     return null;
 }
+
+/**
+ * How to take back each effect kind an agent run can leave standing.
+ *
+ * Only kinds listed here are recoverable; recoverRun deliberately HALTS on an
+ * unregistered kind rather than stepping over it, so this map is the explicit
+ * boundary of what we are willing to undo automatically. `db_migration` and
+ * `publish` are absent on purpose -- they are classified as barriers in
+ * effectLedger.ts and must not be guessed at against live customer data.
+ */
+const AGENT_EFFECT_COMPENSATORS: Parameters<typeof recoverRun>[1] = {
+    /** The dead run's own lock row. Scoped by token so we can never delete a
+     *  lock that has since been legitimately reclaimed by someone else. */
+    agent_lock: async (row) => {
+        const { error } = await supabase
+            .from('agent_locks')
+            .delete()
+            .eq('project_id', row.project_id)
+            .eq('token', row.run_id);
+        if (error) throw new Error(`could not release orphaned lock: ${error.message}`);
+    },
+};
 
 /** The single staleness bound, shared by the reclaim path (tryAcquireAgentLock)
  *  and the visibility path (readLiveAgentLock). These MUST agree: if a lock
@@ -914,6 +966,19 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
 
     const stopAgentLockHeartbeat = startAgentLockHeartbeat(projectId, agentLockToken);
 
+    // Enter this run's lock into the effect ledger. The lock token doubles as
+    // the run id, so every later effect this run records is attributable to the
+    // same component instance -- which is what lets another worker recover the
+    // whole set if this process dies before its finally block runs.
+    const lockEffectId = await recordEffect({
+        runId: agentLockToken,
+        projectId,
+        kind: 'agent_lock',
+        target: `agent_locks/${projectId}`,
+        boundary: EFFECT_KINDS.agent_lock,
+        afterState: { token: agentLockToken, owner: `pid:${process.pid}` },
+    });
+
     const routeAbortController = new AbortController();
     const abortRun = () => {
         if (!routeAbortController.signal.aborted) {
@@ -1467,6 +1532,12 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         // harmless direction (lock free, map entry lingering for the few ms
         // until the next line).
         await releaseAgentLock(projectId);
+        // Converge the happy path onto the same ledger state the crash path
+        // produces. Without this a cleanly-released lock still reads as
+        // "standing" to every other worker, which is the visibility bug again
+        // in a new location.
+        await markReverted(lockEffectId);
+        forgetRun(agentLockToken);
         activeAgentRuns.delete(projectId);
         currentRun.bus.emit('end');
         currentRun.bus.removeAllListeners();
