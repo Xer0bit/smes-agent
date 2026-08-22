@@ -16,20 +16,34 @@ import os from 'node:os';
 import path from 'node:path';
 
 const recorded: any[] = [];
+const blobs = new Map<string, Buffer>();
+let blobUploadFails = false;
 vi.mock('../effectLedger.js', async (orig) => {
   const actual = await (orig() as Promise<Record<string, unknown>>);
   return {
     ...actual,
     recordEffect: async (e: unknown) => { recorded.push(e); return recorded.length; },
+    putEffectBlob: async (key: string, bytes: Buffer) => {
+      if (blobUploadFails) return null;
+      blobs.set(key, bytes);
+      return key;
+    },
+    getEffectBlob: async (key: string) => {
+      const b = blobs.get(key);
+      if (!b) throw new Error(`missing blob ${key}`);
+      return b;
+    },
   };
 });
 vi.mock('../../config/database.js', () => ({ supabase: {}, supabaseAuth: {}, default: {} }));
 
-import { writeProjectFile, compensateFileWrite, MAX_CAPTURED_BEFORE_BYTES } from '../projectFileWriter.js';
+import { writeProjectFile, compensateFileWrite, MAX_CAPTURED_BEFORE_BYTES, MAX_PARKED_BEFORE_BYTES } from '../projectFileWriter.js';
 
 let appPath: string;
 beforeEach(() => {
   recorded.length = 0;
+  blobs.clear();
+  blobUploadFails = false;
   appPath = fs.mkdtempSync(path.join(os.tmpdir(), 'pfw-'));
 });
 afterEach(() => fs.rmSync(appPath, { recursive: true, force: true }));
@@ -75,14 +89,46 @@ describe('project file writer', () => {
     expect(fs.readFileSync(path.join(appPath, 'public/logo.png')).equals(png)).toBe(true);
   });
 
-  it('classifies an overwrite it could not capture as a barrier', async () => {
-    fs.mkdirSync(path.join(appPath, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(appPath, 'src/big.bin'), Buffer.alloc(MAX_CAPTURED_BEFORE_BYTES + 1, 1));
-    const r = await writeProjectFile(ctx(), 'src/big.bin', 'small');
-    // Honest classification: no captured prior state means no compensation, and
-    // recoverRun halts on a barrier rather than stepping past it.
-    expect(r.boundary).toBe('barrier');
-    expect(recorded[0].beforeState).toEqual({ existed: true, content: null });
+  it('parks an over-inline-cap file instead of calling it irreversible', async () => {
+    // The production problem: ordinary assets (a jpg, a docx) exceed the inline
+    // cap, so routine overwrites became barriers -- and recovery HALTS at a
+    // barrier, blocking everything older than it.
+    const big = Buffer.alloc(MAX_CAPTURED_BEFORE_BYTES + 1, 7);
+    fs.mkdirSync(path.join(appPath, 'public'), { recursive: true });
+    fs.writeFileSync(path.join(appPath, 'public/big.jpg'), big);
+    const r = await writeProjectFile(ctx(), 'public/big.jpg', 'replaced');
+    expect(r.boundary).toBe('compensable');
+    expect(recorded[0].beforeState.blob).toBeTruthy();
+    expect(recorded[0].beforeState.content).toBeNull();
+  });
+
+  it('round-trips a parked file back to its exact prior bytes', async () => {
+    const big = Buffer.alloc(MAX_CAPTURED_BEFORE_BYTES + 32, 9);
+    fs.mkdirSync(path.join(appPath, 'public'), { recursive: true });
+    fs.writeFileSync(path.join(appPath, 'public/big.jpg'), big);
+    await writeProjectFile(ctx(), 'public/big.jpg', 'replaced');
+    await compensateFileWrite({
+      ...row('public/big.jpg', recorded[0].beforeState),
+      after_state: recorded[0].afterState,
+    });
+    expect(fs.readFileSync(path.join(appPath, 'public/big.jpg')).equals(big)).toBe(true);
+  });
+
+  it('falls back to barrier when parking fails -- never a promise it cannot keep', async () => {
+    blobUploadFails = true;
+    const big = Buffer.alloc(MAX_CAPTURED_BEFORE_BYTES + 1, 3);
+    fs.mkdirSync(path.join(appPath, 'public'), { recursive: true });
+    fs.writeFileSync(path.join(appPath, 'public/big.jpg'), big);
+    await writeProjectFile(ctx(), 'public/big.jpg', 'replaced');
+    expect(recorded[0].boundary).toBe('barrier');
+    expect(recorded[0].beforeState.blob).toBeNull();
+  });
+
+  it('still refuses beyond the park ceiling, rather than risking an OOM', async () => {
+    // Guarded by size check alone -- allocating 25MB+ in a test is wasteful, so
+    // assert the ceiling is ordered above the inline cap and below anything we
+    // would read into memory casually.
+    expect(MAX_PARKED_BEFORE_BYTES).toBeGreaterThan(MAX_CAPTURED_BEFORE_BYTES);
   });
 
   it('refuses to invent a prior state it never captured', async () => {

@@ -31,7 +31,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeJoin } from '../agent-tools/types.js';
-import { recordEffect, EFFECT_KINDS, type Boundary, type LedgerRow } from './effectLedger.js';
+import { recordEffect, reserveSeq, putEffectBlob, getEffectBlob, EFFECT_KINDS, type Boundary, type LedgerRow } from './effectLedger.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -40,6 +40,22 @@ import { logger } from '../utils/logger.js';
  * exists so a large binary cannot bloat the ledger row, not to be hit routinely.
  */
 export const MAX_CAPTURED_BEFORE_BYTES = 256 * 1024;
+
+/**
+ * Above the inline cap, prior content is parked in object storage and the
+ * ledger row holds only a key. Production showed the inline cap alone was too
+ * blunt: ordinary project assets (a jpg, a docx) blew past 256KB, so routine
+ * overwrites were recorded as irreversible barriers -- and since recovery HALTS
+ * at a barrier, one overwritten image blocked recovery of everything older than
+ * it. Raising the inline cap was not the answer: base64 in a jsonb row inflates
+ * by a third and is read back on every ledger query.
+ *
+ * This second ceiling is the point past which we refuse honestly. Reading it to
+ * park it means holding it in memory, and a genuinely huge file is not worth an
+ * OOM on the gen box -- above this it stays a barrier, which is the truthful
+ * answer rather than a compensation we cannot perform.
+ */
+export const MAX_PARKED_BEFORE_BYTES = 25 * 1024 * 1024;
 
 /** Marker distinguishing a captured binary payload from captured text. */
 const BINARY_PREFIX = 'base64:';
@@ -59,15 +75,33 @@ export interface WriteProjectFileResult {
   effectId: number | null;
 }
 
-function captureBefore(fullPath: string): { existed: boolean; captured: string | null; tooLarge: boolean } {
+interface Capture {
+  existed: boolean;
+  /** Small enough to sit inline in the ledger row. */
+  captured: string | null;
+  /** Too big to inline but small enough to park in storage. */
+  park: Buffer | null;
+  /** Beyond every ceiling: genuinely unrecoverable. */
+  tooLarge: boolean;
+}
+
+function captureBefore(fullPath: string): Capture {
+  const none: Capture = { existed: false, captured: null, park: null, tooLarge: false };
   let stat: fs.Stats;
   try {
     stat = fs.statSync(fullPath);
   } catch {
-    return { existed: false, captured: null, tooLarge: false };
+    return none;
   }
-  if (!stat.isFile()) return { existed: false, captured: null, tooLarge: false };
-  if (stat.size > MAX_CAPTURED_BEFORE_BYTES) return { existed: true, captured: null, tooLarge: true };
+  if (!stat.isFile()) return none;
+  if (stat.size > MAX_PARKED_BEFORE_BYTES) return { existed: true, captured: null, park: null, tooLarge: true };
+  if (stat.size > MAX_CAPTURED_BEFORE_BYTES) {
+    try {
+      return { existed: true, captured: null, park: fs.readFileSync(fullPath), tooLarge: false };
+    } catch {
+      return { existed: true, captured: null, park: null, tooLarge: true };
+    }
+  }
 
   const buf = fs.readFileSync(fullPath);
   // Round-trip test rather than an extension guess: if the bytes survive a
@@ -76,7 +110,14 @@ function captureBefore(fullPath: string): { existed: boolean; captured: string |
   // carries under source-looking paths.
   const asUtf8 = buf.toString('utf8');
   const isText = Buffer.from(asUtf8, 'utf8').equals(buf);
-  return { existed: true, captured: isText ? asUtf8 : BINARY_PREFIX + buf.toString('base64'), tooLarge: false };
+  return { existed: true, captured: isText ? asUtf8 : BINARY_PREFIX + buf.toString('base64'), park: null, tooLarge: false };
+}
+
+/** Storage key for one parked payload. Namespaced by run so a project's
+ *  parked content is greppable and removable per run. */
+function blobKeyFor(projectId: string, runId: string, seq: number, relPath: string): string {
+  const safe = relPath.replace(/[^A-Za-z0-9._/-]/g, '_');
+  return `effect-ledger/${projectId}/${runId}/${seq}-${safe}`;
 }
 
 /**
@@ -93,16 +134,11 @@ export async function writeProjectFile(
   content: string | Buffer,
 ): Promise<WriteProjectFileResult> {
   const fullPath = safeJoin(ctx.appPath, relPath);
-  const { existed, captured, tooLarge } = captureBefore(fullPath);
-
-  // A creation is compensable by deleting what we created (section 6.1 names
-  // exactly this as a compensation). An overwrite is compensable only if we
-  // hold the prior bytes.
-  const boundary: Boundary = !existed || captured !== null ? EFFECT_KINDS.file_write : 'barrier';
+  const { existed, captured, park, tooLarge } = captureBefore(fullPath);
 
   if (tooLarge) {
     logger.warn(
-      `[project-writer] prior content of ${relPath} is ${MAX_CAPTURED_BEFORE_BYTES} bytes or more; ` +
+      `[project-writer] prior content of ${relPath} exceeds ${MAX_PARKED_BEFORE_BYTES} bytes; ` +
       `recording this overwrite as irreversible rather than claiming a compensation we cannot perform.`,
     );
   }
@@ -112,13 +148,27 @@ export async function writeProjectFile(
 
   let effectId: number | null = null;
   if (ctx.runId && ctx.projectId) {
+    const seq = reserveSeq(ctx.runId);
+    // Park oversized prior content out-of-band. The boundary follows what we
+    // actually managed to keep: a failed upload means no compensation exists,
+    // so it degrades to a barrier rather than a promise we cannot honour.
+    let blobKey: string | null = null;
+    if (park) {
+      blobKey = await putEffectBlob(blobKeyFor(ctx.projectId, ctx.runId, seq, relPath), park);
+    }
+    const boundary: Boundary =
+      !existed || captured !== null || blobKey !== null ? EFFECT_KINDS.file_write : 'barrier';
+
     effectId = await recordEffect({
       runId: ctx.runId,
       projectId: ctx.projectId,
+      seq,
       kind: 'file_write',
       target: relPath,
       boundary,
-      beforeState: existed ? { existed: true, content: captured } : { existed: false },
+      beforeState: existed
+        ? { existed: true, content: captured, blob: blobKey }
+        : { existed: false },
       // The project root travels WITH the effect. Recovery runs in a different
       // process (and a different request) than the write did, at a point where
       // appPath has not been resolved yet -- so a compensator that needed it
@@ -127,9 +177,10 @@ export async function writeProjectFile(
       // self-contained.
       afterState: { appPath: ctx.appPath },
     });
+    return { fullPath, existed, boundary, effectId };
   }
 
-  return { fullPath, existed, boundary, effectId };
+  return { fullPath, existed, boundary: !existed || captured !== null || park !== null ? EFFECT_KINDS.file_write : 'barrier', effectId };
 }
 
 /**
@@ -150,12 +201,13 @@ export function writeProjectFileSync(
   content: string | Buffer,
 ): WriteProjectFileResult {
   const fullPath = safeJoin(ctx.appPath, relPath);
-  const { existed, captured, tooLarge } = captureBefore(fullPath);
-  const boundary: Boundary = !existed || captured !== null ? EFFECT_KINDS.file_write : 'barrier';
+  const { existed, captured, park, tooLarge } = captureBefore(fullPath);
+  const provisional: Boundary =
+    !existed || captured !== null || park !== null ? EFFECT_KINDS.file_write : 'barrier';
 
   if (tooLarge) {
     logger.warn(
-      `[project-writer] prior content of ${relPath} is ${MAX_CAPTURED_BEFORE_BYTES} bytes or more; ` +
+      `[project-writer] prior content of ${relPath} exceeds ${MAX_PARKED_BEFORE_BYTES} bytes; ` +
       `recording this overwrite as irreversible rather than claiming a compensation we cannot perform.`,
     );
   }
@@ -164,18 +216,28 @@ export function writeProjectFileSync(
   fs.writeFileSync(fullPath, content as never);
 
   if (ctx.runId && ctx.projectId) {
-    void recordEffect({
-      runId: ctx.runId,
-      projectId: ctx.projectId,
-      kind: 'file_write',
-      target: relPath,
-      boundary,
-      beforeState: existed ? { existed: true, content: captured } : { existed: false },
-      afterState: { appPath: ctx.appPath },
-    });
+    // The LIFO slot is claimed synchronously, before any upload: recovery
+    // orders by seq, so a slow park must not reorder this effect behind ones
+    // that happened after it.
+    const seq = reserveSeq(ctx.runId);
+    const runId = ctx.runId;
+    const projectId = ctx.projectId;
+    const appPath = ctx.appPath;
+    void (async () => {
+      const blobKey = park ? await putEffectBlob(blobKeyFor(projectId, runId, seq, relPath), park) : null;
+      await recordEffect({
+        runId, projectId, seq,
+        kind: 'file_write',
+        target: relPath,
+        // Reflects what was actually kept, which a failed upload changes.
+        boundary: !existed || captured !== null || blobKey !== null ? EFFECT_KINDS.file_write : 'barrier',
+        beforeState: existed ? { existed: true, content: captured, blob: blobKey } : { existed: false },
+        afterState: { appPath },
+      });
+    })();
   }
 
-  return { fullPath, existed, boundary, effectId: null };
+  return { fullPath, existed, boundary: provisional, effectId: null };
 }
 
 /**
@@ -187,7 +249,7 @@ export function writeProjectFileSync(
  * error and halts recovery on a throw, which is the intended outcome.
  */
 export async function compensateFileWrite(row: LedgerRow, appPathOverride?: string): Promise<void> {
-  const before = row.before_state as { existed?: boolean; content?: string | null } | null;
+  const before = row.before_state as { existed?: boolean; content?: string | null; blob?: string | null } | null;
   const recorded = (row.after_state as { appPath?: string } | null)?.appPath;
   const appPath = appPathOverride ?? recorded;
   if (!appPath) {
@@ -201,6 +263,19 @@ export async function compensateFileWrite(row: LedgerRow, appPathOverride?: stri
       fs.rmSync(fullPath, { force: true });
     } catch (err) {
       throw new Error(`could not delete created file ${row.target}: ${(err as Error).message}`);
+    }
+    return;
+  }
+
+  // Parked payload: fetch it back. getEffectBlob throws on failure, which
+  // halts recovery -- correct, since we cannot restore what we cannot fetch.
+  if (typeof before.content !== 'string' && typeof before.blob === 'string' && before.blob) {
+    const payload = await getEffectBlob(before.blob);
+    try {
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, payload);
+    } catch (err) {
+      throw new Error(`could not restore parked ${row.target}: ${(err as Error).message}`);
     }
     return;
   }

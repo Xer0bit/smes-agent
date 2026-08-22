@@ -121,6 +121,53 @@ function nextSeq(runId: string): number {
   return next;
 }
 
+/**
+ * Claim this effect's position in the LIFO order NOW, before any async work.
+ *
+ * Capturing large prior content uploads it to storage first, so the ledger
+ * insert lands later than the write it describes. Recovery orders by `seq`, not
+ * by insert time, so the slot has to be taken synchronously at the moment of
+ * the write -- otherwise a slow upload would reorder an effect behind ones that
+ * actually happened after it, and recovery would undo them in the wrong order.
+ */
+export function reserveSeq(runId: string): number {
+  return nextSeq(runId);
+}
+
+/** Where out-of-band effect payloads live. Same bucket the revision store uses. */
+const EFFECT_BLOB_BUCKET = 'user-projects-free';
+
+/**
+ * Park bytes too large to sit inline in a ledger row, returning the key to
+ * fetch them back with, or null if the upload failed.
+ *
+ * A null return is the signal to record the effect as a `barrier`: we could not
+ * keep what was there, so we must not claim we can put it back.
+ */
+export async function putEffectBlob(key: string, bytes: Buffer): Promise<string | null> {
+  const supabase = await getDb();
+  if (!supabase) return null;
+  try {
+    const { error } = await supabase.storage
+      .from(EFFECT_BLOB_BUCKET)
+      .upload(key, bytes, { contentType: 'application/octet-stream', upsert: true });
+    if (error) throw error;
+    return key;
+  } catch (err) {
+    logger.warn(`[effect-ledger] could not park prior content at ${key}: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/** Fetch back what putEffectBlob parked. Throws so a failed restore halts recovery. */
+export async function getEffectBlob(key: string): Promise<Buffer> {
+  const supabase = await getDb();
+  if (!supabase) throw new Error('database unavailable, cannot fetch parked content');
+  const { data, error } = await supabase.storage.from(EFFECT_BLOB_BUCKET).download(key);
+  if (error || !data) throw new Error(`could not fetch parked content ${key}: ${error?.message ?? 'missing'}`);
+  return Buffer.from(await data.arrayBuffer());
+}
+
 /** Drop a finished run's counter so the map cannot grow without bound. */
 export function forgetRun(runId: string): void {
   seqCounters.delete(runId);
