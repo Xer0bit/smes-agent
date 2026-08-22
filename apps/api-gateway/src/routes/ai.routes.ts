@@ -4,6 +4,7 @@ import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { recordEffect, markReverted, recoverRun, forgetRun, EFFECT_KINDS } from '../services/effectLedger.js';
 import { compensateFileWrite } from '../services/projectFileWriter.js';
+import { publishRunChunk, publishRunEnd, relayRunStream, runStreamExists } from '../services/runStreamBroker.js';
 import { getLlmControlState, getUserPlanTier } from '../services/llm-control.service.js';
 import { testAndAutoDisableProviders, getLastHealthResults } from '../services/llm-health.service.js';
 import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
@@ -368,11 +369,11 @@ function startAgentLockHeartbeat(projectId: string, token: string): () => void {
 /** Read the project's lock row, ignoring one already past the staleness bound.
  *  This is how a worker answers "is a run live?" for a run it cannot see in its
  *  own `activeAgentRuns` map -- i.e. one owned by the other cluster worker. */
-async function readLiveAgentLock(projectId: string): Promise<{ acquired_at: string } | null> {
+async function readLiveAgentLock(projectId: string): Promise<{ acquired_at: string; token: string } | null> {
     try {
         const { data, error } = await supabase
             .from('agent_locks')
-            .select('acquired_at')
+            .select('acquired_at, token')
             .eq('project_id', projectId)
             .maybeSingle();
         if (error || !data) return null;
@@ -963,6 +964,42 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
     // files.
     const agentLockToken = await tryAcquireAgentLock(projectId);
     if (!agentLockToken) {
+        // A run is genuinely live on the other PM2 worker. Before rejecting,
+        // try to RELAY it (Phase 5, paper section 6.2 "cross-process
+        // invocation"): the owning worker mirrors every chunk to a Redis
+        // stream, so this worker can serve the same output even though the
+        // run's event bus lives in another process's memory. The lock token is
+        // the run id, which is what makes the other worker's stream findable.
+        //
+        // This is the difference between "a generation is already running,
+        // please wait" and simply showing the user their generation.
+        const liveLock = await readLiveAgentLock(projectId);
+        if (liveLock?.token && await runStreamExists(projectId, liveLock.token)) {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache, no-transform');
+            res.setHeader('Connection', 'keep-alive');
+
+            const relayAbort = new AbortController();
+            req.on('close', () => relayAbort.abort());
+
+            const relayed = await relayRunStream(
+                projectId,
+                liveLock.token,
+                {
+                    onChunk: (c) => { if (!res.writableEnded) res.write(c); },
+                    onEnd: () => { if (!res.writableEnded) res.end(); },
+                },
+                relayAbort.signal,
+            );
+            if (!res.writableEnded) res.end();
+            if (relayed) return;
+            // Relay failed mid-flight (section 6.2 warns a cross-process call
+            // can). Headers are already sent, so we cannot fall back to a JSON
+            // 429 here -- the stream simply ends and the client's own
+            // reconnect/poll path takes over.
+            return;
+        }
+
         res.status(429).json({
             error: 'A generation is already running for this project (on another server process). Please wait for it to finish before starting another.',
             code: 'PROJECT_LOCKED',
@@ -1025,6 +1062,12 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             currentRun.buffer.push(str);
         }
         currentRun.bus.emit('chunk', str);
+        // Mirror to the cross-worker broker (Phase 5). Deliberately not
+        // awaited: this is a best-effort mirror for subscribers on the OTHER
+        // PM2 worker, and an agent run must never slow down or fail because a
+        // Redis write did. Local subscribers are served from memory above
+        // regardless of what happens here.
+        void publishRunChunk(projectId, agentLockToken, str);
         return originalWrite(chunk, ...args);
     };
 
@@ -1546,6 +1589,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         forgetRun(agentLockToken);
         activeAgentRuns.delete(projectId);
         currentRun.bus.emit('end');
+        void publishRunEnd(projectId, agentLockToken);
         currentRun.bus.removeAllListeners();
         if (!res.writableEnded) {
             res.end();
@@ -1669,7 +1713,13 @@ router.get('/active-run/:projectId', optionalAuthMiddleware, async (req: Authent
     const lock = await readLiveAgentLock(projectId);
     if (lock) {
         const startedAt = new Date(lock.acquired_at).getTime();
-        res.json({ active: true, attachable: false, startedAt, ageMs: Date.now() - startedAt });
+        // Phase 5: the run may be on the other worker but still ATTACHABLE, if
+        // that worker has been mirroring it to the broker. Only report
+        // attachable: false when there is genuinely no stream to relay --
+        // otherwise the client needlessly falls back to polling a run it could
+        // be watching.
+        const attachable = Boolean(lock.token) && await runStreamExists(projectId, lock.token);
+        res.json({ active: true, attachable, startedAt, ageMs: Date.now() - startedAt });
         return;
     }
 
