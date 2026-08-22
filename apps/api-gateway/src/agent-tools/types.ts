@@ -168,6 +168,15 @@ export interface AgentContext {
   previewServiceUrl?: string;
   /** Authenticated user id   required by database_query / get_database_schema to scope tenant DB access. */
   userId?: string;
+  /**
+   * Identifier for this agent run as a component instantiation, used to
+   * attribute tracked effects in the effect ledger. This is the agent_locks
+   * token: it is already unique per run, already durable, and already the
+   * thing another worker finds when it reclaims a dead run's lock -- so using
+   * it as the run id is what lets that worker recover the run's whole effect
+   * set rather than just its lock.
+   */
+  runId?: string;
   /** Tracks how many times query_database has been called in this run, to cap runaway query loops. */
   dbQueryCallCount?: number;
   /** eCG Agents Portal MCP endpoint, present only for projects with MCP enabled at launch. */

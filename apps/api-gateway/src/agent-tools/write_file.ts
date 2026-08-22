@@ -7,6 +7,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import ts from 'typescript';
 import { ToolDefinition, AgentContext, safeJoin, escapeXmlAttr, extractAnonFetchTables, isOpaqueBinaryPath } from './types.js';
+import { writeProjectFile } from '../services/projectFileWriter.js';
 import { sanitizeFileContent, checkSyntaxBalance } from './sanitize.js';
 
 // Paths that are pre-seeded by the base template   re-writing them wastes a step.
@@ -202,7 +203,9 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
       } catch { /* unreadable existing file -- fall through and write */ }
     }
 
-    fs.writeFileSync(fullPath, content, 'utf8');
+    // Single-owner write path (projectFileWriter.ts): tracks the effect so it
+    // can be compensated, and keeps this location inside the system boundary.
+    await writeProjectFile({ appPath: ctx.appPath, projectId: ctx.projectId, runId: ctx.runId }, args.path, content);
 
     // Record in ledger so the Change Journal reflects this write
     const lineCount = content.split('\n').length;

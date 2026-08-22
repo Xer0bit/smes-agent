@@ -738,6 +738,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     appPath,
     projectId,
     userId,
+    runId: agentLockToken,
     chatMode: chatMode === 'admin' ? 'admin' : 'normal',
     readFiles: new Set<string>(),
     pendingPreviewFiles: new Map<string, string>(),

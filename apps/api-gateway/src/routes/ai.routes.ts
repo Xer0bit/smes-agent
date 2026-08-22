@@ -3,6 +3,7 @@ import { authMiddleware, optionalAuthMiddleware, AuthenticatedRequest } from '..
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { recordEffect, markReverted, recoverRun, forgetRun, EFFECT_KINDS } from '../services/effectLedger.js';
+import { compensateFileWrite } from '../services/projectFileWriter.js';
 import { getLlmControlState, getUserPlanTier } from '../services/llm-control.service.js';
 import { testAndAutoDisableProviders, getLastHealthResults } from '../services/llm-health.service.js';
 import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
@@ -314,6 +315,11 @@ async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
  * effectLedger.ts and must not be guessed at against live customer data.
  */
 const AGENT_EFFECT_COMPENSATORS: Parameters<typeof recoverRun>[1] = {
+    /** Restore the file's prior bytes, or delete it when the run created it.
+     *  The project root is carried on the effect row itself, so this works from
+     *  a process that never resolved an appPath for the project. */
+    file_write: async (row) => { await compensateFileWrite(row); },
+
     /** The dead run's own lock row. Scoped by token so we can never delete a
      *  lock that has since been legitimately reclaimed by someone else. */
     agent_lock: async (row) => {

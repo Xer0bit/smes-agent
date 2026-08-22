@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import { z } from 'zod';
 import ts from 'typescript';
 import { ToolDefinition, AgentContext, safeJoin, extractAnonFetchTables, isOpaqueBinaryPath } from './types.js';
+import { writeProjectFile } from '../services/projectFileWriter.js';
 import { sanitizeFileContent, checkSyntaxBalance } from './sanitize.js';
 
 const schema = z.object({
@@ -280,7 +281,8 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
         `\nIf you changed exports or props, those files may need updating too.\n\n`
       : '';
 
-    fs.writeFileSync(fullPath, sanitized, 'utf8');
+    // Single-owner write path -- see write_file.ts and projectFileWriter.ts.
+    await writeProjectFile({ appPath: ctx.appPath, projectId: ctx.projectId, runId: ctx.runId }, args.path, sanitized);
     // Emit SSE tool-output so the frontend shows an activity chip
     ctx.onXmlComplete(`<ecomgear-edit path="${args.path}"></ecomgear-edit>`);
 

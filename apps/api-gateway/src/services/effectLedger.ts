@@ -28,8 +28,35 @@
  *     each effect kind declare its boundary class up front (see EFFECT_KINDS)
  *     rather than by assuming.
  */
-import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
+
+/**
+ * The Supabase client is loaded LAZILY rather than imported at module scope.
+ *
+ * config/database.js throws at import time when SUPABASE_URL is unset. Because
+ * projectFileWriter.ts imports this module, and every file-writing agent tool
+ * imports that, a static import here would make the entire tool layer refuse to
+ * load without database configuration -- which is exactly what it did: adding
+ * the import broke edit_file's test suite at collection, not at assertion.
+ *
+ * A best-effort observability layer must not impose a load-time dependency on
+ * its consumers. Resolving it on first use keeps the failure where it belongs:
+ * the ledger degrades to unavailable, and the write it was describing still
+ * happens.
+ */
+type Db = Awaited<typeof import('../config/database.js')>['supabase'];
+let cachedDb: Db | null | undefined;
+
+async function getDb(): Promise<Db | null> {
+  if (cachedDb !== undefined) return cachedDb;
+  try {
+    cachedDb = (await import('../config/database.js')).supabase;
+  } catch (err) {
+    logger.warn(`[effect-ledger] database unavailable, effects will not be tracked: ${(err as Error).message}`);
+    cachedDb = null;
+  }
+  return cachedDb;
+}
 
 /** Section 6.1's per-location classification. See the migration header. */
 export type Boundary = 'inside' | 'compensable' | 'barrier';
@@ -111,6 +138,8 @@ export function forgetRun(runId: string): void {
 export async function recordEffect(effect: Omit<EffectRecord, 'seq'> & { seq?: number }): Promise<number | null> {
   const seq = effect.seq ?? nextSeq(effect.runId);
   try {
+    const supabase = await getDb();
+    if (!supabase) return null;
     const { data, error } = await supabase
       .from('agent_run_effects')
       .insert({
@@ -146,6 +175,8 @@ export async function recordEffect(effect: Omit<EffectRecord, 'seq'> & { seq?: n
 export async function markReverted(effectId: number | null): Promise<void> {
   if (effectId === null) return;
   try {
+    const supabase = await getDb();
+    if (!supabase) return;
     await supabase
       .from('agent_run_effects')
       .update({ reverted_at: new Date().toISOString() })
@@ -198,6 +229,9 @@ export async function recoverRun(
   compensators: Partial<Record<string, Compensator>>,
 ): Promise<RecoveryOutcome> {
   const outcome: RecoveryOutcome = { reverted: 0, haltedAtBarrier: false, failures: [] };
+
+  const supabase = await getDb();
+  if (!supabase) return outcome;
 
   const { data, error } = await supabase
     .from('agent_run_effects')
@@ -270,6 +304,9 @@ export async function recoverRun(
  * is what made a live run invisible ~50% of the time under 2 PM2 workers.
  */
 export async function standingEffects(projectId: string, limit = 100): Promise<LedgerRow[]> {
+  const supabase = await getDb();
+  if (!supabase) return [];
+
   const { data, error } = await supabase
     .from('agent_run_effects')
     .select('id, run_id, project_id, seq, kind, target, boundary, before_state, after_state')
