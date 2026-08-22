@@ -50,6 +50,7 @@ import { acquireProjectLock, cleanupProjectLock } from './agentProjectLock.js';
 import { parseXmlOperation, parseXmlResponse, type OperationStore } from './agentXmlParser.js';
 import { logger } from '../utils/logger.js';
 import { writeProjectFileSync } from './projectFileWriter.js';
+import { interpretPreviewPush } from './previewPushResult.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -4309,9 +4310,33 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true, baseSeq: new Date().toISOString() }), 120_000);
       }
       if (firstAttempt.status === 200) {
-        logger.info('[AgentLoop] Preview push OK', { projectId, fileCount: mergedWrites.length });
-        tracer.event('preview-push', { files: mergedWrites.length, paths: mergedWrites.slice(0, 50).map((f) => f.path) });
-        previewPushOk = true;
+        // A 200 does NOT mean the files went live. preview-service answers 200
+        // even when it detected build errors and ROLLED THE PUSH BACK to the
+        // last stable version, reporting that as { promoted: false,
+        // rolledBack: true } (see its /update handler and pushOutcome.js).
+        // Those fields were never read here, so a rolled-back push set
+        // previewPushOk = true: the run skipped the repair loop entirely and
+        // told the user its work was done while the preview had discarded it.
+        // That is exactly the "it says it fixed it but nothing changed"
+        // report -- the user saw the rollback warning and a success message in
+        // the same reply.
+        const pushResult = interpretPreviewPush(firstAttempt.status, firstAttempt.body);
+        const rolledBack = pushResult.rolledBack;
+
+        if (!pushResult.landed) {
+          logger.warn('[AgentLoop] Preview push was ROLLED BACK by preview-service -- routing to repair loop', {
+            projectId, fileCount: mergedWrites.length, rolledBack,
+          });
+          tracer.event('preview-push-rolled-back', { files: mergedWrites.length });
+          // Same handling as a 422: the work did not land, so fall into the
+          // repair loop rather than reporting success.
+          previewPushOk = false;
+          ctx.previewRolledBack = true;
+        } else {
+          logger.info('[AgentLoop] Preview push OK', { projectId, fileCount: mergedWrites.length });
+          tracer.event('preview-push', { files: mergedWrites.length, paths: mergedWrites.slice(0, 50).map((f) => f.path) });
+          previewPushOk = true;
+        }
       } else if (firstAttempt.status === 422) {
         // Previously this branch immediately reverted whichever files the
         // preview service's validationErrors named as broken -- BEFORE ever

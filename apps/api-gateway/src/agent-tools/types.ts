@@ -177,6 +177,13 @@ export interface AgentContext {
    * set rather than just its lock.
    */
   runId?: string;
+
+  /**
+   * Set when preview-service accepted the push with HTTP 200 but rolled it
+   * back for build errors. Without this the run cannot tell a landed push from
+   * a discarded one, and reports success either way.
+   */
+  previewRolledBack?: boolean;
   /** Tracks how many times query_database has been called in this run, to cap runaway query loops. */
   dbQueryCallCount?: number;
   /** eCG Agents Portal MCP endpoint, present only for projects with MCP enabled at launch. */
