@@ -12,6 +12,7 @@ import { ToolDefinition, AgentContext, safeJoin } from './types.js';
 import { supabase } from '../config/database.js';
 import { databaseService } from '../services/database.service.js';
 import { writeProjectFileSync } from '../services/projectFileWriter.js';
+import { extractCoeffects, resolveCoeffects, describeUnsatisfied } from '../services/edgeFunctionCoeffects.js';
 import { logger } from '../utils/logger.js';
 import { EDGE_FUNCTIONS_DIR, MAX_FUNCTIONS_PER_PROJECT } from './write_edge_function.js';
 
@@ -144,6 +145,7 @@ export const confirmEdgeFunctionDeployTool: ToolDefinition<z.infer<typeof schema
       const dbStatus = await databaseService.getStatus(ctx.userId, ctx.projectId);
       let invokeUrl = '(provision a database first   invocation needs a tenant schema)';
       let permissionNote = '';
+      let coeffectNote = '';
       // 'synced' | 'skipped_no_secret' | 'failed' | 'not_applicable' (no DB provisioned yet)
       let syncStatus: 'synced' | 'skipped_no_secret' | 'failed' | 'not_applicable' = 'not_applicable';
       if (dbStatus?.status === 'active') {
@@ -159,6 +161,32 @@ export const confirmEdgeFunctionDeployTool: ToolDefinition<z.infer<typeof schema
           }
         } catch (preflightErr) {
           logger.warn(`[confirm_edge_function_deploy] permission preflight error for ${name}`, preflightErr);
+        }
+
+        // Coeffect resolution (Phase 4). ensureFunctionDbAccess above skips a
+        // referenced table that does not exist -- "not this function's problem"
+        // -- so a function querying a table nobody created deploys clean and
+        // then fails in a customer's browser. Resolve the declared
+        // requirements now and say which ones the environment does not
+        // provide. Reported, never enforced: extraction is regex-based and
+        // therefore incomplete, so a false negative must not block a
+        // legitimate deploy.
+        try {
+          const required = extractCoeffects(code);
+          if (required.tables.length > 0 || required.secrets.length > 0) {
+            const [tables, secretRows] = await Promise.all([
+              databaseService.listTables(ownerId, ctx.projectId),
+              supabase.from('project_secrets').select('key_name').eq('project_id', ctx.projectId),
+            ]);
+            const resolution = resolveCoeffects(required, {
+              tables: new Set(tables.map((t) => t.name)),
+              secrets: new Set((secretRows.data ?? []).map((r: { key_name: string }) => r.key_name)),
+            });
+            const unsatisfied = describeUnsatisfied(resolution);
+            if (unsatisfied) coeffectNote = `\n${unsatisfied}`;
+          }
+        } catch (coeffectErr) {
+          logger.warn(`[confirm_edge_function_deploy] coeffect resolution failed for ${name}`, coeffectErr);
         }
         try {
           const creds = await databaseService.getCredentials(ownerId, ctx.projectId);
@@ -218,7 +246,7 @@ export const confirmEdgeFunctionDeployTool: ToolDefinition<z.infer<typeof schema
 
       return (
         `${verb} edge function "${name}" (id: ${data.id}). It is ${statusVerb} via ` +
-        `POST ${invokeUrl}.${noDbNote}${permissionNote}${syncWarning}\n` +
+        `POST ${invokeUrl}.${noDbNote}${permissionNote}${coeffectNote}${syncWarning}\n` +
         `Now tell the user, in plain words: what this function does, what params it expects, and which part ` +
         `of the app calls it. Never show secret values   refer to them by name only.`
       );
