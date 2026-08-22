@@ -299,7 +299,21 @@ function humanize(thought: string): string | null {
 }
 
 function cleanLlmText(text: string): string | null {
-  const t = text.trim().replace(/^["']|["']$/g, '').replace(/\.$/, '').replace(/ /g, '-');
+  const t = text
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/\.$/, '')
+    // Em/en dashes become a hyphen. This previously read `.replace(/ /g, '-')`
+    // -- a PLAIN SPACE, byte 0x20 -- which turned every LLM-written status into
+    // "Reading-the-login-file". The only clean status text users ever saw was
+    // the hardcoded fallbacks, which is why the live status line looked generic
+    // and unchanging (reported 2026-08-22). Almost certainly a dash character
+    // flattened to a space by an earlier encoding pass.
+    .replace(/[\u2012-\u2015\u2212]/g, '-')
+    // Collapse any whitespace (including newlines from the model) to single
+    // spaces so the status stays one line.
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!t || t.length < 3) return null;
   return t.length > 80 ? t.slice(0, 77) + '...' : t;
 }
@@ -319,3 +333,7 @@ function pathToLabel(p: string): string {
   if (p.includes('/components/')) return `${words} component`;
   return words;
 }
+
+/** Exported for tests only: the status-line cleaner. Kept internal otherwise so
+ *  callers go through generateStatus, which owns the fallback behaviour. */
+export const __test_cleanLlmText = cleanLlmText;
