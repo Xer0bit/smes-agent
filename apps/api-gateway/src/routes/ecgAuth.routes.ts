@@ -195,8 +195,25 @@ router.post('/login', loginLimiter, async (req: Request, res: Response, next: Ne
               user: { id: supabaseUserId, email: loginData.user.email, fullName },
             });
           } catch (mirrorErr: any) {
-            logger.error('[ecgAuth] Supabase mirror failed on login', { email, error: mirrorErr?.message });
-            res.status(500).json({ error: 'Login succeeded on eCG Auth but session setup failed. Please try again.' });
+            // Say WHICH half failed and why. The old response was one generic
+            // sentence for every cause, so a dead local auth container and a
+            // genuinely broken account looked identical -- diagnosing the
+            // former took a full log dig on 2026-08-22. reason/detail come
+            // from SupabaseMirrorError (authBridge.service.ts).
+            const reason = mirrorErr?.reason === 'auth_unavailable' ? 'auth_unavailable' : 'mirror_failed';
+            logger.error('[ecgAuth] Supabase mirror failed on login', {
+              email, reason, error: mirrorErr?.message, detail: mirrorErr?.detail,
+            });
+            res.status(reason === 'auth_unavailable' ? 503 : 500).json({
+              error: reason === 'auth_unavailable'
+                ? 'Signed in, but the account service is not responding right now. Please try again in a moment.'
+                : 'Login succeeded on eCG Auth but session setup failed. Please try again.',
+              reason,
+              // Bounded, and only ever the upstream failure text -- never
+              // credentials or tokens. This endpoint already required a
+              // correct password to reach, so it is not an oracle.
+              detail: typeof mirrorErr?.detail === 'string' ? mirrorErr.detail.slice(0, 200) : undefined,
+            });
           }
           return;
         }
