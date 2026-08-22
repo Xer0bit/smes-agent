@@ -157,6 +157,18 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   // silently carrying into a future session is exactly the kind of surprise
   // this feature should never produce. Resets to 'normal' on every mount.
   const [chatMode, setChatMode] = useState<'normal' | 'admin'>('normal');
+  // Bumping this re-runs the active-run reconnect effect below. That effect
+  // used to key on [projectId] alone, so it only ever looked once, on mount:
+  // a run already in flight when the user tried to send (started in another
+  // tab, on another device, or before a reload) left them with a dead-end
+  // "please wait" error and no way to see it. Bumping the nonce lets the
+  // existing rejoin path attach to that run instead.
+  const [rejoinNonce, setRejoinNonce] = useState(0);
+  // Set when the lock branch in onError has fully handled a rejected send.
+  // The catch below dedupes by looking for an assistant bubble already marked
+  // 'error', but that branch REMOVES the bubble, so the check would miss and
+  // re-toast the very "please wait" message the rejoin replaces.
+  const lockRejoinRef = useRef(false);
   const [pendingAdminSql, setPendingAdminSql] = useState<PendingAdminSqlChange[]>([]);
   const [confirmingSqlId, setConfirmingSqlId] = useState<string | null>(null);
   const refreshPendingAdminSql = useCallback(async () => {
@@ -583,7 +595,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       reconnectAbortRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, rejoinNonce]);
 
   // ── File attachment handlers ──────────────────────────────────────────────
   const handleFiles = async (files: FileList | File[]) => {
@@ -1154,6 +1166,24 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             setIsGenerating(false);
             setStatusText('');
             setPlanTasks(prev => finalizeTasks(prev, true));
+
+            // A run was already in flight server-side (another tab, another
+            // device, or one still going from before a reload). The old
+            // behavior was a dead end: the typed message was already cleared
+            // by setInput('') above, the send failed, and the user could
+            // neither see the running generation nor recover what they wrote.
+            // Give the text back and attach to the run instead.
+            if ((errMsg ?? '').includes('Another generation is already running')) {
+              if (!overridePrompt) setInput(prev => (prev.trim() ? prev : raw));
+              // Drop both bubbles for the send that never happened -- the
+              // rejoin below adds its own, and the restored input already
+              // represents the user's unsent message.
+              setMessages(prev => prev.filter(m => m.id !== asstId && m.id !== userMsg.id));
+              toast.message('A generation is already running   showing it here.');
+              lockRejoinRef.current = true;
+              setRejoinNonce(n => n + 1);
+              return;
+            }
             // Show real error so users/devs can diagnose   strip raw HTTP prefix if present
             const display = errMsg
               ? errMsg.replace(/^Agent stream failed \(\d+\):\s*/i, '').slice(0, 300)
@@ -1191,6 +1221,12 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       });
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
+      // The lock branch in onError already restored the input, cleared the
+      // bubbles and kicked off the rejoin. streamAgentGeneration still throws
+      // after calling onError, and that throw lands here -- without this the
+      // user would get the friendly "showing it here" toast AND the old
+      // dead-end "please wait" error on top of it.
+      if (lockRejoinRef.current) { lockRejoinRef.current = false; return; }
       setIsGenerating(false);
       setStatusText('');
       setPlanTasks(prev => finalizeTasks(prev, true));
