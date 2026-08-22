@@ -187,11 +187,23 @@ const activeAgentRuns = new Map<string, ActiveRun>();
 // stomped by the other run's concurrent write, moments apart, with nothing in
 // any log to explain why. A plain file lock works here because   unlike the
 // in-memory Map   the filesystem itself IS shared across every worker.
-// Generous ceiling above the longest real AGENT_TIMEOUT_MS (see agentLoopService.ts
-// getDefaultAgentTimeoutMs) so a genuinely still-running request is never treated
-// as stale, while a lock left behind by a crashed/killed worker doesn't wedge a
-// project forever.
-const AGENT_LOCK_STALE_MS = 15 * 60_000;
+// Staleness is measured against `acquired_at`, which a LIVE run refreshes every
+// AGENT_LOCK_HEARTBEAT_MS (see startAgentLockHeartbeat). Before the heartbeat
+// existed this had to be a generous ceiling above the longest real
+// AGENT_TIMEOUT_MS -- 15 minutes -- because a still-running request had no way
+// to prove it was alive. That ceiling was also the blast radius: any lock left
+// behind by a SIGKILLed worker (OOM, `pm2 restart`, the 15s force-exit in
+// index.ts) wedged that project for the full 15 minutes behind a false
+// "a generation is already running" error, against a client retry budget of
+// only ~10s. With a heartbeat, liveness is proven continuously, so the window
+// drops to a few missed beats. Kept at 6x the heartbeat interval so a run
+// survives several consecutive transient Supabase failures before another
+// request may reclaim its lock -- and note runAgentLoop's Redlock mutex
+// (agentProjectLock.ts) still serializes the actual file writes even if this
+// lock is reclaimed early, so an early reclaim degrades to a rejected duplicate
+// rather than interleaved writes.
+const AGENT_LOCK_STALE_MS = 3 * 60_000;
+const AGENT_LOCK_HEARTBEAT_MS = 30_000;
 
 // Lock lives in the `agent_locks` DB table (not a local tmpfile) because the
 // preview-service pushing files for a run lives on a *different machine*
@@ -235,8 +247,22 @@ async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
         return token;
     }
 
-    const age = existing ? Date.now() - new Date(existing.acquired_at).getTime() : Infinity;
-    if (age > AGENT_LOCK_STALE_MS) {
+    if (!existing) {
+        // The row was deleted between our failed insert and this select -- the
+        // previous run finished in that window. Re-INSERT; the old code fell
+        // through to the UPDATE below, which matched zero rows and still
+        // reported success (updateError is null for an empty match), handing
+        // back a token for a lock row that does not exist. A second worker
+        // could then insert cleanly and both runs proceeded in parallel on the
+        // same project, which is the one outcome this lock exists to prevent.
+        const { error: reinsertError } = await supabase
+            .from('agent_locks')
+            .insert({ project_id: projectId, token, owner: `pid:${process.pid}` });
+        return reinsertError ? null : token;
+    }
+
+    if (!isLockLive(existing.acquired_at)) {
+        const age = Date.now() - new Date(existing.acquired_at).getTime();
         logger.warn(`[agent-lock] Reclaiming stale lock for ${projectId} (age ${Math.round(age / 1000)}s)`);
         const { error: updateError } = await supabase
             .from('agent_locks')
@@ -246,6 +272,56 @@ async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
     }
 
     return null;
+}
+
+/** The single staleness bound, shared by the reclaim path (tryAcquireAgentLock)
+ *  and the visibility path (readLiveAgentLock). These MUST agree: if a lock
+ *  could ever be "not live enough to report" yet "not stale enough to reclaim",
+ *  a project falls back into the exact dead zone this whole change removes --
+ *  /active-run says nothing is running while the lock check still rejects the
+ *  next message. One function, one bound, both callers. */
+export function isLockLive(acquiredAt: string, now: number = Date.now()): boolean {
+    // An unparseable timestamp yields NaN, and `NaN <= x` is false -- so a
+    // garbage value reads as dead (reclaimable) rather than live-forever, which
+    // is the safe direction: the wrong one would wedge the project permanently.
+    return now - new Date(acquiredAt).getTime() <= AGENT_LOCK_STALE_MS;
+}
+
+/** Keep this run's lock row fresh so AGENT_LOCK_STALE_MS can stay short.
+ *  Scoped by token as well as project so a heartbeat can never resurrect a lock
+ *  that was already reclaimed by (and now belongs to) a different run. */
+function startAgentLockHeartbeat(projectId: string, token: string): () => void {
+    const timer = setInterval(async () => {
+        try {
+            await supabase
+                .from('agent_locks')
+                .update({ acquired_at: new Date().toISOString() })
+                .eq('project_id', projectId)
+                .eq('token', token);
+        } catch {
+            // Transient failure: the staleness window tolerates several
+            // consecutive misses before anything can reclaim this lock.
+        }
+    }, AGENT_LOCK_HEARTBEAT_MS);
+    timer.unref?.();
+    return () => clearInterval(timer);
+}
+
+/** Read the project's lock row, ignoring one already past the staleness bound.
+ *  This is how a worker answers "is a run live?" for a run it cannot see in its
+ *  own `activeAgentRuns` map -- i.e. one owned by the other cluster worker. */
+async function readLiveAgentLock(projectId: string): Promise<{ acquired_at: string } | null> {
+    try {
+        const { data, error } = await supabase
+            .from('agent_locks')
+            .select('acquired_at')
+            .eq('project_id', projectId)
+            .maybeSingle();
+        if (error || !data) return null;
+        return isLockLive(data.acquired_at) ? data : null;
+    } catch {
+        return null;
+    }
 }
 
 async function releaseAgentLock(projectId: string): Promise<void> {
@@ -836,6 +912,8 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         return;
     }
 
+    const stopAgentLockHeartbeat = startAgentLockHeartbeat(projectId, agentLockToken);
+
     const routeAbortController = new AbortController();
     const abortRun = () => {
         if (!routeAbortController.signal.aborted) {
@@ -1379,8 +1457,17 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             );
         }
 
-        activeAgentRuns.delete(projectId);
+        stopAgentLockHeartbeat();
+        // Release the cross-worker DB lock BEFORE dropping the in-memory entry.
+        // The old order deleted the map entry first, so if all 3 delete retries
+        // failed the project was left in the one inconsistent state that is
+        // user-visible and self-sustaining: DB says locked, no worker can see
+        // or rejoin the run, and nothing clears it until the staleness bound
+        // lapses. Releasing first means the only transient inconsistency is the
+        // harmless direction (lock free, map entry lingering for the few ms
+        // until the next line).
         await releaseAgentLock(projectId);
+        activeAgentRuns.delete(projectId);
         currentRun.bus.emit('end');
         currentRun.bus.removeAllListeners();
         if (!res.writableEnded) {
@@ -1481,14 +1568,35 @@ Rules:
 });
 
 // Check if a project has an active agent run (used by frontend to auto-reconnect)
-router.get('/active-run/:projectId', optionalAuthMiddleware, (req: AuthenticatedRequest, res: Response) => {
+router.get('/active-run/:projectId', optionalAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     const { projectId } = req.params;
     const run = activeAgentRuns.get(projectId);
     if (run) {
-        res.json({ active: true, startedAt: run.startedAt, ageMs: Date.now() - run.startedAt });
-    } else {
-        res.json({ active: false });
+        // Owned by THIS worker, so its event bus is in our memory and the
+        // caller's SSE reconnect can actually attach to it.
+        res.json({ active: true, attachable: true, startedAt: run.startedAt, ageMs: Date.now() - run.startedAt });
+        return;
     }
+
+    // `activeAgentRuns` is per-process but `ecomgear-gen` runs 2 PM2 cluster
+    // workers, so a miss here does NOT mean no run is happening -- it means no
+    // run is happening *on this worker*. Answering a flat `active: false` while
+    // the other worker holds the project's lock is what produced the reported
+    // contradiction: the panel showed nothing running, then the user's next
+    // message round-robined into the lock check and came back "A generation is
+    // already running for this project". Consult the cross-worker lock so both
+    // answers come from the same source of truth. `attachable: false` tells the
+    // client a run is live but its stream lives in another process, so it
+    // should reflect the running state and poll rather than open an SSE
+    // reconnect that can only 429.
+    const lock = await readLiveAgentLock(projectId);
+    if (lock) {
+        const startedAt = new Date(lock.acquired_at).getTime();
+        res.json({ active: true, attachable: false, startedAt, ageMs: Date.now() - startedAt });
+        return;
+    }
+
+    res.json({ active: false });
 });
 
 // Get generation history

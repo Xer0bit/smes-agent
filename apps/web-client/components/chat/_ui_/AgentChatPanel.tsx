@@ -169,6 +169,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   // 'error', but that branch REMOVES the bubble, so the check would miss and
   // re-toast the very "please wait" message the rejoin replaces.
   const lockRejoinRef = useRef(false);
+  // Interval used to wait out a run owned by the other cluster worker (which
+  // this panel can observe but not attach to). Held in a ref so the effect's
+  // cleanup can stop it on unmount/project switch.
+  const activeRunPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [pendingAdminSql, setPendingAdminSql] = useState<PendingAdminSqlChange[]>([]);
   const [confirmingSqlId, setConfirmingSqlId] = useState<string | null>(null);
   const refreshPendingAdminSql = useCallback(async () => {
@@ -486,6 +490,39 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             if (!r.ok) break;
             const json = await r.json();
             if (cancelled) return;
+            if (json.active && json.attachable === false && !isGenerating) {
+              // A run IS live, but it belongs to the other `ecomgear-gen`
+              // cluster worker, so its SSE event bus is in that process's
+              // memory and there is nothing here to attach to. Opening a
+              // reconnect stream anyway just round-robins into the lock check
+              // and 429s. Reflect the running state so the composer is
+              // correctly disabled (rather than showing an idle panel that
+              // rejects the user's next message), and poll until it clears.
+              setIsGenerating(true);
+              setStatusText('A generation is already running…');
+              const poll = setInterval(async () => {
+                if (cancelled) { clearInterval(poll); return; }
+                try {
+                  const rr = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } });
+                  if (!rr.ok) return;
+                  const jj = await rr.json();
+                  if (cancelled) { clearInterval(poll); return; }
+                  if (!jj.active) {
+                    clearInterval(poll);
+                    setIsGenerating(false);
+                    setStatusText('');
+                    // Composer is usable again. NOTE: the assistant message
+                    // produced by that other-worker run is not streamed into
+                    // this panel -- we never held its stream. It is persisted
+                    // server-side and shows up on the next history load. Fully
+                    // fixing that needs cross-worker stream fan-out (Redis
+                    // pub/sub on the run bus), which is a separate change.
+                  }
+                } catch { /* transient   keep polling */ }
+              }, 3000);
+              activeRunPollRef.current = poll;
+              break;
+            }
             if (json.active && !isGenerating) {
               // A run is in progress server-side   reconnect to it
               const asstId = `reconnect-${Date.now()}`;
@@ -588,6 +625,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
     return () => {
       cancelled = true;
+      if (activeRunPollRef.current) {
+        clearInterval(activeRunPollRef.current);
+        activeRunPollRef.current = null;
+      }
       // Abort any in-flight SSE stream so a stale project's events don't
       // bleed into the next project's chat panel when the user switches
       // projects. Own ref -- must never touch a fresh handleSubmit
