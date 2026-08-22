@@ -118,7 +118,14 @@ build_deploy_stage() {
     # mismatch: live=<none>" for exactly this reason.
     local sha; sha="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
     echo "$sha" > "$STAGE_DIR/.deployed-sha"
-    for svc in apps/api-gateway apps/tenant-functions-runner apps/hosting-service; do
+    # apps/preview-service was missing from this list until 2026-08-22, so VPS2
+    # was the one target that uploaded a subtree carrying no stamp at all --
+    # verify_remote_sha could never have passed for it, and no caller was
+    # asking. A VPS2 deploy that silently did not land was therefore
+    # indistinguishable from one that did (confirmed live that day: a
+    # preview-service change was reported deployed while the file was absent
+    # from the box).
+    for svc in apps/api-gateway apps/preview-service apps/tenant-functions-runner apps/hosting-service; do
         [ -d "$STAGE_DIR/$svc" ] && echo "$sha" > "$STAGE_DIR/$svc/.deployed-sha"
     done
     local tracked staged
@@ -492,6 +499,10 @@ REMOTE
         err "Health gate failed (Supabase Auth/REST, not the frontend itself   check VPS1 containers: ssh root@$VPS1_IP 'docker ps')"
     fi
 
+    # Same gap VPS2 had: the health gate above checks Supabase Auth/REST, which
+    # answer identically whether or not this deploy's api-gateway code landed.
+    # Covers the server subtree only -- the SPA is a built dist/ with no stamp.
+    verify_remote_sha ssh_vps1 "$DEPLOY_PATH/server" "VPS1 (api server)"
     success "VPS1 deploy complete → https://ecomgear.dev"
 }
 
@@ -659,6 +670,10 @@ fi
 echo " preview healthy"
 echo "Backup preserved at preview-service.old for manual rollback"
 REMOTE
+    # Proof the swap actually landed, not just that the health check answered:
+    # a still-running OLD process passes /health just as happily as a new one,
+    # which is exactly how a no-op VPS2 deploy went unnoticed (2026-08-22).
+    verify_remote_sha ssh_vps2 "$DEPLOY_PATH/preview-service" "VPS2 (preview-service)"
     success "VPS2 deploy complete → https://preview.ecomgear.app"
 }
 
@@ -1076,6 +1091,9 @@ fi
 echo "  hosting service healthy"
 echo "Backup preserved at hosting-service.old for manual rollback"
 REMOTE
+    # hosting-service was already stamped but never checked -- same blind spot
+    # as VPS1/VPS2 had, just one nobody had hit yet.
+    verify_remote_sha ssh_vps4 "/opt/ecomgear/hosting-service" "VPS4 (hosting-service)"
     success "VPS4 deploy complete → https://apps.ecomgear.app"
 }
 
