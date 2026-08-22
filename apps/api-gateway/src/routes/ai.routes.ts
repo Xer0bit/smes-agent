@@ -1508,6 +1508,14 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             !routeAbortController.signal.aborted
         ) {
             logger.info(`[agent-stream] Cheap-first model (${effectiveModel}) made no changes   escalating to entitled model ${entitledModel}`);
+            // The cheap attempt already streamed a COMPLETE answer to the
+            // client, which accumulates deltas into one message. The escalated
+            // run is about to stream another complete answer for the same
+            // prompt, so without this the user reads the same reply twice --
+            // reported 2026-08-22 as the agent "repeating itself and still
+            // running after it finished". Tell the client to discard what the
+            // superseded attempt said before the replacement starts.
+            sseWrite(res, 'text-reset', { reason: 'escalating' });
             sseWrite(res, 'status', { phase: 'escalating', message: 'Retrying with a stronger model...' });
             effectiveModel = entitledModel;
             agentResult = await runAgentLoop(buildAgentLoopParams(entitledModel));

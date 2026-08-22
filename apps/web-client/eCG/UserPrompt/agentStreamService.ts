@@ -88,6 +88,8 @@ export interface AgentStreamCallbacks {
   onOpen?: () => void;
   /** Called for each text token the agent produces */
   onTextDelta?: (text: string) => void;
+  /** Discard text streamed so far: the run that produced it was superseded. */
+  onTextReset?: () => void;
   /** Called when files are available (on 'done' event) */
   onDone?: (result: GenerationResponse) => void;
   /** Called when the agent emits tool XML (e.g. <ecomgear-write>) */
@@ -370,6 +372,13 @@ export async function streamAgentGeneration(params: {
             case 'text-delta':
               streamedText += payload.text ?? '';
               callbacks.onTextDelta?.(payload.text ?? '');
+              break;
+            case 'text-reset':
+              // The server superseded the attempt that produced the text so
+              // far (cheap-first escalation). Drop it locally instead of
+              // appending the replacement underneath it.
+              streamedText = '';
+              callbacks.onTextReset?.();
               break;
             case 'tool-output': {
               const xml = payload.xml ?? '';

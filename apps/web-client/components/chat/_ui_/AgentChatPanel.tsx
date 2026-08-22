@@ -547,6 +547,16 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                       ? { ...m, content: stripEcomgearTags(currentContent), status: 'streaming' }
                       : m));
                   },
+                  onTextReset: () => {
+                    // Cheap-first escalation superseded the previous attempt.
+                    // Clear it, or the replacement answer renders underneath a
+                    // duplicate of itself.
+                    if (generationDone || cancelled) return;
+                    currentContent = '';
+                    setMessages(prev => prev.map(m => m.id === asstId
+                      ? { ...m, content: '', status: 'streaming' }
+                      : m));
+                  },
                   onToolOutput: (xml) => {
                     if (generationDone || cancelled) return;
                     toolXmlAccum += xml + '\n';
@@ -917,6 +927,14 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             // a moment via onStepFinish / step-status-refine. Never show a
             // fake "Working on your request" headline.
             pushStatus('Starting…');
+          },
+          onTextReset: () => {
+            // See the rejoin handler above: the escalated run restates the
+            // whole answer, so the superseded one must go rather than be
+            // prepended to it.
+            if (generationDone) return;
+            currentContent = '';
+            setMessages(prev => prev.map(m => m.id === asstId ? { ...m, content: '' } : m));
           },
           onTextDelta: (chunk) => {
             if (generationDone) return;          // drop late post-done events
