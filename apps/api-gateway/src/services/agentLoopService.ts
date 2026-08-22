@@ -51,6 +51,7 @@ import { parseXmlOperation, parseXmlResponse, type OperationStore } from './agen
 import { logger } from '../utils/logger.js';
 import { writeProjectFileSync } from './projectFileWriter.js';
 import { interpretPreviewPush } from './previewPushResult.js';
+import { NarrationFilter } from './narrationFilter.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -2940,13 +2941,21 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       let textBuffer = '';
       let partError: any = null;
       let lastFinishReason: string | undefined;
+      // Withholds announce-then-do narration from the user-facing stream. The
+      // prompt bans it in every tier and is ignored; this enforces it instead
+      // of asking again. Per STEP, so a sentence never straddles a tool call.
+      // textBuffer is deliberately left unfiltered -- it feeds the model's own
+      // context and the completion-claim gates, which must still see exactly
+      // what was generated.
+      const narration = new NarrationFilter();
       try {
         for await (const part of stream.fullStream) {
           if (part.type === 'text-delta') {
             textBuffer += part.text;
             const safeText = sanitizeUserFacingDelta(part.text);
             if (safeText) {
-              sink.emit('text-delta', { text: safeText });
+              const visible = narration.push(safeText);
+              if (visible) sink.emit('text-delta', { text: visible });
             }
           } else if (part.type === 'tool-call') {
             // ── Real-time narration microservice ──────────────────────────
@@ -3006,6 +3015,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // instead of emitting a part.type === 'error'. Capture it so it goes through the
         // streamError recovery path (fallback providers) rather than the outer catch.
         partError = iterErr;
+      }
+      // Release any trailing sentence that never got a terminator -- a final
+      // answer must not be swallowed just because it lacked a full stop. Also
+      // logs what was withheld, so this filter's effect is observable rather
+      // than a silent edit of the agent's voice.
+      const tail = narration.flush();
+      if (tail) sink.emit('text-delta', { text: tail });
+      if (narration.suppressed > 0) {
+        logger.debug('[AgentLoop] suppressed process narration', {
+          projectId, sentences: narration.suppressed,
+        });
       }
       return { text: textBuffer, err: partError };
     };
