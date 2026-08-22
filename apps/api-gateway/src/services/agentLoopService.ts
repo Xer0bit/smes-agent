@@ -53,6 +53,8 @@ import { writeProjectFileSync } from './projectFileWriter.js';
 import { interpretPreviewPush } from './previewPushResult.js';
 import { NarrationFilter } from './narrationFilter.js';
 import { arbitrateFailureClaim } from './staleFailureClaim.js';
+import { renderRunStateHeader } from './runStateHeader.js';
+import { standingEffects } from './effectLedger.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -2198,6 +2200,78 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       }));
       contentParts.push({ type: 'text', text: diagnosisContext ? `${diagnosisContext}${boundedPrompt}` : boundedPrompt });
       currentUserContent = contentParts;
+    }
+
+    // ── Observed state, ahead of everything else ──────────────────────────
+    // `history` is CLIENT-supplied, so the agent's own past claims -- including
+    // false ones -- ride up with every request and cannot be cleaned server
+    // side. Changes also reach a project from outside the chat entirely. So
+    // rather than trying to correct the history, state what is measurably true
+    // now and tell the model it outranks the conversation. See
+    // runStateHeader.ts for the incident this comes from.
+    //
+    // Best-effort and non-blocking: every probe is wrapped, and an unmeasured
+    // field is omitted rather than guessed. If nothing can be read the header
+    // renders empty and the run proceeds exactly as before.
+    let observedStateBlock = '';
+    try {
+      const previewBase = ctx.previewServiceUrl;
+      const [health, standing] = await Promise.all([
+        (async (): Promise<{ healthy: boolean | null; errors: string[] }> => {
+          try {
+            const r = await fetch(`${previewBase}/preview/${projectId}/status`, {
+              signal: AbortSignal.timeout(4000),
+            });
+            if (!r.ok) return { healthy: null, errors: [] };
+            const j = await r.json() as { healthy?: boolean; errors?: string[]; diagnosticKind?: string };
+            // 'type' diagnostics are advisory TypeScript notes; Vite strips
+            // types without checking them, so the app still builds and runs.
+            // Reporting those as a broken build would make the header lie in
+            // the opposite direction.
+            const advisoryOnly = j.diagnosticKind === 'type';
+            return {
+              healthy: advisoryOnly ? true : Boolean(j.healthy),
+              errors: Array.isArray(j.errors) && !advisoryOnly ? j.errors : [],
+            };
+          } catch { return { healthy: null, errors: [] }; }
+        })(),
+        (async () => {
+          try { return await standingEffects(projectId, 20); } catch { return null; }
+        })(),
+      ]);
+
+      observedStateBlock = renderRunStateHeader({
+        buildHealthy: health.healthy,
+        buildErrors: health.errors,
+        standingEffects: standing
+          ? standing.map((e) => ({ kind: e.kind, target: e.target, boundary: e.boundary }))
+          : undefined,
+        observedAt: new Date(),
+      });
+    } catch (stateErr) {
+      logger.debug('[AgentLoop] observed-state probe failed (non-fatal)', {
+        projectId, error: (stateErr as Error).message,
+      });
+    }
+
+    // Folded into THIS turn's content rather than appended as its own message:
+    // history can end on a user turn, and a second consecutive user message is
+    // rejected or silently merged depending on the provider. Prepending keeps
+    // the message sequence exactly as it was.
+    if (observedStateBlock) {
+      if (typeof currentUserContent === 'string') {
+        currentUserContent = `${observedStateBlock}\n\n${currentUserContent}`;
+      } else if (Array.isArray(currentUserContent)) {
+        const textIdx = currentUserContent.findIndex((part: any) => part?.type === 'text');
+        if (textIdx >= 0) {
+          currentUserContent[textIdx] = {
+            ...currentUserContent[textIdx],
+            text: `${observedStateBlock}\n\n${currentUserContent[textIdx].text ?? ''}`,
+          };
+        } else {
+          currentUserContent.unshift({ type: 'text', text: observedStateBlock });
+        }
+      }
     }
 
     let conversationMessages: Array<{ role: 'user' | 'assistant'; content: any; providerOptions?: any }> = [
