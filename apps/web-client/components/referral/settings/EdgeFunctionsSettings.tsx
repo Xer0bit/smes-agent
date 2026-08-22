@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { FunctionSquare, Play, Clock, Bot, Lock } from "lucide-react";
+import { FunctionSquare, Play, Clock, Lock } from "lucide-react";
 import { useSubscription } from "@/contexts/SubscriptionContext";
 import { cn } from "@/lib/utils";
 import { getApiServerUrl } from "@/config/external-api";
@@ -46,8 +46,6 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
 
   const [fns, setFns] = useState<EdgeFn[]>([]);
   const [selected, setSelected] = useState<EdgeFn | null>(null);
-  const [code, setCode] = useState<string | null>(null);
-  const [codeLoading, setCodeLoading] = useState(false);
   const [params, setParams] = useState('{}');
   const [result, setResult] = useState<InvokeResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,18 +63,13 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
 
   useEffect(() => { load(); }, [load]);
 
-  // Load the full source for whichever function is selected   the list
-  // endpoint only returns name/description/is_active, never the code itself.
-  useEffect(() => {
-    if (!selected) { setCode(null); return; }
-    setCodeLoading(true);
-    setCode(null);
-    apiFetch(`/functions/${selected.name}`)
-      .then(res => setCode(res.code ?? ''))
-      .catch(e => toast.error((e as Error).message))
-      .finally(() => setCodeLoading(false));
-  }, [selected, apiFetch]);
-
+  // Deliberately NOT fetching the function's source. This surface used to
+  // GET /functions/:name purely to render it read-only, which put generated
+  // code in front of a user who is here to describe behavior, not read
+  // JavaScript -- and merely hiding the <pre> would still have shipped the
+  // body to the browser, visible in devtools and the network tab. The list
+  // endpoint returns name/description/is_active only, so not making this
+  // call is what actually keeps the code out of the client.
   const invoke = async () => {
     if (!selected) return;
     let parsed: unknown = {};
@@ -161,18 +154,9 @@ export const EdgeFunctionsSettings = ({ projectId }: EdgeFunctionsSettingsProps)
                     </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-white/45 font-medium">Source (read-only   ask the agent to change it)</span>
-                    </div>
-                    <div className="rounded-lg border border-white/[0.07] bg-black/40 max-h-56 overflow-y-auto">
-                      {codeLoading ? (
-                        <p className="text-xs text-white/30 p-3">Loading…</p>
-                      ) : (
-                        <pre className="text-xs font-mono text-white/60 p-3 whitespace-pre-wrap break-all">{code || '(empty)'}</pre>
-                      )}
-                    </div>
-                  </div>
+                  <p className="text-xs text-white/35">
+                    Ask the agent in chat to change what this function does.
+                  </p>
 
                   <div className="flex items-center gap-2">
                     <Textarea
