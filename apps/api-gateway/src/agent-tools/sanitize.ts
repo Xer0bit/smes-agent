@@ -296,7 +296,13 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
   // intermittently because nginx's referer-based asset rescue covers the miss
   // whenever a usable Referer is present, and silently does not when it
   // isn't -- so the same page works or breaks depending on the request.
-  const fakeRootInterp = /\$\{\s*['"]\/['"]\s*\}(?=(assets|images|fonts|icons|media)\/)/g;
+  // Matches when the slash is followed by an asset DIRECTORY, or by a filename
+  // ending in a static-asset EXTENSION. The extension arm was added after the
+  // 2026-08-22 repair sweep: images living at public/ root (`${'/'}team-1.jpg`,
+  // `${'/'}hero-bg.jpg`) are broken identically but have no directory to match,
+  // and a directory-only rule silently left 14 of them behind in one project.
+  // A route like `${'/'}dashboard` has neither and is left alone.
+  const fakeRootInterp = /\$\{\s*['"]\/['"]\s*\}(?=(?:(?:assets|images|fonts|icons|media)\/|[^`'"\s)]*\.(?:jpe?g|png|svg|webp|gif|ico|avif|woff2?|ttf|otf|mp4|mp3|pdf)\b))/g;
   const beforeFakeRoot = content;
   content = content.replace(fakeRootInterp, '${import.meta.env.BASE_URL}');
   if (content !== beforeFakeRoot) {

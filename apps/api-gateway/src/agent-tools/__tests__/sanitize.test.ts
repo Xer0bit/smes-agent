@@ -73,3 +73,27 @@ describe('fake ${\'/\'} interpolation in asset paths', () => {
     expect(content).toBe(raw);
   });
 });
+
+// The 2026-08-22 repair sweep found the same bug on images living at public/
+// root, which a directory-only rule silently left behind (14 in one project).
+describe('fake ${\'/\'} interpolation on root-level asset files', () => {
+  it('rewrites a root-level image with no asset directory', () => {
+    for (const raw of [
+      "const img = `${'/'}team-1.jpg`;",
+      "style={{ backgroundImage: `url(${'/'}about-hero.jpg)` }}",
+      'src={`${"/"}map.png`}',
+    ]) {
+      const { content } = sanitizeFileContent('src/A.tsx', raw);
+      expect(content, raw).not.toContain("${'/'}");
+      expect(content, raw).not.toContain('${"/"}');
+      expect(content, raw).toContain('import.meta.env.BASE_URL');
+    }
+  });
+
+  it('still leaves an extensionless route path alone', () => {
+    for (const raw of ["const p = `${'/'}dashboard`;", "navigate(`${'/'}settings/profile`)"]) {
+      const { content } = sanitizeFileContent('src/A.tsx', raw);
+      expect(content, raw).toBe(raw);
+    }
+  });
+});
