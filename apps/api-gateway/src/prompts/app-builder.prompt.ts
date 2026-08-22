@@ -1126,13 +1126,71 @@ export interface AppBuilderBuildOptions {
   includePreviewEnvironment?: boolean;
 }
 
+// Every strip title that matched nothing, recorded as (builder -> titles).
+// Stripping works by matching heading TEXT, so renaming a heading silently
+// turns its strip into a no-op -- the prompt just gets bigger and nothing
+// says so. That is not hypothetical: 'Integration And Database Guidance' was
+// never a real heading, so fix tier shipped the full ~16.6K-char hosted-
+// database section on every single request until someone measured the output
+// (2026-08-11/12). Misses are recorded here and asserted to be empty by
+// app-builder.promptStrip.test.ts, so the next rename fails CI instead of
+// quietly inflating every run's token bill.
+const stripMisses = new Map<string, string[]>();
+let currentStripContext = 'unknown';
+
+function recordStripMiss(title: string): void {
+  const existing = stripMisses.get(currentStripContext) ?? [];
+  existing.push(title);
+  stripMisses.set(currentStripContext, existing);
+}
+
+/**
+ * Attribute subsequent strip misses to `context`. Plain assignment rather than
+ * a wrapper: every builder below is synchronous and sets this as its first
+ * statement, so there is no interleaving to guard against.
+ */
+function setStripContext(context: string): void {
+  currentStripContext = context;
+}
+
+/**
+ * Which strip titles matched nothing, per prompt builder. Populated by calling
+ * the builders; a caller that wants a complete picture should invoke each one
+ * first (see auditPromptStrips).
+ */
+export function getStripMisses(): Map<string, string[]> {
+  return new Map(stripMisses);
+}
+
+/**
+ * Calls every prompt builder and reports strip titles that matched nothing.
+ * An empty result means every strip in this file is still pointed at a real
+ * heading. Exported for the regression test, and cheap enough to call from a
+ * startup check if that is ever wanted.
+ */
+export function auditPromptStrips(): Map<string, string[]> {
+  stripMisses.clear();
+  getFixSystemPrompt();
+  getEditSystemPrompt();
+  getAppBuilderSystemPrompt('plan');
+  getAppBuilderBuildSystemPrompt({});
+  getAppBuilderBuildSystemPrompt({
+    includeRequirementGathering: true, includeStartingNewProject: true, includeSeo: true,
+    includeIntegration: true, includeErrorPatterns: true, includeCapabilities: true,
+    includePreviewEnvironment: true,
+  });
+  return getStripMisses();
+}
+
 // Strip one or more top-level sections (lines starting with "# Title") from a prompt string.
 // Each section runs from its header to the next "# " header at column 0.
 function stripSections(prompt: string, ...titles: string[]): string {
   let result = prompt;
   for (const title of titles) {
     const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    result = result.replace(new RegExp(`\\n# ${escaped}[\\s\\S]*?(?=\\n# |$)`), '');
+    const next = result.replace(new RegExp(`\\n# ${escaped}[\\s\\S]*?(?=\\n# |$)`), '');
+    if (next === result) recordStripMiss(title);
+    result = next;
   }
   return result;
 }
@@ -1142,13 +1200,16 @@ function stripSubSections(prompt: string, ...titles: string[]): string {
   let result = prompt;
   for (const title of titles) {
     const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    result = result.replace(new RegExp(`\\n## ${escaped}[\\s\\S]*?(?=\\n## |\\n# |$)`), '');
+    const next = result.replace(new RegExp(`\\n## ${escaped}[\\s\\S]*?(?=\\n## |\\n# |$)`), '');
+    if (next === result) recordStripMiss(title);
+    result = next;
   }
   return result;
 }
 
 /** Returns the system prompt for build mode, stripping unused sections based on options. */
 export function getAppBuilderBuildSystemPrompt(options?: AppBuilderBuildOptions): string {
+  setStripContext('build');
   const toStrip: string[] = [];
 
   if (!options?.includeCapabilities) {
@@ -1192,6 +1253,7 @@ export function getAppBuilderBuildSystemPrompt(options?: AppBuilderBuildOptions)
 
 /** Returns the system prompt for plan / confirm profiles. */
 export function getAppBuilderSystemPrompt(profile: 'plan' | 'confirm' | string): string {
+  setStripContext(`profile:${profile}`);
   // Lifecycle audit finding (2026-08-11/12): this used to special-case
   // profile==='fix' with its OWN section-stripping list, entirely separate
   // from getFixSystemPrompt() below -- the two produced measurably different
@@ -1231,6 +1293,7 @@ EcomGear's own domains \u2014 \`api.ecomgear.dev\` (auth, via \`VITE_SUPABASE_UR
  * ~1.2K tokens   strips everything except core rules + error-fix guidance.
  */
 export function getFixSystemPrompt(): string {
+  setStripContext('fix');
   // Keep 'Starting a New Project' because it contains the pre-built shadcn/ui component
   // manifest and installed package list   without it, the agent uses wrong import paths
   // and tries to recreate already-existing components, which is the #1 cause of fix loops.
@@ -1306,6 +1369,7 @@ You have tools that produce evidence. Use them instead of asserting.
  *   - Guidelines              → <ecomgear-chat-summary> tag + behavioral rules
  */
 export function getEditSystemPrompt(): string {
+  setStripContext('edit');
   const base = stripSections(
     APP_BUILDER_SYSTEM_PROMPT,
     'Design Philosophy (MANDATORY   apply to every pixel you produce)',
