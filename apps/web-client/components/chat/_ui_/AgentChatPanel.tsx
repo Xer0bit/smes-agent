@@ -173,8 +173,34 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [confirmingSqlId, setConfirmingSqlId] = useState<string | null>(null);
   const refreshPendingAdminSql = useCallback(async () => {
     if (!projectId) return;
-    setPendingAdminSql(await fetchPendingAdminSql(projectId));
-  }, [projectId]);
+    const pending = await fetchPendingAdminSql(projectId);
+    // Admin mode is itself the human's confirmation: switching the chat mode
+    // toggle to Admin is an explicit, session-scoped opt-in to letting the
+    // agent run SQL against this project's own database (see the toggle's
+    // title text below and agentToolSet.ts's ADMIN_ONLY_TOOLS gate). The
+    // staging table/human-click-to-run mechanism exists so the AGENT can
+    // never confirm its own change (2026-08-19 admin-mode review, see
+    // query_database.ts) -- it was never meant to make the human re-approve
+    // a change they already opted into by turning Admin mode on. So here,
+    // driven by the human's own browser session (not the model), auto-run
+    // whatever admin mode just staged instead of leaving it sitting behind a
+    // second manual click. A stale item from a PRIOR session/reload only
+    // reaches this path if the toggle happens to already be back on Admin --
+    // chatMode always resets to 'normal' on mount, so the routine mount-time
+    // refresh below never auto-runs old leftovers.
+    if (chatMode === 'admin' && pending.length > 0) {
+      let ranCount = 0;
+      for (const change of pending) {
+        const result = await confirmAdminSql(change.id);
+        if (result.success) ranCount++;
+        else toast.error(result.error || 'Failed to auto-run staged admin SQL.');
+      }
+      if (ranCount > 0) toast.success(ranCount === 1 ? 'Admin SQL auto-approved and executed.' : `${ranCount} admin SQL changes auto-approved and executed.`);
+      setPendingAdminSql(await fetchPendingAdminSql(projectId));
+      return;
+    }
+    setPendingAdminSql(pending);
+  }, [projectId, chatMode]);
   // Catches a change left over from a previous session (page reload before
   // confirming), not just ones staged during this mount.
   useEffect(() => { refreshPendingAdminSql(); }, [refreshPendingAdminSql]);
@@ -1833,7 +1859,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 onClick={() => setChatMode(m => m === 'admin' ? 'normal' : 'admin')}
                 disabled={isGenerating}
                 title={chatMode === 'admin'
-                  ? 'Admin mode: agent can stage SQL against the database (you must confirm before it runs). Click to switch to Normal.'
+                  ? 'Admin mode: agent can run SQL against the database, auto-approved since turning this on is your confirmation. Click to switch to Normal.'
                   : 'Normal mode: development only, no database access. Click to switch to Admin.'}
                 className={`flex items-center gap-1 px-2 py-1 rounded-full text-[12px] font-medium transition-colors disabled:opacity-40 disabled:cursor-default ${
                   chatMode === 'admin'

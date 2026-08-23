@@ -3644,8 +3644,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             `before finishing:\n` +
             `  1. If \`query_database\` is in your current tools (Admin mode) AND the data is genuinely meant to be ` +
             `public, call it with \`CREATE POLICY <name> ON <schema>.<table> FOR SELECT TO <schema>_anon USING ` +
-            `(<condition, e.g. true>);\` -- this stages the change, tell the user to confirm it in the chat UI; you ` +
-            `cannot confirm it yourself.\n` +
+            `(<condition, e.g. true>);\` -- this stages the change and Admin mode auto-runs it once you finish; you ` +
+            `cannot confirm it yourself, but you also don't need to ask the user to click anything.\n` +
             `  2. Otherwise (Normal mode, or the data should NOT be public), remove the direct fetch and move it ` +
             `into an edge function via write_edge_function instead.\n` +
             `Do not restate your closing summary until you've done one of these for every table listed above.`,
