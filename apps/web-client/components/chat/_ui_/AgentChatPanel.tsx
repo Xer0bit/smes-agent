@@ -375,11 +375,17 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   //     always win the race and undo it).
   //  2. Otherwise only scrolls when the user was already near the bottom, so
   //     scrolling up mid-stream to re-read something isn't fought every token.
+  //  3. Also re-runs when the admin-SQL banner appears/disappears (line ~1579)
+  //     -- it's a flex sibling BELOW this scroll container, so it shrinks
+  //     scrollRef's clientHeight the instant it's inserted, pushing the just-
+  //     finished streamed reply out of view with scrollTop never re-adjusted.
+  //     Without pendingAdminSql.length here, that read as "the stream froze"
+  //     even though the message content was already fully up to date.
   useEffect(() => {
     if (skipAutoScrollRef.current) { skipAutoScrollRef.current = false; return; }
     const el = scrollRef.current;
     if (el && isNearBottomRef.current) el.scrollTop = el.scrollHeight;
-  }, [messages, statusText]);
+  }, [messages, statusText, pendingAdminSql.length]);
 
   // ── Load older messages when scrolled to top ──────────────────────────────
   const loadMoreMessages = async () => {
