@@ -42,30 +42,34 @@ export function isSchemaMutatingSql(sql: string): boolean {
   return DDL_RE.test(sql);
 }
 
-// pgcrypto functions this codebase's own generated SQL actually uses. Not the
-// extension's full surface -- deliberately scoped to what's been seen live,
-// same "broad enough to catch the real class, not a general SQL linter"
-// posture as DDL_RE above.
+// pgcrypto functions this codebase's own generated SQL has historically
+// reached for. Not the extension's full surface -- deliberately scoped to
+// what's been seen live, same "broad enough to catch the real class, not a
+// general SQL linter" posture as DDL_RE above.
 const PGCRYPTO_FUNCTIONS = ['crypt', 'gen_salt', 'gen_random_bytes', 'digest', 'hmac'];
 
 /**
- * Real incident, 2026-08-13: a register_and_login function correctly
- * schema-qualified extensions.crypt/extensions.gen_salt for password hashing,
- * then called a bare gen_random_bytes(32) two lines later for the session
- * token -- pgcrypto isn't on this role's search_path, so the unqualified call
- * failed with "function ... does not exist" at RUNTIME. write_edge_function's
- * AST validation never sees this class of bug (it doesn't execute SQL);
- * neither does this tool's own success/failure path for a CREATE FUNCTION
- * statement, which only fails when the function BODY runs, not when it's
- * defined. Advisory only (a function name match doesn't prove the call is
- * actually unqualified in every syntactic position) -- surfaced at staging
- * time, before confirm_database_change actually runs it, so the model has a
- * chance to catch its own mistake before it reaches the live database.
+ * This database has NO extensions installed, not even pgcrypto (stock,
+ * vanilla Postgres -- see app-builder.prompt.ts's stock-Postgres note). Every
+ * one of these calls fails with "function ... does not exist" at RUNTIME,
+ * schema-qualified or not -- there is no `extensions.` schema to qualify
+ * into on this instance. (Prior to this, the check only flagged an
+ * UNQUALIFIED call, on the theory that qualifying it into `extensions.` was
+ * the fix -- real incident 2026-08-13, a register_and_login function
+ * qualified extensions.crypt/extensions.gen_salt correctly and still broke,
+ * because the extension was never actually there to qualify into.)
+ * write_edge_function's AST validation never sees this class of bug (it
+ * doesn't execute SQL); neither does this tool's own success/failure path
+ * for a CREATE FUNCTION statement, which only fails when the function BODY
+ * runs, not when it's defined. Advisory only (a function name match doesn't
+ * prove the call is actually a pgcrypto call in every syntactic position) --
+ * surfaced at staging time, so the model has a chance to catch its own
+ * mistake before it reaches the live database.
  */
-export function findUnqualifiedPgcryptoCalls(sql: string): string[] {
+export function findPgcryptoCalls(sql: string): string[] {
   const found: string[] = [];
   for (const fn of PGCRYPTO_FUNCTIONS) {
-    const re = new RegExp(`(?<!extensions\\.)\\b${fn}\\s*\\(`, 'gi');
+    const re = new RegExp(`(?:extensions\\.)?\\b${fn}\\s*\\(`, 'gi');
     if (re.test(sql)) found.push(fn);
   }
   return found;
@@ -198,8 +202,11 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
     "it; treat it as already going to happen and describe it to the user in the past/near-future tense, not as " +
     "something they still need to click. The same staging applies to a DELETE or UPDATE with no WHERE clause " +
     "(affects every row, as risky as a schema change). Plain, row-scoped data statements (SELECT/INSERT, or " +
-    "UPDATE/DELETE with a WHERE clause) run immediately as usual. " +
-    "If no database is provisioned, tell the user to provision one from Settings → Hosted Database.",
+    "UPDATE/DELETE with a WHERE clause) run immediately as usual. This database has NO extensions installed " +
+    "(stock Postgres, not even pgcrypto) -- never use crypt/gen_salt/gen_random_bytes/digest/hmac, qualified or " +
+    "not, in any SQL; there is no safe hashing primitive in this Postgres instance at all -- route password/token " +
+    "handling through the project's Auth connection instead. If no database is provisioned, tell the user to " +
+    "provision one from Settings → Hosted Database.",
   inputSchema: schema,
   getConsentPreview: (args) => `Run SQL: ${args.sql.slice(0, 120)}${args.sql.length > 120 ? '…' : ''}`,
 
@@ -214,13 +221,13 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
     if (isSchemaMutatingSql(args.sql)) {
       const stagedId = await stagePendingChange(ctx, args.sql);
       if (!stagedId) return DB_UNAVAILABLE_MESSAGE;
-      const unqualified = findUnqualifiedPgcryptoCalls(args.sql);
-      const pgcryptoWarning = unqualified.length > 0
-        ? `\n\n⚠ POSSIBLE BUG: this SQL calls pgcrypto function(s) ${unqualified.map(f => `"${f}"`).join(', ')} without the ` +
-          `"extensions." prefix. pgcrypto is installed in the extensions schema, which is NOT on this role's search_path -- ` +
-          `an unqualified call fails at RUNTIME with "function ... does not exist" (this exact bug broke registration in ` +
-          `production for hours on 2026-08-13). Mention this to the user before they confirm: every pgcrypto call in this ` +
-          `statement should be written as extensions.${unqualified[0]}(...), not bare ${unqualified[0]}(...).`
+      const pgcryptoHits = findPgcryptoCalls(args.sql);
+      const pgcryptoWarning = pgcryptoHits.length > 0
+        ? `\n\n⚠ BUG: this SQL calls pgcrypto function(s) ${pgcryptoHits.map(f => `"${f}"`).join(', ')}. This database has ` +
+          `NO extensions installed -- pgcrypto is not available at all here, qualified or not. This WILL fail at RUNTIME ` +
+          `with "function ... does not exist" once it runs. Rewrite it before telling the user this is ready -- there is ` +
+          `no safe hashing primitive in this Postgres instance; route password/token handling through the project's ` +
+          `Auth connection instead of a database function.`
         : '';
       return (
         `STAGED   this SQL will auto-run shortly (Admin mode auto-approves; the owner's own session confirms it, ` +
