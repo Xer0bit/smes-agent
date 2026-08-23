@@ -40,10 +40,14 @@ export interface ObservedRunState {
   /** First few real build errors, when unhealthy. */
   buildErrors?: string[];
   /**
-   * Effects the previous run left standing (nothing reverted them). Empty is
-   * meaningful: it says no earlier run left anything behind.
+   * Effects left by runs that never finished cleanly -- an interrupted run
+   * whose lock was never released. Empty is meaningful: it says nothing was
+   * left half-done. Deliberately NOT every un-reverted effect: a successful
+   * run's file writes stay un-reverted forever because they still stand, so
+   * counting those grew without bound and reported normal completed work as
+   * though it were outstanding.
    */
-  standingEffects?: Array<{ kind: string; target: string; boundary: string }>;
+  orphanedEffects?: Array<{ kind: string; target: string; boundary: string }>;
   /** When these readings were taken. */
   observedAt: Date;
 }
@@ -70,13 +74,17 @@ export function renderRunStateHeader(state: ObservedRunState): string {
     );
   }
 
-  if (state.standingEffects) {
-    if (state.standingEffects.length === 0) {
-      lines.push('- No earlier run left any un-reverted changes behind.');
+  if (state.orphanedEffects) {
+    if (state.orphanedEffects.length === 0) {
+      lines.push('- No earlier run was interrupted; nothing is left half-applied.');
     } else {
-      const listed = state.standingEffects.slice(0, MAX_LISTED_EFFECTS);
-      lines.push(`- ${state.standingEffects.length} change(s) from earlier runs are still in place:`);
+      const listed = state.orphanedEffects.slice(0, MAX_LISTED_EFFECTS);
+      lines.push(
+        `- An earlier run was INTERRUPTED before it finished and left ${state.orphanedEffects.length} ` +
+        `change(s) un-reconciled:`,
+      );
       for (const e of listed) lines.push(`    ${e.kind} ${e.target} (${e.boundary})`);
+      lines.push('    Treat these as possibly half-applied, and verify before building on them.');
     }
   }
 

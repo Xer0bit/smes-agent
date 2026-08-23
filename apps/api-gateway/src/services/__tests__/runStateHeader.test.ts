@@ -29,20 +29,32 @@ describe('rendering observed state', () => {
     expect(out).toMatch(/missing import/);
   });
 
-  it('says so explicitly when no earlier run left anything behind', () => {
+  it('says so explicitly when nothing was left half-applied', () => {
     // Silence would be ambiguous; the agent needs to be able to tell
     // "nothing outstanding" from "not measured".
-    const out = renderRunStateHeader(base({ buildHealthy: true, standingEffects: [] }));
-    expect(out).toMatch(/No earlier run left any un-reverted changes/);
+    const out = renderRunStateHeader(base({ buildHealthy: true, orphanedEffects: [] }));
+    expect(out).toMatch(/No earlier run was interrupted/);
   });
 
-  it('lists effects still in place', () => {
+  it('reports an interrupted run and warns the work may be half-applied', () => {
     const out = renderRunStateHeader(base({
       buildHealthy: true,
-      standingEffects: [{ kind: 'file_write', target: 'src/App.tsx', boundary: 'compensable' }],
+      orphanedEffects: [{ kind: 'file_write', target: 'src/App.tsx', boundary: 'compensable' }],
     }));
-    expect(out).toMatch(/still in place/);
+    expect(out).toMatch(/INTERRUPTED/);
     expect(out).toMatch(/file_write src\/App\.tsx/);
+    expect(out).toMatch(/half-applied/);
+  });
+
+  it('does NOT describe a completed run\'s writes as outstanding', () => {
+    // The bug this replaced: every file_write stays un-reverted forever
+    // because successful changes still stand, so the header grew a
+    // permanently-increasing "N changes still in place" count. Only
+    // interrupted runs reach this field now, so an empty list is the normal
+    // case even on a project with thousands of past writes.
+    const out = renderRunStateHeader(base({ buildHealthy: true, orphanedEffects: [] }));
+    expect(out).not.toMatch(/still in place/);
+    expect(out).not.toMatch(/[0-9]+ change/);
   });
 
   it('tells the model this outranks the conversation', () => {
@@ -64,8 +76,8 @@ describe('rendering observed state', () => {
   });
 
   it('omits the build line entirely when health is unknown', () => {
-    const out = renderRunStateHeader(base({ standingEffects: [] }));
+    const out = renderRunStateHeader(base({ orphanedEffects: [] }));
     expect(out).not.toMatch(/BUILDS CLEANLY|BUILD ERRORS/);
-    expect(out).toMatch(/No earlier run left/);
+    expect(out).toMatch(/No earlier run was interrupted/);
   });
 });

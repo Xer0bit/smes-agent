@@ -54,7 +54,7 @@ import { interpretPreviewPush } from './previewPushResult.js';
 import { NarrationFilter } from './narrationFilter.js';
 import { arbitrateFailureClaim } from './staleFailureClaim.js';
 import { renderRunStateHeader } from './runStateHeader.js';
-import { standingEffects } from './effectLedger.js';
+import { orphanedEffects } from './effectLedger.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -2236,14 +2236,16 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           } catch { return { healthy: null, errors: [] }; }
         })(),
         (async () => {
-          try { return await standingEffects(projectId, 20); } catch { return null; }
+          // Only runs that never cleaned up. A completed run's writes still
+          // stand and are not 'outstanding' -- counting those grew forever.
+          try { return await orphanedEffects(projectId, agentLockToken, 20); } catch { return null; }
         })(),
       ]);
 
       observedStateBlock = renderRunStateHeader({
         buildHealthy: health.healthy,
         buildErrors: health.errors,
-        standingEffects: standing
+        orphanedEffects: standing
           ? standing.map((e) => ({ kind: e.kind, target: e.target, boundary: e.boundary }))
           : undefined,
         observedAt: new Date(),

@@ -350,6 +350,61 @@ export async function recoverRun(
  * per-worker activeAgentRuns Map could only answer for its own process, which
  * is what made a live run invisible ~50% of the time under 2 PM2 workers.
  */
+/**
+ * Effects left behind by runs that never finished cleanly.
+ *
+ * standingEffects() below returns every un-reverted effect, which sounds like
+ * the same thing and is not. A file_write is only ever marked reverted when it
+ * is actively compensated, so a SUCCESSFUL run's writes stay un-reverted
+ * forever -- correctly, since those changes still stand. Reporting them as
+ * outstanding made the observed-state header say "N changes from earlier runs
+ * are still in place" with N growing without bound on every project, which is
+ * noise at best and misleading at worst.
+ *
+ * What is actually worth surfacing is an INTERRUPTED run: one whose agent_lock
+ * was never released, meaning the process died before its cleanup ran. Its
+ * effects may be half-applied, and nothing has reconciled them.
+ *
+ * `excludeRunId` is the caller's own run, whose lock is legitimately
+ * un-reverted because it is still holding it.
+ */
+export async function orphanedEffects(
+  projectId: string,
+  excludeRunId?: string,
+  limit = 50,
+): Promise<LedgerRow[]> {
+  const supabase = await getDb();
+  if (!supabase) return [];
+  try {
+    // A run whose lock effect was never reverted did not reach its cleanup.
+    const { data: locks, error: lockErr } = await supabase
+      .from('agent_run_effects')
+      .select('run_id')
+      .eq('project_id', projectId)
+      .eq('kind', 'agent_lock')
+      .is('reverted_at', null);
+    if (lockErr) throw lockErr;
+
+    const orphanRuns = [...new Set((locks ?? []).map((r) => (r as { run_id: string }).run_id))]
+      .filter((r) => r && r !== excludeRunId);
+    if (orphanRuns.length === 0) return [];
+
+    const { data, error } = await supabase
+      .from('agent_run_effects')
+      .select('id, run_id, project_id, seq, kind, target, boundary, before_state, after_state')
+      .eq('project_id', projectId)
+      .in('run_id', orphanRuns)
+      .is('reverted_at', null)
+      .order('recorded_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return (data ?? []) as LedgerRow[];
+  } catch (err) {
+    logger.warn(`[effect-ledger] cannot read orphaned effects for ${projectId}: ${(err as Error).message}`);
+    return [];
+  }
+}
+
 export async function standingEffects(projectId: string, limit = 100): Promise<LedgerRow[]> {
   const supabase = await getDb();
   if (!supabase) return [];
