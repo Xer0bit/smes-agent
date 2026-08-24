@@ -102,6 +102,7 @@ module.exports = {
                 PORT: GEN_API_PORT,
                 SERVICE_ROLE: 'gen',
                 TENANT_DB_API_URL: 'https://cloud.ecomgear.app',
+                PREVIEW_UPDATE_SECRET,
                 // Lets a local dev frontend (npm run dev, default Vite port) call
                 // this production server directly -- see server/src/app.ts's
                 // allowedOrigins, which reads this env var when NODE_ENV=production
