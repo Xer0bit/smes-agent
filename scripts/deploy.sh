@@ -650,8 +650,14 @@ nginx -t && systemctl reload nginx
 # Graceful reload: PM2 sends SIGINT to old process (which saves warmup list),
 # starts new process, waits for 'ready' signal, then the new process
 # restores all previously active Vite servers in the background.
-pm2 reload ecomgear-preview --update-env 2>/dev/null || \
-    pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-preview
+# Reload FROM the ecosystem config, not by process name. Reloading by name
+# keeps the env pm2 captured at first start and merges only the current shell's
+# env; the config file is never re-evaluated, so a freshly-written
+# .env.production has no effect and the process runs the old secret forever.
+# That is how VPS2 kept serving a stale PREVIEW_UPDATE_SECRET (2026-08-24) and
+# 401'd every preview push while its own env file held the correct value.
+pm2 reload /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-preview --update-env 2>/dev/null || \
+    pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-preview --update-env
 pm2 save --force
 
 sleep 4
@@ -662,8 +668,8 @@ if ! curl -sf http://localhost:3001/health; then
     rm -rf preview-service.failed
     mv preview-service preview-service.failed
     [ -d preview-service.old ] && mv preview-service.old preview-service
-    pm2 reload ecomgear-preview --update-env 2>/dev/null || \
-        pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-preview
+    pm2 reload /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-preview --update-env 2>/dev/null || \
+        pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-preview --update-env
     echo "ROLLED BACK to previous version"
     exit 1
 fi
