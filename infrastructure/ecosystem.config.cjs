@@ -18,13 +18,23 @@ const API_SERVER_PORT = Number(process.env.API_SERVER_PORT || process.env.PORT |
 // the ESM/cluster env-loading path wasn't pinned down; this sidesteps it by
 // never depending on it.
 function readEnvFileVar(name) {
-    try {
-        const content = fs.readFileSync(path.join(ROOT, '.env.production'), 'utf8');
-        const m = content.match(new RegExp('^' + name + '=(.*)$', 'm'));
-        return m ? m[1] : '';
-    } catch {
-        return '';
+    // VPS1 (api-gateway) keeps .env.production at the repo root; VPS2
+    // (preview-service) keeps its own copy one level down. Same file is
+    // deployed to both, so check both layouts.
+    const candidates = [
+        path.join(ROOT, '.env.production'),
+        path.join(ROOT, 'preview-service', '.env.production'),
+    ];
+    for (const file of candidates) {
+        try {
+            const content = fs.readFileSync(file, 'utf8');
+            const m = content.match(new RegExp('^' + name + '=(.*)$', 'm'));
+            if (m) return m[1];
+        } catch {
+            // try next candidate
+        }
     }
+    return '';
 }
 const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || readEnvFileVar('PREVIEW_UPDATE_SECRET');
 
