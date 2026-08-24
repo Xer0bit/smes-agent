@@ -157,7 +157,7 @@ export async function streamAgentGeneration(params: {
   callbacks: AgentStreamCallbacks;
   signal?: AbortSignal;
 }): Promise<GenerationResponse> {
-  const { prompt, projectId, orgId, existingFiles, model, mode, chatMode, history, olderSummary, attachments, fingerprint, retryOnLock, callbacks, signal } = params;
+  const { prompt, projectId, orgId, model, mode, chatMode, history, olderSummary, attachments, fingerprint, retryOnLock, callbacks, signal } = params;
 
   // Get session; if access token is missing, attempt a silent refresh before giving up.
   let sessionData = (await lovableCloud.auth.getSession()).data.session;
@@ -189,7 +189,27 @@ export async function streamAgentGeneration(params: {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const bodyPayload: Record<string, unknown> = { prompt, projectId, existingFiles, model, mode, chatMode, history, olderSummary, attachments };
+  // existingFiles is deliberately NOT sent.
+  //
+  // The server does not need it: agentLoopService builds preAgentDiskSnapshot
+  // from /var/ecomgear/projects/<projectId> on every run, and that disk state is
+  // authoritative -- it is what the preview push and every file tool operate on.
+  // Sending the client's copy uploaded the whole project source on each message
+  // (hundreds of files on a real project) purely to be ignored or, worse, used.
+  //
+  // "Worse", because agentLoopService's fileSources PREFERS a non-empty
+  // existingFiles over the disk snapshot. Two concrete failures came from that:
+  //   - Stale context. The client array is a snapshot from whenever the browser
+  //     last synced. After a rollback, a timeout salvage, or any out-of-band
+  //     change, it describes files that no longer exist on disk, and the agent
+  //     writes SEARCH blocks against code that is not there.
+  //   - It defeats the micro fast path, which deliberately snapshots only the
+  //     one target file; a full client tree silently restores the full cost.
+  //
+  // existingFiles is still threaded through promptService for the local
+  // liveFileMap seed, which merges streamed partial updates onto the tree the
+  // user is looking at. That is a client-side concern and stays client-side.
+  const bodyPayload: Record<string, unknown> = { prompt, projectId, model, mode, chatMode, history, olderSummary, attachments };
   if (orgId) {
     bodyPayload.orgId = orgId;
   }

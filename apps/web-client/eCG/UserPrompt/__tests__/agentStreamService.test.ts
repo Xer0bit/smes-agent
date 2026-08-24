@@ -100,3 +100,77 @@ describe('agentStreamService', () => {
     expect(result.mode).toBe('build');
   });
 });
+
+/**
+ * The request body must not carry the project's source.
+ *
+ * agentLoopService snapshots /var/ecomgear/projects/<projectId> on every run and
+ * that disk state is authoritative. A non-empty existingFiles in the body
+ * OVERRIDES it (fileSources prefers the client array), so shipping it both
+ * uploaded the whole tree on every message and let a stale browser snapshot
+ * decide what the agent thinks is on disk.
+ *
+ * Callers still pass existingFiles -- promptService seeds its local liveFileMap
+ * from it -- so the param staying in the signature is not evidence it is unsent.
+ * Only the serialized body proves that, which is what these assert.
+ */
+describe('agent-stream request body', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(lovableCloud.auth.getSession).mockResolvedValue({
+      data: { session: { access_token: 'mock-token' } },
+    } as any);
+    global.fetch = vi.fn();
+  });
+
+  const bodyOf = (call: unknown[]): Record<string, unknown> =>
+    JSON.parse((call[1] as RequestInit).body as string);
+
+  const emptyStream = () => new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('event: done\ndata: {"filesToWrite":[]}\n\n'));
+      controller.close();
+    },
+  });
+
+  it('omits existingFiles even when the caller supplies a full tree', async () => {
+    vi.mocked(global.fetch).mockResolvedValue({ ok: true, body: emptyStream() } as Response);
+
+    await streamAgentGeneration({
+      prompt: 'tweak the header',
+      projectId: 'project-123',
+      existingFiles: Array.from({ length: 193 }, (_, i) => ({
+        path: `src/File${i}.tsx`,
+        content: 'x'.repeat(2000),
+      })) as never,
+      callbacks: {},
+    });
+
+    const body = bodyOf(vi.mocked(global.fetch).mock.calls[0]);
+    expect(body).not.toHaveProperty('existingFiles');
+    // 193 * 2KB would be ~400KB; the body must stay small regardless of project size.
+    expect(JSON.stringify(body).length).toBeLessThan(4096);
+  });
+
+  it('still sends the fields the server actually needs', async () => {
+    vi.mocked(global.fetch).mockResolvedValue({ ok: true, body: emptyStream() } as Response);
+
+    await streamAgentGeneration({
+      prompt: 'tweak the header',
+      projectId: 'project-123',
+      chatMode: 'admin',
+      mode: 'plan',
+      history: [{ role: 'user', content: 'earlier turn' }],
+      olderSummary: 'summary of older turns',
+      callbacks: {},
+    });
+
+    const body = bodyOf(vi.mocked(global.fetch).mock.calls[0]);
+    expect(body.prompt).toBe('tweak the header');
+    expect(body.projectId).toBe('project-123');
+    expect(body.chatMode).toBe('admin');
+    expect(body.mode).toBe('plan');
+    expect(body.history).toEqual([{ role: 'user', content: 'earlier turn' }]);
+    expect(body.olderSummary).toBe('summary of older turns');
+  });
+});
