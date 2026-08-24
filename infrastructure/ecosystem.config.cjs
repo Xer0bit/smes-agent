@@ -36,7 +36,23 @@ function readEnvFileVar(name) {
     }
     return '';
 }
-const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || readEnvFileVar('PREVIEW_UPDATE_SECRET');
+// The FILE wins over the ambient env, not the other way round.
+//
+// With the old `process.env.X || file` order, VPS3 ran for an unknown period
+// with three different values in play: deploy.sh wrote the correct secret into
+// .env.production, but a stale PREVIEW_UPDATE_SECRET already present in the pm2
+// start environment took precedence, so ecomgear-gen sent a value matching
+// neither its own env file nor VPS2's. Measured 2026-08-24 (sha256, distinct):
+// deploy source fca5db..., VPS3 file fca5db..., VPS3 runtime a539b1...,
+// VPS2 runtime 98c8e5... -- every preview push 401'd, and because the push
+// retries burn the agent's remaining budget, runs then hit AGENT_TIMEOUT_MS and
+// salvaged back to the pre-agent snapshot, discarding all generated work.
+//
+// deploy.sh writes .env.production on every deploy, so the file is the only
+// value that is always current. An ambient env var, by contrast, can outlive
+// any number of deploys and fails silently -- a 401 looks like an auth bug, not
+// a stale-config bug. Reading the file first makes a deploy authoritative.
+const PREVIEW_UPDATE_SECRET = readEnvFileVar('PREVIEW_UPDATE_SECRET') || process.env.PREVIEW_UPDATE_SECRET || '';
 
 module.exports = {
     apps: [
