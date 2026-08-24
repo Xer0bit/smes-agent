@@ -176,6 +176,20 @@ interface ActiveRun {
     startedAt: number;
     bus: EventEmitter;   // fan-out: subscribers (rejoining connections) listen on 'chunk' / 'end'
     buffer: string[];    // raw SSE chunks emitted so far   replayed to new subscribers
+    /**
+     * True once the loop emitted 'done'. The answer is complete and the client
+     * has already flipped to "ready", but teardown -- revision persist, lock
+     * release, map removal -- is still running. Measured at ~3s in production
+     * (2026-08-24: inner-return 13:20:29, lock released 13:20:32).
+     *
+     * A run in this state must NOT accept a new prompt as a stream subscriber:
+     * the prompt is never read on that path, so the user's message vanishes.
+     */
+    finishing: boolean;
+    /** Resolves once the run has truly ended AND released its project lock. */
+    ended: Promise<void>;
+    /** Called from the route's finally, after the lock is released. */
+    markEnded: () => void;
 }
 const activeAgentRuns = new Map<string, ActiveRun>();
 
@@ -896,12 +910,80 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
     // Concurrency guard   if a run is already active for this project, subscribe this new
     // SSE connection to it (fan-out) rather than starting a new run and charging eco again.
     // Must be checked BEFORE eco deduction so reconnects don't double-count usage.
+    // Longest we will park a new prompt while a finishing run tears down.
+    // Teardown measured at ~3s (persist + lock release); this is generous
+    // enough to cover a slow revision upload and short enough that a run which
+    // dies mid-teardown does not hang the caller.
+    const TEARDOWN_WAIT_MS = 20_000;
+
     const existingRunEarly = activeAgentRuns.get(projectId);
     if (existingRunEarly) {
         const ageMs = Date.now() - existingRunEarly.startedAt;
-        logger.info(`[agent-stream] Project ${projectId} has active run (age ${ageMs}ms)   subscribing new connection`);
 
-        res.setHeader('Content-Type', 'text/event-stream');
+        if (existingRunEarly.finishing) {
+            // TEARDOWN WINDOW. The previous run already emitted 'done', so the
+            // client cleared its generating state and let the user send this
+            // prompt -- but that run still holds the project lock and is still
+            // in activeAgentRuns. Subscribing here would attach this connection
+            // to the dying run's stream and NEVER READ `prompt`: the user's
+            // message disappears with no answer and no error. Starting a fresh
+            // run immediately is equally wrong -- the lock is still held, so it
+            // would 429 instead.
+            //
+            // So: wait for the run to genuinely end (its lock released), then
+            // fall through and serve this prompt as a normal new run.
+            logger.info(
+                `[agent-stream] Prompt arrived during teardown of a finishing run (age ${ageMs}ms) ` +
+                `-- waiting up to ${TEARDOWN_WAIT_MS}ms for it to release its lock, then running this prompt`,
+                { projectId, promptPreview: typeof prompt === 'string' ? prompt.slice(0, 80) : '' },
+            );
+
+            let disconnected = false;
+            const clientGone = new Promise<'closed'>((resolve) => {
+                const onClose = () => { disconnected = true; resolve('closed'); };
+                req.once('close', onClose);
+                // Detach on settle so a long-lived request cannot accumulate
+                // listeners across waits.
+                void existingRunEarly.ended.finally(() => req.off('close', onClose));
+            });
+            let timer: NodeJS.Timeout | undefined;
+            const timedOut = new Promise<'timeout'>((resolve) => {
+                timer = setTimeout(() => resolve('timeout'), TEARDOWN_WAIT_MS);
+            });
+
+            const outcome = await Promise.race([
+                existingRunEarly.ended.then(() => 'ended' as const),
+                timedOut,
+                clientGone,
+            ]);
+            if (timer) clearTimeout(timer);
+
+            if (disconnected || outcome === 'closed') {
+                // Caller hung up while parked. Nothing to serve; do not start a
+                // run nobody is listening to.
+                logger.info('[agent-stream] Client disconnected while waiting out teardown; dropping request', { projectId });
+                if (!res.writableEnded) res.end();
+                return;
+            }
+            if (outcome === 'timeout') {
+                // The run never signalled a clean end -- crashed mid-teardown,
+                // or its finally never ran. Proceed anyway: the lock's own
+                // staleness reclaim covers a genuinely dead owner, and hanging
+                // the user is worse than racing a corpse.
+                logger.warn(
+                    `[agent-stream] Finishing run did not end within ${TEARDOWN_WAIT_MS}ms; proceeding with the new prompt anyway`,
+                    { projectId },
+                );
+            }
+            // Fall through: acquire the lock and run this prompt for real.
+        } else {
+            logger.info(`[agent-stream] Project ${projectId} has active run (age ${ageMs}ms)   subscribing new connection`, {
+                projectId,
+                promptPreview: typeof prompt === 'string' ? prompt.slice(0, 80) : '',
+                note: 'this connection joins the running generation; the submitted prompt is NOT executed separately',
+            });
+
+            res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache, no-transform');
         res.setHeader('Connection', 'keep-alive');
 
@@ -918,6 +1000,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             existingRunEarly.bus.off('end', onEndEarly);
         });
         return;
+        }
     }
 
     // ── Backend eco enforcement ─────────────────────────────────────────────
@@ -1031,7 +1114,17 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
 
     const currentRunBus = new EventEmitter();
     currentRunBus.setMaxListeners(50);
-    const currentRun: ActiveRun = { abort: abortRun, startedAt: Date.now(), bus: currentRunBus, buffer: [] };
+    let markRunEnded!: () => void;
+    const runEnded = new Promise<void>((resolve) => { markRunEnded = resolve; });
+    const currentRun: ActiveRun = {
+        abort: abortRun,
+        startedAt: Date.now(),
+        bus: currentRunBus,
+        buffer: [],
+        finishing: false,
+        ended: runEnded,
+        markEnded: markRunEnded,
+    };
     activeAgentRuns.set(projectId, currentRun);
 
     req.on('close', () => {
@@ -1436,7 +1529,14 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 hasIntegrationRequest: /\b(database|supabase|api|connect|integration|webhook|backend)\b/i.test(prompt),
             },
             sink: {
-                emit: (event: string, data: any) => sseWrite(res, event, data),
+                emit: (event: string, data: any) => {
+                    // 'done' means "the answer is complete", NOT "the run is
+                    // over" -- persist and lock release still follow. Mark the
+                    // teardown window so a prompt arriving now waits for the
+                    // real end instead of being swallowed as a subscriber.
+                    if (event === 'done') currentRun.finishing = true;
+                    return sseWrite(res, event, data);
+                },
                 heartbeat: () => { if (!res.writableEnded) res.write(': heartbeat\n\n'); },
             },
             userId,
@@ -1609,6 +1709,9 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         await markReverted(lockEffectId);
         forgetRun(agentLockToken);
         activeAgentRuns.delete(projectId);
+        // Signal waiters only now: the lock is released above, so anyone who
+        // parked during teardown can acquire it immediately on wake.
+        currentRun.markEnded();
         currentRun.bus.emit('end');
         void publishRunEnd(projectId, agentLockToken);
         currentRun.bus.removeAllListeners();

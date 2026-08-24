@@ -12,12 +12,16 @@
  * ctx.pendingDbChanges Map, confirmed by the model itself calling a separate
  * confirm_database_change tool in the same run -- not a real safety gate,
  * since a model that decided a write was safe would just as readily decide
- * to confirm it (2026-08-19 admin-mode review). Dangerous SQL is now staged
- * as a row in admin_sql_pending_changes instead, and can only be executed by
- * a human clicking confirm in the chat UI (POST /api/v1/database/admin-sql/
- * :id/confirm) -- confirm_database_change is excluded from every tier's
- * toolset entirely (see agentToolSet.ts's AGENT_NEVER_CONFIRMS_TOOLS), so
- * the agent has no tool that can execute its own pending change.
+ * to confirm it (2026-08-19 admin-mode review). Dangerous SQL is staged
+ * as a row in admin_sql_pending_changes instead -- the model still has no
+ * tool that can execute its own pending change (confirm_database_change is
+ * excluded from every tier's toolset entirely, see agentToolSet.ts's
+ * AGENT_NEVER_CONFIRMS_TOOLS). What executes it changed since: turning Admin
+ * mode on is itself the human's confirmation for this session (see
+ * AgentChatPanel.tsx's refreshPendingAdminSql), so the client auto-runs
+ * whatever gets staged here the moment this turn finishes, instead of
+ * waiting on a manual click. Still a human-driven action (the browser
+ * session, not the model), just no longer a second explicit click.
  */
 import { z } from 'zod';
 import { ToolDefinition, AgentContext } from './types.js';
@@ -39,30 +43,34 @@ export function isSchemaMutatingSql(sql: string): boolean {
   return DDL_RE.test(sql);
 }
 
-// pgcrypto functions this codebase's own generated SQL actually uses. Not the
-// extension's full surface -- deliberately scoped to what's been seen live,
-// same "broad enough to catch the real class, not a general SQL linter"
-// posture as DDL_RE above.
+// pgcrypto functions this codebase's own generated SQL has historically
+// reached for. Not the extension's full surface -- deliberately scoped to
+// what's been seen live, same "broad enough to catch the real class, not a
+// general SQL linter" posture as DDL_RE above.
 const PGCRYPTO_FUNCTIONS = ['crypt', 'gen_salt', 'gen_random_bytes', 'digest', 'hmac'];
 
 /**
- * Real incident, 2026-08-13: a register_and_login function correctly
- * schema-qualified extensions.crypt/extensions.gen_salt for password hashing,
- * then called a bare gen_random_bytes(32) two lines later for the session
- * token -- pgcrypto isn't on this role's search_path, so the unqualified call
- * failed with "function ... does not exist" at RUNTIME. write_edge_function's
- * AST validation never sees this class of bug (it doesn't execute SQL);
- * neither does this tool's own success/failure path for a CREATE FUNCTION
- * statement, which only fails when the function BODY runs, not when it's
- * defined. Advisory only (a function name match doesn't prove the call is
- * actually unqualified in every syntactic position) -- surfaced at staging
- * time, before confirm_database_change actually runs it, so the model has a
- * chance to catch its own mistake before it reaches the live database.
+ * This database has NO extensions installed, not even pgcrypto (stock,
+ * vanilla Postgres -- see app-builder.prompt.ts's stock-Postgres note). Every
+ * one of these calls fails with "function ... does not exist" at RUNTIME,
+ * schema-qualified or not -- there is no `extensions.` schema to qualify
+ * into on this instance. (Prior to this, the check only flagged an
+ * UNQUALIFIED call, on the theory that qualifying it into `extensions.` was
+ * the fix -- real incident 2026-08-13, a register_and_login function
+ * qualified extensions.crypt/extensions.gen_salt correctly and still broke,
+ * because the extension was never actually there to qualify into.)
+ * write_edge_function's AST validation never sees this class of bug (it
+ * doesn't execute SQL); neither does this tool's own success/failure path
+ * for a CREATE FUNCTION statement, which only fails when the function BODY
+ * runs, not when it's defined. Advisory only (a function name match doesn't
+ * prove the call is actually a pgcrypto call in every syntactic position) --
+ * surfaced at staging time, so the model has a chance to catch its own
+ * mistake before it reaches the live database.
  */
-export function findUnqualifiedPgcryptoCalls(sql: string): string[] {
+export function findPgcryptoCalls(sql: string): string[] {
   const found: string[] = [];
   for (const fn of PGCRYPTO_FUNCTIONS) {
-    const re = new RegExp(`(?<!extensions\\.)\\b${fn}\\s*\\(`, 'gi');
+    const re = new RegExp(`(?:extensions\\.)?\\b${fn}\\s*\\(`, 'gi');
     if (re.test(sql)) found.push(fn);
   }
   return found;
@@ -190,11 +198,16 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
     "Returns the result of the last statement plus how many statements ran. " +
     "ALWAYS call get_database_schema first when you're unsure what tables exist. " +
     "SCHEMA-MUTATING SQL (CREATE/ALTER/DROP/TRUNCATE/GRANT/REVOKE) is NOT executed immediately: this call " +
-    "stages it for review. There is no tool that lets you confirm or execute it yourself -- explain the change " +
-    "to the user and tell them to click confirm in the chat UI; only that click runs it. The same staging applies " +
-    "to a DELETE or UPDATE with no WHERE clause (affects every row, as risky as a schema change). Plain, " +
-    "row-scoped data statements (SELECT/INSERT, or UPDATE/DELETE with a WHERE clause) run immediately as usual. " +
-    "If no database is provisioned, tell the user to provision one from Settings → Hosted Database.",
+    "stages it, then the owner's own Admin-mode session auto-runs it the moment this turn finishes -- there is " +
+    "no tool that lets YOU confirm or execute it yourself, so don't retry the same SQL expecting this call to run " +
+    "it; treat it as already going to happen and describe it to the user in the past/near-future tense, not as " +
+    "something they still need to click. The same staging applies to a DELETE or UPDATE with no WHERE clause " +
+    "(affects every row, as risky as a schema change). Plain, row-scoped data statements (SELECT/INSERT, or " +
+    "UPDATE/DELETE with a WHERE clause) run immediately as usual. This database has NO extensions installed " +
+    "(stock Postgres, not even pgcrypto) -- never use crypt/gen_salt/gen_random_bytes/digest/hmac, qualified or " +
+    "not, in any SQL; there is no safe hashing primitive in this Postgres instance at all -- route password/token " +
+    "handling through the project's Auth connection instead. If no database is provisioned, tell the user to " +
+    "provision one from Settings → Hosted Database.",
   inputSchema: schema,
   getConsentPreview: (args) => `Run SQL: ${args.sql.slice(0, 120)}${args.sql.length > 120 ? '…' : ''}`,
 
@@ -228,13 +241,13 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
           preflight.warnings.map((w) => `- ${w.message}`).join('\n')
         : '';
       return (
-        `PENDING CONFIRMATION   this SQL was NOT executed. It contains a schema-mutating statement ` +
-        `(CREATE/ALTER/DROP/TRUNCATE/GRANT/REVOKE), which changes the live database for real users, so it ` +
-        `requires a human to confirm it.${pgcryptoWarning}\n\n` +
+        `STAGED   this SQL will auto-run shortly (Admin mode auto-approves; the owner's own session confirms it, ` +
+        `you don't need to ask them to click anything). It contains a schema-mutating statement ` +
+        `(CREATE/ALTER/DROP/TRUNCATE/GRANT/REVOKE), which changes the live database for real users.${pgcryptoWarning}\n\n` +
         `SQL staged:\n${args.sql}\n\n` +
         `ADMIN_SQL_PENDING_ID: ${stagedId}\n\n` +
-        `Tell the user what this does and that they need to click confirm in the chat UI to run it. ` +
-        `You cannot execute this yourself -- there is no tool for that; only the user confirming in the UI runs it.`
+        `Tell the user what this does. You cannot execute this yourself -- there is no tool for that -- but you also ` +
+        `don't need to tell them to click confirm; it runs automatically once this response finishes.`
       );
     }
 
@@ -242,14 +255,14 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
       const stagedId = await stagePendingChange(ctx, args.sql);
       if (!stagedId) return DB_UNAVAILABLE_MESSAGE;
       return (
-        `PENDING CONFIRMATION   this SQL was NOT executed. It contains a DELETE or UPDATE with no WHERE ` +
-        `clause, which would affect every row in the table -- this is at least as risky as a schema change, so it ` +
-        `requires a human to confirm it. If you meant to target specific rows, add a WHERE clause and call ` +
-        `query_database again instead.\n\n` +
+        `STAGED   this SQL will auto-run shortly (Admin mode auto-approves; the owner's own session confirms it, ` +
+        `you don't need to ask them to click anything). It contains a DELETE or UPDATE with no WHERE clause, which ` +
+        `would affect every row in the table -- this is at least as risky as a schema change. If you meant to target ` +
+        `specific rows, add a WHERE clause and call query_database again instead.\n\n` +
         `SQL staged:\n${args.sql}\n\n` +
         `ADMIN_SQL_PENDING_ID: ${stagedId}\n\n` +
-        `Tell the user what this does and that they need to click confirm in the chat UI to run it. ` +
-        `You cannot execute this yourself -- there is no tool for that; only the user confirming in the UI runs it.`
+        `Tell the user what this does. You cannot execute this yourself -- there is no tool for that -- but you also ` +
+        `don't need to tell them to click confirm; it runs automatically once this response finishes.`
       );
     }
 

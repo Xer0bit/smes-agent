@@ -160,8 +160,12 @@ export function validateEdgeFunctionCode(code: string): ValidationIssue[] {
     // (this exact pattern shipped live in a real project -- see CardPro
     // auth-login.js/auth-signup.js, 2026-08-08). Heuristic, not proof of a
     // hash's strength: it only confirms *some* crypt/hash/bcrypt call is in
-    // the value expression, matching the pgcrypto pattern app-builder.prompt.ts's
-    // rule 5 already teaches (`extensions.crypt(password, extensions.gen_salt('bf'))`).
+    // the value expression. In practice this should rarely fire at all --
+    // app-builder.prompt.ts's rule 5 now tells the agent to route auth
+    // through the platform's own Auth connection instead of ever hashing or
+    // storing a password in generated code (this database has no pgcrypto,
+    // and the sandbox has no crypto global or npm packages -- there's no
+    // safe way to hash one here regardless).
     //
     // Needs `ancestor` (not `simple`) to see the immediate parent: acorn's AST
     // uses the same "Property" node type for real object-literal construction
@@ -180,8 +184,10 @@ export function validateEdgeFunctionCode(code: string): ValidationIssue[] {
       if (isInsideHashCallArgs(ancestors)) return; // forwarded into a recognized hash/verify call
       issues.push({
         message: `Field "${keyName}" is assigned a value that doesn't pass through a hash call ` +
-          '(crypt/bcrypt/etc). Storing or forwarding a raw password is a security defect -- hash it first, ' +
-          "e.g. extensions.crypt(password, extensions.gen_salt('bf')) via pgcrypto (see the password-handling rule).",
+          '(crypt/bcrypt/etc). Storing or forwarding a raw password is a security defect. This database/sandbox ' +
+          'has no hashing primitive available (no pgcrypto, no Web Crypto, no npm packages) -- do not hand-roll ' +
+          'one. Route login/signup/password verification through the platform\'s Auth connection instead of a ' +
+          'custom password table (see the password-handling rule).',
       });
     },
     // Plaintext-password comparison: `user.password_hash !== password` (also
@@ -198,8 +204,9 @@ export function validateEdgeFunctionCode(code: string): ValidationIssue[] {
       if (isHashCall(node.left) || isHashCall(node.right)) return;
       issues.push({
         message: 'Comparing a password/password_hash field without a hash call in the comparison -- this compares ' +
-          'a stored hash against a raw value (or two raw values) directly. Verify via a hash call instead, e.g. ' +
-          "extensions.crypt(input_password, password_hash) = password_hash via pgcrypto, not a plain !== / === check.",
+          'a stored hash against a raw value (or two raw values) directly. This database/sandbox has no hashing ' +
+          'primitive available -- route login/signup through the platform\'s Auth connection instead of ' +
+          'verifying passwords yourself.',
       });
     },
     // `db.*` call-shape validation (orchestration audit, 2026-08-09): the db

@@ -144,6 +144,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [expandedPlanSubtasks, setExpandedPlanSubtasks] = useState<Record<string, boolean>>({});
 
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [chatModeMenuOpen, setChatModeMenuOpen] = useState(false);
   const [agentMode, setAgentMode] = useState<'agent' | 'plan'>(() => {
     try {
       const saved = localStorage.getItem('ecomgear:agentMode');
@@ -177,8 +178,34 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [confirmingSqlId, setConfirmingSqlId] = useState<string | null>(null);
   const refreshPendingAdminSql = useCallback(async () => {
     if (!projectId) return;
-    setPendingAdminSql(await fetchPendingAdminSql(projectId));
-  }, [projectId]);
+    const pending = await fetchPendingAdminSql(projectId);
+    // Admin mode is itself the human's confirmation: switching the chat mode
+    // toggle to Admin is an explicit, session-scoped opt-in to letting the
+    // agent run SQL against this project's own database (see the toggle's
+    // title text below and agentToolSet.ts's ADMIN_ONLY_TOOLS gate). The
+    // staging table/human-click-to-run mechanism exists so the AGENT can
+    // never confirm its own change (2026-08-19 admin-mode review, see
+    // query_database.ts) -- it was never meant to make the human re-approve
+    // a change they already opted into by turning Admin mode on. So here,
+    // driven by the human's own browser session (not the model), auto-run
+    // whatever admin mode just staged instead of leaving it sitting behind a
+    // second manual click. A stale item from a PRIOR session/reload only
+    // reaches this path if the toggle happens to already be back on Admin --
+    // chatMode always resets to 'normal' on mount, so the routine mount-time
+    // refresh below never auto-runs old leftovers.
+    if (chatMode === 'admin' && pending.length > 0) {
+      let ranCount = 0;
+      for (const change of pending) {
+        const result = await confirmAdminSql(change.id);
+        if (result.success) ranCount++;
+        else toast.error(result.error || 'Failed to auto-run staged admin SQL.');
+      }
+      if (ranCount > 0) toast.success(ranCount === 1 ? 'Admin SQL auto-approved and executed.' : `${ranCount} admin SQL changes auto-approved and executed.`);
+      setPendingAdminSql(await fetchPendingAdminSql(projectId));
+      return;
+    }
+    setPendingAdminSql(pending);
+  }, [projectId, chatMode]);
   // Catches a change left over from a previous session (page reload before
   // confirming), not just ones staged during this mount.
   useEffect(() => { refreshPendingAdminSql(); }, [refreshPendingAdminSql]);
@@ -245,6 +272,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   // now only ever touches its own controller.
   const reconnectAbortRef = useRef<AbortController | null>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const chatModeMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Pagination state for chat history
@@ -468,6 +496,9 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     const handler = (e: MouseEvent) => {
       if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
         setModelMenuOpen(false);
+      }
+      if (chatModeMenuRef.current && !chatModeMenuRef.current.contains(e.target as Node)) {
+        setChatModeMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handler);
@@ -1921,28 +1952,56 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 )}
               </div>
 
-              {/* Normal / Admin chat mode toggle. NOTE: this no longer changes
-                  what the agent can do. It used to gate query_database server-side,
-                  but chatMode is read straight off the request body with no
-                  authorization check, so it gated the toggle rather than the
-                  capability while breaking database work in the default mode.
-                  Database tools are available in both modes now; the real gate is
-                  that dangerous SQL stages for human confirmation. This control is
-                  effectively decorative and is a candidate for removal. */}
-              <button
-                onClick={() => setChatMode(m => m === 'admin' ? 'normal' : 'admin')}
-                disabled={isGenerating}
-                title={chatMode === 'admin'
-                  ? 'Admin mode. The agent can stage SQL against the database and you confirm before it runs   the same as Normal mode. Click to switch to Normal.'
-                  : 'Normal mode. The agent can stage SQL against the database and you confirm before it runs. Click to switch to Admin.'}
-                className={`flex items-center gap-1 px-2 py-1 rounded-full text-[12px] font-medium transition-colors disabled:opacity-40 disabled:cursor-default ${
-                  chatMode === 'admin'
-                    ? 'text-amber-300 bg-amber-500/10 hover:bg-amber-500/15'
-                    : 'text-white/70 hover:text-white hover:bg-white/[0.06]'
-                }`}
-              >
-                <span>{chatMode === 'admin' ? 'Admin' : 'Normal'}</span>
-              </button>
+              {/* Normal / Admin chat mode dropdown.
+                  Admin mode is NOT cosmetic: staged schema-mutating SQL
+                  auto-runs at the end of the turn, on the basis that switching
+                  this on IS the owner's confirmation for the session. In Normal
+                  mode the same SQL stages and waits for an explicit confirm.
+                  Database tools themselves are available in BOTH modes -- the
+                  mode changes who confirms, not what the agent can reach. */}
+              <div className="relative" ref={chatModeMenuRef}>
+                <button
+                  onClick={() => setChatModeMenuOpen(v => !v)}
+                  disabled={isGenerating}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-full text-[12px] font-medium transition-colors disabled:opacity-40 disabled:cursor-default ${
+                    chatMode === 'admin'
+                      ? 'text-amber-300 bg-amber-500/10 hover:bg-amber-500/15'
+                      : 'text-white/70 hover:text-white hover:bg-white/[0.06]'
+                  }`}
+                >
+                  <span>{chatMode === 'admin' ? 'Admin' : 'Normal'}</span>
+                  <ChevronDown className="w-3 h-3 opacity-60" />
+                </button>
+
+                {/* Opens upward, matching the Build/Plan menu above it. */}
+                {chatModeMenuOpen && (
+                  <div className="absolute bottom-full right-0 mb-1.5 bg-[#1c1c20] border border-white/[0.10] rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.7)] z-[200] overflow-hidden" style={{ minWidth: 250 }}>
+                    <button
+                      onClick={() => { setChatMode('normal'); setChatModeMenuOpen(false); }}
+                      className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.05] ${chatMode === 'normal' ? 'text-white' : 'text-white/60'}`}
+                    >
+                      <span className="mt-0.5 w-3.5 shrink-0 text-indigo-400">{chatMode === 'normal' ? '\u2713' : ''}</span>
+                      <div>
+                        <p className="text-[13px] font-semibold leading-none mb-1">Normal</p>
+                        <p className="text-[11px] text-white/40">Risky SQL waits for you to confirm</p>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { setChatMode('admin'); setChatModeMenuOpen(false); }}
+                      className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.05] ${chatMode === 'admin' ? 'text-white' : 'text-white/60'}`}
+                    >
+                      <span className="mt-0.5 w-3.5 shrink-0 text-amber-400">{chatMode === 'admin' ? '\u2713' : ''}</span>
+                      <div>
+                        <p className="text-[13px] font-semibold leading-none mb-1">Admin</p>
+                        <p className="text-[11px] text-white/40">Staged SQL runs automatically</p>
+                      </div>
+                    </button>
+                    <div className="px-4 py-2 border-t border-white/[0.06]">
+                      <span className="text-[11px] text-white/25">Switching to Admin counts as your confirmation for this session.</span>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Send / Stop   circular button, morphs to a Stop control while
                   generating (wired to the real cancelGeneration, unlike the
