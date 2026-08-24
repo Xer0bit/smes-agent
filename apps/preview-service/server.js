@@ -45,7 +45,14 @@ for (const envName of ['.env.production', '.env']) {
         if (fs.existsSync(envFile)) {
             for (const line of fs.readFileSync(envFile, 'utf-8').split('\n')) {
                 const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-                if (m && !(m[1] in process.env)) process.env[m[1]] = m[2];
+                // Falsy check, not `in process.env`: ecosystem.config.cjs sets
+                // SUPABASE_SERVICE_ROLE_KEY via `process.env.X || '...' || ''`,
+                // so pm2 injects the key as an empty string whenever it wasn't
+                // exported in the shell pm2 was started from. `in` sees that
+                // empty string as "already present" and skips this real value
+                // forever -- silently breaking every Supabase-backed check
+                // (userCanAccessProject) with no thrown error to surface it.
+                if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
             }
             break;
         }
