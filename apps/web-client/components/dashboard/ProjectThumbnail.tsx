@@ -5,7 +5,6 @@ interface ProjectThumbnailProps {
   projectName: string;
   thumbnailUrl?: string | null;
   previewUrl: string | null | undefined;
-  onRefresh?: () => void;
 }
 
 type LoadState = 'idle' | 'loading' | 'loaded' | 'error';
@@ -18,7 +17,7 @@ function nameToGradient(name: string): string {
   return `linear-gradient(135deg, hsl(${hue},60%,18%) 0%, hsl(${(hue + 40) % 360},50%,12%) 100%)`;
 }
 
-export function ProjectThumbnail({ projectName, thumbnailUrl, previewUrl, onRefresh }: ProjectThumbnailProps) {
+export function ProjectThumbnail({ projectName, thumbnailUrl, previewUrl }: ProjectThumbnailProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [loadState, setLoadState] = useState<LoadState>('idle');
@@ -127,15 +126,6 @@ export function ProjectThumbnail({ projectName, thumbnailUrl, previewUrl, onRefr
               <ExternalLink className="h-3.5 w-3.5" />
               Open Preview
             </a>
-          )}
-          {onRefresh && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setLoadState('idle'); onRefresh(); }}
-              className="flex items-center gap-1.5 bg-white/15 backdrop-blur-sm text-white text-xs font-medium px-3 py-1.5 rounded-lg border border-white/25 hover:bg-white/25 transition-colors"
-            >
-              <Camera className="h-3.5 w-3.5" />
-              Capture
-            </button>
           )}
         </div>
       )}

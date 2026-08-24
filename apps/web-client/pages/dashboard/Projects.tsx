@@ -255,13 +255,6 @@ export default function DashboardProjects() {
     }
   };
 
-  const refreshPreviewUrl = async (projectId: string) => {
-    const { data } = await supabase.rpc('get_latest_preview_url', { p_project_id: projectId });
-    if (data) {
-      setPreviewUrls(prev => ({ ...prev, [projectId]: data }));
-    }
-  };
-
   const handleCreateProject = async () => {
     try {
       setCreating(true);
@@ -560,7 +553,6 @@ export default function DashboardProjects() {
                     projectName={project.name}
                     thumbnailUrl={project.thumbnail_url ?? null}
                     previewUrl={previewUrls[project.id] ?? null}
-                    onRefresh={() => refreshPreviewUrl(project.id)}
                   />
                 )}
                 <CardContent className="flex items-center gap-3 p-4">
