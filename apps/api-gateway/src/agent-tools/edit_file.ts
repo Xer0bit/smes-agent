@@ -15,6 +15,8 @@ import ts from 'typescript';
 import { ToolDefinition, AgentContext, safeJoin, extractAnonFetchTables, isOpaqueBinaryPath } from './types.js';
 import { writeProjectFile } from '../services/projectFileWriter.js';
 import { sanitizeFileContent, checkSyntaxBalance } from './sanitize.js';
+import { logger } from '../utils/logger.js';
+import { classifySearchMiss, PREVIEW_LINES } from './searchMissDiagnostics.js';
 
 const schema = z.object({
   path: z.string().describe('File path relative to the project root'),
@@ -181,14 +183,44 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
       // making the SEARCH-miss rate unmeasurable (confirmed: zero grep hits
       // across 2 months of production logs, audit 2026-07-21). Also counted
       // on ctx so agentLoopService.ts can persist it to agent_runs.
-      console.warn(`[edit_file] SEARCH_MISS project=${ctx.projectId} path=${args.path}`);
+      // ── Diagnostic fields ────────────────────────────────────────────────
+      // SEARCH_MISS is the single highest-frequency cause of wrong changes
+      // (61 occurrences in one 4000-line log window, audit 2026-08-24), and
+      // until now it was UNDIAGNOSABLE: the log carried only project+path, and
+      // the failing SEARCH text went to runStateLedger, which is in-memory and
+      // discarded when the run ends. There was no way to tell WHY the model's
+      // view diverged from disk, so no way to know which fix would work.
+      //
+      // Each field below discriminates between the candidate causes rather
+      // than just adding detail:
+      //   targetFoundAtLine === null -> the SEARCH text is not in the file AT
+      //     ALL, so the model reconstructed it from a stale or compacted view
+      //     (not a whitespace/formatting mismatch).
+      //   targetInPreview === false  -> the 100-line correction preview below
+      //     does NOT contain the target, so the model cannot fix it from the
+      //     error alone and will repeat. This is the harness-vs-reasoning
+      //     split for thrash, measured instead of guessed.
+      //   readWasTruncated === true  -> read_file served head+outline for this
+      //     file in this tier (>=300 lines), so the model may never have seen
+      //     the real text.
+      const allLines = original.split('\n');
+      const diag = classifySearchMiss(original, firstSearchLine, ctx.tier);
+      logger.warn(`[edit_file] SEARCH_MISS project=${ctx.projectId} path=${args.path}`, {
+        projectId: ctx.projectId,
+        runId: ctx.runId ?? null,
+        path: args.path,
+        tier: ctx.tier ?? null,
+        searchSnippet: firstSearchLine.split('\n').map((l) => l.trim()).find((l) => l.length > 0)?.slice(0, 80) ?? '',
+        ...diag,
+        reason: (result.error ?? 'unknown error').slice(0, 120),
+      });
       ctx.editSearchMissCount = (ctx.editSearchMissCount ?? 0) + 1;
 
       // Include the first 100 lines of the current file so the agent can see
       // the exact content and correct the SEARCH text without an extra read_file call.
-      const previewLines = original.split('\n').slice(0, 100).join('\n');
-      const filePreview = original.split('\n').length > 100
-        ? `${previewLines}\n… (${original.split('\n').length - 100} more lines   call read_file for the full content)`
+      const previewLines = allLines.slice(0, PREVIEW_LINES).join('\n');
+      const filePreview = allLines.length > PREVIEW_LINES
+        ? `${previewLines}\n… (${allLines.length - PREVIEW_LINES} more lines   call read_file for the full content)`
         : previewLines;
       return `Error applying edit to ${args.path}: ${result.error}\n\nCurrent file content (first 100 lines):\n\`\`\`\n${filePreview}\n\`\`\`\n\nFix your SEARCH text to exactly match the content above.`;
     }
