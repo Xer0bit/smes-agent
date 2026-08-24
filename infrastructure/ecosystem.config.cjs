@@ -1,4 +1,5 @@
 const path = require('path');
+const fs = require('fs');
 // VPS1: 156.67.218.75 (Singapore)   Frontend + Supabase Edge + API server
 // VPS2: 72.62.126.99(Indonesia)   Preview Hosting + Generated Apps
 // VPS3: 3.148.126.20 (USA)   LLM / Code Generation + Agent Runner (generation-only)
@@ -6,6 +7,26 @@ const ROOT = __dirname;
 const PREVIEW_PORT = Number(process.env.PREVIEW_PORT || process.env.PORT || 3001);
 const GEN_API_PORT = Number(process.env.GEN_API_PORT || process.env.PORT || 5001);
 const API_SERVER_PORT = Number(process.env.API_SERVER_PORT || process.env.PORT || 5002);
+
+// Reads a var straight out of .env.production so pm2 injects it into the
+// process's real OS env at spawn time -- same reason SUPABASE_SERVICE_ROLE_KEY
+// below is pulled in this way instead of trusting the app's own dotenv load:
+// api-gateway is ESM + pm2 cluster mode, and its in-process `configDotenv`
+// call was observed (2026-08-24) NOT reliably landing PREVIEW_UPDATE_SECRET in
+// process.env at request time, causing every preview-update proxy call to go
+// out with no x-update-secret header -> preview-service 401s. Root cause in
+// the ESM/cluster env-loading path wasn't pinned down; this sidesteps it by
+// never depending on it.
+function readEnvFileVar(name) {
+    try {
+        const content = fs.readFileSync(path.join(ROOT, '.env.production'), 'utf8');
+        const m = content.match(new RegExp('^' + name + '=(.*)$', 'm'));
+        return m ? m[1] : '';
+    } catch {
+        return '';
+    }
+}
+const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || readEnvFileVar('PREVIEW_UPDATE_SECRET');
 
 module.exports = {
     apps: [
@@ -30,6 +51,7 @@ module.exports = {
                 VITE_HMR_PROTOCOL: 'wss',
                 SUPABASE_URL: 'https://api.ecomgear.dev',
                 SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '',
+                PREVIEW_UPDATE_SECRET,
             },
             max_memory_restart: '2000M',
             error_file: path.join(ROOT, 'logs', 'preview-error.log'),
@@ -114,6 +136,7 @@ module.exports = {
                 ECG_AUTH_BASE_URL: process.env.ECG_AUTH_BASE_URL || 'https://auth.ecomgear.ai',
                 ECG_AUTH_API_KEY: process.env.ECG_AUTH_API_KEY || '',
                 ECG_AUTH_2FA_ACTIVE: process.env.ECG_AUTH_2FA_ACTIVE || 'false',
+                PREVIEW_UPDATE_SECRET,
                 // Lets a local dev frontend (npm run dev, default Vite port) call
                 // this production server directly -- see server/src/app.ts's
                 // allowedOrigins, which reads this env var when NODE_ENV=production
