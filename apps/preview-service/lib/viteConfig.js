@@ -29,6 +29,15 @@ const COMMON_DEPS = [
     'input-otp', 'react-resizable-panels', 'axios', 'lodash', 'uuid', 'zustand', 'zod',
     '@supabase/supabase-js', 'next-themes', 'react-icons', 'react-markdown', 'react-hot-toast',
     'react-dropzone', 'swr', 'i18next', 'react-i18next', '@heroicons/react',
+    // A dep the browser imports but that is NOT listed here is discovered at
+    // request time: Vite re-runs dep optimization and forces a FULL PAGE
+    // RELOAD ("new dependencies optimized: ..."), which the user sees as the
+    // preview blanking and reloading mid-session. Found on a live project
+    // 2026-08-25 -- it ships Stripe and react-quill, none of which were here.
+    // Entries a project does not have installed only produce a resolve
+    // warning, which is why this list can safely stay a superset (i18next,
+    // swr and react-dropzone above are already in that category).
+    '@stripe/react-stripe-js', '@stripe/stripe-js', 'react-quill',
 ];
 
 function resilientHmrPlugin(onDiagnostic) {
