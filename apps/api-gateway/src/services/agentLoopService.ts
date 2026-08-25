@@ -55,6 +55,7 @@ import { NarrationFilter } from './narrationFilter.js';
 import { arbitrateFailureClaim } from './staleFailureClaim.js';
 import { renderRunStateHeader } from './runStateHeader.js';
 import { orphanedEffects } from './effectLedger.js';
+import { stripBinariesForClient, payloadBytes } from './clientFilePayload.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -73,6 +74,7 @@ const SUPPRESS_RECOVERY_UI = (process.env.AGENT_SUPPRESS_RECOVERY_UI ?? '1') !==
 // 2026-08-09 as the cause of "my logo disappears when I deploy".
 const BINARY_EXTS_SET = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.webp', '.mp4', '.mp3', '.pdf', '.zip']);
 const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+
 
 /** Read a file for a disk snapshot/write-collection payload, base64-encoding binaries with BINARY_SENTINEL so they survive the JSON sync payload intact (mirrors preview-service's own BINARY_EXTS handling on the receiving end). */
 function readFileForSync(fullPath: string): string {
@@ -2014,7 +2016,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
       if (salvageFiles.length > 0) {
         sink.emit('done', {
-          filesToWrite: runtimeMode === 'plan' ? [] : salvageFiles,
+          filesToWrite: runtimeMode === 'plan' ? [] : stripBinariesForClient(salvageFiles),
           filesToDelete: [],
           renames: [],
           dependencies: [],
@@ -5253,10 +5255,24 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       ? `Continue exactly where you left off on this request: "${prompt}". Do not redo files you already finished   pick up with whatever is left.`
       : undefined;
 
+    // The preview push above already sent mergedWrites (binaries included) to
+    // preview-service. The browser gets the same list minus the base64 blobs it
+    // cannot use -- see clientFilePayload.ts for why that is safe to omit.
+    const clientFilesToWrite = stripBinariesForClient(doneFilesToWrite);
+    if (clientFilesToWrite.length !== doneFilesToWrite.length) {
+      logger.info('[AgentLoop] done payload: binaries withheld from client', {
+        projectId,
+        filesTotal: doneFilesToWrite.length,
+        filesSent: clientFilesToWrite.length,
+        bytesBefore: payloadBytes(doneFilesToWrite),
+        bytesAfter: payloadBytes(clientFilesToWrite),
+      });
+    }
+
     // NOW send 'done'   preview is synced, frontend shows correct state
     sink.emit('done', {
       ghostRun: runtimeMode === 'build' && !agentWroteFiles,
-      filesToWrite: doneFilesToWrite,
+      filesToWrite: clientFilesToWrite,
       filesToDelete: doneFilesToDelete,
       renames: doneRenames,
       dependencies: doneDependencies,
