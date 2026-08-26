@@ -473,6 +473,36 @@ function preprocessFile(filePath, content) {
         }
     }
 
+    // Fix 3.47: The platform-auth client (src/integrations/supabase/client.ts)
+    // points every generated project at the SAME Supabase project --
+    // database.service.ts: "VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are the
+    // EcomGear platform's OWN Supabase instance ... NOT the per-project hosted
+    // database" -- and every preview is served from one origin, differentiated
+    // only by URL path. @supabase/supabase-js's default auth lock is a
+    // Navigator LockManager lock keyed off that shared URL's hostname, so it's
+    // contended across EVERY open preview tab on EVERY project, not just tabs
+    // of the same one. A losing tab's lock acquisition throws
+    // NavigatorLockAcquireTimeoutError ("Uncaught (in promise) Error:
+    // Acquiring an exclusive Navigator LockManager lock ... immediately
+    // failed"); depending on where that lands relative to the app's own
+    // render gate, it can block mount entirely with zero build error and zero
+    // failed request -- same failure class as the undefined-URL incidents
+    // above (Fix 3.46), just a different trigger.
+    //
+    // Preview iframes are short-lived and disposable; they don't need
+    // cross-tab-synchronized token refresh, so a no-op lock (run the
+    // operation immediately, no Web Locks involved) removes the whole failure
+    // class instead of papering over one trigger of it.
+    if (filePath.endsWith('integrations/supabase/client.ts')) {
+        if (/createClient\(/.test(fixed) && /auth:\s*\{/.test(fixed) && !/\block\s*:/.test(fixed)) {
+            const before = fixed;
+            fixed = fixed.replace(/(auth:\s*\{)/, '$1\n    lock: (_name, _acquireTimeout, fn) => fn(),');
+            if (fixed !== before) {
+                issues.push('Added a no-op auth lock to the platform auth client -- previews share one Supabase project across all projects, so the default Navigator Lock can throw and blank the page under contention');
+            }
+        }
+    }
+
     // Fix 3.5: Fix common event handler casing
     if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
         const events = ['onclick', 'onchange', 'onsubmit', 'onkeydown', 'onkeyup', 'onmouseenter', 'onmouseleave'];

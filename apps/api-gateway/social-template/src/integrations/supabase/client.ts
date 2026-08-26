@@ -15,5 +15,13 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     storage: localStorage,
     persistSession: true,
     autoRefreshToken: true,
+    // Every generated project shares this same platform Supabase project, and
+    // every preview lives on one origin -- so the default Navigator Lock
+    // (keyed off this URL) is contended across every open preview tab, on
+    // every project, not just tabs of this one. A losing tab can throw
+    // NavigatorLockAcquireTimeoutError and blank the page before it ever
+    // mounts. Previews don't need cross-tab-synced token refresh, so skip
+    // the lock entirely.
+    lock: (_name, _acquireTimeout, fn) => fn(),
   }
 });
