@@ -56,6 +56,7 @@ import { arbitrateFailureClaim } from './staleFailureClaim.js';
 import { renderRunStateHeader } from './runStateHeader.js';
 import { orphanedEffects } from './effectLedger.js';
 import { stripBinariesForClient, payloadBytes } from './clientFilePayload.js';
+import { isRetryableSyncStatus, readSecretsWrittenCount } from './secretsSyncOutcome.js';
 
 // Supabase service-role client for agent_runs tracking (fire-and-forget)
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -4399,19 +4400,68 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // undefined, so createClient() threw at boot (blank page + every login
       // "failure" the clients keep reporting). Best-effort: a failed sync
       // never blocks the file push.
+      // Retried, unlike before: this push carries the credentials the app needs
+      // to BOOT, and it sat one line above a file push that already retries
+      // three times. A single transient blip left the preview with no
+      // VITE_DB_API_URL while the run reported success.
+      //
+      // Retries are scoped to failures a retry can actually fix -- transport
+      // errors (status 0) and 5xx. A 4xx is a definitive answer: the request
+      // is wrong or unauthorised, and sending it again cannot change that.
+      // 2026-08-24 showed why that distinction matters: a PREVIEW_UPDATE_SECRET
+      // mismatch 401'd the FILE push, which retries on any non-200/422, so it
+      // burned three 120s attempts (13:20 -> 20:41 window, 15 failures across 5
+      // projects) and pushed the run into AGENT_TIMEOUT_MS, whose salvage then
+      // discarded the whole run's work. Retrying an auth error converted a
+      // config fault into lost work. NOTE: the file push below still has that
+      // blind-retry behaviour -- deliberately not touched here, flagged only.
       if (userId) {
         try {
           const envSecrets = await buildProjectEnvSecrets(userId, projectId);
           if (envSecrets.length > 0) {
-            const envRes = await httpPost(`${previewServiceUrl}/preview/${projectId}/secrets`, JSON.stringify({ secrets: envSecrets }));
-            if (envRes.status !== 200) {
-              logger.warn('[AgentLoop] preview env-secrets sync returned non-200', {
-                projectId, status: envRes.status, bodyPreview: envRes.body.slice(0, 200),
+            const secretsUrl = `${previewServiceUrl}/preview/${projectId}/secrets`;
+            const body = JSON.stringify({ secrets: envSecrets });
+            const MAX_SECRET_RETRIES = 3;
+            let envRes = await httpPost(secretsUrl, body);
+            for (
+              let attempt = 1;
+              attempt <= MAX_SECRET_RETRIES && envRes.status !== 200 && isRetryableSyncStatus(envRes.status);
+              attempt++
+            ) {
+              logger.warn('[AgentLoop] preview env-secrets sync transport failure, retrying', {
+                projectId, status: envRes.status, attempt, maxAttempts: MAX_SECRET_RETRIES,
               });
+              await new Promise<void>((r) => setTimeout(r, attempt * 1000));
+              envRes = await httpPost(secretsUrl, body);
+            }
+            if (envRes.status !== 200) {
+              // The app will boot without its database credentials. Error, not
+              // warn: the run is about to report success while the preview it
+              // just pushed to cannot reach ECG CLOUD DB.
+              logger.error('[AgentLoop] preview env-secrets sync FAILED — app will boot without DB credentials', {
+                projectId,
+                status: envRes.status,
+                retryable: isRetryableSyncStatus(envRes.status),
+                secretCount: envSecrets.length,
+                secretKeys: envSecrets.map((s) => s.key_name),
+                bodyPreview: envRes.body.slice(0, 200),
+              });
+            } else {
+              // preview-service reports how many keys it actually wrote, and
+              // nothing has ever read it. A short count means a successful HTTP
+              // call still left the app short of credentials -- the .env.local
+              // write is a full replace, not a merge.
+              const written = readSecretsWrittenCount(envRes.body);
+              if (written != null && written !== envSecrets.length) {
+                logger.error('[AgentLoop] preview env-secrets sync wrote fewer keys than sent', {
+                  projectId, sent: envSecrets.length, written,
+                  secretKeys: envSecrets.map((s) => s.key_name),
+                });
+              }
             }
           }
         } catch (envErr: any) {
-          logger.warn('[AgentLoop] preview env-secrets sync failed (continuing)', { projectId, error: envErr?.message, stack: envErr?.stack });
+          logger.error('[AgentLoop] preview env-secrets sync threw — app may boot without DB credentials', { projectId, error: envErr?.message, stack: envErr?.stack });
         }
       }
 

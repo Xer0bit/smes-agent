@@ -270,16 +270,37 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
     }
 
     // Push every secret (platform auth + hosted DB, if provisioned) to the live preview.
+    //
+    // The response is CHECKED. It previously was not: `await fetch(...)` does
+    // not throw on an HTTP error status, so the catch below only ever saw
+    // transport errors and a 401/500 passed as success with no log line at all.
+    // During the 2026-08-24 PREVIEW_UPDATE_SECRET mismatch every push from here
+    // would have been rejected, and VPS1's logs carry 67 [ecg-dev-agent] lines
+    // with not one mentioning this sync -- the path could not distinguish
+    // "never ran" from "failed", which is the whole defect. The equivalent push
+    // in agentLoopService has always status-checked; this one just never did.
     try {
       const secrets = await buildProjectEnvSecrets(req.user!.id, project.id);
       const previewBase = (process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001').replace(/\/$/, '');
-      await fetch(`${previewBase}/preview/${project.id}/secrets`, {
+      const secretsRes = await fetch(`${previewBase}/preview/${project.id}/secrets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(process.env.PREVIEW_UPDATE_SECRET ? { 'x-update-secret': process.env.PREVIEW_UPDATE_SECRET } : {}) },
         body: JSON.stringify({ secrets }),
       });
+      if (!secretsRes.ok) {
+        const bodyPreview = await secretsRes.text().then((t) => t.slice(0, 200)).catch(() => '');
+        // Error, not warn: onboarding is about to report success for a project
+        // whose app cannot reach its database.
+        logger.error('[ecg-dev-agent] preview secret sync FAILED — app will boot without DB credentials', {
+          projectId: project.id,
+          status: secretsRes.status,
+          secretCount: secrets.length,
+          secretKeys: secrets.map((s) => s.key_name),
+          bodyPreview,
+        });
+      }
     } catch (err) {
-      logger.warn('[ecg-dev-agent] preview secret sync failed', err);
+      logger.error('[ecg-dev-agent] preview secret sync threw — app may boot without DB credentials', err);
     }
 
     // ── Seed the frontend from agent-template/ (Dashboard/Agents/Schedulers/
