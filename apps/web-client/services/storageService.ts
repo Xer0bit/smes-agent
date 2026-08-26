@@ -13,6 +13,38 @@ export interface ProjectFile {
 
 const STORAGE_BUCKET = 'user-projects-free'; // PRIVATE bucket
 
+// Same extension list + sentinel as revisionService.ts's blobToSyncContent /
+// preview-service's materialize.js. .text() UTF-8-decodes every byte, which
+// mangles binary content (each non-UTF8 byte becomes U+FFFD) -- fine for
+// source files, silently corrupts images/fonts. This was the one download
+// path in the revision-loading fallback chain that never got that fix, so a
+// project whose revision falls through to this "oldest fallback" tier (no
+// manifest-v1 format, no inline JSONB files -- typically an older/idle
+// project reopened after the manifest migration) would resolve its images as
+// garbled text. materialize.js's write-side guard refuses to overwrite an
+// already-good file with mangled content, but on a freshly (re)initialized
+// preview instance there's no existing file to protect, so the image simply
+// never gets written -- broken <img> reference even though the file is still
+// intact in this very storage bucket.
+const BINARY_EXT_RE = /\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3|pdf|zip)$/i;
+const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+
+async function blobToFileContent(path: string, blob: Blob): Promise<string> {
+    if (!BINARY_EXT_RE.test(path)) return blob.text();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    // Storage may already hold the sentinel-prefixed base64 text verbatim
+    // (saveProjectFiles just uploads whatever string content it's given) --
+    // detect that case rather than re-encoding it into a double-wrapped blob.
+    const prefix = new TextDecoder().decode(bytes.subarray(0, BINARY_SENTINEL.length));
+    if (prefix === BINARY_SENTINEL) return new TextDecoder().decode(bytes);
+    let binary = '';
+    const CHUNK = 0x8000; // avoid blowing the call-stack arg limit on large files
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+    }
+    return BINARY_SENTINEL + btoa(binary);
+}
+
 export const storageService = {
     /**
      * Save project files to Supabase storage
@@ -102,7 +134,7 @@ export const storageService = {
                             continue;
                         }
 
-                        const content = await data.text();
+                        const content = await blobToFileContent(relativePath, data);
                         files.push({
                             path: relativePath,
                             content,
