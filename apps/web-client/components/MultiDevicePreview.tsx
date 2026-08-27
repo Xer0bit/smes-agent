@@ -91,8 +91,12 @@ interface MultiDevicePreviewProps {
 
 /** Imperative handle for driving the preview iframe's own session history
  * (its HashRouter navigation), the same way browser back/forward buttons
- * drive a real tab   see nav-patch.js, which already reports the resulting
- * route back to the parent via postMessage. */
+ * drive a real tab. Goes through postMessage rather than calling
+ * contentWindow.history.back()/forward() directly   the iframe is
+ * cross-origin (preview.ecomgear.app vs the app's own origin), and nav-patch.js
+ * (already injected into every preview) runs history.go() same-origin on the
+ * other end, the same pattern already used for ecg-inspect-mode below. It
+ * also reports the resulting route back to the parent via postMessage. */
 export interface MultiDevicePreviewHandle {
     goBack: () => void;
     goForward: () => void;
@@ -149,8 +153,8 @@ export const MultiDevicePreview = React.forwardRef<MultiDevicePreviewHandle, Mul
     const iframeRef = useRef<HTMLIFrameElement>(null);
 
     React.useImperativeHandle(ref, () => ({
-        goBack: () => iframeRef.current?.contentWindow?.history.back(),
-        goForward: () => iframeRef.current?.contentWindow?.history.forward(),
+        goBack: () => iframeRef.current?.contentWindow?.postMessage({ type: 'ecg-nav-go', delta: -1 }, '*'),
+        goForward: () => iframeRef.current?.contentWindow?.postMessage({ type: 'ecg-nav-go', delta: 1 }, '*'),
     }), []);
 
     // Toggle inspect mode in the iframe via postMessage whenever the prop changes
