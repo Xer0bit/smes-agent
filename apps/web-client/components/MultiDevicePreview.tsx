@@ -89,6 +89,15 @@ interface MultiDevicePreviewProps {
     noChanges?: boolean;
 }
 
+/** Imperative handle for driving the preview iframe's own session history
+ * (its HashRouter navigation), the same way browser back/forward buttons
+ * drive a real tab   see nav-patch.js, which already reports the resulting
+ * route back to the parent via postMessage. */
+export interface MultiDevicePreviewHandle {
+    goBack: () => void;
+    goForward: () => void;
+}
+
 function isNonFatalAssetError(errorText: string): boolean {
     const text = errorText.toLowerCase();
     // [object Event] is a stringified Event object   this happens when a resource (image, font, etc.)
@@ -114,7 +123,7 @@ function getBlockingStateCopy(_previewStatus: PreviewStatus): { title: string; d
     };
 }
 
-export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
+export const MultiDevicePreview = React.forwardRef<MultiDevicePreviewHandle, MultiDevicePreviewProps>(({
     src,
     htmlContent,
     viewMode,
@@ -131,13 +140,18 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
     installingDependency = false,
     isGenerating = false,
     noChanges = false,
-}) => {
+}, ref) => {
     const config = DEVICE_CONFIGS[viewMode];
     const [previewDiagnostics, setPreviewDiagnostics] = useState<PreviewStatus>({ healthy: true, errors: [], diagnosticKind: 'healthy' });
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const [blankScreen, setBlankScreen] = useState(false);
     const blankTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const iframeRef = useRef<HTMLIFrameElement>(null);
+
+    React.useImperativeHandle(ref, () => ({
+        goBack: () => iframeRef.current?.contentWindow?.history.back(),
+        goForward: () => iframeRef.current?.contentWindow?.history.forward(),
+    }), []);
 
     // Toggle inspect mode in the iframe via postMessage whenever the prop changes
     useEffect(() => {
@@ -461,6 +475,8 @@ export const MultiDevicePreview: React.FC<MultiDevicePreviewProps> = ({
 
         </div>
     );
-};
+});
+
+MultiDevicePreview.displayName = 'MultiDevicePreview';
 
 export default MultiDevicePreview;

@@ -13,7 +13,7 @@ import { VersionHistoryPanel } from "@/components/VersionHistoryPanel";
 import { WorkspaceLoader } from "@/components/WorkspaceLoader";
 import { CodeEditorPanel } from "@/components/CodeEditorPanel";
 import { useWorkspace, WorkspaceProvider } from "@/contexts/WorkspaceContext";
-import { MultiDevicePreview } from "@/components/MultiDevicePreview";
+import { MultiDevicePreview, type MultiDevicePreviewHandle } from "@/components/MultiDevicePreview";
 import type { ActivityType } from "@/components/ProjectActivityIndicator";
 import { AgentChatPanel } from "@/components/chat/_ui_/AgentChatPanel";
 import { SettingsDialog } from "@/components/referral/settings/SettingsDialog";
@@ -26,6 +26,8 @@ import {
   Settings,
   Search,
   RotateCcw,
+  ChevronLeft,
+  ChevronRight,
   Minimize2,
   Monitor,
   Smartphone,
@@ -437,6 +439,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   // Track current path from preview iframe   initialised from URL so refresh restores it
   const [previewPath, setPreviewPath] = useState<string>(() => searchParams.get('page') || '/');
   const previewPathRef = useRef(previewPath);
+  const previewHandleRef = useRef<MultiDevicePreviewHandle>(null);
   useEffect(() => { previewPathRef.current = previewPath; }, [previewPath]);
 
   // The workspace is a module-level singleton that outlives this component,
@@ -2964,6 +2967,26 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               gap between the tabs and the eco/settings cluster. */}
           {showRouteNavigator && (
             <div className="flex items-center gap-1 flex-1 min-w-0 mx-2">
+              {/* Back / Forward   drive the preview iframe's own session history
+                  (its HashRouter), same as a real browser tab's controls. */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0 text-white/20 hover:text-white/60 hover:bg-white/[0.04] rounded-md"
+                title="Back"
+                onClick={() => previewHandleRef.current?.goBack()}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0 text-white/20 hover:text-white/60 hover:bg-white/[0.04] rounded-md"
+                title="Forward"
+                onClick={() => previewHandleRef.current?.goForward()}
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -3508,6 +3531,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                 </div>
               ) : (
                 <MultiDevicePreview
+                  ref={previewHandleRef}
                   src={effectivePreviewUrl}
                   htmlContent={localPreviewHtml || (generatedFiles.length === 1 && generatedFiles[0]?.path === 'index.html' ? generatedCode : null)}
                   viewMode={viewMode}
