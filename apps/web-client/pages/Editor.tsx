@@ -2420,6 +2420,15 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                         className="h-5 w-auto object-contain"
                       />
                     </button>
+                    <button
+                      type="button"
+                      aria-label="Back to projects"
+                      title="Back to projects"
+                      onClick={() => navigate('/dashboard/projects')}
+                      className="flex items-center justify-center h-6 w-6 text-white/40 hover:text-white/80 hover:bg-white/[0.06] rounded-md transition-colors flex-shrink-0"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
                     <div className="h-4 w-px bg-white/[0.08]" />
                     <span className="text-sm font-medium text-white/80 truncate">Assistant</span>
                   </div>
@@ -2604,6 +2613,15 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                 <div className="flex items-center gap-2 min-w-0">
                   <button onClick={() => navigate('/dashboard/projects')} className="flex items-center group">
                     <img src={ecgLogo} alt="eCG" className="h-4 w-auto object-contain group-hover:opacity-60 transition-opacity" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Back to projects"
+                    title="Back to projects"
+                    onClick={() => navigate('/dashboard/projects')}
+                    className="flex items-center justify-center h-5 w-5 text-white/30 hover:text-white/80 hover:bg-white/[0.06] rounded transition-colors flex-shrink-0"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
                   </button>
                   <div className="h-3 w-px bg-white/[0.08]" />
                   <button onClick={() => setIsEditingProjectName(true)} className="flex items-center gap-1 min-w-0 group">
