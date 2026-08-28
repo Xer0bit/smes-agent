@@ -26,4 +26,14 @@
   window.addEventListener('popstate', sendNav);
   // Send initial route after app has mounted
   setTimeout(sendNav, 300);
+
+  // Back/Forward toolbar buttons live in the parent (Editor.tsx) and can't
+  // call history.back()/forward() on this cross-origin iframe directly, so
+  // they ask via postMessage instead   history.go() runs same-origin here,
+  // same as every other parent<->preview signal (inspect mode, etc).
+  window.addEventListener('message', function (event) {
+    if (event.data && event.data.type === 'ecg-nav-go' && typeof event.data.delta === 'number') {
+      window.history.go(event.data.delta);
+    }
+  });
 })();
