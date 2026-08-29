@@ -15,6 +15,7 @@ import { getGenServerUrl, getGenServerCandidateUrls } from '@/config/external-ap
 import { lovableCloud } from '@/integrations/supabase/client';
 import { messageService } from '@/eCG/UserPrompt/messageService';
 import { uploadChatAttachment, isAllowedFile, formatFileSize, type ChatAttachment } from '@/services/chatAttachmentService';
+import type { AgentAttachment } from '@/eCG/UserPrompt/types';
 import { useUsage } from '@/contexts/UsageContext';
 import type { StepEntry, Message } from '../_utils_/agentChatHelpers';
 // The Plan component is no longer rendered -- narration is shown as a live
@@ -33,6 +34,7 @@ import {
   filePathToLabel,
   tokenize,
   relevanceScore,
+  seededChatAttachment,
 } from '../_utils_/agentChatHelpers';
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -46,6 +48,15 @@ interface AgentChatPanelProps {
   /** Called with the real token count once the server resolves usage (fires after onGenerationComplete) */
   onUsage?: (tokensUsed: number) => void;
   isMinimized?: boolean;
+  /**
+   * Attachments carried in from another surface (the dashboard's "New project"
+   * flow), to sit in the composer as if the user had just attached them here.
+   * Deliberately NOT auto-sent: that surface has no prompt box, so the file
+   * arrives without a question and the user still has to say what they want.
+   */
+  initialAttachments?: AgentAttachment[];
+  /** Fired once the seeded attachments have been adopted, so the source can clear them. */
+  onInitialAttachmentsConsumed?: () => void;
   /** When set, automatically send this prompt to the agent (e.g. from Repair button). */
   triggerPrompt?: string | null;
   /** Chat-message label shown for the auto-sent triggerPrompt. Defaults to the repair-flow label. */
@@ -94,6 +105,8 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   onGenerationComplete,
   onUsage,
   isMinimized = false,
+  initialAttachments,
+  onInitialAttachmentsConsumed,
   triggerPrompt,
   triggerDisplayText,
   onTriggerConsumed,
@@ -304,6 +317,21 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   useEffect(() => {
     try { localStorage.setItem('ecomgear:agentMode', agentMode); } catch {}
   }, [agentMode]);
+
+  // ── Adopt attachments handed over from another surface ──────────────────
+  // The dashboard's "New project" flow uploads files before it navigates here,
+  // so they already exist server-side (tempPath) and in storage (publicUrl).
+  // Rebuild the two fields ChatAttachment carries that AgentAttachment does
+  // not: `previewUrl` falls back to the durable publicUrl rather than an
+  // object URL, which would not survive the navigation that brought us here.
+  const seededAttachmentsRef = useRef(false);
+  useEffect(() => {
+    if (seededAttachmentsRef.current) return;
+    if (!initialAttachments || initialAttachments.length === 0) return;
+    seededAttachmentsRef.current = true;
+    setPendingAttachments((prev) => [...prev, ...initialAttachments.map(seededChatAttachment)]);
+    onInitialAttachmentsConsumed?.();
+  }, [initialAttachments, onInitialAttachmentsConsumed]);
 
   // ── Auto-trigger from external prompt (e.g. Repair button) ──────────────
   useEffect(() => {

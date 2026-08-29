@@ -15,7 +15,13 @@ import type { AgentAttachment } from '@/eCG/UserPrompt/types';
  * `location.state` comes back empty.
  */
 export interface PendingPrompt {
-  initialPrompt: string;
+  /**
+   * Empty when the handoff carries only attachments -- the dashboard's
+   * "New project" flow has no prompt box, so a user who attaches a file there
+   * has nothing to type. Those attachments still have to survive the same
+   * RequireAuth remount, so the payload is valid with a prompt OR attachments.
+   */
+  initialPrompt?: string;
   fileContext?: string;
   attachments?: AgentAttachment[];
 }
@@ -41,7 +47,12 @@ export function consumePendingPrompt(projectId: string): PendingPrompt | null {
   sessionStorage.removeItem(key);
   try {
     const parsed = JSON.parse(stashed);
-    if (typeof parsed?.initialPrompt !== 'string' || !parsed.initialPrompt) return null;
+    // A prompt OR at least one attachment makes this payload meaningful.
+    // fileContext alone does not: nothing downstream can act on extracted text
+    // with neither a question to answer nor a file to show.
+    const hasPrompt = typeof parsed?.initialPrompt === 'string' && parsed.initialPrompt.length > 0;
+    const hasAttachments = Array.isArray(parsed?.attachments) && parsed.attachments.length > 0;
+    if (!hasPrompt && !hasAttachments) return null;
     return parsed as PendingPrompt;
   } catch {
     return null;

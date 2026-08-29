@@ -18,7 +18,10 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Plus, Grid3x3, List, Database, Settings, Trash2 } from 'lucide-react';
+import { Search, Plus, Grid3x3, List, Database, Settings, Trash2, Paperclip, FileText, X } from 'lucide-react';
+import { uploadChatAttachment, isAllowedFile } from '@/services/chatAttachmentService';
+import { stashPendingPrompt } from '@/services/pendingPromptHandoff';
+import type { AgentAttachment } from '@/eCG/UserPrompt/types';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { DashboardPageHeader } from '@/components/dashboard/DashboardPageHeader';
@@ -58,6 +61,34 @@ export default function DashboardProjects() {
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
 
   const [creating, setCreating] = useState(false);
+  // Files staged before the project exists. They cannot be uploaded yet --
+  // uploadChatAttachment is scoped to a projectId -- so they are held as raw
+  // File objects and uploaded in handleCreateProject once the id is known.
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const createFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleAttachFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    if (attachedFiles.length + files.length > 10) {
+      toast.error('Maximum 10 files allowed');
+      return;
+    }
+    // Gate on isAllowedFile -- the same check the uploader enforces. Accepting
+    // anything wider here just defers the failure to a point where the user
+    // has already navigated away from this screen.
+    for (const file of Array.from(files)) {
+      const check = isAllowedFile(file);
+      if (!check.ok) {
+        toast.error(`${file.name}: ${check.reason}`);
+        return;
+      }
+    }
+    setAttachedFiles((prev) => [...prev, ...Array.from(files)]);
+  };
+
+  const removeAttachedFile = (index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
 
   // Delete confirmation
   const [deleteProjectId, setDeleteProjectId] = useState<string | null>(null);
@@ -323,11 +354,42 @@ export default function DashboardProjects() {
         console.error('[Projects] Failed to initialize storage:', initError);
       }
 
+      // Upload staged files now that a projectId exists. Same pipeline the
+      // chat composer uses, so an image reaches the model's vision path and
+      // place_asset rather than being flattened to text.
+      const attachments: AgentAttachment[] = [];
+      if (attachedFiles.length > 0) {
+        toast.info('Uploading attached files…');
+        for (const file of attachedFiles) {
+          try {
+            const att = await uploadChatAttachment(file, user.id, newProject.id);
+            attachments.push({ name: att.name, type: att.type, category: att.category, tempPath: att.tempPath, publicUrl: att.publicUrl });
+          } catch (err) {
+            console.error('[Projects] Attachment upload failed:', err);
+            // Say so rather than degrading silently: the project is already
+            // created and we are about to navigate away, so a dropped file
+            // would otherwise just never appear with no explanation.
+            toast.error(`Couldn't attach ${file.name}. You can add it again from the chat.`);
+          }
+        }
+      }
+
       toast.success('Project created');
       if (orgId) {
         setCurrentOrganizationId(orgId);
       }
-      navigate(`/project/${newProject.id}`);
+      setAttachedFiles([]);
+
+      if (attachments.length > 0) {
+        // Both carriers, for the reason pendingPromptHandoff.ts documents:
+        // RequireAuth's redirect rebuilds the URL and drops router state.
+        // No initialPrompt -- this surface has no prompt box, so the files
+        // land in the chat composer and the user says what they want next.
+        stashPendingPrompt(newProject.id, { attachments });
+        navigate(`/project/${newProject.id}`, { state: { attachments } });
+      } else {
+        navigate(`/project/${newProject.id}`);
+      }
     } catch (error) {
       console.error('Failed to create project:', error);
       const extractFunctionErrorMessage = async (err: unknown) => {
@@ -481,15 +543,57 @@ export default function DashboardProjects() {
           </button>
         </div>
 
-        <Button
-          className="h-10 gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
-          onClick={handleCreateProject}
-          disabled={creating}
-        >
-          <Plus className="h-4 w-4" />
-          {creating ? 'Creating…' : 'New project'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <input
+            ref={createFileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => { handleAttachFiles(e.target.files); e.target.value = ''; }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 w-10 shrink-0 rounded-full border-border/60 p-0"
+            onClick={() => createFileInputRef.current?.click()}
+            disabled={creating}
+            aria-label="Attach files to the new project"
+            title="Attach files to the new project"
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
+          <Button
+            className="h-10 gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
+            onClick={handleCreateProject}
+            disabled={creating}
+          >
+            <Plus className="h-4 w-4" />
+            {creating ? 'Creating…' : 'New project'}
+          </Button>
+        </div>
       </div>
+
+      {attachedFiles.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">
+            Attached to the next new project:
+          </span>
+          {attachedFiles.map((file, i) => (
+            <span key={`${file.name}-${i}`} className="flex items-center gap-1.5 rounded-full border border-border/60 bg-card/80 py-1 pl-2.5 pr-1.5 text-xs text-foreground">
+              <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <span className="max-w-[10rem] truncate">{file.name}</span>
+              <button
+                type="button"
+                onClick={() => removeAttachedFile(i)}
+                aria-label={`Remove ${file.name}`}
+                className="rounded-full p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       <Tabs
         value={statusFilter}

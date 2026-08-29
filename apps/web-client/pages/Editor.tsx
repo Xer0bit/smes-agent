@@ -137,6 +137,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant', content: string }>>([]);
   const [generatedCode, setGeneratedCode] = useState("");
   const [generatedFiles, setGeneratedFiles] = useState<Array<{ path: string; content: string }>>([]);
+  /** Attachments handed over from the dashboard create flow, seeded into the chat composer. */
+  const [seedChatAttachments, setSeedChatAttachments] = useState<AgentAttachment[] | undefined>(undefined);
   // Lazy editor (2026-08-10): on open, only the revision MANIFEST (paths +
   // hashes) is fetched -- the file tree renders instantly and a file's body
   // downloads when its tab is opened. The full fetch still runs in the
@@ -889,6 +891,16 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
         attachments = pending.attachments;
         fromSessionStorage = true;
       }
+    }
+
+    // Attachments with no prompt: the dashboard's "New project" flow has no
+    // prompt box, so there is nothing to generate FROM yet. Hand them to the
+    // chat composer instead of firing a run -- the user still has to say what
+    // they want done with the file. The prompt path below is unchanged.
+    if (!initialPrompt && attachments && attachments.length > 0) {
+      window.history.replaceState({}, document.title);
+      setSeedChatAttachments(attachments);
+      return;
     }
 
     if (initialPrompt && (state?.shouldGenerate || fromSessionStorage)) {
@@ -2450,6 +2462,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       projectId={projectId}
                       userId={currentUser?.id || `guest:${guestFingerprint || 'anonymous'}`}
                       isMinimized={false}
+                      initialAttachments={seedChatAttachments}
+                      onInitialAttachmentsConsumed={() => setSeedChatAttachments(undefined)}
                       triggerPrompt={repairPrompt}
                       triggerDisplayText={agentTriggerDisplayText}
                       onTriggerConsumed={() => {
@@ -2666,6 +2680,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               projectId={projectId}
               userId={currentUser?.id || `guest:${guestFingerprint || 'anonymous'}`}
               isMinimized={isMinimized}
+              initialAttachments={seedChatAttachments}
+              onInitialAttachmentsConsumed={() => setSeedChatAttachments(undefined)}
               triggerPrompt={repairPrompt}
               triggerDisplayText={agentTriggerDisplayText}
               onTriggerConsumed={() => {

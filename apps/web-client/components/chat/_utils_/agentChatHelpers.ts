@@ -1,4 +1,5 @@
 import type { ChatAttachment } from '@/services/chatAttachmentService';
+import type { AgentAttachment } from '@/eCG/UserPrompt/types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -221,4 +222,34 @@ export function relevanceScore(referenceTokens: Set<string>, text: string): numb
   let hits = 0;
   for (const t of tokens) if (referenceTokens.has(t)) hits++;
   return hits / tokens.length;
+}
+
+/**
+ * Rebuild a composer-ready ChatAttachment from one handed over by another
+ * surface (the dashboard's "New project" flow).
+ *
+ * AgentAttachment is the wire shape that survives the handoff; ChatAttachment
+ * is what the composer renders. Two fields exist only on the latter:
+ *
+ *  - `previewUrl` falls back to `publicUrl`, NOT to an object URL. The object
+ *    URL the original picker made belongs to the page that created it, and the
+ *    handoff crosses a navigation (and possibly a sessionStorage round-trip,
+ *    where it would serialise to a string pointing at nothing).
+ *  - `size` is not carried across the handoff and is only used for the size
+ *    label, so it comes back as 0 rather than being invented.
+ *
+ * `id` is derived from tempPath, which is already unique per upload, so a
+ * double-seed cannot produce two chips with colliding React keys.
+ */
+export function seededChatAttachment(a: AgentAttachment): ChatAttachment {
+  return {
+    id: `seeded-${a.tempPath}`,
+    name: a.name,
+    size: 0,
+    type: a.type,
+    previewUrl: a.publicUrl ?? '',
+    tempPath: a.tempPath,
+    publicUrl: a.publicUrl ?? '',
+    category: a.category,
+  };
 }

@@ -57,8 +57,22 @@ describe('pendingPromptHandoff', () => {
     expect(consumePendingPrompt(projectId)).toBeNull();
   });
 
-  it('treats an entry with a missing/empty initialPrompt as absent', () => {
+  it('treats an entry with neither a prompt nor attachments as absent', () => {
     sessionStorage.setItem(`ecg_pending_prompt_${projectId}`, JSON.stringify({ fileContext: 'stray context' }));
+    expect(consumePendingPrompt(projectId)).toBeNull();
+  });
+
+  it('keeps an attachment-only handoff -- the dashboard has no prompt box', () => {
+    // "New project" on the dashboard creates a bare project: a user who
+    // attaches a file there has nothing to type, and dropping the payload for
+    // want of a prompt would lose the file on the RequireAuth remount.
+    const attachments = [{ name: 'brief.pdf', type: 'application/pdf', category: 'document' as const, tempPath: '/tmp/a' }];
+    stashPendingPrompt(projectId, { attachments });
+    expect(consumePendingPrompt(projectId)).toEqual({ attachments });
+  });
+
+  it('still drops an attachment-only handoff when the array is empty', () => {
+    stashPendingPrompt(projectId, { attachments: [] });
     expect(consumePendingPrompt(projectId)).toBeNull();
   });
 });
