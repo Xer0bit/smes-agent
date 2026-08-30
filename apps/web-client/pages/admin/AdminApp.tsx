@@ -41,12 +41,9 @@ import AdminRolesPermissions from './RolesPermissions';
 import AdminUsage from './Usage';
 import AdminHosting from './Hosting';
 import AdminEcgAgents from './EcgAgents';
-import AdminServers from './Servers';
 import AdminDatabaseHosting from './DatabaseHosting';
 import AdminSystemStatus from './SystemStatus';
 import AdminSettings from './Settings';
-import AdminTenantDetail from './TenantDetail';
-import AdminDemoRequests from './DemoRequests';
 import AdminAIMetrics from './AIMetrics';
 import { cn } from '@/lib/utils';
 
@@ -117,7 +114,6 @@ export default function AdminApp() {
                 { title: 'Organizations', path: '/admin/organizations', icon: Building2 },
                 { title: 'Projects', path: '/admin/projects', icon: FolderKanban },
                 { title: 'Invitations', path: '/admin/invitations', icon: Mail },
-                { title: 'Demo Requests', path: '/admin/demo-requests', icon: Mail },
             ],
         },
         {
@@ -366,15 +362,12 @@ export default function AdminApp() {
                                     <Route path="projects" element={<AdminProjects />} />
                                     <Route path="invitations" element={<AdminInvitations />} />
                                     <Route path="subscriptions" element={<AdminSubscriptions />} />
-                                    <Route path="demo-requests" element={<AdminDemoRequests />} />
                                     <Route path="roles" element={<AdminRolesPermissions />} />
                                     <Route path="usage" element={<AdminUsage />} />
                                     <Route path="ai-metrics" element={<AdminAIMetrics />} />
                                     <Route path="hosting" element={<AdminHosting />} />
                                     <Route path="ecg-agents" element={<AdminEcgAgents />} />
                                     <Route path="database-hosting" element={<AdminDatabaseHosting />} />
-                                    <Route path="servers" element={<AdminServers />} />
-                                    <Route path="tenant/:projectId" element={<AdminTenantDetail />} />
                                     <Route path="system-status" element={<AdminSystemStatus />} />
                                     <Route path="llm-settings" element={<AdminSettings />} />
                                     <Route path="settings" element={<Navigate to="/admin/llm-settings" replace />} />
