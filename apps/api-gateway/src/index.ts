@@ -1,15 +1,9 @@
-import 'dotenv/config'; // loads server/.env first
-import { configDotenv } from 'dotenv';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..', '..');
-// Local dev: load .env.local (project root)   contains production service credentials.
-// Does NOT override server/.env so local overrides always win.
-configDotenv({ path: path.join(ROOT, '.env.local'), override: false });
-// Production / any environment: load .env.production so TENANT_DB_* and other
-// server secrets survive PM2 restarts without needing --update-env.
-configDotenv({ path: path.join(ROOT, '.env.production'), override: false });
+// MUST be the first import. ESM evaluates every import before any statement in
+// this file runs, so env loading has to happen inside an import of its own or
+// the whole ./app.js graph (winston included) evaluates against a bare env.
+// The old inline configDotenv() calls here ran twelve lines too late — see
+// bootstrap-env.ts for the full mechanism and the production incident.
+import './bootstrap-env.js';
 import app from './app.js';
 import { logger } from './utils/logger.js';
 import { ensureBaseTemplate } from './services/baseTemplateService.js';
@@ -19,8 +13,23 @@ import { getLlmControlState } from './services/llm-control.service.js';
 import { probeEmbeddingProvider } from './knowledgebase/index.js';
 import { releaseAllLocksForThisProcess } from './routes/ai.routes.js';
 import type { Server } from 'node:http';
+import { config } from './config/environment.js';
 
 const PORT = process.env.PORT || 5001;
+
+// One line of runtime truth per boot. pm2's records show intent, /proc shows
+// the execve snapshot — neither shows what the logger actually initialized
+// with (both were checked against production on 2026-08-30 and both misled).
+// This is the value winston froze at, logged where every future incident can
+// read it. Presence booleans only for secrets — never values.
+logger.info('[Boot] resolved config', {
+    logLevel: config.logLevel,
+    nodeEnv: config.nodeEnv,
+    port: PORT,
+    serviceRole: process.env.SERVICE_ROLE || 'all',
+    supabaseUrlSet: Boolean(config.supabaseUrl),
+    redisUrlSet: Boolean(process.env.REDIS_URL),
+});
 
 const activeConnections = new Set<import('node:net').Socket>();
 

@@ -409,6 +409,9 @@ GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
 PREVIEW_SERVICE_URL=${PREVIEW_SERVICE_URL:-https://preview.ecomgear.app}
 PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}
+# Logger verbosity. Settable durably from .deploy.env; defaults to info.
+# Without this line, deploys silently deleted any live-set LOG_LEVEL.
+LOG_LEVEL=${LOG_LEVEL:-info}
 HOSTING_SERVICE_URL=${HOSTING_SERVICE_URL:-}
 HOSTING_SERVICE_SECRET=${HOSTING_SERVICE_SECRET:-}
 ECG_AUTH_BASE_URL=${ECG_AUTH_BASE_URL:-https://auth.ecomgear.ai}
@@ -613,6 +616,9 @@ SUPABASE_URL=https://api.ecomgear.dev
 SUPABASE_SERVICE_ROLE_KEY=${SK}
 PREVIEW_CHILD_PROCESS_MODE=${PREVIEW_CHILD_PROCESS_MODE:-off}
 PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}
+# Logger verbosity. Settable durably from .deploy.env; defaults to info.
+# Without this line, deploys silently deleted any live-set LOG_LEVEL.
+LOG_LEVEL=${LOG_LEVEL:-info}
 ENV
 ENVREMOTE
     step "Remote: installing node_modules on VPS2 (npm ci, not shipped over the network)..."
@@ -797,6 +803,9 @@ ECOMGEAR_SERVER_URL=${ECOMGEAR_SERVER_URL}
 DASHBOARD_ACCESS_SECRET=${DASHBOARD_ACCESS_SECRET:-}
 FUNCTIONS_INTERNAL_SECRET=${FUNCTIONS_INTERNAL_SECRET:-}
 PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}
+# Logger verbosity. Settable durably from .deploy.env; defaults to info.
+# Without this line, deploys silently deleted any live-set LOG_LEVEL.
+LOG_LEVEL=${LOG_LEVEL:-info}
 # Redis for the Redlock project lock (agentProjectLock.ts). Localhost-only on
 # VPS3 (bind 127.0.0.1, protected-mode on, port 6379 confirmed unreachable
 # externally 2026-08-10). Before this, no Redis existed anywhere and the lock
