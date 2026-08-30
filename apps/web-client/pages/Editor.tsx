@@ -392,7 +392,6 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   // (onFilesGenerated fires once at completion, onPreviewCommand only on a
   // user-issued refresh), so it doesn't reliably span a run that pushes
   // multiple times mid-way (auto-fix passes). This does, unconditionally.
-  const [isAgentGenerating, setIsAgentGenerating] = useState(false);
   // Stable handler: advances the preview base seq only on the running->idle
   // TRANSITION (the moment newer agent state exists). An inline arrow here
   // would re-run the child's effect every render and bump the seq while
@@ -409,7 +408,6 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
       }).catch(() => { /* keep previous base */ });
     }
     wasGeneratingRef.current = g;
-    setIsAgentGenerating(g);
   }, [projectId]);
   /** Last completed run wrote no files -- dims the preview instead of revealing
    * an unchanged frame as if work landed. See MultiDevicePreview's noChanges. */
@@ -3579,7 +3577,6 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                   inspectMode={inspectMode}
                   onInspectModeChange={setInspectMode}
                   installingDependency={installingDependency}
-                  isGenerating={isAgentGenerating}
                   noChanges={lastRunNoChanges}
                   onRepair={(errorSummary) => {
                     setRepairPrompt(errorSummary);
