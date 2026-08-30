@@ -20,6 +20,7 @@ import {
 import { Search, Pencil, Trash2, FolderKanban, Users } from 'lucide-react';
 import { ProjectMemberAccess } from '@/components/ProjectMemberAccess';
 import { toast } from 'sonner';
+import { confirmRowDeleted } from '@/services/confirmDeletion';
 
 const PAGE_SIZE = 20;
 
@@ -117,7 +118,10 @@ export default function Projects() {
     try {
       const { error } = await supabase.from('projects').delete().eq('id', id);
       if (error) throw error;
-      toast.success('Project deleted');
+      const outcome = await confirmRowDeleted('projects', id);
+      toast.success(outcome === 'gone'
+        ? 'Project deleted'
+        : 'Delete sent, but it could not be confirmed. Refresh to check.');
       loadProjects();
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete project');

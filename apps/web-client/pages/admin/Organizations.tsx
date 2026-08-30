@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/pagination';
 import { Search, Pencil, Trash2, Plus, Building2, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmRowDeleted } from '@/services/confirmDeletion';
 
 const PAGE_SIZE = 20;
 
@@ -157,7 +158,11 @@ export default function Organizations() {
     try {
       const { error } = await supabase.from('organizations').delete().eq('id', id);
       if (error) throw error;
-      toast.success('Organization deleted');
+      // A DELETE matching zero rows returns no error, so confirm before claiming it.
+      const outcome = await confirmRowDeleted('organizations', id);
+      toast.success(outcome === 'gone'
+        ? 'Organization deleted'
+        : 'Delete sent, but it could not be confirmed. Refresh to check.');
       loadOrganizations();
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete');

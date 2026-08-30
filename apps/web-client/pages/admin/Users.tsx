@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/pagination';
 import { Search, Pencil, Trash2, Shield, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmRowDeleted } from '@/services/confirmDeletion';
 
 const PAGE_SIZE = 20;
 
@@ -202,7 +203,14 @@ export default function Users() {
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      toast.success('User deleted   email is now free to re-register');
+      // The function returning { success: true } is a claim, not proof. An
+      // account reported deleted was still signing in days later because
+      // nothing ever re-checked. The profile row is what this list renders,
+      // so its absence is the honest confirmation.
+      const outcome = await confirmRowDeleted('profiles', id);
+      toast.success(outcome === 'gone'
+        ? 'User deleted   email is now free to re-register'
+        : 'Delete sent, but it could not be confirmed. Refresh to check.');
       loadUsers();
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete user');
