@@ -187,6 +187,56 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   // this panel can observe but not attach to). Held in a ref so the effect's
   // cleanup can stop it on unmount/project switch.
   const activeRunPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const staleGenerationPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Recover a generating state the server has already finished ──────────
+  // The composer is gated on isGenerating, and until now nothing could clear
+  // it once the SSE stream ended without delivering 'done' -- a dropped
+  // connection, a backgrounded tab, or a 5-minute run whose socket died all
+  // leave the panel permanently disabled. The reconnect effect below handles
+  // "server says active" in two forms but has no branch for the inverse, and
+  // it only re-runs on [projectId, rejoinNonce], so sitting on the page
+  // recovers nothing. Confirmed live 2026-08-30: the browser was polling
+  // /active-run and being told {"active":false} while the send button stayed
+  // dead, and the server logs show the user's prompts never left the browser.
+  //
+  // Two consecutive negative answers are required. A run that has just been
+  // accepted is not registered instantly, so a single 'inactive' during
+  // start-up is expected and must not cancel a real generation.
+  useEffect(() => {
+    if (!isGenerating || !projectId) return;
+    let cancelled = false;
+    let consecutiveInactive = 0;
+
+    const poll = setInterval(async () => {
+      try {
+        const { data: { session } } = await lovableCloud.auth.getSession();
+        if (!session || cancelled) return;
+        const [url] = getGenServerCandidateUrls(`/api/v1/ai/active-run/${projectId}`);
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } });
+        if (!r.ok || cancelled) return;
+        const json = await r.json();
+        if (cancelled) return;
+
+        if (json.active) { consecutiveInactive = 0; return; }
+        consecutiveInactive += 1;
+        if (consecutiveInactive < 2) return;
+
+        clearInterval(poll);
+        setIsGenerating(false);
+        setStatusText('');
+        setLiveThought('');
+      } catch {
+        // Network blip: say nothing and keep the run marked active. Clearing
+        // on a failed probe would abandon a generation that is still running.
+        consecutiveInactive = 0;
+      }
+    }, 8000);
+
+    staleGenerationPollRef.current = poll;
+    return () => { cancelled = true; clearInterval(poll); staleGenerationPollRef.current = null; };
+  }, [isGenerating, projectId]);
+
   const [pendingAdminSql, setPendingAdminSql] = useState<PendingAdminSqlChange[]>([]);
   const [confirmingSqlId, setConfirmingSqlId] = useState<string | null>(null);
   const refreshPendingAdminSql = useCallback(async () => {
