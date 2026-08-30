@@ -39,6 +39,7 @@ import { publishSiteTool } from '../agent-tools/publish_site.js';
 import { checkTsSyntaxInLoop } from './agentContextCompaction.js';
 import { validateCodeAst } from './agentAstValidation.js';
 import { applySearchReplace } from '../agent-tools/edit_file.js';
+import { inspectGeneratedCode } from '../agent-tools/generatedCodePreflight.js';
 
 // Tools irrelevant to a single-file, single-property "micro" change (color/text/
 // one-line fixes   see MICRO_SYSTEM_PROMPT). Every tool schema sent costs real
@@ -331,6 +332,20 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
           }
 
           if (contentToValidate !== null) {
+            // Semantic guard, ahead of the AST check: both patterns below are
+            // valid TypeScript, so esbuild, the AST reflection pass and the
+            // preview build all accept them. They reach the customer's live
+            // preview and throw at runtime. See generatedCodePreflight.ts.
+            const generatedIssues = inspectGeneratedCode(args.path, contentToValidate);
+            if (generatedIssues.length > 0) {
+              return (
+                `BLOCKED (would ship a runtime crash): "${args.path}" was NOT written.\n` +
+                generatedIssues.map((i) => `  • Line ${i.line}: ${i.message}`).join('\n') +
+                `\n\nFix these and write again. Both compile cleanly, so nothing downstream ` +
+                `will catch them -- they surface only as a broken page for the user.`
+              );
+            }
+
             const astCheck = validateCodeAst(args.path, contentToValidate);
             if (!astCheck.valid) {
               const errorLines = astCheck.errors
