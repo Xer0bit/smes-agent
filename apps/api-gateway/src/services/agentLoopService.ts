@@ -5430,6 +5430,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       if (supabase && agentRunId) {
         supabase.from('agent_runs').update({
           status: 'completed',
+          // The column has existed since 20260417100000 with DEFAULT false and
+          // nothing ever wrote it, so all 3478 rows read "not promoted" --
+          // indistinguishable from 3478 genuinely failed pushes. previewPushOk
+          // already holds the answer (and is already reported to the client as
+          // `previewPushed`); it just never reached the row.
+          preview_promoted: previewPushOk,
           preview_errors: previewSmokeErrors,
           steps_taken: stepCount,
           files_written: distinctAgentEditCount,
