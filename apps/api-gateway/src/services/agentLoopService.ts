@@ -2,6 +2,7 @@
 import { streamText, generateText, ToolSet, stepCountIs, jsonSchema, wrapLanguageModel } from 'ai';
 import { phantomAbortThresholdFor, isStuckAndBuildKnownBroken, unfulfilledPromiseNote, DIAGNOSIS_TOOL_NAMES, extractImplicatedFiles, shouldSeedScope } from './agentGating.js';
 import { reconcileClientFilesToHead } from './agentFileReconcile.js';
+import { shouldRevertToPreAgentSnapshot } from './agentGating.js';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -731,6 +732,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // text, which is empty on an aborted run even if native write_file/edit_file
   // tool calls already succeeded earlier in the same run. Track that directly.
   let anySuccessfulWriteThisRun = false;
+  // True once the main generation loop finished (RUN COMPLETE). After this, the
+  // disk holds the agent's COMPLETED output, so a timeout during the slow post-run
+  // preview push must NOT revert to the pre-agent snapshot -- that would discard
+  // finished work (the logo-replace 'stuck then reverted' incident, 2026-08-31).
+  let agentGenerationComplete = false;
 
   // Set when onStepFinish aborts the run for hitting the token/cost cap   lets
   // the summary-building code downstream tell the difference between "the
@@ -2034,7 +2040,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // mentioned file only)   using a partial file set here would delete
       // the rest of the project on the next fullSync, so micro tier keeps
       // the original disk-scan fallback.
-      const useCleanSnapshot = _tier !== 'micro' && preAgentDiskSnapshot.size > 0;
+      const useCleanSnapshot = shouldRevertToPreAgentSnapshot(_tier, preAgentDiskSnapshot.size > 0, agentGenerationComplete);
 
       let salvageFiles: Array<{ path: string; content: string }>;
       if (useCleanSnapshot) {
@@ -2090,7 +2096,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           mode: runtimeMode,
           summary: useCleanSnapshot
             ? 'Agent timed out mid-repair. Reverted to the last known-good state.'
-            : 'Agent timed out. Partial progress was saved.',
+            : agentGenerationComplete
+              ? 'Your changes were saved; the preview was still finishing when the run timed out. Reload if it looks behind.'
+              : 'Agent timed out. Partial progress was saved.',
           tokensUsed: 0,
           costUsd: 0,
           ecoUsed: 0,
@@ -3132,6 +3140,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // Accumulated per-step (serving-model-priced) when available;
             // calcCost only as fallback for streams onStepFinish never saw.
             const totalCost = runCostUsd > 0 ? runCostUsd : calcCost(totalIn, totalOut, totalCR, totalCW);
+            agentGenerationComplete = true;
             logger.info('[AgentLoop] RUN COMPLETE', {
               projectId, userId, agentRunId,
               inputTokens: totalIn, outputTokens: totalOut, cacheReadTokens: totalCR, cacheWriteTokens: totalCW,

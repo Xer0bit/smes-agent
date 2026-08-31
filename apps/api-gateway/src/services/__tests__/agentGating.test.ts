@@ -18,6 +18,7 @@ import {
   phantomAbortThresholdFor,
   isStuckAndBuildKnownBroken,
   unfulfilledPromiseNote,
+  shouldRevertToPreAgentSnapshot,
 } from '../agentGating.js';
 
 describe('phantomAbortThresholdFor', () => {
@@ -60,5 +61,19 @@ describe('unfulfilledPromiseNote', () => {
       expect(note).toContain("Let me know if you'd like me to go ahead");
       expect(note).not.toContain('showed real errors');
     }
+  });
+});
+
+describe('shouldRevertToPreAgentSnapshot (timeout salvage)', () => {
+  it('reverts when interrupted mid-work (not complete) with a snapshot', () => {
+    expect(shouldRevertToPreAgentSnapshot('feature', true, false)).toBe(true);
+    expect(shouldRevertToPreAgentSnapshot('fix', true, false)).toBe(true);
+  });
+  it('does NOT revert once generation completed -- keeps the finished work', () => {
+    expect(shouldRevertToPreAgentSnapshot('feature', true, true)).toBe(false);
+  });
+  it('never reverts for micro (partial snapshot) or when no snapshot exists', () => {
+    expect(shouldRevertToPreAgentSnapshot('micro', true, false)).toBe(false);
+    expect(shouldRevertToPreAgentSnapshot('feature', false, false)).toBe(false);
   });
 });

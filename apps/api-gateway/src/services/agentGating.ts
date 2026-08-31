@@ -93,3 +93,21 @@ export function extractImplicatedFiles(steps: ReadonlyArray<DiagnosisStep> | und
 export function shouldSeedScope(implicatedFiles: Set<string>, diagnosisText: string | undefined): boolean {
   return implicatedFiles.size > 0 && implicatedFiles.size <= 10 && Boolean(diagnosisText?.trim());
 }
+
+// ── Timeout salvage (2026-08-31 logo-replace incident) ───────────────────────
+
+/**
+ * On an agent-run timeout, whether to REVERT to the pre-agent snapshot instead
+ * of keeping the current disk. Revert only when the run was interrupted
+ * mid-work (disk may be half-repaired). Once generation COMPLETED (RUN
+ * COMPLETE), the disk holds the finished result -- a timeout during the slow
+ * post-run preview push must keep it, never throw it away. micro tier has only
+ * a partial snapshot so it never reverts.
+ */
+export function shouldRevertToPreAgentSnapshot(
+  tier: string | undefined,
+  hasPreAgentSnapshot: boolean,
+  generationComplete: boolean,
+): boolean {
+  return tier !== 'micro' && hasPreAgentSnapshot && !generationComplete;
+}
