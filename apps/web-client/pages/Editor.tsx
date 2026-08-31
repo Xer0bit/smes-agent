@@ -1175,7 +1175,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             // Any real drift is corrected the moment the user makes a change, or
             // by a hard refresh. hasDirtyOverrides still forces a push so unsaved
             // in-browser edits are never lost.
-            if (!hasDirtyOverrides) {
+            {
               const syncState = await getPreviewSyncState(projectId!);
               const headSeqMs = Date.parse(previewBaseSeqRef.current || '');
               const provenStale =
@@ -1183,6 +1183,10 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                 typeof syncState.heldSeq === 'number' &&
                 Number.isFinite(headSeqMs) &&
                 syncState.heldSeq < headSeqMs - 10_000;
+              // No hasDirtyOverrides gate: on a fresh editor load the workspace
+              // starts empty, and forcing a re-host whenever a stale dirty flag
+              // lingers was defeating the whole point. A live+healthy preview is
+              // kept as-is; a real edit or save pushes on its own path.
               if (syncState && syncState.live && syncState.healthy && !provenStale) {
                 const baseUrl = getPreviewUrl(projectId!);
                 setPreviewUrl((prev) => (prev && prev.startsWith(baseUrl) ? prev : baseUrl));

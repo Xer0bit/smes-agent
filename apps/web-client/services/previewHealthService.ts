@@ -231,6 +231,11 @@ export async function getPreviewSyncState(
     const base = DOCKER_PREVIEW_URL.replace(/\/$/, '');
     const res = await fetch(`${base}/preview/${projectId}/status`, {
       credentials: 'include',
+      // no-store: /status carries an ETag, so without this the browser serves
+      // a cached 304 body -- which, if cached before the live/heldSeq fields
+      // existed, has no `live` field, so the open-skip below never fires and
+      // the editor re-hosts on every load. Always read a fresh status.
+      cache: 'no-store',
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
