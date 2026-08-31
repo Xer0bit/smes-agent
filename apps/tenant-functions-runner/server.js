@@ -68,6 +68,31 @@ function verifyTenantJwt(token) {
   }
 }
 
+function b64url(str) {
+  return Buffer.from(str).toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+// Mint a short-lived SERVICE-role token for a schema, so db.* calls inside an
+// edge function run with write access. The frontend only ever holds the anon
+// key (SELECT-only by design, since it ships in the browser bundle), and an
+// edge function used to inherit that anon grant -- which meant NO app could
+// ever INSERT/UPDATE/DELETE through a function: every write 403'd with
+// "permission denied for table X". Edge functions are the trusted, validated,
+// admin-authored server layer; they are exactly where writes belong, so they
+// run as <schema>_service. The caller is still authenticated by their own
+// token above; this only governs what the function's db helper may do, scoped
+// to this one schema. Signed the same way verifyTenantJwt checks.
+function mintServiceToken(schema) {
+  const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const body = b64url(JSON.stringify({
+    role: `${schema}_service`,
+    exp: Math.floor(Date.now() / 1000) + 300,
+  }));
+  const sig = createHmac('sha256', TENANT_DB_JWT_SECRET).update(`${header}.${body}`).digest('base64')
+    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  return `${header}.${body}.${sig}`;
+}
+
 function requireInternalSecret(req, res, next) {
   if (req.headers['x-internal-secret'] !== FUNCTIONS_INTERNAL_SECRET) {
     res.status(401).json({ error: 'Invalid internal secret.' });
@@ -171,8 +196,11 @@ async function handleInvoke(req, res) {
     const secrets = Object.fromEntries(secretRows.map((r) => [r.key_name, r.key_value]));
 
     const apiUrl = `${req.protocol}://${req.get('host')}/${schema}`.replace(/^http:/, 'https:');
-    const dbCtx = { apiUrl, schema, anonKey: '', serviceKey: token };
-    // Note: serviceKey here is whichever key the caller authenticated with  
+    // db.* runs as the schema's SERVICE role so functions can actually write.
+    // The caller was already authenticated by verifyTenantJwt above; this token
+    // only scopes the function's own db access to this schema.
+    const dbCtx = { apiUrl, schema, anonKey: '', serviceKey: mintServiceToken(schema) };
+    // Historical note: serviceKey used to be the caller's own (anon) token  
     // db.* calls made from a function invoked with the anon key run with
     // anon-level Postgres GRANTs, not elevated service-role access. This
     // matches the documented no-RLS, GRANT-scoped isolation model.
