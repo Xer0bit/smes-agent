@@ -9,6 +9,35 @@ import { validateEdgeFunctionCode } from '../edgeFunctionValidator.js';
 // that matter here with nothing to catch it.
 
 describe('validateEdgeFunctionCode', () => {
+  // ── db envelope destructure (the cqjobs [] bug, 2026-08-31) ──────────────
+  const msgs = (code: string) => validateEdgeFunctionCode(code).map((i) => i.message).join(' | ');
+
+  it('rejects { data, error } destructured from db.select — always returns []', () => {
+    const m = msgs("const { data, error } = await db.select('categories'); return data || [];");
+    expect(m).toMatch(/Do not destructure \{ data, error \} from db\.select/);
+  });
+
+  it('catches it on db.insert/update/rpc too, not just select', () => {
+    for (const method of ['insert', 'update', 'rpc']) {
+      const m = msgs(`const { data, error } = await db.${method}('t', {}); return data;`);
+      expect(m).toMatch(new RegExp(`db\\.${method}`));
+    }
+  });
+
+  it('ALLOWS the correct form: a plain assignment from db.select', () => {
+    // This is the fix, and must never be flagged.
+    expect(msgs("const rows = await db.select('categories'); return rows;")).toBe('');
+  });
+
+  it('does NOT flag { data, error } destructured from something that is not db', () => {
+    // A real supabase client legitimately returns { data, error }. Only db.* is wrong.
+    expect(msgs("const { data, error } = await supabase.from('t').select(); return data;")).toBe('');
+  });
+
+  it('does NOT flag an ordinary object destructure', () => {
+    expect(msgs("const { name, price } = await db.select('gigs'); return name;")).toBe('');
+  });
+
   it('allows clean code', () => {
     const issues = validateEdgeFunctionCode('const x = await db.select("users"); return x;');
     expect(issues).toEqual([]);

@@ -131,6 +131,45 @@ export function validateEdgeFunctionCode(code: string): ValidationIssue[] {
   }
 
   walkAncestor(ast, {
+    VariableDeclarator(node: acorn.VariableDeclarator) {
+      // The single most common data bug in generated functions: destructuring
+      // { data, error } from a db.* call. The runner's db.select/insert/update/
+      // delete/rpc return the PostgREST result DIRECTLY (a bare array or row),
+      // never a supabase-js { data, error } envelope, and they THROW on failure
+      // rather than returning an error field. So `const { data, error } =
+      // await db.select('t')` leaves data === undefined on every call, and
+      // `return data || []` ships an empty result while the table is full.
+      // Shipped live in cqjobs (get-categories/get-job-types/get-gigs, all
+      // returning [] against a populated DB, 2026-08-31). Every gate passed it:
+      // valid syntax, no banned identifier, clean AST.
+      if (
+        node.id.type === 'ObjectPattern' &&
+        node.init != null
+      ) {
+        const call = unwrapAwait(node.init);
+        if (call.type === 'CallExpression') {
+          const callee = (call as acorn.CallExpression).callee;
+          if (
+            callee.type === 'MemberExpression' &&
+            memberChainName(callee.object as acorn.Expression) === 'db'
+          ) {
+            const keys = node.id.properties
+              .map((pr) => (pr.type === 'Property' ? propertyKeyName(pr as acorn.Property) : null))
+              .filter((k): k is string => k !== null);
+            if (keys.includes('data') || keys.includes('error')) {
+              const method = callee.property.type === 'Identifier' ? callee.property.name : 'select';
+              issues.push({
+                message: `Do not destructure { data, error } from db.${method}(). The db helper returns the ` +
+                  `result directly -- a bare array or row, not a { data, error } envelope -- and throws on failure. ` +
+                  `As written, data is always undefined and the function returns nothing. Use ` +
+                  `\`const rows = await db.${method}(...)\` and return \`rows\`; wrap in try/catch if you need to ` +
+                  `handle an error.`,
+              });
+            }
+          }
+        }
+      }
+    },
     Identifier(node: acorn.Identifier) {
       if (BANNED_IDENTIFIERS.has(node.name)) {
         issues.push({
