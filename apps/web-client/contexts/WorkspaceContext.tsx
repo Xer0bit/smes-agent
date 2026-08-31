@@ -156,6 +156,33 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
             return;
         }
 
+        // Clobber guard: never auto-save a revision drastically smaller than the
+        // current head. A crash or interrupted load can leave the workspace with
+        // only a file or two and empty carry paths; without this, that partial
+        // state saves as the new head and effectively wipes the project (observed
+        // on CardPro 2026-08-31: a post-crash auto-save collapsed 193 files to 2,
+        // and each later save carried from that bad head, cascading). Legitimate
+        // edits and deletions never approach a >50% shrink, so this only blocks
+        // the corruption case; on any doubt it proceeds (fail-open).
+        const projectedCount = dirtyFiles.length + carryPaths.size;
+        try {
+            const { data: headRev } = await supabase
+                .from('revisions')
+                .select('generated_files')
+                .eq('project_id', projectId)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            const gf: any = headRev?.generated_files;
+            const headCount = Array.isArray(gf?.files) ? gf.files.length : 0;
+            if (headCount >= 20 && projectedCount < headCount * 0.5) {
+                console.warn(`[WorkspaceContext] Auto-save BLOCKED (clobber guard): would shrink head ${headCount} -> ${projectedCount} files. Partial workspace, likely after an interrupted load/crash -- not overwriting head. Reload the project to recover the full file set.`);
+                return;
+            }
+        } catch (guardErr) {
+            console.warn('[WorkspaceContext] clobber-guard head-count check failed (non-fatal, proceeding):', guardErr);
+        }
+
         setIsLoading(true);
         try {
             const filesList = dirtyFiles;
