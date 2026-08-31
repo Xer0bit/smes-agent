@@ -1159,32 +1159,36 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               throw new Error(health.error || 'Preview service unavailable');
             }
 
-            // Fast path: if a live preview already holds this head revision (or
-            // newer) and nothing unsaved needs pushing, skip the re-materialize
-            // entirely. Re-hosting an already-current preview on every editor
-            // open just restarts Vite and reloads every file for no gain -- the
-            // exact "why does it re-host what's already working" waste. Any
-            // uncertainty (preview not live, seq unknown/older, dirty edits, or
-            // the status probe fails) falls through to the full sync below.
-            // heldSeq is in-memory on the preview: after an LRU eviction or a
-            // preview restart it is null, so a genuinely gone preview correctly
-            // re-hosts. The 10s slack absorbs the agent-push-vs-revision-insert
-            // ordering the STALE_BASE guard already tolerates.
-            const headSeqMs = Date.parse(previewBaseSeqRef.current || '');
-            if (!hasDirtyOverrides && Number.isFinite(headSeqMs)) {
+            // Fast path: if a live, healthy preview is already serving this
+            // project and nothing unsaved needs pushing, DON'T re-host on open.
+            // Keep the already-hosted URL in the iframe and return -- no push,
+            // no Vite restart, no file reload. This is the explicit product
+            // requirement: on editor load, use the pre-hosted preview; only
+            // re-materialize when the user actually changes something (an edit
+            // or agent run pushes on its own path, not through here).
+            //
+            // Staleness guard: we only DECLINE to skip when heldSeq positively
+            // proves the preview is older than the head revision. When heldSeq
+            // is unknown (null -- the common case, since partial asset pushes
+            // don't always record one) we still trust a live+healthy preview,
+            // because forcing a full re-host on every open was the actual bug.
+            // Any real drift is corrected the moment the user makes a change, or
+            // by a hard refresh. hasDirtyOverrides still forces a push so unsaved
+            // in-browser edits are never lost.
+            if (!hasDirtyOverrides) {
               const syncState = await getPreviewSyncState(projectId!);
-              if (
-                syncState &&
-                syncState.live &&
-                syncState.healthy &&
+              const headSeqMs = Date.parse(previewBaseSeqRef.current || '');
+              const provenStale =
+                syncState != null &&
                 typeof syncState.heldSeq === 'number' &&
-                syncState.heldSeq >= headSeqMs - 10_000
-              ) {
+                Number.isFinite(headSeqMs) &&
+                syncState.heldSeq < headSeqMs - 10_000;
+              if (syncState && syncState.live && syncState.healthy && !provenStale) {
                 const baseUrl = getPreviewUrl(projectId!);
                 setPreviewUrl((prev) => (prev && prev.startsWith(baseUrl) ? prev : baseUrl));
                 setLatestPreviewUrl(baseUrl);
                 transitionPreviewStatus('ready', { message: 'Preview Ready' });
-                console.log('[Editor] Preview already live and current (heldSeq >= head) -- skipped re-host');
+                console.log('[Editor] Live healthy preview -- kept hosted URL, skipped re-host');
                 return;
               }
             }
