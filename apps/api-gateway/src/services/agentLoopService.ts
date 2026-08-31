@@ -20,7 +20,7 @@ import { PRE_INSTALLED_PACKAGES } from './baseTemplateService.js';
 import { RunStateLedger } from './runStateLedger.js';
 import { canonicalizeModelId, DEFAULT_PRIMARY_MODEL, DEFAULT_FALLBACK_MODEL } from '../config/models.js';
 import { runPreviewSmokeCheck } from './previewSmokeCheck.service.js';
-import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols } from '../knowledgebase/index.js';
+import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols, getProvider } from '../knowledgebase/index.js';
 import { persistAgentRevision } from './agentRevisionPersist.service.js';
 import { captureThumbnail } from './thumbnailService.js';
 import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
@@ -1008,28 +1008,43 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         ])
       : Promise.resolve({ hit: false });
 
-  // KB vector retrieval   skip for micro (partial snapshot) and fix (2s latency with no benefit;
-  // fix agent calls get_build_errors first and reads only the broken file).
-  const kbScores = new Map<string, number>(); // path → 0-50 bonus points
-  if (_tier !== 'micro' && _tier !== 'fix' && projectId) {
-    logger.debug('_runAgentLoopInner: retrieving relevant files from KB', { projectId, mentionedPathCount: directlyMentioned.size });
+  // KB retrieval   rank the initial working set by relevance to the prompt.
+  // Only 'micro' is excluded (8-step trivial tweaks on a partial snapshot).
+  // fix/edit are INCLUDED: the production provider is BM25 (pure in-memory   no
+  // embedding key is set, see detectProvider), so retrieval returns in tens of
+  // ms, not the "2s latency" an earlier comment used to justify skipping fix.
+  // Skipping the two most common tiers meant most runs got path-heuristic
+  // ordering only; BM25 keyword matching on the prompt (component/function
+  // names the user actually typed) is a real improvement there for free.
+  // The timeout is provider-aware: BM25 is instant, but a future embeddings
+  // switch (google/openai) does a real embed+DB round-trip that 2s would cut
+  // off mid-flight, so the DB path gets a realistic budget.
+  const kbScores = new Map<string, number>(); // path -> bonus points added to the heuristic sort
+  if (_tier !== 'micro' && projectId) {
+    const kbProvider = getProvider();
+    const kbTimeoutMs = kbProvider === 'bm25' ? 1500 : 6000;
+    logger.debug('_runAgentLoopInner: retrieving relevant files from KB', {
+      projectId, tier: _tier, kbProvider, kbTimeoutMs, mentionedPathCount: directlyMentioned.size,
+    });
     try {
       const kbResults = await Promise.race([
         retrieveRelevantFiles(projectId, prompt, fileSources, {
-          maxFiles: 6,
-          graphExpansion: false,
+          maxFiles: 10,
+          graphExpansion: false, // imports/dependents are already scored separately below
           mentionedPaths: [...directlyMentioned],
         }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('kb timeout')), 2000)),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('kb timeout')), kbTimeoutMs)),
       ]);
       // Multiply by 80 so a strong KB hit (score 0.8) = 64 pts   enough to beat the
       // criticalFiles baseline (60) and actually influence file selection.
       for (const r of kbResults) kbScores.set(r.path, Math.round(r.score * 80));
-      logger.debug('_runAgentLoopInner: KB retrieval complete', { projectId, resultCount: kbResults.length });
+      logger.debug('_runAgentLoopInner: KB retrieval complete', { projectId, tier: _tier, resultCount: kbResults.length });
     } catch (kbErr: any) {
-      // Non-fatal   heuristic sort still works without KB
-      logger.debug('_runAgentLoopInner: KB retrieval failed or timed out (non-fatal, falling back to heuristic sort)', {
-        projectId, error: kbErr?.message,
+      // Non-fatal   heuristic sort still works without KB. info, not debug: a
+      // retrieval that keeps timing out is a real signal worth seeing now that
+      // log levels are honored (bootstrap-env fix), not something to hide.
+      logger.info('_runAgentLoopInner: KB retrieval failed or timed out (non-fatal, using heuristic sort)', {
+        projectId, tier: _tier, error: kbErr?.message,
       });
     }
   }
