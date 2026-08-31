@@ -1000,16 +1000,18 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // run concurrently -- up to ~2.5s off the worst case for a fresh-project
   // first-build prompt (previously up to 2000ms KB + 2500ms cache = 4500ms
   // serial; now max(2000, 2500) = 2500ms).
-  // DISABLED (2026-08-31 incident): the cross-project semantic cache replaced a
-  // whole project's codebase with an unrelated one. It matched a CardPro request
-  // to a CQjobs snapshot at 0.98 similarity and the agent materialized CQjobs'
-  // entire file set into CardPro. A cache that can serve ONE project's full
-  // snapshot into ANOTHER project is unsafe at any similarity threshold: prompt
-  // embeddings match on generic wording, not real intent, and injecting a full
-  // foreign snapshot as a "reference to adapt" makes the model clone it. Kept
-  // wired but hard-off until it is redesigned to never inject a cross-project
-  // full snapshot (e.g. same-project only, or a small ignorable hint, never a
-  // whole materialized file set). Do not re-enable by flipping this alone.
+  // DISABLED (2026-08-31 incident): the semantic cache replaced a whole project's
+  // codebase with an unrelated one -- it matched a CardPro request to a CQjobs
+  // snapshot at 0.98 similarity and the agent materialized CQjobs' entire file
+  // set into CardPro. The schema (agent_semantic_cache) stores NO project_id and
+  // NO user_id, so it is a global pool: any build can be served any other
+  // project's -- and any other USER's -- files. That is a cross-user data leak,
+  // not just a correctness bug, and no similarity threshold makes it safe.
+  // Re-enabling requires a real redesign, NOT flipping this flag: the table must
+  // carry project_id + user_id, matches must be scoped (same user at minimum),
+  // and a hit must never inject a full materializable foreign snapshot -- at most
+  // a short, ignorable textual hint. Both this read and the write below are
+  // gated on this flag so they can never diverge.
   const SEMANTIC_CACHE_ENABLED = false;
   const semanticCachePromise: Promise<{ hit: boolean; cachedSnapshot?: Record<string, string>; similarity?: number }> =
     (SEMANTIC_CACHE_ENABLED && isEmptyProject && isFirstMessage && runtimeMode === 'build' && !(attachments && attachments.length > 0))
@@ -5591,7 +5593,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // for a different project's near-identical prompt is safe: a fresh
     // project has nothing to conflict with. Fire-and-forget; never blocks the
     // response the user is waiting on.
-    if (isEmptyProject && isFirstMessage && runtimeMode === 'build'
+    // Also OFF (2026-08-31 incident): populating the cache means writing this
+    // project's file contents into a pool that has NO project_id and NO user_id,
+    // so those files could later be served into a different user's project. Kept
+    // gated on the same flag so read and write can never diverge.
+    if (SEMANTIC_CACHE_ENABLED && isEmptyProject && isFirstMessage && runtimeMode === 'build'
       && doneFilesToWrite.length > 0 && !stuckAnalysisAbortReason) {
       const snapshot: Record<string, string> = {};
       for (const f of doneFilesToWrite) snapshot[f.path] = f.content;
