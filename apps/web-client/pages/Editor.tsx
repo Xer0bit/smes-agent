@@ -1375,6 +1375,29 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     // onClick handler), treat it as "no override" so we fall back to workspace state.
     const safeOverride = Array.isArray(overrideFiles) ? overrideFiles : undefined;
 
+    // Open-time fast path (single choke point for every trigger). If this is an
+    // initial display -- no override files AND no preview URL yet -- and a live,
+    // healthy preview is already hosted, keep its URL in the frame instead of
+    // re-materializing. This is what stops the re-host on editor load: every
+    // open-time caller (the workspace-load-complete effect, the debounced editor
+    // sync, the JSONB-null fallback) routes through here. Genuine changes pass
+    // overrideFiles, and an explicit refresh runs with previewUrl already set --
+    // both fall through and push normally. A new/unhosted project isn't live, so
+    // it builds as before.
+    if (!safeOverride && !previewUrlRef.current && projectId) {
+      try {
+        const st = await getPreviewSyncState(projectId);
+        if (st && st.live && st.healthy) {
+          const baseUrl = getPreviewUrl(projectId);
+          setPreviewUrl(baseUrl);
+          setLatestPreviewUrl(baseUrl);
+          transitionPreviewStatus('ready', { message: 'Preview Ready' });
+          console.log('[Editor] buildPreviewNow: live preview already hosted -- kept URL, skipped re-host');
+          return { success: true } as any;
+        }
+      } catch { /* fall through to a normal build */ }
+    }
+
     // When overrideFiles is provided (e.g. immediately after generation), use it directly
     // to avoid a stale-snapshot race with async React state updates from writeFileWorkspace.
     const filesSnapshot = safeOverride ?? (
