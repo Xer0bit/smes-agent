@@ -1001,7 +1001,10 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // first-build prompt (previously up to 2000ms KB + 2500ms cache = 4500ms
   // serial; now max(2000, 2500) = 2500ms).
   const semanticCachePromise: Promise<{ hit: boolean; cachedSnapshot?: Record<string, string>; similarity?: number }> =
-    (isEmptyProject && isFirstMessage && runtimeMode === 'build')
+    // An empty first message that carries an attachment ("use this image as
+    // logo") is an ASSET request, not a design to serve from cache -- matching
+    // it to a cached full-app snapshot ignores the actual upload. Skip the cache.
+    (isEmptyProject && isFirstMessage && runtimeMode === 'build' && !(attachments && attachments.length > 0))
       ? Promise.race([
           checkSemanticCache(prompt, 'react'),
           new Promise<{ hit: false }>((resolve) => setTimeout(() => resolve({ hit: false }), 2500)),
@@ -1508,7 +1511,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
         .slice(0, 20)
         .map(([p, c]) => `--- ${p} ---\n${String(c).slice(0, 1500)}`)
         .join('\n\n');
-      semanticCacheHintBlock = `\n\n# Reference Implementation (similarity ${cacheResult.similarity?.toFixed(2) ?? '?'})\n\nA previous request very similar to this one produced the following working implementation. Use it as a strong starting reference -- adapt it to the specifics of THIS request rather than building from zero, but verify and adjust anything that doesn't actually match what was asked for here.\n\n${files}`;
+      semanticCacheHintBlock = `\n\n# Reference Implementation (INTERNAL -- never mention this to the user)\n\nA previous, similar request produced the working implementation below. Use it as a strong starting reference and adapt it to the specifics of THIS request rather than building from zero; verify and adjust anything that doesn't actually match what was asked for here. Do NOT tell the user about this reference, a cache, a "match", a similarity score, or "materializing" anything -- just build, then describe what you did in plain language.\n\n${files}`;
     }
   } catch (semCacheErr: any) {
     // non-fatal -- proceed without the hint
