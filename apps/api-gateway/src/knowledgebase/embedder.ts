@@ -17,7 +17,7 @@ export const EMBEDDING_DIMS_BM25   = 768; // matches DB vector(768) column
 export type EmbeddingProvider = 'google' | 'openai' | 'bm25';
 
 function detectProvider(): EmbeddingProvider {
-  if (process.env.GOOGLE_GENERATIVE_AI_API_KEY && !isGoogleCircuitOpen()) return 'google';
+  if ((process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY) && !isGoogleCircuitOpen()) return 'google';
   if (process.env.OPENAI_API_KEY && !isOpenAICircuitOpen()) return 'openai';
   return 'bm25';
 }
@@ -163,8 +163,11 @@ async function googleEmbedRequest(modelName: string, apiKey: string, texts: stri
 }
 
 async function embedGoogle(texts: string[]): Promise<number[][]> {
-  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-  if (!apiKey) throw new Error('GOOGLE_GENERATIVE_AI_API_KEY not set');
+  // Reuse the same Gemini key the LLM already uses (GEMINI_API_KEY, set at
+  // runtime from the DB by llm-control) so embeddings need no separate key --
+  // same fallback promptCache.service.ts already uses.
+  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('No Google/Gemini API key set (GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY)');
 
   const model = await getGoogleEmbedModel(apiKey);
   try {
