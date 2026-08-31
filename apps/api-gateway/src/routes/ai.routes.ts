@@ -8,6 +8,7 @@ import { publishRunChunk, publishRunEnd, relayRunStream, runStreamExists, publis
 import { getLlmControlState, getUserPlanTier } from '../services/llm-control.service.js';
 import { testAndAutoDisableProviders, getLastHealthResults } from '../services/llm-health.service.js';
 import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
+import { materializeAgentDiskFromHead } from '../services/agentDiskMaterialize.js';
 import { checkUsageQuota } from '../services/billing.service.js';
 import { checkSemanticCache } from '../services/agentSemanticCache.js';
 import { DEFAULT_FREE_MODEL } from '../config/models.js';
@@ -1382,6 +1383,21 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             }
         } catch (ecgSeedErr) {
             logger.warn(`[agent-stream] eCG template re-seed skipped: ${(ecgSeedErr as Error).message}`);
+        }
+
+        // ── Source-of-truth: re-materialize the disk from the HEAD revision ───
+        // The agent-runner disk persists across runs and is never otherwise
+        // re-synced, so a past contaminated run's files linger and get swept
+        // into every output by collectDiskFiles(). Overwrite with HEAD's
+        // authoritative content and prune stray source files before the agent
+        // touches anything. Fail-open (see materializeAgentDiskFromHead).
+        try {
+            const _mat = await materializeAgentDiskFromHead(projectId, appPath);
+            if (_mat.wrote > 0 || _mat.pruned > 0) {
+                logger.info(`[agent-stream] project=${projectId} disk synced to HEAD (wrote ${_mat.wrote}, pruned ${_mat.pruned})`);
+            }
+        } catch (matErr) {
+            logger.warn(`[agent-stream] disk materialize skipped: ${(matErr as Error).message}`);
         }
 
         // ── Intent classification + cost routing ─────────────────────────────

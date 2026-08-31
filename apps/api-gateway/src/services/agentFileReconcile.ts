@@ -49,3 +49,33 @@ export function reconcileClientFilesToHead(
   }
   return { files, dropped };
 }
+
+/**
+ * Which on-disk source files to PRUNE when re-materializing the agent-runner
+ * disk from the authoritative HEAD revision (2026-08-31 incident). The disk is
+ * persistent and accumulates files across runs; a past contaminated run left
+ * another project's source pages (GigDetailPage.tsx, JobsPage.tsx) there, and
+ * collectDiskFiles then swept them into every output. This returns disk paths
+ * that HEAD does not have -- but ONLY within the narrow, safe "user source"
+ * space (src/ code/style files), never node_modules, config, assets, or
+ * anything outside src/. Conservative by construction: unknown = keep.
+ *
+ * Safety floor: if HEAD has fewer than `minHeadSourceFiles` source files, the
+ * manifest is too small to trust as an authority (a partial/broken revision),
+ * so prune NOTHING -- overwriting content is still safe, deleting is not.
+ */
+const PRUNABLE_RE = /^src\/.*\.(tsx?|jsx?|css)$/;
+
+export function computeStalePaths(
+  headPaths: ReadonlySet<string>,
+  diskPaths: Iterable<string>,
+  minHeadSourceFiles = 20,
+): string[] {
+  const headSourceCount = [...headPaths].filter((p) => PRUNABLE_RE.test(p)).length;
+  if (headSourceCount < minHeadSourceFiles) return []; // untrustworthy baseline: never delete
+  const stale: string[] = [];
+  for (const p of diskPaths) {
+    if (PRUNABLE_RE.test(p) && !headPaths.has(p)) stale.push(p);
+  }
+  return stale;
+}
