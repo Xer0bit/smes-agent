@@ -1,5 +1,6 @@
 
 import { streamText, generateText, ToolSet, stepCountIs, jsonSchema, wrapLanguageModel } from 'ai';
+import { phantomAbortThresholdFor, isStuckAndBuildKnownBroken, unfulfilledPromiseNote, DIAGNOSIS_TOOL_NAMES, extractImplicatedFiles, shouldSeedScope } from './agentGating.js';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -2108,7 +2109,6 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     let diagnosisContext = '';
     if ((_tier === 'fix' || _tier === 'edit') && runtimeMode === 'build') {
       try {
-        const DIAGNOSIS_TOOL_NAMES = new Set(['read_file', 'read_files', 'grep', 'glob_files', 'list_files', 'get_build_errors', 'think']);
         // Fresh, isolated AgentContext -- NOT the real `ctx` -- so this pass's
         // read_file/get_build_errors calls don't consume the main run's own
         // budgets (get_build_errors is capped at 5 calls/run via
@@ -2161,18 +2161,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // parsing the model's prose -- more robust than trusting it followed
         // an exact output format, the same lesson tonight's other fixes
         // already learned the hard way.
-        const implicatedFiles = new Set<string>();
-        for (const step of diagnosisResult.steps ?? []) {
-          for (const tc of step.toolCalls ?? []) {
-            const input = tc.input as any;
-            if (tc.toolName === 'read_file' && typeof input?.path === 'string') implicatedFiles.add(input.path);
-            if (tc.toolName === 'read_files' && Array.isArray(input?.paths)) {
-              for (const p of input.paths) if (typeof p === 'string') implicatedFiles.add(p);
-            }
-          }
-        }
+        const implicatedFiles = extractImplicatedFiles(diagnosisResult.steps);
 
-        if (implicatedFiles.size > 0 && implicatedFiles.size <= 10 && diagnosisResult.text?.trim()) {
+        if (shouldSeedScope(implicatedFiles, diagnosisResult.text)) {
           ctx.declaredScope = new Set([...implicatedFiles].map(normalizeScopePath));
           diagnosisContext =
             `# Diagnosis (pre-change investigation pass)\n\n${diagnosisResult.text.trim()}\n\n` +
@@ -2754,7 +2745,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // with the model narrating completed work while calling zero tools,
             // is a stronger stuck signal than either alone -- don't wait for the
             // full default streak when the code is already known not to work.
-            const phantomAbortThreshold = ctx.lastBuildErrorsHealthy === false ? 2 : 3;
+            const phantomAbortThreshold = phantomAbortThresholdFor(ctx.lastBuildErrorsHealthy);
             if (consecutivePhantomClaimSteps >= phantomAbortThreshold) {
               logger.warn('[AgentLoop] Aborting: consecutive no-tool steps claiming completed work (phantom narration)', {
                 projectId, userId, stepCount, consecutivePhantomClaimSteps, phantomAbortThreshold,
@@ -2873,7 +2864,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // doesn't work. This is tonight's incident shape: budget burning with
           // no successful write while the build is confirmed unhealthy.
           const stuckAndBuildKnownBroken =
-            stepsSinceLastWrite >= STUCK_ANALYSIS_THRESHOLD && ctx.lastBuildErrorsHealthy === false;
+            isStuckAndBuildKnownBroken(stepsSinceLastWrite, STUCK_ANALYSIS_THRESHOLD, ctx.lastBuildErrorsHealthy);
           if (
             stuckAndBudgetCritical ||
             stuckAndContentRepeating ||
@@ -3678,9 +3669,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // already confirmed this run's build is broken, say so plainly instead of
       // the generic note -- "let me know if you'd like me to go ahead" invites
       // confirmation as if things are otherwise fine, when they're confirmed not to be.
-      accumulatedText += ctx.lastBuildErrorsHealthy === false
-        ? `\n\n(Note: I described a change above but haven't actually made it yet, and the last build check showed real errors. Tell me to go ahead and I'll pick this back up.)`
-        : `\n\n(Note: I described a change above but haven't actually made it yet. Let me know if you'd like me to go ahead.)`;
+      accumulatedText += unfulfilledPromiseNote(ctx.lastBuildErrorsHealthy);
     }
 
     // ─── Anon-fetch-without-policy closure gate (2026-08 audit follow-up) ─────
