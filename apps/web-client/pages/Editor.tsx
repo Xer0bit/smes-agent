@@ -77,7 +77,7 @@ import type { AgentAttachment } from "@/eCG/UserPrompt/types";
 import { uploadChatAttachment, isAllowedFile } from "@/services/chatAttachmentService";
 import { messageService } from "@/eCG/UserPrompt/messageService";
 import { generatePreview } from "@/eCG/Preview/previewGenerator";
-import { checkPreviewHealth, updateDockerPreview, syncPreviewFromRevision, getPreviewUrl, handlePreviewSessionExpired, createPreviewSession } from "@/services/previewHealthService";
+import { checkPreviewHealth, updateDockerPreview, syncPreviewFromRevision, getPreviewUrl, handlePreviewSessionExpired, createPreviewSession, getPreviewSyncState } from "@/services/previewHealthService";
 import { validateAndFixFiles, getFixedContent } from "@/services/fileValidationService";
 import { QuotaLimitDialog } from "@/components/QuotaLimitDialog";
 import { useSubscription } from "@/contexts/SubscriptionContext"; // single source   hasFeature/tier/tierLabel now on context
@@ -1154,15 +1154,45 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
           // A stale preview URL can still return HTTP 200 while only serving
           // the default placeholder app after preview service restarts.
           try {
-            transitionPreviewStatus('building', {
-              message: 'Building preview...',
-              details: `${files.length} files`,
-            });
-
             const health = await checkPreviewHealth(projectId!);
             if (!health.isDockerAvailable) {
               throw new Error(health.error || 'Preview service unavailable');
             }
+
+            // Fast path: if a live preview already holds this head revision (or
+            // newer) and nothing unsaved needs pushing, skip the re-materialize
+            // entirely. Re-hosting an already-current preview on every editor
+            // open just restarts Vite and reloads every file for no gain -- the
+            // exact "why does it re-host what's already working" waste. Any
+            // uncertainty (preview not live, seq unknown/older, dirty edits, or
+            // the status probe fails) falls through to the full sync below.
+            // heldSeq is in-memory on the preview: after an LRU eviction or a
+            // preview restart it is null, so a genuinely gone preview correctly
+            // re-hosts. The 10s slack absorbs the agent-push-vs-revision-insert
+            // ordering the STALE_BASE guard already tolerates.
+            const headSeqMs = Date.parse(previewBaseSeqRef.current || '');
+            if (!hasDirtyOverrides && Number.isFinite(headSeqMs)) {
+              const syncState = await getPreviewSyncState(projectId!);
+              if (
+                syncState &&
+                syncState.live &&
+                syncState.healthy &&
+                typeof syncState.heldSeq === 'number' &&
+                syncState.heldSeq >= headSeqMs - 10_000
+              ) {
+                const baseUrl = getPreviewUrl(projectId!);
+                setPreviewUrl((prev) => (prev && prev.startsWith(baseUrl) ? prev : baseUrl));
+                setLatestPreviewUrl(baseUrl);
+                transitionPreviewStatus('ready', { message: 'Preview Ready' });
+                console.log('[Editor] Preview already live and current (heldSeq >= head) -- skipped re-host');
+                return;
+              }
+            }
+
+            transitionPreviewStatus('building', {
+              message: 'Building preview...',
+              details: `${files.length} files`,
+            });
 
             // Server-to-server sync whenever nothing unsaved-in-browser needs
             // pushing: the server re-fetches this exact revision's bytes

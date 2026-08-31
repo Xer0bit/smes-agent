@@ -2321,7 +2321,16 @@ export default App;
             return res.status(400).json({ error: 'Invalid project ID' });
         }
         touchRuntime(projectId);
-        res.json(getProjectDiagnostics(projectId));
+        // live + heldSeq power the editor's open fast path: skip a redundant
+        // full re-materialize when a live Vite instance already serves this
+        // project and holds the head revision (or newer). heldSeq is the epoch
+        // ms of the last accepted full-sync (in-memory: a preview restart
+        // forgets it, so the editor correctly re-hosts after an eviction).
+        res.json({
+            ...getProjectDiagnostics(projectId),
+            live: activeServers.has(projectId),
+            heldSeq: lastAcceptedBaseSeq.get(projectId) ?? null,
+        });
     });
 
     // Runtime Error Report: POST /preview/:projectId/runtime-error

@@ -215,6 +215,38 @@ export async function checkPreviewHealth(projectId: string): Promise<PreviewHeal
 }
 
 /**
+ * Lightweight per-project state for the editor-open fast path: is a live Vite
+ * instance already serving this project, is it healthy, and what seq does it
+ * hold (epoch ms of its last accepted full-sync). Lets the editor skip a
+ * redundant full re-materialize when the preview is already current.
+ * Best-effort: any failure returns null and the caller falls back to a normal
+ * sync, so this can only ever save work, never block a load.
+ */
+export async function getPreviewSyncState(
+  projectId: string,
+): Promise<{ live: boolean; healthy: boolean; heldSeq: number | null } | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const base = DOCKER_PREVIEW_URL.replace(/\/$/, '');
+    const res = await fetch(`${base}/preview/${projectId}/status`, {
+      credentials: 'include',
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!res.ok) return null;
+    const body: any = await res.json();
+    return {
+      live: body?.live === true,
+      healthy: body?.healthy === true,
+      heldSeq: typeof body?.heldSeq === 'number' ? body.heldSeq : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Quick check if Docker is likely available (uses cache).
  */
 export function isDockerLikelyAvailable(projectId: string): boolean {
