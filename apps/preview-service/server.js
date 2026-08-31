@@ -283,6 +283,33 @@ const PREVIEW_UPDATE_SECRET = process.env.PREVIEW_UPDATE_SECRET || '';
 
 const PROJECTS_ROOT = path.resolve(__dirname, 'projects');
 
+// ── Durable held-seq marker ──────────────────────────────────────────────
+// The epoch-ms baseSeq of the newest revision the on-disk project reflects.
+// Persisted OUTSIDE the project tree (so prune/serve never touch it) because
+// the in-memory lastAcceptedBaseSeq is wiped on every preview restart -- 100+
+// so far -- which left the editor's "already current" check permanently blind
+// and re-materializing on every open. Recorded on ANY push carrying a valid
+// baseSeq, not just fullSync: even a partial push brings its files to that head
+// revision, and the marker only ever moves forward.
+const HELD_SEQ_DIR = path.join(PROJECTS_ROOT, '.ecg-held-seq');
+function heldSeqMarkerPath(projectId) { return path.join(HELD_SEQ_DIR, projectId); }
+function readHeldSeq(projectId) {
+    const inMem = lastAcceptedBaseSeq.get(projectId);
+    if (inMem !== undefined) return inMem;
+    try {
+        const n = Number(fs.readFileSync(heldSeqMarkerPath(projectId), 'utf-8').trim());
+        if (Number.isFinite(n)) { lastAcceptedBaseSeq.set(projectId, n); return n; }
+    } catch { /* no marker yet */ }
+    return null;
+}
+function recordHeldSeq(projectId, seq) {
+    lastAcceptedBaseSeq.set(projectId, seq);
+    try {
+        fs.mkdirSync(HELD_SEQ_DIR, { recursive: true });
+        fs.writeFileSync(heldSeqMarkerPath(projectId), String(seq));
+    } catch { /* best effort: falls back to a re-sync, never blocks */ }
+}
+
 // Ensure projects root exists
 if (!fs.existsSync(PROJECTS_ROOT)) {
     fs.mkdirSync(PROJECTS_ROOT, { recursive: true });
@@ -1935,15 +1962,21 @@ async function startMainServer() {
         // the next push (revisions stay safe via create_revision_checked).
         const STALE_BASE_TOLERANCE_MS = 60_000;
         const baseSeq = typeof req.body.baseSeq === 'string' ? Date.parse(req.body.baseSeq) : NaN;
-        if (fullSync && Number.isFinite(baseSeq)) {
-            const last = lastAcceptedBaseSeq.get(projectId);
-            if (last !== undefined && last - baseSeq > STALE_BASE_TOLERANCE_MS) {
+        if (Number.isFinite(baseSeq)) {
+            const last = readHeldSeq(projectId);
+            // STALE_BASE reject stays fullSync-only: only a whole-project push
+            // must never move the preview backwards.
+            if (fullSync && last !== null && last - baseSeq > STALE_BASE_TOLERANCE_MS) {
                 return res.status(409).json({
                     error: `STALE_BASE: this push derives from ${new Date(baseSeq).toISOString()} but the preview already holds ${new Date(last).toISOString()}. Reload the project before pushing.`,
                     code: 'STALE_BASE',
                 });
             }
-            if (last === undefined || baseSeq > last) lastAcceptedBaseSeq.set(projectId, baseSeq);
+            // Record forward on ANY accepted push (full or partial) and persist
+            // durably: this marker is what the editor reads to skip a redundant
+            // re-host on the next open, and asset-heavy projects push partial
+            // (fullSync=false) far more often than full.
+            if (last === null || baseSeq > last) recordHeldSeq(projectId, baseSeq);
         }
 
         const now = Date.now();
@@ -2324,12 +2357,12 @@ export default App;
         // live + heldSeq power the editor's open fast path: skip a redundant
         // full re-materialize when a live Vite instance already serves this
         // project and holds the head revision (or newer). heldSeq is the epoch
-        // ms of the last accepted full-sync (in-memory: a preview restart
-        // forgets it, so the editor correctly re-hosts after an eviction).
+        // ms of the newest revision the on-disk project reflects, read durably
+        // via readHeldSeq (survives preview restarts).
         res.json({
             ...getProjectDiagnostics(projectId),
             live: activeServers.has(projectId),
-            heldSeq: lastAcceptedBaseSeq.get(projectId) ?? null,
+            heldSeq: readHeldSeq(projectId),
         });
     });
 
