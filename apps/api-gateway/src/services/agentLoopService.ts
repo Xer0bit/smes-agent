@@ -1000,11 +1000,19 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // run concurrently -- up to ~2.5s off the worst case for a fresh-project
   // first-build prompt (previously up to 2000ms KB + 2500ms cache = 4500ms
   // serial; now max(2000, 2500) = 2500ms).
+  // DISABLED (2026-08-31 incident): the cross-project semantic cache replaced a
+  // whole project's codebase with an unrelated one. It matched a CardPro request
+  // to a CQjobs snapshot at 0.98 similarity and the agent materialized CQjobs'
+  // entire file set into CardPro. A cache that can serve ONE project's full
+  // snapshot into ANOTHER project is unsafe at any similarity threshold: prompt
+  // embeddings match on generic wording, not real intent, and injecting a full
+  // foreign snapshot as a "reference to adapt" makes the model clone it. Kept
+  // wired but hard-off until it is redesigned to never inject a cross-project
+  // full snapshot (e.g. same-project only, or a small ignorable hint, never a
+  // whole materialized file set). Do not re-enable by flipping this alone.
+  const SEMANTIC_CACHE_ENABLED = false;
   const semanticCachePromise: Promise<{ hit: boolean; cachedSnapshot?: Record<string, string>; similarity?: number }> =
-    // An empty first message that carries an attachment ("use this image as
-    // logo") is an ASSET request, not a design to serve from cache -- matching
-    // it to a cached full-app snapshot ignores the actual upload. Skip the cache.
-    (isEmptyProject && isFirstMessage && runtimeMode === 'build' && !(attachments && attachments.length > 0))
+    (SEMANTIC_CACHE_ENABLED && isEmptyProject && isFirstMessage && runtimeMode === 'build' && !(attachments && attachments.length > 0))
       ? Promise.race([
           checkSemanticCache(prompt, 'react'),
           new Promise<{ hit: false }>((resolve) => setTimeout(() => resolve({ hit: false }), 2500)),
