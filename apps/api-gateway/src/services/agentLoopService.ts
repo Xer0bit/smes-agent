@@ -1,6 +1,7 @@
 
 import { streamText, generateText, ToolSet, stepCountIs, jsonSchema, wrapLanguageModel } from 'ai';
 import { phantomAbortThresholdFor, isStuckAndBuildKnownBroken, unfulfilledPromiseNote, DIAGNOSIS_TOOL_NAMES, extractImplicatedFiles, shouldSeedScope } from './agentGating.js';
+import { reconcileClientFilesToHead } from './agentFileReconcile.js';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -901,10 +902,46 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     }
   }
 
-  // Unified file source: prefer frontend-sent existingFiles, fall back to disk snapshot.
+  // Server-authoritative reconciliation (2026-08-31 incident): the client's
+  // existingFiles are trusted for CONTENT (unsaved edits) but NOT for MEMBERSHIP
+  // -- a stale/contaminated tab could otherwise inject another project's files
+  // and the run would rebuild from them (CardPro kept turning into CQjobs). Fetch
+  // the HEAD revision manifest (the authoritative record of what belongs to this
+  // project) and drop any client path HEAD has never seen. Fail-open: no HEAD
+  // (new/empty project) or a fetch error trusts the client unchanged.
+  let reconciledClientFiles = existingFiles ?? [];
+  if (existingFiles && existingFiles.length > 0 && projectId && supabase) {
+    try {
+      const { data: headRev } = await supabase
+        .from('revisions')
+        .select('generated_files')
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const headFiles = (headRev?.generated_files as { files?: Array<{ path?: unknown }> } | null)?.files;
+      const headPaths = Array.isArray(headFiles)
+        ? new Set(headFiles.map((f) => (typeof f.path === 'string' ? f.path : '')).filter(Boolean))
+        : null;
+      const { files, dropped } = reconcileClientFilesToHead(existingFiles, headPaths);
+      reconciledClientFiles = files;
+      if (dropped.length > 0) {
+        logger.warn('[AgentLoop] Dropped client files not in HEAD revision (stale/contaminated input)', {
+          projectId, droppedCount: dropped.length, sample: dropped.slice(0, 10),
+        });
+      }
+    } catch (reconcileErr: any) {
+      logger.warn('[AgentLoop] HEAD-manifest reconciliation failed (non-fatal, trusting client files)', {
+        projectId, error: reconcileErr?.message,
+      });
+    }
+  }
+
+  // Unified file source: reconciled client files (server-authoritative membership),
+  // falling back to the disk snapshot when the client sent nothing.
   const fileSources: Array<{ path: string; content: string }> =
-    (existingFiles && existingFiles.length > 0)
-      ? existingFiles
+    (reconciledClientFiles.length > 0)
+      ? reconciledClientFiles
       : Array.from(preAgentDiskSnapshot.entries()).map(([p, c]) => ({ path: p, content: c }));
 
   // KB batch index   runs once per project per server boot in the background.
