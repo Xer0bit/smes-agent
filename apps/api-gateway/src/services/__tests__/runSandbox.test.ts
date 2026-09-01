@@ -63,3 +63,43 @@ describe('collectSandboxFiles', () => {
     expect(collectSandboxFiles(seed({}))).toEqual([]);
   });
 });
+
+import { createHash } from 'node:crypto';
+import { diffFilesAgainstHead } from '../runSandbox.js';
+
+const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+
+describe('diffFilesAgainstHead (real changeset vs whole-tree sweep)', () => {
+  it('classifies added / changed / unchanged / deleted against HEAD hashes', () => {
+    const head = new Map([
+      ['src/App.tsx', sha('OLD')],
+      ['src/keep.ts', sha('SAME')],
+      ['src/gone.ts', sha('BYE')],
+    ]);
+    const files = [
+      { path: 'src/App.tsx', content: 'NEW' },   // changed
+      { path: 'src/keep.ts', content: 'SAME' },  // unchanged
+      { path: 'src/new.ts',  content: 'HI' },    // added
+    ];
+    const d = diffFilesAgainstHead(files, head);
+    expect(d.changed.map(f => f.path)).toEqual(['src/App.tsx']);
+    expect(d.added.map(f => f.path)).toEqual(['src/new.ts']);
+    expect(d.deleted).toEqual(['src/gone.ts']);
+    expect(d.unchanged).toBe(1);
+  });
+
+  it('a run that touched nothing produces an empty changeset', () => {
+    const head = new Map([['a.ts', sha('x')]]);
+    const d = diffFilesAgainstHead([{ path: 'a.ts', content: 'x' }], head);
+    expect(d.added).toEqual([]);
+    expect(d.changed).toEqual([]);
+    expect(d.deleted).toEqual([]);
+    expect(d.unchanged).toBe(1);
+  });
+
+  it('treats everything as added when the project has no HEAD yet', () => {
+    const d = diffFilesAgainstHead([{ path: 'a.ts', content: 'x' }], new Map());
+    expect(d.added.map(f => f.path)).toEqual(['a.ts']);
+    expect(d.deleted).toEqual([]);
+  });
+});

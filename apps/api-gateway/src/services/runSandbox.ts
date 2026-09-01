@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { persistAgentRevision } from './agentRevisionPersist.service.js';
@@ -246,4 +246,53 @@ export async function rollbackToRevision(
 export function discardSandbox(sandboxPath: string): void {
   try { fs.rmSync(sandboxPath, { recursive: true, force: true }); }
   catch (err) { logger.debug('[runSandbox] discard failed (non-fatal)', { sandboxPath, error: (err as Error)?.message }); }
+}
+
+/** path -> sha256 from the HEAD revision manifest, for diffing a run's output. */
+export async function fetchHeadHashes(projectId: string): Promise<Map<string, string>> {
+  const head = await fetchHeadManifest(projectId);
+  const map = new Map<string, string>();
+  if (!head) return map;
+  for (const e of head.files) {
+    if (typeof e.path === 'string' && typeof e.hash === 'string') map.set(e.path, e.hash);
+  }
+  return map;
+}
+
+export interface FileDiff {
+  added: SandboxFile[];
+  changed: SandboxFile[];
+  deleted: string[];
+  unchanged: number;
+}
+
+/**
+ * The run's REAL changeset: hash every produced file and compare against HEAD's
+ * manifest hashes. Replaces "the whole tree is the output" -- without this a run
+ * cannot tell what the agent actually changed from untouched cruft, and every
+ * preview push ships the entire project.
+ *
+ * Hashing matches persistAgentRevision exactly (sha256 over the utf8 content),
+ * so a file whose hash equals HEAD's is genuinely unchanged. Pure: no IO, so the
+ * classification is unit-testable.
+ */
+export function diffFilesAgainstHead(
+  files: SandboxFile[],
+  headHashes: ReadonlyMap<string, string>,
+): FileDiff {
+  const added: SandboxFile[] = [];
+  const changed: SandboxFile[] = [];
+  let unchanged = 0;
+  const seen = new Set<string>();
+  for (const f of files) {
+    seen.add(f.path);
+    const prev = headHashes.get(f.path);
+    const hash = createHash('sha256').update(f.content ?? '', 'utf8').digest('hex');
+    if (prev === undefined) added.push(f);
+    else if (prev !== hash) changed.push(f);
+    else unchanged++;
+  }
+  const deleted: string[] = [];
+  for (const p of headHashes.keys()) if (!seen.has(p)) deleted.push(p);
+  return { added, changed, deleted, unchanged };
 }

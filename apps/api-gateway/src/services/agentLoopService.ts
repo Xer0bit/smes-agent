@@ -25,6 +25,7 @@ import { runPreviewSmokeCheck } from './previewSmokeCheck.service.js';
 import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols, getProvider } from '../knowledgebase/index.js';
 import { persistAgentRevision } from './agentRevisionPersist.service.js';
 import { priceFor, calcCost, createRunTokens } from './agentCost.js';
+import { fetchHeadHashes, diffFilesAgainstHead } from './runSandbox.js';
 import { captureThumbnail } from './thumbnailService.js';
 import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
 import { beginRun as beginNarration, updateThought, endRun as endNarration, generateStatus, getNarrationCost, type LifecyclePhase } from './narration.service.js';
@@ -4502,14 +4503,43 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // reported success to the user while the live preview never actually
       // received this run's work. The written content was never determined
       // to be broken, so retry the same push rather than reverting anything.
+      // Push the REAL changeset, not the whole tree. A run that edits two files
+      // used to ship every file in the project on every push -- slow, and it
+      // makes "what did the agent actually change?" unanswerable. Diff the
+      // output against HEAD's manifest hashes and send only added+changed.
+      //
+      // fullSync is the PRUNE signal: preview-service deletes anything absent
+      // from the payload. So a partial push is only safe when nothing was
+      // deleted; any deletion (or no HEAD, or an empty changeset) falls back to
+      // the full prune push. Fail-open on any diff error.
+      let pushFiles = mergedWrites;
+      let pushFullSync = true;
+      try {
+        const headHashes = await fetchHeadHashes(projectId);
+        if (headHashes.size > 0) {
+          const diff = diffFilesAgainstHead(mergedWrites, headHashes);
+          const touched = diff.added.length + diff.changed.length;
+          if (diff.deleted.length === 0 && touched > 0) {
+            pushFiles = [...diff.added, ...diff.changed];
+            pushFullSync = false;
+          }
+          logger.info('[AgentLoop] run changeset', {
+            projectId, added: diff.added.length, changed: diff.changed.length,
+            deleted: diff.deleted.length, unchanged: diff.unchanged,
+            pushing: pushFiles.length, fullSync: pushFullSync,
+          });
+        }
+      } catch (diffErr) {
+        logger.warn('[AgentLoop] changeset diff failed, pushing full tree', { projectId, error: (diffErr as Error)?.message });
+      }
       logger.info('[AgentLoop] preview push starting', { projectId, updateUrl, fileCount: mergedWrites.length });
-      let firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true, baseSeq: new Date().toISOString() }), 120_000);
+      let firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: pushFiles, fullSync: pushFullSync, baseSeq: new Date().toISOString() }), 120_000);
       for (let pushRetry = 1; pushRetry <= 3 && firstAttempt.status !== 200 && firstAttempt.status !== 422; pushRetry++) {
         logger.warn('[AgentLoop] Preview push transport failure, retrying', {
           projectId, status: firstAttempt.status, pushRetry, maxPushRetries: 3,
         });
         await new Promise<void>((r) => setTimeout(r, pushRetry * 1000));
-        firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: mergedWrites, fullSync: true, baseSeq: new Date().toISOString() }), 120_000);
+        firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: pushFiles, fullSync: pushFullSync, baseSeq: new Date().toISOString() }), 120_000);
       }
       if (firstAttempt.status === 200) {
         // A 200 does NOT mean the files went live. preview-service answers 200
