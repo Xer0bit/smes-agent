@@ -391,7 +391,9 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         const { data: { session } } = await lovableCloud.auth.getSession();
         if (!session || cancelled) return;
         const [url] = getGenServerCandidateUrls(`/api/v1/ai/active-run/${projectId}`);
-        const r = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } });
+        // no-store: /active-run carries an ETag, so without it the browser returns 304
+        // and `r.ok` is false -- the poll would bail before parsing and never flip state.
+        const r = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${session.access_token}` } });
         if (!r.ok || cancelled) return;
         const json = await r.json();
         if (cancelled) return;
@@ -618,7 +620,9 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         const urls = getGenServerCandidateUrls(`/api/v1/ai/active-run/${projectId}`);
         for (const url of urls) {
           try {
-            const r = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } });
+            // no-store: /active-run carries an ETag, so without it the browser returns 304
+        // and `r.ok` is false -- the poll would bail before parsing and never flip state.
+        const r = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${session.access_token}` } });
             if (!r.ok) break;
             const json = await r.json();
             if (cancelled) return;
@@ -635,7 +639,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               const poll = setInterval(async () => {
                 if (cancelled) { clearInterval(poll); return; }
                 try {
-                  const rr = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } });
+                  const rr = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${session.access_token}` } });
                   if (!rr.ok) return;
                   const jj = await rr.json();
                   if (cancelled) { clearInterval(poll); return; }

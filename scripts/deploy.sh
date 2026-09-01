@@ -384,6 +384,7 @@ REMOTE
 set -e
 cat > /var/www/ecomgear/.env.production << ENV
 NODE_ENV=production
+ECOMGEAR_RUNS_DIR=${ECOMGEAR_RUNS_DIR:-/var/ecomgear/runs}
 SUPABASE_URL=https://api.ecomgear.dev
 SUPABASE_SERVICE_ROLE_KEY=${SK}
 SUPABASE_SERVICE_KEY=${SK}
@@ -780,6 +781,9 @@ cd "\$DEPLOY_PATH"
 cat > "\$DEPLOY_PATH/.env.production" << ENV
 NODE_ENV=production
 PORT=5001
+# Per-run agent sandboxes. Without this the runs root falls back to /tmp,
+# where a systemd tmp-cleaner can delete an ACTIVE sandbox mid-run.
+ECOMGEAR_RUNS_DIR=${ECOMGEAR_RUNS_DIR:-/var/ecomgear/runs}
 PREVIEW_SERVICE_URL=https://preview.ecomgear.app
 SUPABASE_URL=https://api.ecomgear.dev
 SUPABASE_SERVICE_ROLE_KEY=${SK}
