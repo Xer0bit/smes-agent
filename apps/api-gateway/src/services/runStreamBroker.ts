@@ -204,10 +204,21 @@ export function subscribeRunCancel(onCancel: (projectId: string) => void): () =>
     maxRetriesPerRequest: null,
     enableOfflineQueue: true,
     lazyConnect: false,
+    // ponytail: ioredis's default retryStrategy redials every ~50ms-2s forever.
+    // On a host with no Redis that is ~8 reconnects/second/worker, and the error
+    // handler below logged each one -- 65k lines and most of a 71MB log dir on
+    // VPS1. Backing off to 30s keeps the cross-worker cancel path self-healing
+    // if Redis comes back, without the flood.
+    retryStrategy: (times: number) => Math.min(times * 2000, 30_000),
   });
+  // Log the outage once per down-period, not once per reconnect attempt.
+  let outageLogged = false;
   sub.on('error', (err: Error) => {
-    logger.debug('[run-broker] cancel subscriber error', { error: err.message });
+    if (outageLogged) return;
+    outageLogged = true;
+    logger.debug('[run-broker] cancel subscriber error (silencing until reconnect)', { error: err.message });
   });
+  sub.on('ready', () => { outageLogged = false; });
   sub.subscribe(CANCEL_CHANNEL).catch((err) => {
     logger.warn('[run-broker] cancel subscribe failed', { error: (err as Error).message });
   });
