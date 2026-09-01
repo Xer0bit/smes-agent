@@ -33,13 +33,18 @@ import { supabase } from '../config/database.js';
 const STORAGE_BUCKET = 'user-projects-free';
 const UPLOAD_BATCH_SIZE = 5;
 /**
- * The bucket rejects objects over 10 MiB. Binaries are stored as
- * BINARY_SENTINEL + base64 (the format every reader expects, set by the
- * browser's own save), and base64 inflates by ~4/3 -- so an 8.2 MiB JPEG
- * becomes ~11 MiB on the wire and is refused. Checking the ENCODED length here
- * turns that into a per-file skip instead of an upload the bucket bounces.
+ * Must match the `user-projects-free` bucket's `file_size_limit` (raised from
+ * 10 to 25 MiB on 2026-09-02). Binaries are stored as BINARY_SENTINEL + base64
+ * (the format every reader expects, set by the browser's own save) and base64
+ * inflates by ~4/3, so the effective ceiling on a raw file is about three
+ * quarters of this. Checking the ENCODED length here turns an oversized file
+ * into a reported per-file skip instead of an upload the bucket bounces.
+ *
+ * Overridable so the two can be realigned without a deploy if the bucket
+ * changes again; a value SMALLER than the bucket's only costs a needless skip,
+ * a larger one just means the bucket rejects it and the same skip path runs.
  */
-const MAX_OBJECT_BYTES = 10 * 1024 * 1024;
+const MAX_OBJECT_BYTES = Number(process.env.STORAGE_MAX_OBJECT_BYTES) || 25 * 1024 * 1024;
 
 interface ManifestEntry { path: string; hash: string; source_revision: string }
 
