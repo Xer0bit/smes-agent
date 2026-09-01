@@ -32,8 +32,49 @@ import { supabase } from '../config/database.js';
 
 const STORAGE_BUCKET = 'user-projects-free';
 const UPLOAD_BATCH_SIZE = 5;
+/**
+ * The bucket rejects objects over 10 MiB. Binaries are stored as
+ * BINARY_SENTINEL + base64 (the format every reader expects, set by the
+ * browser's own save), and base64 inflates by ~4/3 -- so an 8.2 MiB JPEG
+ * becomes ~11 MiB on the wire and is refused. Checking the ENCODED length here
+ * turns that into a per-file skip instead of an upload the bucket bounces.
+ */
+const MAX_OBJECT_BYTES = 10 * 1024 * 1024;
 
 interface ManifestEntry { path: string; hash: string; source_revision: string }
+
+
+/**
+ * Rebuild the manifest once some uploads have failed.
+ *
+ * A path whose upload failed must not stay in the manifest pointing at THIS
+ * revision: that entry resolves to a 404 for every later reader, which is worse
+ * than the file being absent. Where the previous revision has a copy, point at
+ * that instead so the file survives; where it does not, drop the path and
+ * report it so the caller can tell the user rather than losing it in silence.
+ */
+export function reconcileManifestAfterFailures(
+  manifest: readonly ManifestEntry[],
+  failedPaths: readonly string[],
+  prevByPath: ReadonlyMap<string, { hash: string; source_revision: string }>,
+): { manifest: ManifestEntry[]; skipped: string[] } {
+  if (failedPaths.length === 0) return { manifest: [...manifest], skipped: [] };
+  const failed = new Set(failedPaths);
+  const out: ManifestEntry[] = [];
+  const skipped: string[] = [];
+  for (const entry of manifest) {
+    if (!failed.has(entry.path)) { out.push(entry); continue; }
+    const prev = prevByPath.get(entry.path);
+    if (prev) out.push({ path: entry.path, hash: prev.hash, source_revision: prev.source_revision });
+    else skipped.push(entry.path);
+  }
+  return { manifest: out, skipped };
+}
+
+/** Encoded size the bucket will see, so an oversized file is skipped rather than bounced. */
+export function exceedsObjectLimit(content: string, limit: number = MAX_OBJECT_BYTES): boolean {
+  return Buffer.byteLength(content, 'utf8') > limit;
+}
 
 export async function persistAgentRevision(
   projectId: string,
@@ -41,7 +82,14 @@ export async function persistAgentRevision(
   files: Array<{ path: string; content: string }>,
   summary: string,
   prompt: string,
-): Promise<{ ok: boolean; revisionId?: string; error?: string }> {
+): Promise<{
+  ok: boolean;
+  revisionId?: string;
+  error?: string;
+  /** Paths absent from the revision because they could not be uploaded and had no earlier copy. */
+  skippedPaths?: string[];
+  uploadWarnings?: string[];
+}> {
   if (!supabase) return { ok: false, error: 'no supabase client' };
   if (files.length === 0) return { ok: false, error: 'no files' };
 
@@ -95,18 +143,49 @@ export async function persistAgentRevision(
       }
     }
 
+    const failedPaths: string[] = [];
     const uploadErrors: string[] = [];
+    const noteFailure = (path: string, message: string) => {
+      failedPaths.push(path);
+      uploadErrors.push(`${path}: ${message}`);
+    };
+
     for (let i = 0; i < toUpload.length; i += UPLOAD_BATCH_SIZE) {
       const batch = toUpload.slice(i, i + UPLOAD_BATCH_SIZE);
       await Promise.all(batch.map(async (f) => {
+        const body = Buffer.from(f.content, 'utf8');
+        if (exceedsObjectLimit(f.content)) {
+          noteFailure(f.path, `exceeds the ${Math.round(MAX_OBJECT_BYTES / 1024 / 1024)}MB storage limit once encoded (${Math.round(body.byteLength / 1024 / 1024)}MB)`);
+          return;
+        }
         const storagePath = `projects/${projectId}/${revisionId}/${f.path}`;
         const { error: upErr } = await supabase.storage
           .from(STORAGE_BUCKET)
-          .upload(storagePath, Buffer.from(f.content, 'utf8'), { contentType: 'text/plain', upsert: true });
-        if (upErr) uploadErrors.push(`${f.path}: ${upErr.message}`);
+          .upload(storagePath, body, { contentType: 'text/plain', upsert: true });
+        if (upErr) noteFailure(f.path, upErr.message);
       }));
     }
-    if (uploadErrors.length > 0) {
+
+    // A file that could not be uploaded must not appear in the manifest pointing
+    // at THIS revision -- that entry would resolve to a 404 for every later
+    // reader. Carry the previous revision's copy forward where one exists;
+    // otherwise drop the path entirely.
+    //
+    // The whole revision used to fail instead. One 8.2 MiB image on CardPro
+    // meant no manifest was written at all from 2026-09-01 13:00 onward, which
+    // in turn left the project with no manifest-v1 HEAD -- so the per-run
+    // sandbox silently stopped materialising from HEAD and fell back to copying
+    // the stale shared disk, and the changeset diff had nothing to diff against
+    // so every push shipped all 199 files. Losing one oversized asset from a
+    // revision is a far smaller failure than losing the revision.
+    const reconciled = reconcileManifestAfterFailures(manifest, failedPaths, prevByPath);
+    const skipped = reconciled.skipped;
+    manifest.length = 0;
+    manifest.push(...reconciled.manifest);
+
+    // Every file failed and none could be carried: there is no revision worth
+    // writing, and claiming success would publish an empty HEAD.
+    if (manifest.length === 0) {
       return { ok: false, revisionId, error: `uploads failed: ${uploadErrors.slice(0, 3).join('; ')}` };
     }
 
@@ -121,7 +200,14 @@ export async function persistAgentRevision(
       .eq('id', revisionId);
     if (manifestErr) return { ok: false, revisionId, error: `manifest write failed: ${manifestErr.message}` };
 
-    return { ok: true, revisionId };
+    return {
+      ok: true,
+      revisionId,
+      // Surfaced so the caller can log/report it: the revision IS good, but
+      // these paths are not in it and the user should know which.
+      skippedPaths: skipped.length > 0 ? skipped : undefined,
+      uploadWarnings: uploadErrors.length > 0 ? uploadErrors.slice(0, 5) : undefined,
+    };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
   }

@@ -13,6 +13,8 @@
  *   build   → 30  → user choice   (new project or full rebuild)
  */
 
+import { logger } from '../utils/logger.js';
+
 export type RequestTier = 'micro' | 'fix' | 'edit' | 'feature' | 'build';
 
 // ── Micro signal words   checked FIRST so "change color" beats "change" ──────
@@ -143,8 +145,13 @@ build   - create a whole new site or app, or rebuild one from scratch.
 
 Request: `;
 
-/** Timeout is short on purpose: a slow router must never delay a run. */
-const RESOLVER_TIMEOUT_MS = 2500;
+/**
+ * A slow router must not delay a run, but 2500ms was too tight to ever succeed:
+ * measured live 2026-09-01, a Flash round-trip for this took ~3s and the ceiling
+ * fired on every ambiguous prompt, so the resolver paid the latency and always
+ * fell back to the rules. 6s clears the observed round-trip with headroom.
+ */
+const RESOLVER_TIMEOUT_MS = 6000;
 
 export interface ResolvedTier extends TierDecision {
   source: 'rules' | 'llm';
@@ -199,10 +206,20 @@ export async function resolveRequestTier(
   if (ruled.confidence === 'high') return { ...ruled, source: 'rules' };
 
   try {
-    const parsed = parseTier(await ask(prompt));
-    if (!parsed) return { ...ruled, source: 'rules' };
+    const answer = await ask(prompt);
+    const parsed = parseTier(answer);
+    if (!parsed) {
+      // Falling back silently is how a router that never works looks healthy.
+      logger.warn('[tier-resolver] unusable answer, keeping the rules verdict', {
+        rule: ruled.rule, tier: ruled.tier, answer: answer.slice(0, 40),
+      });
+      return { ...ruled, source: 'rules' };
+    }
     return { tier: parsed, rule: `${ruled.rule}->llm`, confidence: 'high', source: 'llm' };
-  } catch {
+  } catch (err) {
+    logger.warn('[tier-resolver] call failed, keeping the rules verdict', {
+      rule: ruled.rule, tier: ruled.tier, error: (err as Error).message,
+    });
     return { ...ruled, source: 'rules' };
   }
 }

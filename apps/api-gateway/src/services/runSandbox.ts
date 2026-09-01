@@ -144,8 +144,20 @@ export async function openSandbox(projectId: string, projectDir?: string): Promi
       const fp = path.join(sandboxPath, p);
       try {
         fs.mkdirSync(path.dirname(fp), { recursive: true });
-        if (BINARY_EXT_RE.test(p)) fs.writeFileSync(fp, Buffer.from(await blob.arrayBuffer()));
-        else fs.writeFileSync(fp, await blob.text());
+        // Storage holds a binary as the BINARY_SENTINEL + base64 STRING, not as
+        // raw bytes -- that is what both the browser save (storageService
+        // saveProjectFiles) and persistAgentRevision write. Writing the
+        // downloaded blob's bytes straight to disk would therefore write the
+        // base64 text itself into the .jpg and hand the agent a corrupt image.
+        // Decode by the stored prefix rather than by file extension, so a text
+        // file that happens to end in .svg and a binary that does not are both
+        // handled by what the object actually contains.
+        const text = await blob.text();
+        if (text.startsWith(BINARY_SENTINEL)) {
+          fs.writeFileSync(fp, Buffer.from(text.slice(BINARY_SENTINEL.length), 'base64'));
+        } else {
+          fs.writeFileSync(fp, text);
+        }
         wrote++;
       } catch { failed++; }
     }));

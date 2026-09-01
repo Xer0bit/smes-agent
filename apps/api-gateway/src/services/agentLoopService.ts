@@ -5555,7 +5555,20 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           if (persistResult.ok) {
             logger.info('[AgentLoop] Revision persisted server-side', {
               projectId, userId, revisionId: persistResult.revisionId, fileCount: doneFilesToWrite.length,
+              skippedPaths: persistResult.skippedPaths,
             });
+            if (persistResult.skippedPaths?.length) {
+              // The revision is good, but these files are not in it. Silence
+              // here is how a project quietly loses an asset.
+              logger.warn('[AgentLoop] Revision persisted WITHOUT some files', {
+                projectId, revisionId: persistResult.revisionId,
+                skipped: persistResult.skippedPaths, warnings: persistResult.uploadWarnings,
+              });
+              sink?.emit?.('status', {
+                phase: 'warning',
+                message: `Saved, but ${persistResult.skippedPaths.length} file(s) could not be stored (too large): ${persistResult.skippedPaths.join(', ')}`,
+              });
+            }
           } else {
             logger.warn('[AgentLoop] Server-side revision persist FAILED, durable state may lag the live preview', {
               projectId, userId, error: persistResult.error,
