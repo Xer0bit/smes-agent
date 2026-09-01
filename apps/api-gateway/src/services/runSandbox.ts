@@ -248,6 +248,71 @@ export function discardSandbox(sandboxPath: string): void {
   catch (err) { logger.debug('[runSandbox] discard failed (non-fatal)', { sandboxPath, error: (err as Error)?.message }); }
 }
 
+export interface SandboxDir {
+  projectId: string;
+  runId: string;
+  sandboxPath: string;
+  mtimeMs: number;
+}
+
+/**
+ * Every run sandbox currently on disk.
+ *
+ * A sandbox is removed in the route's `finally`, which a killed worker never
+ * reaches -- so each crash or deploy strands a full source tree under the runs
+ * root with nothing that would ever remove it. This exposes them so a caller
+ * that can judge liveness (the watchdog, which reads the same lock state the
+ * route does) can clean up. Deliberately only reports: the deletion decision
+ * needs liveness, and liveness needs the DB, which does not belong in here.
+ */
+export function listSandboxDirs(): SandboxDir[] {
+  const out: SandboxDir[] = [];
+  let projects: string[];
+  try { projects = fs.readdirSync(RUNS_BASE_DIR); }
+  catch { return out; } // no runs root yet is the normal cold state, not an error
+  for (const projectId of projects) {
+    const projectRuns = path.join(RUNS_BASE_DIR, projectId);
+    let runIds: string[];
+    try {
+      if (!fs.statSync(projectRuns).isDirectory()) continue;
+      runIds = fs.readdirSync(projectRuns);
+    } catch { continue; }
+    for (const runId of runIds) {
+      const sandboxPath = path.join(projectRuns, runId);
+      try {
+        const st = fs.statSync(sandboxPath);
+        if (!st.isDirectory()) continue;
+        out.push({ projectId, runId, sandboxPath, mtimeMs: st.mtimeMs });
+      } catch { /* vanished mid-scan: it is gone, which is the goal anyway */ }
+    }
+  }
+  return out;
+}
+
+/**
+ * Which sandboxes are safe to delete.
+ *
+ * Two independent conditions must both hold, because the cost of being wrong is
+ * deleting a live run's working tree. A project with a live lock is excluded
+ * outright, and on top of that the directory must be untouched for `minAgeMs` --
+ * so even if lock state were somehow read wrong, a sandbox being actively
+ * written to is still not a candidate.
+ *
+ * Nothing here tries to salvage a stranded sandbox's contents. A worker killed
+ * mid-write leaves a tree of unknown consistency, and committing that as a
+ * revision is precisely how a corrupt snapshot gets published: the run's own
+ * completed writes are already in a revision, and anything after them is not
+ * worth the risk of publishing a half-written file.
+ */
+export function selectOrphanedSandboxes(
+  dirs: readonly SandboxDir[],
+  liveProjectIds: ReadonlySet<string>,
+  now: number,
+  minAgeMs: number,
+): SandboxDir[] {
+  return dirs.filter((d) => !liveProjectIds.has(d.projectId) && now - d.mtimeMs > minAgeMs);
+}
+
 /** path -> sha256 from the HEAD revision manifest, for diffing a run's output. */
 export async function fetchHeadHashes(projectId: string): Promise<Map<string, string>> {
   const head = await fetchHeadManifest(projectId);

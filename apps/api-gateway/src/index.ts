@@ -11,7 +11,7 @@ import { testAndAutoDisableProviders, startLlmHealthLoop } from './services/llm-
 import { startAgentRunWatchdog } from './services/agentRunWatchdog.service.js';
 import { getLlmControlState } from './services/llm-control.service.js';
 import { probeEmbeddingProvider } from './knowledgebase/index.js';
-import { releaseAllLocksForThisProcess } from './routes/ai.routes.js';
+import { releaseAllLocksForThisProcess, interruptRunsForThisProcess } from './routes/ai.routes.js';
 import type { Server } from 'node:http';
 import { config } from './config/environment.js';
 
@@ -100,10 +100,16 @@ function gracefulShutdown(signal: string) {
     shuttingDown = true;
     logger.info(`${signal} received   draining connections...`);
 
-    // Deterministic cleanup: release any agent_locks rows THIS process holds,
-    // regardless of whether its in-flight request handlers ever reach their
-    // own finally block (see releaseAllLocksForThisProcess's comment).
-    releaseAllLocksForThisProcess().catch(() => {});
+    // Deterministic cleanup: tell in-flight runs they are being killed and close
+    // their agent_runs rows, then release any agent_locks rows THIS process
+    // holds, regardless of whether its in-flight request handlers ever reach
+    // their own finally block (see releaseAllLocksForThisProcess's comment).
+    // Interrupt first: it needs the runs still present in memory, and it is what
+    // turns a restart from a silently dropped stream into a message the user
+    // can act on. Both are best-effort and neither may delay the drain.
+    void interruptRunsForThisProcess()
+        .catch(() => {})
+        .finally(() => { void releaseAllLocksForThisProcess().catch(() => {}); });
 
     // Stop accepting new connections
     server.close(() => {

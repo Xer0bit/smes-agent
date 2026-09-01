@@ -7,6 +7,8 @@ import { compensateFileWrite } from '../services/projectFileWriter.js';
 import { publishRunChunk, publishRunEnd, relayRunStream, runStreamExists, publishRunCancel, subscribeRunCancel } from '../services/runStreamBroker.js';
 import { getLlmControlState, getUserPlanTier } from '../services/llm-control.service.js';
 import { testAndAutoDisableProviders, getLastHealthResults } from '../services/llm-health.service.js';
+import { createRunSink } from '../services/runSink.js';
+import { isLockLive, AGENT_LOCK_STALE_MS, AGENT_LOCK_HEARTBEAT_MS } from '../services/agentLockState.js';
 import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
 import { openSandbox, discardSandbox } from '../services/runSandbox.js';
 import { checkUsageQuota } from '../services/billing.service.js';
@@ -191,8 +193,43 @@ interface ActiveRun {
     ended: Promise<void>;
     /** Called from the route's finally, after the lock is released. */
     markEnded: () => void;
+    /**
+     * The run's ONLY output path. Formats an SSE frame, buffers it for replay,
+     * fans it out to every attached connection, and mirrors it cross-worker.
+     * The run never touches a `Response`, so its progress does not depend on
+     * anyone currently listening.
+     */
+    emit: (event: string, data: unknown) => void;
+    /** Same, for a pre-formatted frame. `replayable: false` skips the buffer. */
+    emitRaw: (frame: string, replayable?: boolean) => void;
 }
 const activeAgentRuns = new Map<string, ActiveRun>();
+
+/**
+ * Point one HTTP connection at a run: replay what it missed, then follow live.
+ *
+ * Every connection uses this, the one that started the run included. Attaching
+ * and detaching are the only things a connection does to a run -- it cannot
+ * start, stop, or slow one.
+ */
+function attachSubscriber(run: ActiveRun, req: AuthenticatedRequest, res: Response): void {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+
+    for (const frame of run.buffer) {
+        if (!res.writableEnded) res.write(frame);
+    }
+
+    const onChunk = (frame: string) => { if (!res.writableEnded) res.write(frame); };
+    const onEnd = () => { if (!res.writableEnded) res.end(); };
+    run.bus.on('chunk', onChunk);
+    run.bus.once('end', onEnd);
+    req.on('close', () => {
+        run.bus.off('chunk', onChunk);
+        run.bus.off('end', onEnd);
+    });
+}
 
 // ── Cross-process lock ────────────────────────────────────────────────────
 // `activeAgentRuns` above is a module-level Map   it only exists in the memory
@@ -220,8 +257,8 @@ const activeAgentRuns = new Map<string, ActiveRun>();
 // (agentProjectLock.ts) still serializes the actual file writes even if this
 // lock is reclaimed early, so an early reclaim degrades to a rejected duplicate
 // rather than interleaved writes.
-const AGENT_LOCK_STALE_MS = 3 * 60_000;
-const AGENT_LOCK_HEARTBEAT_MS = 30_000;
+// AGENT_LOCK_STALE_MS / AGENT_LOCK_HEARTBEAT_MS now live in services/agentLockState.ts
+// so the agent_runs watchdog can share the exact same staleness bound.
 
 // Lock lives in the `agent_locks` DB table (not a local tmpfile) because the
 // preview-service pushing files for a run lives on a *different machine*
@@ -354,12 +391,7 @@ const AGENT_EFFECT_COMPENSATORS: Parameters<typeof recoverRun>[1] = {
  *  a project falls back into the exact dead zone this whole change removes --
  *  /active-run says nothing is running while the lock check still rejects the
  *  next message. One function, one bound, both callers. */
-export function isLockLive(acquiredAt: string, now: number = Date.now()): boolean {
-    // An unparseable timestamp yields NaN, and `NaN <= x` is false -- so a
-    // garbage value reads as dead (reclaimable) rather than live-forever, which
-    // is the safe direction: the wrong one would wedge the project permanently.
-    return now - new Date(acquiredAt).getTime() <= AGENT_LOCK_STALE_MS;
-}
+export { isLockLive };
 
 /** Keep this run's lock row fresh so AGENT_LOCK_STALE_MS can stay short.
  *  Scoped by token as well as project so a heartbeat can never resurrect a lock
@@ -434,6 +466,56 @@ async function releaseAgentLock(projectId: string): Promise<void> {
 // AGENT_LOCK_STALE_MS (15min) with a false "another generation is running"
 // error. Deleting by owner is deterministic regardless of how far any
 // individual request got, unlike waiting for sockets/finally blocks to run.
+/**
+ * Tell every run this worker owns that it is being killed, then close the loop
+ * on it in the DB.
+ *
+ * A restart used to be silent from the client's side: the socket simply died
+ * mid-stream, the `agent_runs` row kept claiming `status='running'`, and the UI
+ * showed a generation that no process was working on until a sweep noticed.
+ * Emitting a terminal event first means an attached client learns immediately
+ * and from the run itself, rather than inferring it from a dropped connection.
+ *
+ * Awaited by the shutdown path: this is the last moment the run ids are known,
+ * since they live only in this process's memory.
+ */
+export async function interruptRunsForThisProcess(): Promise<void> {
+    const projectIds = [...activeAgentRuns.keys()];
+    if (projectIds.length === 0) return;
+
+    for (const [, run] of activeAgentRuns) {
+        try {
+            run.emit('error', {
+                message: 'This generation was interrupted because the server restarted. Work already saved to a revision is kept; please re-send your request to continue.',
+                interrupted: true,
+            });
+            run.bus.emit('end');
+        } catch { /* a run whose subscribers are already gone is fine */ }
+    }
+
+    try {
+        // Scoped by project rather than by run id because the id lives inside
+        // the agent loop, not on the run handle -- and this worker holds each
+        // of these projects' locks, so a 'running' row for one of them is this
+        // run by construction.
+        const { error } = await supabase
+            .from('agent_runs')
+            .update({
+                status: 'failed',
+                error_message: 'Interrupted by a server restart before the run finished.',
+                completed_at: new Date().toISOString(),
+            })
+            .in('project_id', projectIds)
+            .eq('status', 'running');
+        if (error) throw error;
+        logger.info(`[agent-stream] Marked runs interrupted on shutdown for ${projectIds.length} project(s)`);
+    } catch (err) {
+        // The watchdog's lock-liveness sweep is the backstop; this is only the
+        // fast path that saves the user a wait.
+        logger.warn(`[agent-stream] Could not mark interrupted runs on shutdown: ${(err as Error).message}`);
+    }
+}
+
 export async function releaseAllLocksForThisProcess(): Promise<void> {
     try {
         const { error, count } = await supabase
@@ -984,23 +1066,8 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 note: 'this connection joins the running generation; the submitted prompt is NOT executed separately',
             });
 
-            res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache, no-transform');
-        res.setHeader('Connection', 'keep-alive');
-
-        for (const chunk of existingRunEarly.buffer) {
-            if (!res.writableEnded) res.write(chunk);
-        }
-
-        const onChunkEarly = (chunk: string) => { if (!res.writableEnded) res.write(chunk); };
-        const onEndEarly = () => { if (!res.writableEnded) res.end(); };
-        existingRunEarly.bus.on('chunk', onChunkEarly);
-        existingRunEarly.bus.once('end', onEndEarly);
-        req.on('close', () => {
-            existingRunEarly.bus.off('chunk', onChunkEarly);
-            existingRunEarly.bus.off('end', onEndEarly);
-        });
-        return;
+            attachSubscriber(existingRunEarly, req, res);
+            return;
         }
     }
 
@@ -1113,57 +1180,36 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         }
     };
 
-    const currentRunBus = new EventEmitter();
-    currentRunBus.setMaxListeners(50);
+    // The run's only output path. `publishRunChunk` is deliberately not awaited:
+    // it is a best-effort mirror for subscribers on the OTHER PM2 worker, and an
+    // agent run must never slow down or fail because a Redis write did. Local
+    // subscribers are served from the sink's own buffer and bus regardless.
+    const runSink = createRunSink((frame) => { void publishRunChunk(projectId, agentLockToken, frame); });
+    const currentRunBus = runSink.bus;
     let markRunEnded!: () => void;
     const runEnded = new Promise<void>((resolve) => { markRunEnded = resolve; });
     const currentRun: ActiveRun = {
         abort: abortRun,
         startedAt: Date.now(),
         bus: currentRunBus,
-        buffer: [],
+        buffer: runSink.buffer,
         finishing: false,
         ended: runEnded,
         markEnded: markRunEnded,
+        emit: runSink.emit,
+        emitRaw: runSink.emitRaw,
     };
     activeAgentRuns.set(projectId, currentRun);
 
-    req.on('close', () => {
-        // Give the client 5 minutes to navigate back and reconnect before aborting the run.
-        // This allows the agent to keep running in the background when the user leaves the page.
-        if (!res.writableEnded) {
-            setTimeout(() => {
-                if (!routeAbortController.signal.aborted && currentRun.bus.listenerCount('chunk') === 0) {
-                    abortRun();
-                }
-            }, 300_000);
-        }
-    });
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
-
-    // Intercept res.write so every SSE chunk is also broadcast to fan-out subscribers.
-    // Cap the replay buffer at 2000 entries to prevent unbounded memory growth for
-    // very long generations. Reconnecting clients will still get the most recent
-    // output; they'll only miss very old chunks from the start of the run.
-    const SSE_BUFFER_CAP = 2000;
-    const originalWrite = res.write.bind(res);
-    (res as any).write = (chunk: any, ...args: any[]): boolean => {
-        const str: string = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
-        if (currentRun.buffer.length < SSE_BUFFER_CAP) {
-            currentRun.buffer.push(str);
-        }
-        currentRun.bus.emit('chunk', str);
-        // Mirror to the cross-worker broker (Phase 5). Deliberately not
-        // awaited: this is a best-effort mirror for subscribers on the OTHER
-        // PM2 worker, and an agent run must never slow down or fail because a
-        // Redis write did. Local subscribers are served from memory above
-        // regardless of what happens here.
-        void publishRunChunk(projectId, agentLockToken, str);
-        return originalWrite(chunk, ...args);
-    };
+    // The run now writes to its own record, never to a socket, and THIS
+    // connection subscribes to it exactly like a rejoining one. That is the
+    // whole point: a dropped connection is no longer an event the run can
+    // notice, so the old "wait 5 minutes for a reconnect, then abort" timer is
+    // gone -- an abort now only ever comes from an explicit cancel. It also
+    // removes a real failure mode: the run used to write straight into the
+    // socket, so a client that vanished mid-write surfaced as an EPIPE inside
+    // the agent loop rather than as a disconnected reader.
+    attachSubscriber(currentRun, req, res);
 
     let agentResult: Awaited<ReturnType<typeof runAgentLoop>> | undefined;
     // Per-run sandbox handle, hoisted above the try so `finally` can discard it.
@@ -1507,7 +1553,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
 
         if (isConversational) {
             logger.info(`[agent-stream] Fast path (conversational)   bypassing agent loop`);
-            sseWrite(res, 'start', { projectId, model: 'fast-path', mode: effectiveMode });
+            currentRun.emit('start', { projectId, model: 'fast-path', mode: effectiveMode });
 
             const anthropicKey = process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
             const geminiKey = process.env.GEMINI_API_KEY;
@@ -1527,7 +1573,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                         system: `You are EcomGear AI, an app builder. Answer briefly and helpfully. Rules: NO emojis. Do not use the em dash character. Sound like a calm human teammate, not a bot. Never start a reply with phrases like "Great question", "Absolutely", "Of course", or "I would be happy to".`,
                         prompt: trimmedPrompt,
                     });
-                    sseWrite(res, 'text-delta', { text });
+                    currentRun.emit('text-delta', { text });
                 } catch (fastErr) {
                     logger.warn(`[agent-stream] Fast path LLM failed, falling back to agent loop: ${(fastErr as Error).message}`);
                     fastModel = null; // fall through to the agent loop below
@@ -1535,7 +1581,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             }
 
             if (fastModel) {
-                sseWrite(res, 'done', { mode: effectiveMode, summary: '', tokensUsed: 0 });
+                currentRun.emit('done', { mode: effectiveMode, summary: '', tokensUsed: 0 });
                 return;
             }
         }
@@ -1573,9 +1619,12 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                     // teardown window so a prompt arriving now waits for the
                     // real end instead of being swallowed as a subscriber.
                     if (event === 'done') currentRun.finishing = true;
-                    return sseWrite(res, event, data);
+                    return currentRun.emit(event, data);
                 },
-                heartbeat: () => { if (!res.writableEnded) res.write(': heartbeat\n\n'); },
+                // Not replayable: a keepalive is meaningful only to a socket
+                // that is open right now, and buffering thousands of them would
+                // spend the replay cap on frames a rejoining client cannot use.
+                heartbeat: () => currentRun.emitRaw(': heartbeat\n\n', false),
             },
             userId,
             abortSignal: routeAbortController.signal,
@@ -1588,8 +1637,8 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             if (cacheResult.hit && cacheResult.cachedSnapshot) {
                 logger.info(`[agent-stream] Semantic Cache hit! Bypassing LLM execution for project=${projectId}`);
 
-                sseWrite(res, 'start', { projectId, model: 'semantic-cache-hit', mode: effectiveMode });
-                sseWrite(res, 'text-delta', {
+                currentRun.emit('start', { projectId, model: 'semantic-cache-hit', mode: effectiveMode });
+                currentRun.emit('text-delta', {
                     text: `⚡ [Semantic Cache Hit] Matched cached design pattern with high similarity (${((cacheResult.similarity ?? 0.95) * 100).toFixed(1)}%). Materializing snapshot...`,
                 });
 
@@ -1608,13 +1657,13 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 }
 
                 // Emit tool-output & finish SSE events
-                sseWrite(res, 'tool-output', {
+                currentRun.emit('tool-output', {
                     tool: 'write_file',
                     result: `Materialized ${Object.keys(cacheResult.cachedSnapshot).length} cached files.`,
                     files: cacheResult.cachedSnapshot,
                 });
-                sseWrite(res, 'step-finish', { step: 1, totalSteps: 1, cached: true });
-                sseWrite(res, 'done', { mode: effectiveMode, summary: 'Restored from Semantic Cache', tokensUsed: 0, cached: true });
+                currentRun.emit('step-finish', { step: 1, totalSteps: 1, cached: true });
+                currentRun.emit('done', { mode: effectiveMode, summary: 'Restored from Semantic Cache', tokensUsed: 0, cached: true });
 
                 await releaseAgentLock(projectId).catch(() => {});
                 return;
@@ -1666,8 +1715,8 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             // reported 2026-08-22 as the agent "repeating itself and still
             // running after it finished". Tell the client to discard what the
             // superseded attempt said before the replacement starts.
-            sseWrite(res, 'text-reset', { reason: 'escalating' });
-            sseWrite(res, 'status', { phase: 'escalating', message: 'Retrying with a stronger model...' });
+            currentRun.emit('text-reset', { reason: 'escalating' });
+            currentRun.emit('status', { phase: 'escalating', message: 'Retrying with a stronger model...' });
             effectiveModel = entitledModel;
             agentResult = await runAgentLoop(buildAgentLoopParams(entitledModel));
         }
@@ -1714,7 +1763,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             logger.error(`[agent-stream] Error: ${message}`);
 
             if (!(error as { sseErrorEmitted?: boolean }).sseErrorEmitted) {
-                sseWrite(res, 'error', { message });
+                currentRun.emit('error', { message });
             }
         }
     } finally {
@@ -1754,12 +1803,11 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         // Signal waiters only now: the lock is released above, so anyone who
         // parked during teardown can acquire it immediately on wake.
         currentRun.markEnded();
+        // 'end' closes every attached connection through its own subscriber,
+        // this request's included -- the run does not close sockets itself.
         currentRun.bus.emit('end');
         void publishRunEnd(projectId, agentLockToken);
         currentRun.bus.removeAllListeners();
-        if (!res.writableEnded) {
-            res.end();
-        }
     }
 });
 
