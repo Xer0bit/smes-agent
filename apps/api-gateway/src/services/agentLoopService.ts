@@ -26,6 +26,8 @@ import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols, getProvid
 import { persistAgentRevision } from './agentRevisionPersist.service.js';
 import { priceFor, calcCost, createRunTokens } from './agentCost.js';
 import { fetchHeadHashes, diffFilesAgainstHead } from './runSandbox.js';
+import { buildSignatureMap } from './agentSignatureMap.js';
+import { withInvariantCore } from '../prompts/invariants.js';
 import { captureThumbnail } from './thumbnailService.js';
 import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
 import { beginRun as beginNarration, updateThought, endRun as endNarration, generateStatus, getNarrationCost, type LifecyclePhase } from './narration.service.js';
@@ -1174,21 +1176,14 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // Cheap (regex, already-in-memory content, no DB round-trip) and gives the
   // model enough to judge relevance without loading full text it may not need  
   // it still MUST call read_file before importing/editing, per the warning below.
-  const MAX_SIGNATURE_FILES = 40;
-  const signatureLines: string[] = [];
-  for (const f of excludedFileEntries.slice(0, MAX_SIGNATURE_FILES)) {
-    if (!/\.(tsx?|jsx?)$/.test(f.path)) { signatureLines.push(f.path); continue; }
-    try {
-      const symbols = extractSymbols(f.content);
-      if (symbols.length === 0) { signatureLines.push(f.path); continue; }
-      const sig = symbols.map(s => `${s.name}:${s.kind}`).join(', ');
-      signatureLines.push(`${f.path}   ${sig}`);
-    } catch (symErr: any) {
-      logger.debug('_runAgentLoopInner: extractSymbols failed for excluded file (non-fatal)', { path: f.path, error: symErr?.message });
-      signatureLines.push(f.path);
-    }
-  }
-  const remainingCount = excludedFiles.length - signatureLines.length;
+  // Relevance-ordered + budget-bounded. excludedFileEntries is already sorted by
+  // the same score used to pick the full-body files, so the most relevant files
+  // get signatures first. The old flat 40-file cap made everything past #40
+  // invisible, which is what forced the agent to discover the codebase by
+  // reading files one at a time. See agentSignatureMap.ts.
+  const signatureMap = buildSignatureMap(excludedFileEntries, { extract: extractSymbols });
+  const signatureLines = signatureMap.lines;
+  const remainingCount = signatureMap.omitted;
 
   const excludedFilesNote = excludedFiles.length > 0
     ? `\n\n**WARNING: ${excludedFiles.length} file(s) exist in the project but their FULL contents are NOT shown above   only symbol signatures.** ` +
@@ -1641,7 +1636,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   //   other  →  full prompt   (plan/confirm profiles)
   // Plan mode must never receive tier-specific build/edit/fix prompts   they contain
   // file-write instructions that directly conflict with plan-mode restrictions.
-  const staticSystemPrompt = runtimeMode === 'plan'
+  const selectedSystemPrompt = runtimeMode === 'plan'
     ? getAppBuilderSystemPrompt('plan')
     : _tier === 'micro'
       ? MICRO_SYSTEM_PROMPT
@@ -1685,6 +1680,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             : promptProfile === 'fix'
               ? getFixSystemPrompt()
               : getAppBuilderSystemPrompt(promptProfile);
+
+  // Unstrippable safety net. The per-tier prompts are produced by STRIPPING
+  // sections out of the build prompt, so a non-negotiable rule can silently
+  // vanish from a tier -- measured: edit/fix/micro had all lost the "never echo
+  // a secret's value" rule, and micro also lacked the tool-first mandate.
+  // Appends ONLY what the selected variant is missing, so the full build prompt
+  // comes back byte-identical. See prompts/invariants.ts.
+  const staticSystemPrompt = withInvariantCore(selectedSystemPrompt);
 
   logger.info('[AgentLoop] Prompt profile resolved', {
     projectId, promptProfile, tier: _tier ?? 'unset', maxSteps: MAX_STEPS, staticSystemPromptChars: staticSystemPrompt.length,

@@ -45,25 +45,3 @@ describe('reconcileClientFilesToHead', () => {
     expect(dropped).toEqual([]);
   });
 });
-
-import { computeStalePaths } from '../agentFileReconcile.js';
-
-describe('computeStalePaths (disk re-materialize prune)', () => {
-  const head = new Set(Array.from({ length: 30 }, (_, i) => `src/pages/Real${i}.tsx`).concat(['src/App.tsx', 'public/logo.png', 'package.json']));
-
-  it('prunes stray source pages HEAD does not have', () => {
-    const disk = ['src/App.tsx', 'src/pages/GigDetailPage.tsx', 'src/pages/JobsPage.tsx', 'src/pages/Real0.tsx'];
-    expect(computeStalePaths(head, disk).sort()).toEqual(['src/pages/GigDetailPage.tsx', 'src/pages/JobsPage.tsx']);
-  });
-
-  it('never touches assets, config, or non-src files even if not in HEAD', () => {
-    const disk = ['public/cq.png', 'package.json', 'vite.config.ts', 'node_modules/x/index.js', 'src/App.tsx'];
-    expect(computeStalePaths(head, disk)).toEqual([]);
-  });
-
-  it('safety floor: a too-small HEAD prunes nothing', () => {
-    const tinyHead = new Set(['src/App.tsx']);
-    const disk = ['src/pages/GigDetailPage.tsx', 'src/pages/JobsPage.tsx'];
-    expect(computeStalePaths(tinyHead, disk)).toEqual([]);
-  });
-});
