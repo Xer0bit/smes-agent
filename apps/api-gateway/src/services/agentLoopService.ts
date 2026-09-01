@@ -22,6 +22,7 @@ import { PRE_INSTALLED_PACKAGES } from './baseTemplateService.js';
 import { RunStateLedger } from './runStateLedger.js';
 import { canonicalizeModelId, DEFAULT_PRIMARY_MODEL, DEFAULT_FALLBACK_MODEL } from '../config/models.js';
 import { runPreviewSmokeCheck } from './previewSmokeCheck.service.js';
+import { awaitPreviewSettled } from './previewSettle.js';
 import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols, getProvider } from '../knowledgebase/index.js';
 import { persistAgentRevision } from './agentRevisionPersist.service.js';
 import { priceFor, calcCost, createRunTokens } from './agentCost.js';
@@ -3110,6 +3111,16 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // calcCost only as fallback for streams onStepFinish never saw.
             const totalCost = runCostUsd > 0 ? runCostUsd : calcCost(PRICE, totalIn, totalOut, totalCR, totalCW);
             agentGenerationComplete = true;
+            // Disarm the agent timeout HERE, not 2500 lines later in the
+            // finally. AGENT_TIMEOUT_MS exists to bound the model loop, but it
+            // stayed armed across the whole post-run phase -- preview push,
+            // persist, smoke check -- which on 2026-09-01 spanned 104 seconds
+            // for a single push. A timeout firing in that window aborts a run
+            // whose generation already finished and sends it down the salvage
+            // path, which is the "burns the agent timeout" failure. The post-run
+            // phase is bounded by its own HTTP timeouts, the project lock's
+            // staleness window, and the agent_runs watchdog.
+            if (agentTimeoutId) clearTimeout(agentTimeoutId);
             logger.info('[AgentLoop] RUN COMPLETE', {
               projectId, userId, agentRunId,
               inputTokens: totalIn, outputTokens: totalOut, cacheReadTokens: totalCR, cacheWriteTokens: totalCW,
@@ -4600,25 +4611,28 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         generateStatus(projectId, { kind: 'lifecycle', phase: 'build-check' }).then((s) => {
           if (s) sink.emit('step-finish', { step: 0, toolCount: 0, status: s });
         }).catch(() => {});
-        await new Promise<void>(r => setTimeout(r, 600));
-        let status = await getPreviewStatus();
-        if (!status.healthy) {
+        // Wait for the rebuild to SETTLE rather than sampling it at 600ms and
+        // 1.2s. A push starts an async Vite rebuild whose duration scales with
+        // the payload; sampling it mid-flight is what let a healthy run read as
+        // broken and hand itself to the repair pass. An unhealthy verdict now
+        // requires the same failure twice in a row, and an unsettled reading
+        // (budget exhausted while still changing) is explicitly NOT a failure.
+        const settle = await awaitPreviewSettled(getPreviewStatus);
+        if (!settle.healthy && settle.settled) {
           previewPushOk = false;
-          repairDiagnosticKind = status.diagnosticKind ?? 'build';
-          const hint = status.errors.slice(0, 1).join('\n') || 'unknown preview error';
-          logger.warn('[AgentLoop] Preview reported unhealthy after successful push', { projectId, repairDiagnosticKind, hint });
-        } else {
-          // Second check at 1.2s total   catches slower Vite transforms on production
-          await new Promise<void>(r => setTimeout(r, 600));
-          status = await getPreviewStatus();
-          if (!status.healthy) {
-            previewPushOk = false;
-            repairDiagnosticKind = status.diagnosticKind ?? 'build';
-            const hint = status.errors.slice(0, 1).join('\n') || 'unknown preview error';
-            logger.warn('[AgentLoop] Preview reported unhealthy on second check', { projectId, repairDiagnosticKind, hint });
-          }
+          repairDiagnosticKind = settle.diagnosticKind ?? 'build';
+          const hint = settle.errors.slice(0, 1).join('\n') || 'unknown preview error';
+          logger.warn('[AgentLoop] Preview reported unhealthy after successful push', {
+            projectId, hint, reads: settle.reads, elapsedMs: settle.elapsedMs,
+          });
+        } else if (!settle.healthy) {
+          // Still moving when the budget ran out. Recorded, never acted on:
+          // repairing on this reading is how landed work got re-broken.
+          logger.warn('[AgentLoop] Preview still unsettled after push, NOT triggering repair', {
+            projectId, reads: settle.reads, elapsedMs: settle.elapsedMs,
+            errorsPreview: settle.errors.slice(0, 2).join('; ').slice(0, 200),
+          });
         }
-
         // ── Gap G2: browser smoke check as a REPAIR TRIGGER ──────────────────
         // Runs only when every cheap signal already says healthy -- i.e. exactly
         // when we are about to tell the user it worked. That placement is the
