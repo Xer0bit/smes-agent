@@ -373,3 +373,84 @@ export function diffFilesAgainstHead(
   for (const p of headHashes.keys()) if (!seen.has(p)) deleted.push(p);
   return { added, changed, deleted, unchanged };
 }
+
+/**
+ * The files a revision records, in the exact wire form the preview push and the
+ * client already expect (binaries stay BINARY_SENTINEL + base64, as stored).
+ *
+ * This is the contamination-free way to reconstruct a past state: the set is
+ * whatever the manifest lists and nothing else. A disk snapshot, by contrast,
+ * is a copy of the shared project dir, so it captures whatever else happened to
+ * be sitting there -- which is how a rollback re-injected another project's
+ * pages after the 2026-08-31 cache incident.
+ */
+export async function fetchRevisionFiles(
+  projectId: string,
+  revisionId: string,
+): Promise<Array<{ path: string; content: string }> | null> {
+  if (!supabase) return null;
+  const { data } = await supabase
+    .from('revisions')
+    .select('generated_files')
+    .eq('id', revisionId)
+    .eq('project_id', projectId)
+    .maybeSingle();
+  const gf = data?.generated_files as { format?: string; files?: ManifestEntry[] } | null;
+  if (gf?.format !== 'manifest-v1' || !Array.isArray(gf.files) || gf.files.length === 0) return null;
+
+  const out: Array<{ path: string; content: string }> = [];
+  const BATCH = 12;
+  for (let i = 0; i < gf.files.length; i += BATCH) {
+    await Promise.all(gf.files.slice(i, i + BATCH).map(async (entry) => {
+      const p = typeof entry.path === 'string' ? entry.path : '';
+      const srcRev = typeof entry.source_revision === 'string' ? entry.source_revision : '';
+      if (!p || !srcRev) return;
+      const { data: blob, error } = await supabase!.storage
+        .from(STORAGE_BUCKET)
+        .download(`projects/${projectId}/${srcRev}/${p}`);
+      if (error || !blob) return;
+      out.push({ path: p, content: await blob.text() });
+    }));
+  }
+  return out.length > 0 ? out : null;
+}
+
+/**
+ * The manifest revision a given agent run produced, resolved by time window.
+ *
+ * `agent_runs` carries no revision id, but a project holds an exclusive lock for
+ * the whole of a run, so no two runs on one project can overlap -- which makes
+ * "the manifest revision created between this run's start and shortly after its
+ * end" unambiguous rather than a guess.
+ */
+export async function findRunRevision(projectId: string, runId: string): Promise<string | null> {
+  if (!supabase) return null;
+  const { data: run } = await supabase
+    .from('agent_runs')
+    .select('started_at, completed_at')
+    .eq('id', runId)
+    .eq('project_id', projectId)
+    .maybeSingle();
+  if (!run?.started_at) return null;
+
+  // Teardown continues briefly after completion; the revision write sits inside
+  // that window, so allow slack past completed_at (and cover a run whose
+  // completion was never recorded by falling back to now).
+  const from = new Date(run.started_at).toISOString();
+  const to = new Date((run.completed_at ? new Date(run.completed_at).getTime() : Date.now()) + 120_000).toISOString();
+
+  const { data: revs } = await supabase
+    .from('revisions')
+    .select('id, generated_files')
+    .eq('project_id', projectId)
+    .gte('created_at', from)
+    .lte('created_at', to)
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  for (const r of revs ?? []) {
+    const gf = r.generated_files as { format?: string; files?: unknown[] } | null;
+    if (gf?.format === 'manifest-v1' && Array.isArray(gf.files) && gf.files.length > 0) return r.id;
+  }
+  return null;
+}

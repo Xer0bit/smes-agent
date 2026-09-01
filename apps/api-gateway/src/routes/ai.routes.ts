@@ -10,7 +10,7 @@ import { testAndAutoDisableProviders, getLastHealthResults } from '../services/l
 import { createRunSink } from '../services/runSink.js';
 import { isLockLive, AGENT_LOCK_STALE_MS, AGENT_LOCK_HEARTBEAT_MS } from '../services/agentLockState.js';
 import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
-import { openSandbox, discardSandbox } from '../services/runSandbox.js';
+import { openSandbox, discardSandbox, findRunRevision, fetchRevisionFiles, rollbackToRevision } from '../services/runSandbox.js';
 import { checkUsageQuota } from '../services/billing.service.js';
 import { DEFAULT_FREE_MODEL } from '../config/models.js';
 import { projectService } from '../services/project.service.js';
@@ -2037,6 +2037,10 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
 
     // Resolve snapshotId: either direct or via runId → agent_runs lookup
     let snapshotId = rawSnapshotId;
+    // The run this rollback targets, used to find its revision manifest. When
+    // only a snapshotId was given it is embedded in that id ({projectId}_{runId}),
+    // so both callers reach the manifest path.
+    let rollbackRunId: string | undefined = runId;
     if (!snapshotId && runId && supabase) {
         const { data, error } = await supabase
             .from('agent_runs')
@@ -2083,6 +2087,21 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
         return;
     }
 
+    // The chat-panel caller sends only a snapshotId, whose second half is a
+    // fresh UUID rather than the run's id, so the run has to be found by the
+    // snapshot it owns. Scoped to this project, which ownership was just
+    // verified for. Without this, that caller could never reach the manifest
+    // path below and would always restore from the shared-disk copy.
+    if (!rollbackRunId && snapshotId && supabase) {
+        const { data: ownerRun } = await supabase
+            .from('agent_runs')
+            .select('id')
+            .eq('snapshot_id', snapshotId)
+            .eq('project_id', projectId)
+            .maybeSingle();
+        if (ownerRun?.id) rollbackRunId = ownerRun.id;
+    }
+
     // Resolve appPath (same logic as agent-stream)
     const IS_PRODUCTION = process.env.NODE_ENV === 'production';
     let appPath: string;
@@ -2115,6 +2134,47 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
         return;
     }
 
+    // ── Manifest rollback (preferred) ────────────────────────────────────────
+    // A snapshot is a copy of the SHARED project dir, so it captures whatever
+    // else was sitting there, and the restore below then sweeps that same dir
+    // again -- which is how a rollback re-injected another project's pages after
+    // the 2026-08-31 incident. A revision manifest can only contain what that
+    // revision recorded, so restoring from it cannot carry anything foreign.
+    // The snapshot path is kept solely for revisions with no usable manifest.
+    if (rollbackRunId) {
+        try {
+            const targetRevisionId = await findRunRevision(projectId, rollbackRunId);
+            if (targetRevisionId) {
+                const files = await fetchRevisionFiles(projectId, targetRevisionId);
+                if (files && files.length > 0) {
+                    const rolled = await rollbackToRevision(projectId, req.user!.id, targetRevisionId);
+                    if (rolled.ok) {
+                        const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001';
+                        await fetch(`${previewServiceUrl}/preview/${projectId}/update`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            // fullSync prunes anything not in the manifest, which is
+                            // the point: the project ends up as exactly that revision.
+                            body: JSON.stringify({ files, fullSync: true }),
+                            signal: AbortSignal.timeout(30_000),
+                        }).catch(() => { /* preview lag is not a failed rollback */ });
+                        logger.info('[rollback] restored from revision manifest', {
+                            projectId, targetRevisionId, newRevisionId: rolled.revisionId, files: files.length,
+                        });
+                        res.json({ success: true, source: 'manifest', revisionId: rolled.revisionId, fileCount: files.length });
+                        return;
+                    }
+                    logger.warn('[rollback] manifest rollback failed, falling back to snapshot', { projectId, error: rolled.error });
+                }
+            }
+        } catch (mErr) {
+            logger.warn('[rollback] manifest path errored, falling back to snapshot', {
+                projectId, error: (mErr as Error).message,
+            });
+        }
+    }
+
+    logger.warn('[rollback] using the snapshot path (no usable revision manifest for this version)', { projectId, snapshotId });
     try {
         await restoreSnapshot(snapshotDir, appPath);
 
