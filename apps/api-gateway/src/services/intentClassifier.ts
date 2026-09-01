@@ -49,26 +49,59 @@ const FEATURE_RE = /\b(add|create|include|insert|implement|build|make|generate|p
 const BROAD_RE = /\b(redesign|revamp|rework|refactor|restructure|overhaul|redo|polish\s+(the\s+)?(ui|interface|design|look|style|page|app)|improve\s+(the\s+)?(ui|interface|design|look|style)|modernize|restyle|clean\s+up\s+(the\s+)?(ui|design|layout|style|code)|make\s+(?:it|this|the\s+\w+(?:\s+\w+)?)\s+(?:look|feel)\s+(?:more\s+)?(?:better|modern|clean|polished|professional)|full\s+(ui|design|style)\s+overhaul)\b/i;
 
 // ── Edit   targeted single-thing changes to existing elements ─────────────────
-const EDIT_RE = /\b(change|update|modify|remove|delete|replace|move|reorder|rename|hide|show|toggle|enable|disable|adjust|add\s+(a\s+|the\s+)?(button|link|field|input|label|icon|image|text|title|heading|paragraph|list|item|row|column|class|attribute|prop))\b/i;
+// Split in two because the two halves carry very different amounts of evidence.
+// EDIT_SPECIFIC names the thing being changed, so the tier is well supported.
+// EDIT_GENERIC is a bare verb: "change the logo", "update the hero" tell us an
+// edit is wanted but nothing about its size, and a bare verb is exactly how
+// "logo" ended up needing a hardcoded fast-path. Those go to the resolver
+// below instead of being answered confidently from a verb alone.
+const EDIT_SPECIFIC_RE = /\badd\s+(a\s+|the\s+)?(button|link|field|input|label|icon|image|text|title|heading|paragraph|list|item|row|column|class|attribute|prop)\b/i;
+const EDIT_GENERIC_RE = /\b(change|update|modify|remove|delete|replace|move|reorder|rename|hide|show|toggle|enable|disable|adjust)\b/i;
 
-export function classifyRequest(prompt: string, isEmptyProject: boolean): RequestTier {
-  if (isEmptyProject) return 'build';
+/**
+ * How much evidence the matched rule actually carried.
+ *
+ * 'high' means a rule matched something specific: a named CSS property, an
+ * explicit defect statement, a verb paired with a concrete noun. 'low' means the
+ * cascade produced an answer it cannot really justify -- a bare verb, casual
+ * "can't" filler, or the length fallback, which is a coin flip wearing a
+ * threshold. Only the low band is worth paying a model to resolve.
+ */
+export type TierConfidence = 'high' | 'low';
+
+export interface TierDecision {
+  tier: RequestTier;
+  /** Which rule decided, so misroutes can be traced to a specific pattern. */
+  rule: string;
+  confidence: TierConfidence;
+}
+
+export function classifyRequestDetailed(prompt: string, isEmptyProject: boolean): TierDecision {
+  if (isEmptyProject) return { tier: 'build', rule: 'empty-project', confidence: 'high' };
   // Unambiguous defect signal wins over a cosmetic-only match, even one
   // that mentions a MICRO_RE word like "color"   see FIX_STRONG_RE comment.
-  if (FIX_STRONG_RE.test(prompt)) return 'fix';
+  if (FIX_STRONG_RE.test(prompt)) return { tier: 'fix', rule: 'fix-strong', confidence: 'high' };
   // Micro next   "change the button color" (no defect signal) stays micro.
-  if (MICRO_RE.test(prompt)) return 'micro';
-  // Fix before build   "build error" must not trigger build tier. Includes
-  // the weaker can't/won't phrasing as a fallback for prompts with no
-  // MICRO_RE word to have overridden in the first place.
-  if (FIX_RE.test(prompt)) return 'fix';
-  if (BUILD_RE.test(prompt)) return 'build';
-  if (FEATURE_RE.test(prompt)) return 'feature';
+  if (MICRO_RE.test(prompt)) return { tier: 'micro', rule: 'micro', confidence: 'high' };
+  // Fix before build   "build error" must not trigger build tier. This is the
+  // weak can't/won't phrasing, which FIX_STRONG deliberately excludes because it
+  // is just as often casual filler ("can't you also make it blue?").
+  if (FIX_RE.test(prompt)) return { tier: 'fix', rule: 'fix-weak', confidence: 'low' };
+  if (BUILD_RE.test(prompt)) return { tier: 'build', rule: 'build', confidence: 'high' };
+  if (FEATURE_RE.test(prompt)) return { tier: 'feature', rule: 'feature', confidence: 'high' };
   // Broad-scope words imply touching many files → feature tier, not edit
-  if (BROAD_RE.test(prompt)) return 'feature';
-  if (EDIT_RE.test(prompt)) return 'edit';
-  // Fallback: short prompts are likely targeted edits, long ones are features
-  return prompt.trim().length > 400 ? 'feature' : 'edit';
+  if (BROAD_RE.test(prompt)) return { tier: 'feature', rule: 'broad', confidence: 'high' };
+  if (EDIT_SPECIFIC_RE.test(prompt)) return { tier: 'edit', rule: 'edit-specific', confidence: 'high' };
+  if (EDIT_GENERIC_RE.test(prompt)) return { tier: 'edit', rule: 'edit-generic', confidence: 'low' };
+  // Fallback: short prompts are likely targeted edits, long ones are features.
+  return prompt.trim().length > 400
+    ? { tier: 'feature', rule: 'length-fallback', confidence: 'low' }
+    : { tier: 'edit', rule: 'length-fallback', confidence: 'low' };
+}
+
+/** Rules-only tier. Unchanged behaviour; kept for callers that cannot await. */
+export function classifyRequest(prompt: string, isEmptyProject: boolean): RequestTier {
+  return classifyRequestDetailed(prompt, isEmptyProject).tier;
 }
 
 /** Step budgets per tier
@@ -94,4 +127,82 @@ export const TIER_MAX_STEPS: Record<RequestTier, number> = {
  */
 export function isCheapTier(tier: RequestTier): boolean {
   return tier === 'micro';
+}
+
+// ── Resolving the low-confidence band ────────────────────────────────────────
+
+const TIERS: readonly RequestTier[] = ['micro', 'fix', 'edit', 'feature', 'build'];
+
+const RESOLVER_PROMPT = `You route a web-app edit request to a work tier. Answer with ONE word, nothing else.
+
+micro   - a CSS-level visual tweak to something that already exists (colour, spacing, font, radius, shadow). No new elements, no logic.
+edit    - change, replace or remove one existing thing. Touches roughly one file.
+fix     - something is broken or not behaving correctly, and the cause must be found first.
+feature - add a new page, section, component or capability, or restyle broadly across many files.
+build   - create a whole new site or app, or rebuild one from scratch.
+
+Request: `;
+
+/** Timeout is short on purpose: a slow router must never delay a run. */
+const RESOLVER_TIMEOUT_MS = 2500;
+
+export interface ResolvedTier extends TierDecision {
+  source: 'rules' | 'llm';
+}
+
+function parseTier(raw: string): RequestTier | null {
+  const word = raw.trim().toLowerCase().replace(/[^a-z]/g, '');
+  return TIERS.find((t) => t === word) ?? null;
+}
+
+async function askModelForTier(prompt: string): Promise<string> {
+  // Imported lazily so the classifier stays a pure, dependency-free module for
+  // every caller that only wants the rules.
+  const [{ generateText }, { getCheapProvider }] = await Promise.all([
+    import('ai'),
+    import('./cheapModel.js'),
+  ]);
+  const { model } = getCheapProvider();
+  const result = await Promise.race([
+    generateText({
+      model,
+      messages: [{ role: 'user', content: `${RESOLVER_PROMPT}${prompt.slice(0, 1500)}` }],
+      maxOutputTokens: 5,
+    }),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('tier resolver timeout')), RESOLVER_TIMEOUT_MS)),
+  ]);
+  return result.text ?? '';
+}
+
+/**
+ * The tier to actually run with.
+ *
+ * High-confidence rule matches are returned as-is: they are free, instant, and
+ * carry real evidence. A model is consulted ONLY for the low-confidence band --
+ * a bare verb, weak "can't" phrasing, or the length fallback -- which is where
+ * misroutes concentrate and where the cascade was previously guessing while
+ * looking certain. That keeps the cost at a handful of tokens on a minority of
+ * requests instead of a routing call on every one.
+ *
+ * Fails open in every direction: a timeout, an error, or any answer that is not
+ * one of the five tier words leaves the rules' own verdict in place, so routing
+ * can never be worse than it was before this existed.
+ *
+ * @param ask injectable for tests; defaults to the real cheap-model call.
+ */
+export async function resolveRequestTier(
+  prompt: string,
+  isEmptyProject: boolean,
+  ask: (p: string) => Promise<string> = askModelForTier,
+): Promise<ResolvedTier> {
+  const ruled = classifyRequestDetailed(prompt, isEmptyProject);
+  if (ruled.confidence === 'high') return { ...ruled, source: 'rules' };
+
+  try {
+    const parsed = parseTier(await ask(prompt));
+    if (!parsed) return { ...ruled, source: 'rules' };
+    return { tier: parsed, rule: `${ruled.rule}->llm`, confidence: 'high', source: 'llm' };
+  } catch {
+    return { ...ruled, source: 'rules' };
+  }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyRequest } from '../intentClassifier.js';
+import { classifyRequest, classifyRequestDetailed, resolveRequestTier } from '../intentClassifier.js';
 
 describe('classifyRequest', () => {
   it('empty project always builds, regardless of prompt', () => {
@@ -53,5 +53,77 @@ describe('classifyRequest', () => {
     const longPrompt = 'x'.repeat(401);
     expect(classifyRequest(longPrompt, false)).toBe('feature');
     expect(classifyRequest('tweak this', false)).toBe('edit');
+  });
+});
+
+/**
+ * Confidence does not change any routing above -- every case in the suite above
+ * must still pass. It only records how much evidence the matching rule carried,
+ * so the resolver knows which verdicts are worth a second opinion.
+ */
+describe('classifyRequestDetailed: confidence', () => {
+  it('marks specific evidence high', () => {
+    for (const p of ['change the button color', 'add a pricing section', 'build a new website', 'fix the crash']) {
+      expect(classifyRequestDetailed(p, false).confidence).toBe('high');
+    }
+  });
+
+  it('marks a bare verb low, which is the "logo" shape', () => {
+    const d = classifyRequestDetailed('change the logo', false);
+    expect(d.tier).toBe('edit');           // unchanged answer
+    expect(d.rule).toBe('edit-generic');
+    expect(d.confidence).toBe('low');      // but no longer pretends to be sure
+  });
+
+  it("marks a can't/won't-only complaint low rather than certain", () => {
+    const d = classifyRequestDetailed("the site won't load, please help", false);
+    expect(d.tier).toBe('fix');            // same tier the suite above asserts
+    expect(d.confidence).toBe('low');
+  });
+
+  it('marks the length fallback low in both directions', () => {
+    expect(classifyRequestDetailed('tweak this', false).confidence).toBe('low');
+    expect(classifyRequestDetailed('x'.repeat(401), false).confidence).toBe('low');
+  });
+});
+
+describe('resolveRequestTier', () => {
+  it('never calls the model when the rules are confident', async () => {
+    let calls = 0;
+    const r = await resolveRequestTier('change the button color', false, async () => { calls++; return 'build'; });
+    expect(calls).toBe(0);
+    expect(r.tier).toBe('micro');
+    expect(r.source).toBe('rules');
+  });
+
+  it('consults the model on the low-confidence band and takes its answer', async () => {
+    const r = await resolveRequestTier('change the logo', false, async () => 'feature');
+    expect(r.tier).toBe('feature');
+    expect(r.source).toBe('llm');
+    expect(r.rule).toBe('edit-generic->llm');
+  });
+
+  it('tolerates the answer arriving with punctuation or casing', async () => {
+    const r = await resolveRequestTier('change the logo', false, async () => '  Micro.\n');
+    expect(r.tier).toBe('micro');
+  });
+
+  it('keeps the rules verdict when the model answers with nonsense', async () => {
+    const r = await resolveRequestTier('change the logo', false, async () => 'probably an edit?');
+    expect(r.tier).toBe('edit');
+    expect(r.source).toBe('rules');
+  });
+
+  it('keeps the rules verdict when the model errors or times out', async () => {
+    const r = await resolveRequestTier('change the logo', false, async () => { throw new Error('timeout'); });
+    expect(r.tier).toBe('edit');
+    expect(r.source).toBe('rules');
+  });
+
+  it('never asks about an empty project, which is build by definition', async () => {
+    let calls = 0;
+    const r = await resolveRequestTier('do something', true, async () => { calls++; return 'micro'; });
+    expect(calls).toBe(0);
+    expect(r.tier).toBe('build');
   });
 });

@@ -21,9 +21,7 @@
  */
 
 import { generateText } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createOpenAI } from '@ai-sdk/openai';
+import { getCheapProvider } from './cheapModel.js';
 
 // ─── Per-run state ───────────────────────────────────────────────────────────
 
@@ -83,21 +81,9 @@ const NARRATION_PRICING: Record<string, { input: number; output: number }> = {
   'claude-haiku-4-5-20251001':  { input: 1.00,  output: 5.00 },
 };
 
-function getProvider(): { model: any; priceTag: string } {
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey && process.env.AI_DISABLE_GEMINI !== '1') {
-    return { model: createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-flash-latest') as any, priceTag: 'gemini-flash-latest' };
-  }
-  const zaiKey = process.env.ZAI_API_KEY;
-  if (zaiKey && process.env.AI_DISABLE_ZAI !== '1') {
-    return { model: createOpenAI({ apiKey: zaiKey, baseURL: 'https://api.z.ai/api/paas/v4' }).chat('glm-4.5-flash') as any, priceTag: 'glm-4.5-flash' };
-  }
-  const anthropicKey = process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
-  if (anthropicKey && process.env.AI_DISABLE_ANTHROPIC !== '1') {
-    return { model: createAnthropic({ apiKey: anthropicKey })('claude-haiku-4-5-20251001') as any, priceTag: 'claude-haiku-4-5-20251001' };
-  }
-  return { model: createGoogleGenerativeAI({ apiKey: geminiKey || 'missing' })('gemini-flash-latest') as any, priceTag: 'gemini-flash-latest' };
-}
+// Provider chain moved to cheapModel.ts so narration and the request-tier
+// resolver cannot drift apart on models, price tags, or the AI_DISABLE_* switches.
+const getProvider = getCheapProvider;
 
 // ─── Core: generate a status line ────────────────────────────────────────────
 

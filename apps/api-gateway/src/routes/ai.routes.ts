@@ -24,7 +24,7 @@ import multer from 'multer';
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { classifyRequest, isCheapTier, TIER_MAX_STEPS } from '../services/intentClassifier.js';
+import { resolveRequestTier, isCheapTier, TIER_MAX_STEPS } from '../services/intentClassifier.js';
 import { indexFiles, deleteProjectEmbeddings } from '../knowledgebase/index.js';
 import { applySeoToHtml } from './seo.routes.js';
 
@@ -1497,7 +1497,24 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         const ASSET_SWAP_RE = /\b(use|replace|swap)\b[^.!?]{0,40}\b(this|it)\b[^.!?]{0,20}\b(for|as|with)\b|\b(replace|swap|update|change)\b[^.!?]{0,40}\b(logo|image|photo|picture|icon|banner|avatar)\b/i;
         const isAssetSwap = hasImageAttachment && projectHasFiles && ASSET_SWAP_RE.test(prompt);
 
-        const requestTier = isRepairPrompt ? 'feature' : isAssetSwap ? 'micro' : classifyRequest(prompt, !projectHasFiles);
+        // Both overrides are decided by the caller's own context, not by reading
+        // the prompt, so neither is a candidate for tier resolution.
+        const tierDecision = isRepairPrompt
+            ? { tier: 'feature' as const, rule: 'repair-override', confidence: 'high' as const, source: 'rules' as const }
+            : isAssetSwap
+                ? { tier: 'micro' as const, rule: 'asset-swap-override', confidence: 'high' as const, source: 'rules' as const }
+                : await resolveRequestTier(prompt, !projectHasFiles);
+        const requestTier = tierDecision.tier;
+        // Logged on every run so a misroute is traceable to the rule that made
+        // it, and so the share of prompts the rules cannot answer is a measured
+        // number rather than an impression.
+        logger.info('[agent-stream] tier routed', {
+            projectId,
+            tier: requestTier,
+            rule: tierDecision.rule,
+            source: tierDecision.source,
+            promptPreview: typeof prompt === 'string' ? prompt.slice(0, 80) : '',
+        });
 
         // Tier-based model routing:
         //   micro → Gemini Flash  (visual tweaks, $0.075/MTok   40× cheaper than Sonnet)
