@@ -12,7 +12,6 @@ import { isLockLive, AGENT_LOCK_STALE_MS, AGENT_LOCK_HEARTBEAT_MS } from '../ser
 import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
 import { openSandbox, discardSandbox } from '../services/runSandbox.js';
 import { checkUsageQuota } from '../services/billing.service.js';
-import { checkSemanticCache } from '../services/agentSemanticCache.js';
 import { DEFAULT_FREE_MODEL } from '../config/models.js';
 import { projectService } from '../services/project.service.js';
 import { initProjectFromTemplate, ensureBaseTemplate } from '../services/baseTemplateService.js';
@@ -1631,47 +1630,22 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             agentLockToken,
         });
 
-        // ── Semantic Vector Cache Interceptor (Phase 2) ────────────────────────
-        try {
-            const cacheResult = await checkSemanticCache(prompt, 'react');
-            if (cacheResult.hit && cacheResult.cachedSnapshot) {
-                logger.info(`[agent-stream] Semantic Cache hit! Bypassing LLM execution for project=${projectId}`);
-
-                currentRun.emit('start', { projectId, model: 'semantic-cache-hit', mode: effectiveMode });
-                currentRun.emit('text-delta', {
-                    text: `⚡ [Semantic Cache Hit] Matched cached design pattern with high similarity (${((cacheResult.similarity ?? 0.95) * 100).toFixed(1)}%). Materializing snapshot...`,
-                });
-
-                // Materialize files to disk for Vite preview server
-                if (appPath && cacheResult.cachedSnapshot) {
-                    try {
-                        await fs.promises.mkdir(appPath, { recursive: true });
-                        for (const [relPath, content] of Object.entries(cacheResult.cachedSnapshot)) {
-                            const fullPath = path.join(appPath, relPath);
-                            await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
-                            await fs.promises.writeFile(fullPath, content, 'utf8');
-                        }
-                    } catch (fsErr) {
-                        logger.warn(`[agent-stream] Semantic cache disk write warning: ${(fsErr as Error).message}`);
-                    }
-                }
-
-                // Emit tool-output & finish SSE events
-                currentRun.emit('tool-output', {
-                    tool: 'write_file',
-                    result: `Materialized ${Object.keys(cacheResult.cachedSnapshot).length} cached files.`,
-                    files: cacheResult.cachedSnapshot,
-                });
-                currentRun.emit('step-finish', { step: 1, totalSteps: 1, cached: true });
-                currentRun.emit('done', { mode: effectiveMode, summary: 'Restored from Semantic Cache', tokensUsed: 0, cached: true });
-
-                await releaseAgentLock(projectId).catch(() => {});
-                return;
-            }
-        } catch (cacheErr) {
-            logger.warn(`[agent-stream] Semantic cache interceptor error: ${(cacheErr as Error).message}`);
-        }
-
+        // The route-level semantic-cache interceptor was REMOVED here (2026-09-01).
+        //
+        // It called checkSemanticCache() with no guard of any kind -- any prompt,
+        // any project, any user -- and on a >=0.94 similarity hit it wrote the
+        // matched snapshot's files into this project and returned a completed
+        // run without invoking the model. `match_semantic_cache` carries no
+        // project_id and no user_id, so the pool it matched against is global:
+        // that is precisely the cross-user codebase-replacement path from the
+        // 2026-08-31 incident. agentLoopService.ts had been gated behind
+        // SEMANTIC_CACHE_ENABLED=false in response to that incident, but this
+        // second, independent call site was missed and stayed live.
+        //
+        // Deleted rather than flag-gated on purpose: a flag invites switching
+        // the unscoped design back on. Re-introducing any cache read here
+        // requires provenance on the cache rows first (project/user scoping),
+        // not a boolean.
         agentResult = await runAgentLoop(buildAgentLoopParams(effectiveModel));
 
         // ── Cheap-first escalation ───────────────────────────────────────────
