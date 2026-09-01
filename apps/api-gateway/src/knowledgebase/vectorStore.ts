@@ -8,7 +8,6 @@
 
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
-import { getEmbeddingDims } from './embedder.js';
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseKey =
@@ -131,20 +130,6 @@ export async function searchSimilarFiles(
 }
 
 /** Remove embedding for a deleted file. */
-export async function deleteFileEmbedding(
-  projectId: string,
-  filePath: string,
-): Promise<void> {
-  const db = getClient();
-  if (!db) return;
-
-  await db
-    .from('project_file_embeddings')
-    .delete()
-    .eq('project_id', projectId)
-    .eq('file_path', filePath);
-}
-
 /** Remove all embeddings for a project (e.g. on project delete). */
 export async function deleteProjectEmbeddings(projectId: string): Promise<void> {
   const db = getClient();

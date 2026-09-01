@@ -353,8 +353,8 @@ export async function recoverRun(
 /**
  * Effects left behind by runs that never finished cleanly.
  *
- * standingEffects() below returns every un-reverted effect, which sounds like
- * the same thing and is not. A file_write is only ever marked reverted when it
+ * A raw "every un-reverted effect" query sounds like the same thing and is
+ * not. A file_write is only ever marked reverted when it
  * is actively compensated, so a SUCCESSFUL run's writes stay un-reverted
  * forever -- correctly, since those changes still stand. Reporting them as
  * outstanding made the observed-state header say "N changes from earlier runs
@@ -403,22 +403,4 @@ export async function orphanedEffects(
     logger.warn(`[effect-ledger] cannot read orphaned effects for ${projectId}: ${(err as Error).message}`);
     return [];
   }
-}
-
-export async function standingEffects(projectId: string, limit = 100): Promise<LedgerRow[]> {
-  const supabase = await getDb();
-  if (!supabase) return [];
-
-  const { data, error } = await supabase
-    .from('agent_run_effects')
-    .select('id, run_id, project_id, seq, kind, target, boundary, before_state, after_state')
-    .eq('project_id', projectId)
-    .is('reverted_at', null)
-    .order('recorded_at', { ascending: false })
-    .limit(limit);
-  if (error) {
-    logger.warn(`[effect-ledger] cannot read standing effects for ${projectId}: ${error.message}`);
-    return [];
-  }
-  return (data ?? []) as LedgerRow[];
 }

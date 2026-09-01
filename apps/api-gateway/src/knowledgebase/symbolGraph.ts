@@ -150,11 +150,6 @@ export async function upsertSymbolGraph(
   if (error) console.warn('[kb/symbolGraph] insert error:', error.message);
 }
 
-export async function deleteSymbolGraph(projectId: string, filePath: string): Promise<void> {
-  const db = getClient();
-  if (!db) return;
-  await db.from('project_symbol_graph').delete().eq('project_id', projectId).eq('file_path', filePath);
-}
 
 export interface SymbolRow {
   file_path: string;

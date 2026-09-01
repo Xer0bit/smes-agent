@@ -157,16 +157,3 @@ export async function getDirectDependents(
     .filter(p => !filePaths.includes(p));
 }
 
-export async function deleteFileGraph(
-  projectId: string,
-  filePath: string,
-): Promise<void> {
-  const db = getClient();
-  if (!db) return;
-
-  await db
-    .from('project_file_graph')
-    .delete()
-    .eq('project_id', projectId)
-    .eq('file_path', filePath);
-}

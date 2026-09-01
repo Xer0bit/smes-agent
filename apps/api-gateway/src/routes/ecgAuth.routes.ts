@@ -16,6 +16,7 @@ import rateLimit from 'express-rate-limit';
 import { supabaseAuth, supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { createError } from '../middleware/error.middleware.js';
+import { verifyTurnstile } from '../services/turnstile.service.js';
 import {
   isEcgAuthConfigured,
   isEcgAuth2faActive,
@@ -398,9 +399,18 @@ async function provisionWorkspace(
 
 router.post('/register', registerLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { email, password, fullName, organizationName, projectName } = req.body;
+    const { email, password, fullName, organizationName, projectName, turnstileToken } = req.body;
     if (!email || !password || !fullName || !organizationName || !projectName) {
       res.status(400).json({ error: 'Email, password, full name, organization name, and project name are required' });
+      return;
+    }
+
+    // Bot protection: verify the Turnstile token before creating an account.
+    // Inert until TURNSTILE_SECRET is set in the server env (see turnstile.service.ts).
+    const turnstile = await verifyTurnstile(turnstileToken, req.ip, 'signup');
+    if (!turnstile.ok) {
+      logger.warn(`[ecgAuth] register blocked by Turnstile: ${turnstile.reason}`);
+      res.status(403).json({ error: 'Human verification failed. Please try again.' });
       return;
     }
 

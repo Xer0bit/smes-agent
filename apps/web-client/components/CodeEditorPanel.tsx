@@ -1,34 +1,35 @@
 /**
- * Code Editor Panel
- * Full project explorer + Monaco editor with creation/deletion/save actions.
+ * Source review panel: project file tree + read-only viewer.
+ *
+ * View-only by design -- there is no code editor on this platform (the agent
+ * writes files server-side; users review, they do not hand-edit). Files load
+ * lazily one at a time: the tree renders from a manifest of paths, and a file's
+ * body is fetched only when it is opened (onFileOpen). Export (single file /
+ * ZIP) stays. The editing props remain on the interface but are inert, so the
+ * Editor's existing call site keeps compiling.
  */
-
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { MonacoCodeEditor } from './MonacoCodeEditor';
+import { CodeViewer } from './CodeViewer';
 import { FileTree } from './FileTree';
-import { Download, Save, Plus, Trash2, Minus } from 'lucide-react';
+import { Download, Plus, Minus } from 'lucide-react';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
 import { cn } from '@/lib/utils';
-import {
-    AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
-    AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
-} from '@/components/ui/alert-dialog';
-import { buttonVariants } from '@/components/ui/button';
 
 interface WorkspaceFile {
     path: string;
-    /** null = not yet downloaded (lazy editor) -- selecting it triggers onFileOpen */
+    /** null = not yet downloaded (lazy) -- selecting it triggers onFileOpen */
     content: string | null;
 }
 
 interface CodeEditorPanelProps {
     files: WorkspaceFile[];
+    /** Called when a file with content === null is selected; the parent fetches and updates `files`. */
+    onFileOpen?: (path: string) => void;
+    // Inert: this panel is view-only. Kept optional so existing call sites compile.
     onFileChange?: (path: string, content: string) => void;
     onFileCreate?: (path: string, content: string) => void;
     onFileDelete?: (path: string) => void;
-    /** Called when a file with content === null is selected; the parent fetches and updates `files`. */
-    onFileOpen?: (path: string) => void;
     onSave?: () => void;
     readOnly?: boolean;
     canExport?: boolean;
@@ -45,25 +46,14 @@ function stripXmlTags(text: string): string {
 
 export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
     files,
-    onFileChange,
-    onFileCreate,
-    onFileDelete,
     onFileOpen,
-    onSave,
-    readOnly = false,
     canExport = true,
     exportLockedReason = 'Upgrade to Professional to export source code.',
     streamingText,
 }) => {
     const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
-    const selectedFilePathRef = useRef<string | null>(null);
-    selectedFilePathRef.current = selectedFilePath;
-    const [isDirty, setIsDirty] = useState(false);
-    const [showNewFileInput, setShowNewFileInput] = useState(false);
-    const [newFilePath, setNewFilePath] = useState('');
-    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const streamRef = useRef<HTMLDivElement>(null);
-    const [fontSize, setFontSize] = useState(14);
+    const [fontSize, setFontSize] = useState(13);
     const [treeWidth, setTreeWidth] = useState(176);
     const bodyRef = useRef<HTMLDivElement>(null);
     const resizingRef = useRef(false);
@@ -92,90 +82,17 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
     const selectedFile = normalizedFiles.find(f => f.path === selectedFilePath) || null;
     const selectedIsLoading = selectedFile != null && selectedFile.content === null;
 
+    // Select a file to view. Bodies are lazy: content === null means it has not
+    // been fetched yet, so ask the parent to fetch just this one.
     const handleFileSelect = useCallback((path: string) => {
         setSelectedFilePath(path);
         const f = files.find(x => x.path === path);
         if (f && f.content === null) onFileOpen?.(path);
     }, [files, onFileOpen]);
 
-    const handleContentChange = useCallback((content: string) => {
-        const path = selectedFilePathRef.current;
-        if (path && onFileChange) {
-            onFileChange(path, content);
-            setIsDirty(true);
-        }
-    }, [onFileChange]);
-
-    const normalizeNewPath = (raw: string): string => {
-        return raw
-            .trim()
-            .replace(/\\/g, '/')
-            .replace(/^\.\//, '')
-            .replace(/^\/+/, '')
-            .replace(/\s+/g, ' ')
-            .replace(/\/+/g, '/');
-    };
-
-    const handleCreateFile = useCallback(() => {
-        if (!onFileCreate || readOnly) return;
-
-        const nextPath = normalizeNewPath(newFilePath);
-        if (!nextPath) {
-            toast.error('Enter a valid file path');
-            return;
-        }
-
-        if (nextPath.endsWith('/')) {
-            toast.error('File path cannot end with /');
-            return;
-        }
-
-        if (normalizedFiles.some((file) => file.path === nextPath)) {
-            toast.error('File already exists');
-            return;
-        }
-
-        onFileCreate(nextPath, '');
-        setSelectedFilePath(nextPath);
-        setIsDirty(true);
-        setNewFilePath('');
-        setShowNewFileInput(false);
-        toast.success(`Created ${nextPath}`);
-    }, [newFilePath, normalizedFiles, onFileCreate, readOnly]);
-
-    const handleDeleteSelectedFile = useCallback(() => {
-        if (!selectedFilePath || !onFileDelete || readOnly) return;
-        setShowDeleteConfirm(true);
-    }, [selectedFilePath, onFileDelete, readOnly]);
-
-    const handleConfirmDeleteFile = useCallback(() => {
-        if (!selectedFilePath || !onFileDelete || readOnly) return;
-
-        const currentIndex = normalizedFiles.findIndex((file) => file.path === selectedFilePath);
-        const fallbackFile = normalizedFiles[currentIndex + 1] || normalizedFiles[currentIndex - 1] || null;
-
-        onFileDelete(selectedFilePath);
-        setSelectedFilePath(fallbackFile?.path || null);
-        setIsDirty(true);
-        toast.success(`Deleted ${selectedFilePath}`);
-        setShowDeleteConfirm(false);
-    }, [selectedFilePath, onFileDelete, readOnly, normalizedFiles]);
-
-    const handleSave = useCallback(() => {
-        if (onSave) {
-            onSave();
-            setIsDirty(false);
-            toast.success('Project synced');
-        }
-    }, [onSave]);
-
     const handleDownloadFile = useCallback(() => {
-        if (!canExport) {
-            toast.error(exportLockedReason);
-            return;
-        }
+        if (!canExport) { toast.error(exportLockedReason); return; }
         if (!selectedFile || selectedFile.content === null) return;
-
         const blob = new Blob([selectedFile.content], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -187,24 +104,18 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
     }, [canExport, exportLockedReason, selectedFile]);
 
     const handleDownloadAll = useCallback(async () => {
-        if (!canExport) {
-            toast.error(exportLockedReason);
-            return;
-        }
+        if (!canExport) { toast.error(exportLockedReason); return; }
         try {
-            const zip = new JSZip();
             const unloaded = normalizedFiles.filter(f => f.content === null);
             if (unloaded.length > 0) {
-                // Lazy editor: some files were never downloaded. Ask the parent
-                // to complete the set first (background fetch-all normally
-                // finishes within seconds of open).
-                toast.error(`${unloaded.length} file(s) still loading -- try again in a moment`);
+                // Lazy panel: bodies are fetched on open, so a ZIP of everything
+                // would need a full fetch. Tell the user rather than silently
+                // shipping a partial archive.
+                toast.error(`${unloaded.length} unopened file(s) -- open them first, or use per-file export`);
                 return;
             }
-            normalizedFiles.forEach(file => {
-                zip.file(file.path, file.content as string);
-            });
-
+            const zip = new JSZip();
+            normalizedFiles.forEach(file => { zip.file(file.path, file.content as string); });
             const blob = await zip.generateAsync({ type: 'blob' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -218,33 +129,31 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
         }
     }, [canExport, exportLockedReason, normalizedFiles]);
 
+    // Default the selection to a main file once the tree is known.
     useEffect(() => {
         if (!selectedFilePath && normalizedFiles.length > 0) {
             const mainFile = normalizedFiles.find(f =>
-                f.path.endsWith('App.tsx') ||
-                f.path.endsWith('main.tsx') ||
-                f.path.endsWith('index.tsx')
+                f.path.endsWith('App.tsx') || f.path.endsWith('main.tsx') || f.path.endsWith('index.tsx')
             );
-            setSelectedFilePath(mainFile?.path || normalizedFiles[0].path);
+            const next = mainFile?.path || normalizedFiles[0].path;
+            setSelectedFilePath(next);
+            const f = normalizedFiles.find(x => x.path === next);
+            if (f && f.content === null) onFileOpen?.(next);
         }
-    }, [normalizedFiles, selectedFilePath]);
+    }, [normalizedFiles, selectedFilePath, onFileOpen]);
 
+    // Keep the selection valid if the tree changes under it.
     useEffect(() => {
         if (!selectedFilePath) return;
         if (normalizedFiles.some((file) => file.path === selectedFilePath)) return;
-
         const fallback = normalizedFiles.find((file) =>
             file.path.endsWith('main.tsx') || file.path.endsWith('App.tsx')
         ) || normalizedFiles[0] || null;
-
         setSelectedFilePath(fallback?.path || null);
     }, [normalizedFiles, selectedFilePath]);
 
-    // Auto-scroll streaming panel to bottom as text arrives
     useEffect(() => {
-        if (streamRef.current) {
-            streamRef.current.scrollTop = streamRef.current.scrollHeight;
-        }
+        if (streamRef.current) streamRef.current.scrollTop = streamRef.current.scrollHeight;
     }, [streamingText]);
 
     const visibleStreamText = streamingText ? stripXmlTags(streamingText) : '';
@@ -257,40 +166,9 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
                     <span className="text-xs text-white/60 font-mono truncate">
                         {selectedFilePath ?? 'No file selected'}
                     </span>
-                    {isDirty && !readOnly && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Unsynced changes" />
-                    )}
                 </div>
 
                 <div className="flex items-center gap-0.5 flex-shrink-0">
-                    {!readOnly && (
-                        <button
-                            onClick={() => { setShowNewFileInput(p => !p); if (showNewFileInput) setNewFilePath(''); }}
-                            title="New file"
-                            className="p-1.5 rounded hover:bg-white/5 text-white/40 hover:text-white/80 transition-colors"
-                        >
-                            <Plus className="w-3.5 h-3.5" />
-                        </button>
-                    )}
-                    {!readOnly && (
-                        <button
-                            onClick={handleDeleteSelectedFile}
-                            disabled={!selectedFilePath}
-                            title="Delete file"
-                            className="p-1.5 rounded hover:bg-white/5 text-white/40 hover:text-white/80 transition-colors disabled:opacity-30"
-                        >
-                            <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                    )}
-                    {isDirty && !readOnly && (
-                        <button
-                            onClick={handleSave}
-                            title="Sync preview"
-                            className="p-1.5 rounded hover:bg-white/5 text-amber-400/70 hover:text-amber-400 transition-colors"
-                        >
-                            <Save className="w-3.5 h-3.5" />
-                        </button>
-                    )}
                     {canExport && (
                         <button
                             onClick={handleDownloadFile}
@@ -339,30 +217,7 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
                 </div>
             </div>
 
-            {/* Inline new-file input */}
-            {!readOnly && showNewFileInput && (
-                <div className="flex items-center gap-1.5 px-2.5 py-1 border-b border-white/[0.05] bg-[#0d0d0f]">
-                    <input
-                        autoFocus
-                        value={newFilePath}
-                        onChange={e => setNewFilePath(e.target.value)}
-                        onKeyDown={e => {
-                            if (e.key === 'Enter') { e.preventDefault(); handleCreateFile(); }
-                            if (e.key === 'Escape') { setShowNewFileInput(false); setNewFilePath(''); }
-                        }}
-                        placeholder="src/components/NewComponent.tsx"
-                        className="flex-1 px-2 py-1 text-xs bg-white/5 border border-white/10 rounded text-white/80 placeholder-white/25 outline-none focus:border-white/20 font-mono"
-                    />
-                    <button
-                        onClick={handleCreateFile}
-                        className="px-2.5 py-1 rounded text-xs bg-white/10 hover:bg-white/15 text-white/70 hover:text-white transition-colors"
-                    >
-                        Create
-                    </button>
-                </div>
-            )}
-
-            {/* Main content: file tree + editor */}
+            {/* Main content: file tree + read-only viewer */}
             <div ref={bodyRef} className="flex min-h-0 flex-1 overflow-hidden">
                 <div className="flex-shrink-0 border-r border-white/[0.05] overflow-hidden" style={{ width: treeWidth }}>
                     <FileTree
@@ -385,10 +240,8 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
                                 Loading {selectedFilePath?.split('/').pop()}…
                             </div>
                         ) : (
-                            <MonacoCodeEditor
+                            <CodeViewer
                                 file={selectedFile as { path: string; content: string } | null}
-                                onChange={handleContentChange}
-                                readOnly={readOnly}
                                 showHeader={false}
                                 fontSize={fontSize}
                             />
@@ -413,27 +266,6 @@ export const CodeEditorPanel: React.FC<CodeEditorPanelProps> = ({
                     )}
                 </div>
             </div>
-
-            {/* Delete File Confirmation */}
-            <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Delete file?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            Delete {selectedFilePath}?
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                            onClick={(e) => { e.preventDefault(); handleConfirmDeleteFile(); }}
-                            className={buttonVariants({ variant: 'destructive' })}
-                        >
-                            Delete
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
         </div>
     );
 };

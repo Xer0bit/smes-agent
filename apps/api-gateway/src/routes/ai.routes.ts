@@ -8,7 +8,7 @@ import { publishRunChunk, publishRunEnd, relayRunStream, runStreamExists, publis
 import { getLlmControlState, getUserPlanTier } from '../services/llm-control.service.js';
 import { testAndAutoDisableProviders, getLastHealthResults } from '../services/llm-health.service.js';
 import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
-import { materializeAgentDiskFromHead } from '../services/agentDiskMaterialize.js';
+import { openSandbox, discardSandbox } from '../services/runSandbox.js';
 import { checkUsageQuota } from '../services/billing.service.js';
 import { checkSemanticCache } from '../services/agentSemanticCache.js';
 import { DEFAULT_FREE_MODEL } from '../config/models.js';
@@ -1166,6 +1166,8 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
     };
 
     let agentResult: Awaited<ReturnType<typeof runAgentLoop>> | undefined;
+    // Per-run sandbox handle, hoisted above the try so `finally` can discard it.
+    let sandbox: Awaited<ReturnType<typeof openSandbox>> | null = null;
 
     try {
         // ── Model selection ─────────────────────────────────────────────
@@ -1309,27 +1311,44 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         //  3. Production: /var/ecomgear/projects/{projectId} (persistent, survives restarts)
         //  4. Local dev: ~/.ecomgear/preview/{projectId}
         const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-        let appPath: string;
+        // Persistent per-project dir: holds the warm node_modules the sandbox
+        // symlinks to, and the template scaffold for a brand-new project. It is
+        // NOT the run's write surface anymore -- the sandbox (below) is.
+        let projectDir: string;
         if (projectServerPath) {
-            appPath = String(projectServerPath);
+            projectDir = String(projectServerPath);
         } else if (process.env.SERVER_PROJECTS_DIR) {
-            appPath = path.join(process.env.SERVER_PROJECTS_DIR, projectId);
+            projectDir = path.join(process.env.SERVER_PROJECTS_DIR, projectId);
         } else if (IS_PRODUCTION) {
-            appPath = path.join('/var/ecomgear/projects', projectId);
+            projectDir = path.join('/var/ecomgear/projects', projectId);
         } else {
             const localBase = process.env.LOCAL_PREVIEW_DATA
                 || path.join(os.homedir(), '.ecomgear', 'preview');
-            appPath = path.join(localBase, projectId);
+            projectDir = path.join(localBase, projectId);
         }
 
-        await fs.promises.mkdir(appPath, { recursive: true });
+        await fs.promises.mkdir(projectDir, { recursive: true });
 
         // Copy pre-installed node_modules from the golden template (near-instant
         // via hard links). Race against a 10 s timeout so a slow npm install
         // (first-run template bootstrap) never blocks the agent from starting.
+        // Default the scaffold's <title> to the project's real name (not "App").
+        // Only look it up when we're actually about to scaffold (no index.html yet)
+        // so existing-project edits pay no query. The agent refines full SEO later.
+        let scaffoldTitle: string | undefined;
+        try {
+            if (projectId && !fs.existsSync(path.join(projectDir, 'index.html'))) {
+                const { data: nameRow } = await supabase
+                    .from('projects')
+                    .select('name, website_name')
+                    .eq('id', projectId)
+                    .maybeSingle();
+                scaffoldTitle = (nameRow?.website_name || nameRow?.name) as string | undefined;
+            }
+        } catch { /* best-effort; fall back to the generic scaffold title */ }
         try {
             await Promise.race([
-                initProjectFromTemplate(appPath),
+                initProjectFromTemplate(projectDir, scaffoldTitle),
                 new Promise<void>((_, reject) =>
                     setTimeout(() => reject(new Error('template init timeout')), 10_000)
                 ),
@@ -1337,6 +1356,20 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         } catch (templateErr) {
             logger.warn(`[agent-stream] Template init skipped: ${(templateErr as Error).message}`);
         }
+
+        // ── Per-run isolated sandbox (source of truth = HEAD revision) ───────
+        // The run works in a FRESH ephemeral dir, never the persistent projectDir:
+        // source is materialized from the authoritative HEAD revision, node_modules
+        // is symlinked to projectDir's warm copy, and the dir is discarded at run
+        // end (finally). No shared mutable disk means cross-run/cross-project
+        // contamination is structurally impossible. Fail-open: if the sandbox can't
+        // open, fall back to projectDir so the run still proceeds.
+        try {
+            sandbox = await openSandbox(projectId, projectDir);
+        } catch (sbErr) {
+            logger.warn(`[agent-stream] sandbox open failed, using project dir: ${(sbErr as Error).message}`);
+        }
+        const appPath = sandbox?.sandboxPath ?? projectDir;
 
         // eCG-linked projects need their dashboard overlay (seedEcgTemplate) applied
         // on top of the generic scaffold above. initProjectFromTemplate only ever
@@ -1385,20 +1418,9 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             logger.warn(`[agent-stream] eCG template re-seed skipped: ${(ecgSeedErr as Error).message}`);
         }
 
-        // ── Source-of-truth: re-materialize the disk from the HEAD revision ───
-        // The agent-runner disk persists across runs and is never otherwise
-        // re-synced, so a past contaminated run's files linger and get swept
-        // into every output by collectDiskFiles(). Overwrite with HEAD's
-        // authoritative content and prune stray source files before the agent
-        // touches anything. Fail-open (see materializeAgentDiskFromHead).
-        try {
-            const _mat = await materializeAgentDiskFromHead(projectId, appPath);
-            if (_mat.wrote > 0 || _mat.pruned > 0) {
-                logger.info(`[agent-stream] project=${projectId} disk synced to HEAD (wrote ${_mat.wrote}, pruned ${_mat.pruned})`);
-            }
-        } catch (matErr) {
-            logger.warn(`[agent-stream] disk materialize skipped: ${(matErr as Error).message}`);
-        }
+        // Source of truth is now the sandbox itself (materialized from HEAD in
+        // openSandbox above) -- there is no shared persistent disk left to
+        // re-sync or prune, so the old in-place re-materialize step is gone.
 
         // ── Intent classification + cost routing ─────────────────────────────
         // Classify the request tier (zero LLM cost   pure regex) so we can:
@@ -1725,6 +1747,10 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         await markReverted(lockEffectId);
         forgetRun(agentLockToken);
         activeAgentRuns.delete(projectId);
+        // Tear down the ephemeral per-run sandbox. A non-null sandbox always has
+        // an ephemeral path under the runs root (never projectDir), so this only
+        // ever removes throwaway state. The new revision is already persisted.
+        if (sandbox) { try { discardSandbox(sandbox.sandboxPath); } catch { /* best-effort */ } }
         // Signal waiters only now: the lock is released above, so anyone who
         // parked during teardown can acquire it immediately on wake.
         currentRun.markEnded();

@@ -203,39 +203,8 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   // Two consecutive negative answers are required. A run that has just been
   // accepted is not registered instantly, so a single 'inactive' during
   // start-up is expected and must not cancel a real generation.
-  useEffect(() => {
-    if (!isGenerating || !projectId) return;
-    let cancelled = false;
-    let consecutiveInactive = 0;
-
-    const poll = setInterval(async () => {
-      try {
-        const { data: { session } } = await lovableCloud.auth.getSession();
-        if (!session || cancelled) return;
-        const [url] = getGenServerCandidateUrls(`/api/v1/ai/active-run/${projectId}`);
-        const r = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } });
-        if (!r.ok || cancelled) return;
-        const json = await r.json();
-        if (cancelled) return;
-
-        if (json.active) { consecutiveInactive = 0; return; }
-        consecutiveInactive += 1;
-        if (consecutiveInactive < 2) return;
-
-        clearInterval(poll);
-        setIsGenerating(false);
-        setStatusText('');
-        setLiveThought('');
-      } catch {
-        // Network blip: say nothing and keep the run marked active. Clearing
-        // on a failed probe would abandon a generation that is still running.
-        consecutiveInactive = 0;
-      }
-    }, 8000);
-
-    staleGenerationPollRef.current = poll;
-    return () => { cancelled = true; clearInterval(poll); staleGenerationPollRef.current = null; };
-  }, [isGenerating, projectId]);
+  // Run-state polling is unified below (after isGuest) into ONE authoritative
+  // /active-run poll that handles both busy->free and free->busy. See that effect.
 
   const [pendingAdminSql, setPendingAdminSql] = useState<PendingAdminSqlChange[]>([]);
   const [confirmingSqlId, setConfirmingSqlId] = useState<string | null>(null);
@@ -397,6 +366,54 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   // ── Detect guest mode from userId ──────────────────────────────────────────
   const isGuest = userId.startsWith('guest:');
   const guestFingerprint = isGuest ? userId.slice('guest:'.length) : undefined;
+
+  // ── Authoritative run-state poll (single source for busy <-> free) ──────────
+  // ONE always-on /active-run poll that handles BOTH directions, so the composer
+  // never lies about whether a run is in flight (#2-B: replaces the two separate
+  // pollers this panel used to run):
+  //   busy -> free: two consecutive {active:false} clear a stuck-busy panel whose
+  //     SSE 'done' never arrived -- dropped socket, backgrounded tab, or a long
+  //     run whose connection died (confirmed live 2026-08-30: /active-run said
+  //     inactive while the send button stayed dead). One negative is tolerated
+  //     because a just-accepted run isn't registered instantly.
+  //   free -> busy: a run this panel isn't showing (another tab/device, or the
+  //     other PM2 worker) bumps rejoinNonce so the rejoin effect attaches and
+  //     streams it, or reflects cross-worker busy. Once per active episode.
+  // Declared after isGuest (which it reads) to stay out of that const's TDZ.
+  useEffect(() => {
+    if (!projectId || isGuest) return;
+    let cancelled = false;
+    let consecutiveInactive = 0;
+    let sawActive = false;
+
+    const poll = setInterval(async () => {
+      try {
+        const { data: { session } } = await lovableCloud.auth.getSession();
+        if (!session || cancelled) return;
+        const [url] = getGenServerCandidateUrls(`/api/v1/ai/active-run/${projectId}`);
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } });
+        if (!r.ok || cancelled) return;
+        const json = await r.json();
+        if (cancelled) return;
+        if (json.active) {
+          consecutiveInactive = 0;
+          if (!isGenerating && !sawActive) { sawActive = true; setRejoinNonce(n => n + 1); }
+        } else {
+          sawActive = false;
+          if (isGenerating) {
+            consecutiveInactive += 1;
+            if (consecutiveInactive >= 2) { setIsGenerating(false); setStatusText(''); setLiveThought(''); }
+          }
+        }
+      } catch {
+        // Network blip: keep current state, flip nothing.
+        consecutiveInactive = 0;
+      }
+    }, 8000);
+
+    staleGenerationPollRef.current = poll;
+    return () => { cancelled = true; clearInterval(poll); staleGenerationPollRef.current = null; };
+  }, [isGenerating, projectId, isGuest]);
 
   // Model is now auto-selected server-side based on request tier and user plan.
 
@@ -876,7 +893,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       status: 'complete',
       attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
     };
-    const asstId = (Date.now() + 1).toString();
+    const asstId = crypto.randomUUID();
     const asstMsg: Message = { id: asstId, role: 'assistant', content: '', status: 'pending' };
 
     if (hadInspectTargets) {
@@ -1258,7 +1275,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
             // Persist assistant message (skip for guests, save plan messages too)
             if (!isGuest && finalContent.trim()) {
-              messageService.saveAssistantMessage(projectId, finalContent, userId).catch(err => {
+              messageService.saveAssistantMessage(projectId, finalContent, userId, asstId).catch(err => {
                 console.error('Failed to save assistant message', err);
                 toast.error('Message could not be saved. Check your connection.');
               });
@@ -1377,7 +1394,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             // Persist whatever was streamed so far   otherwise a reload silently
             // erases the agent's partial reply, leaving only the user's prompt.
             if (!isGuest && errorContent.trim()) {
-              messageService.saveAssistantMessage(projectId, `${errorContent}\n\n*[error]*`, userId).catch(err => {
+              messageService.saveAssistantMessage(projectId, `${errorContent}\n\n*[error]*`, userId, asstId).catch(err => {
                 console.error('Failed to save partial assistant message on error', err);
               });
             }
@@ -1427,7 +1444,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       if (!alreadyHandled) {
         toast.error(errDisplay);
         if (!isGuest && errorContent.trim()) {
-          messageService.saveAssistantMessage(projectId, `${errorContent}\n\n*[error]*`, userId).catch(err2 => {
+          messageService.saveAssistantMessage(projectId, `${errorContent}\n\n*[error]*`, userId, asstId).catch(err2 => {
             console.error('Failed to save partial assistant message on error', err2);
           });
         }
@@ -1484,7 +1501,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         // Persist whatever was streamed so far   otherwise a reload silently
         // erases the agent's partial reply, leaving only the user's prompt.
         if (!isGuest && (last.content || '').trim()) {
-          messageService.saveAssistantMessage(projectId, cancelledContent, userId).catch(err => {
+          messageService.saveAssistantMessage(projectId, cancelledContent, userId, last.id).catch(err => {
             console.error('Failed to save partial assistant message on cancel', err);
           });
         }

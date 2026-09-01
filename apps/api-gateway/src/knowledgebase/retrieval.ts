@@ -10,11 +10,10 @@
  *   (same behaviour as before this KB layer existed).
  */
 
-import { embedText, embedTexts, cosineSim, getProvider } from './embedder.js';
+import { embedText, embedTexts, getProvider } from './embedder.js';
 import {
   upsertFileEmbedding,
   searchSimilarFiles,
-  deleteFileEmbedding,
   isAlreadyIndexed,
 } from './vectorStore.js';
 import {
@@ -23,9 +22,8 @@ import {
   upsertFileGraph,
   getDirectImports,
   getDirectDependents,
-  deleteFileGraph,
 } from './graphStore.js';
-import { extractSymbols, upsertSymbolGraph, deleteSymbolGraph } from './symbolGraph.js';
+import { extractSymbols, upsertSymbolGraph } from './symbolGraph.js';
 import { getCachedRetrieval, setCachedRetrieval } from './retrievalCache.js';
 import { rerankFiles } from './rerank.js';
 
@@ -149,17 +147,6 @@ export async function indexFiles(
       }
     }),
   );
-}
-
-export async function removeFileIndex(
-  projectId: string,
-  filePath: string,
-): Promise<void> {
-  await Promise.allSettled([
-    deleteFileEmbedding(projectId, filePath),
-    deleteFileGraph(projectId, filePath),
-    deleteSymbolGraph(projectId, filePath),
-  ]);
 }
 
 // ─── Retrieve relevant files ─────────────────────────────────────────────────

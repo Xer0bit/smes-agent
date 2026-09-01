@@ -153,7 +153,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
     sseWrite(res, 'step', { id: 'project_created', status: 'done', projectId: project.id });
 
     const serverPath = getProjectServerPath(req.user!.id, project.id);
-    try { await initProjectFromTemplate(serverPath); } catch (err) {
+    try { await initProjectFromTemplate(serverPath, project.name); } catch (err) {
       logger.warn('[ecg-dev-agent] base template scaffold failed (continuing without it)', err);
     }
     sseWrite(res, 'step', { id: 'template_import', status: 'done' });

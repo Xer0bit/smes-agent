@@ -85,16 +85,4 @@ export class RunStateLedger {
     );
   }
 
-  /** Paths of all files written or edited this run (deduplicated, preserving order). */
-  getWrittenPaths(): string[] {
-    const seen = new Set<string>();
-    const result: string[] = [];
-    for (const e of this.entries) {
-      if ((e.operation === 'write' || e.operation === 'edit') && !seen.has(e.path)) {
-        seen.add(e.path);
-        result.push(e.path);
-      }
-    }
-    return result;
-  }
 }

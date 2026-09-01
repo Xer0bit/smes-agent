@@ -71,14 +71,6 @@ function tripOpenAICircuit() {
   _provider = null;
 }
 
-export function getEmbeddingDims(): number {
-  switch (getProvider()) {
-    case 'google': return EMBEDDING_DIMS_GOOGLE;
-    case 'openai': return EMBEDDING_DIMS_OPENAI;
-    case 'bm25':   return EMBEDDING_DIMS_BM25;
-  }
-}
-
 // ─── Google (direct REST) ────────────────────────────────────────────────────
 // Auto-discovers the best available embedding model for this API key.
 // Preferred: text-embedding-004; falls back to whatever embedContent model exists.
@@ -164,8 +156,7 @@ async function googleEmbedRequest(modelName: string, apiKey: string, texts: stri
 
 async function embedGoogle(texts: string[]): Promise<number[][]> {
   // Reuse the same Gemini key the LLM already uses (GEMINI_API_KEY, set at
-  // runtime from the DB by llm-control) so embeddings need no separate key --
-  // same fallback promptCache.service.ts already uses.
+  // runtime from the DB by llm-control) so embeddings need no separate key.
   const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('No Google/Gemini API key set (GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY)');
 
@@ -279,15 +270,4 @@ export function getEmbeddingStatus(): {
     googleCircuitResetsAt: _googleCircuitOpen ? _googleCircuitResetAt : null,
     openaiCircuitResetsAt: _openaiCircuitOpen ? _openaiCircuitResetAt : null,
   };
-}
-
-/** Cosine similarity between two equal-length vectors. */
-export function cosineSim(a: number[], b: number[]): number {
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na  += a[i] * a[i];
-    nb  += b[i] * b[i];
-  }
-  return dot / (Math.sqrt(na) * Math.sqrt(nb) || 1);
 }

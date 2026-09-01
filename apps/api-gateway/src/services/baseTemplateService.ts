@@ -348,7 +348,7 @@ export default {
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>App</title>
+    <title>{{PROJECT_NAME}}</title>
   </head>
   <body>
     <div id="root"></div>
@@ -1161,7 +1161,7 @@ export async function ensureBaseTemplate(): Promise<void> {
  * Falls back to a regular recursive copy on platforms where `cp -al` is
  * unavailable (Windows).
  */
-export async function initProjectFromTemplate(destDir: string): Promise<void> {
+export async function initProjectFromTemplate(destDir: string, projectName?: string): Promise<void> {
   const destModules = path.join(destDir, 'node_modules');
   const destPkg = path.join(destDir, 'package.json');
 
@@ -1221,12 +1221,20 @@ export async function initProjectFromTemplate(destDir: string): Promise<void> {
     fs.copyFileSync(srcLock, destLock);
   }
 
-  // Copy scaffold files (only if not already present   agent may have written them)
+  // Copy scaffold files (only if not already present   agent may have written them).
+  // The scaffold index.html carries a {{PROJECT_NAME}} title placeholder so a new
+  // project defaults to its real name instead of a generic "App" -- the agent then
+  // refines full SEO (title/meta/OG/JSON-LD) during the build. Fallback is a neutral
+  // "Web App", never "App".
+  const projectTitle = (projectName ?? '').trim() || 'Web App';
   for (const [relPath, content] of Object.entries(SCAFFOLD_FILES)) {
     const destFile = path.join(destDir, relPath);
     if (!fs.existsSync(destFile)) {
       fs.mkdirSync(path.dirname(destFile), { recursive: true });
-      fs.writeFileSync(destFile, content, 'utf8');
+      const out = content.includes('{{PROJECT_NAME}}')
+        ? content.split('{{PROJECT_NAME}}').join(projectTitle)
+        : content;
+      fs.writeFileSync(destFile, out, 'utf8');
     }
   }
 
@@ -1239,24 +1247,4 @@ export async function initProjectFromTemplate(destDir: string): Promise<void> {
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(2);
   console.log(`[BaseTemplate] node_modules ready in ${elapsed}s`);
-}
-
-/**
- * Check which packages from `requested` are already present in `destDir`'s
- * node_modules.  Returns only the ones that need to be installed.
- */
-export function filterMissingPackages(
-  destDir: string,
-  requested: string[],
-): string[] {
-  const modulesDir = path.join(destDir, 'node_modules');
-  return requested.filter((pkg) => {
-    // Strip version specifiers like pkg@^1.2.3 → pkg
-    const name = pkg.replace(/@[^@/][^/]*$/, '').replace(/^@/, '').split('@')[0];
-    // Scoped packages: @scope/name → check node_modules/@scope/name
-    const checkPath = pkg.startsWith('@')
-      ? path.join(modulesDir, ...pkg.split('/').slice(0, 2))
-      : path.join(modulesDir, name);
-    return !fs.existsSync(checkPath);
-  });
 }

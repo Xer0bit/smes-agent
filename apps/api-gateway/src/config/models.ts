@@ -78,10 +78,6 @@ export function inferProvider(model: string): LlmProvider {
   return 'anthropic';
 }
 
-export function isCanonicalModel(id: string): boolean {
-  return VALID_IDS.has(id);
-}
-
 /**
  * Normalize any model ID to a known-valid one. Returns `fallback` when the
  * input is empty/garbage and can't be mapped by provider family.

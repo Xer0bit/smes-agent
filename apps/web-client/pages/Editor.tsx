@@ -1272,25 +1272,11 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
           console.log(`[Editor] Lazy open: manifest with ${manifest.files.length} paths, bodies deferred`);
 
           deletedDuringLazyRef.current = new Set();
-          void (async () => {
-            try {
-              const fullFiles = await revisionService.getRevisionFiles(projectId!, latestRevision.id);
-              if (fullFiles.length > 0) {
-                // Prune rights only when every manifest path actually
-                // downloaded -- see applyRevisionFiles' completeSet doc.
-                const completeSet = fullFiles.length >= manifest.files.length;
-                if (!completeSet) {
-                  console.warn(`[Editor] Revision load incomplete (${fullFiles.length}/${manifest.files.length})   pushing without prune`);
-                }
-                await applyRevisionFiles(latestRevision, fullFiles, true, completeSet);
-              }
-            } catch (bgErr) {
-              console.error('[Editor] Background full-load failed (files remain fetchable per-tab):', bgErr);
-            } finally {
-              // Whatever happened, per-tab fetching stays available via the manifest.
-              setPendingLazy(new Set());
-            }
-          })();
+          // Fully lazy: NO background full-load. pendingLazy stays populated
+          // (every path deferred), so a file's body is fetched only when the
+          // user opens it (handleLazyFileOpen). The preview does not need these
+          // client-side bodies -- it syncs server-side from the revision
+          // (syncPreviewFromRevision), so nothing here blocks on downloads.
           return true;
         }
 
@@ -1328,22 +1314,37 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
       // blob if Storage is genuinely empty (true legacy projects that
       // predate Storage-based file sync)   never load it just because a
       // revision happens to exist.
-      loadWorkspaceFromDb().then(hasStorageFiles => {
-        if (!hasStorageFiles) {
-          loadLatestCode().catch(err => {
-            console.warn('[Editor] Failed to load latest revision as fallback:', err);
-          });
-        } else {
+      // Lazy-first: loadLatestCode fetches ONLY the revision manifest (paths),
+      // never bulk file bodies -- the file tree renders from paths and each
+      // file downloads on open. loadWorkspaceFromDb (which bulk-loads every
+      // file from flat Storage) is now only the fallback for true-legacy
+      // projects that predate revision-scoped Storage (no revision row at all).
+      loadLatestCode().then(hadRevision => {
+        if (hadRevision) {
           setHasInitialLoadCompleted(true);
+        } else {
+          loadWorkspaceFromDb()
+            .then(() => setHasInitialLoadCompleted(true))
+            .catch(err => console.warn('[Editor] Legacy storage load failed:', err));
         }
       }).catch(err => {
-        console.warn('[Editor] Failed to load workspace from Storage, falling back to revision:', err);
-        loadLatestCode().catch(fallbackErr => {
-          console.warn('[Editor] Fallback revision load also failed:', fallbackErr);
-        });
+        console.warn('[Editor] Revision load failed, falling back to legacy storage:', err);
+        loadWorkspaceFromDb()
+          .then(() => setHasInitialLoadCompleted(true))
+          .catch(fallbackErr => console.warn('[Editor] Fallback storage load also failed:', fallbackErr));
       });
     }
   }, [projectId, loadWorkspaceFromDb]);
+
+  // Guaranteed preview floor: point the iframe at the project's local preview
+  // URL as soon as the project id is known. effectivePreviewUrl prefers
+  // previewUrl/latestPreviewUrl (set by the health-checked fast path), but if
+  // those never resolve the frame would otherwise sit blank -- fallbackPreviewUrl
+  // was declared but never set. The preview-service serves the app at this URL
+  // regardless of the client's health gating, so the frame always has a src.
+  useEffect(() => {
+    if (projectId) setFallbackPreviewUrl(getPreviewUrl(projectId));
+  }, [projectId]);
 
   // Generate local preview from workspace files when no cloud URL
   useEffect(() => {

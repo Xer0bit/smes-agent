@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, SUPABASE_URL } from '@/integrations/supabase/client';
 import { getApiServerUrl } from '@/config/external-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import logo from '@/assets/ecomgear-auth-logo.png';
+import { Turnstile } from '@/components/Turnstile';
 
 // Platform login/signup now routes through this app's own server
 // (/api/v1/auth/ecg/*), which itself talks to eCG Auth first and falls back
@@ -36,6 +37,7 @@ export default function AuthPage() {
   const [projectName, setProjectName] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [pendingToken, setPendingToken] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState('');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -53,7 +55,18 @@ export default function AuthPage() {
       refresh_token: refreshToken,
     });
     if (sessionErr) {
-      setError('Signed in, but starting your session failed. Please try again.');
+      // Surface the real cause -- a generic message here has hidden a
+      // frontend/instance mismatch (wrong VITE_SUPABASE_URL or publishable key)
+      // more than once. The token is valid server-side; setSession failing means
+      // the browser client rejected/could not validate it against its own
+      // configured Supabase instance.
+      console.error('[auth] setSession failed', {
+        name: sessionErr.name,
+        message: sessionErr.message,
+        status: (sessionErr as { status?: number }).status,
+        supabaseUrl: SUPABASE_URL,
+      });
+      setError(`Signed in, but starting your session failed: ${sessionErr.message}`);
       return;
     }
     navigate('/dashboard', { replace: true });
@@ -143,7 +156,7 @@ export default function AuthPage() {
       const res = await fetch(getApiServerUrl('/api/v1/auth/ecg/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, fullName, organizationName, projectName }),
+        body: JSON.stringify({ email, password, fullName, organizationName, projectName, turnstileToken }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -296,7 +309,8 @@ export default function AuthPage() {
               <Label htmlFor="projectName">First project name</Label>
               <Input id="projectName" required value={projectName} onChange={(e) => setProjectName(e.target.value)} />
             </div>
-            <Button type="submit" disabled={submitting} className="w-full h-10">
+            <Turnstile action="signup" onToken={setTurnstileToken} />
+            <Button type="submit" disabled={submitting || !turnstileToken} className="w-full h-10">
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Create account'}
             </Button>
             <div className="text-center text-sm pt-1">

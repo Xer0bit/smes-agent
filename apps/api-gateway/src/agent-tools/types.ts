@@ -432,13 +432,6 @@ export function escapeXmlAttr(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
-export function escapeXmlContent(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
 // ─── File read helper ────────────────────────────────────────────────────────
 
 export interface ReadProjectFileResult {

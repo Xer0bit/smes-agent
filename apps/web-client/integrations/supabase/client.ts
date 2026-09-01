@@ -41,6 +41,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     autoRefreshToken: true,
     detectSessionInUrl: true,
     storage: localStorage,
+    // Pass-through lock: bypass the Web Locks API (navigator.locks). GoTrue's
+    // default navigatorLock throws a noisy uncaught "Acquiring an exclusive
+    // Navigator LockManager lock ... immediately failed" during the
+    // init + visibility-change auto-refresh race. We run single auth client
+    // per tab, so cross-tab lock exclusivity buys nothing here -- just run the
+    // callback. Token refresh still works; the console noise is gone.
+    lock: async (_name, _acquireTimeout, fn) => fn(),
   },
 });
 

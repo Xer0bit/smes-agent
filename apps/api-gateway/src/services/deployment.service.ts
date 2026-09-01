@@ -112,12 +112,22 @@ export default defineConfig({
   }
 
   if (!filePaths.has('index.html')) {
+    // Default the title to the project's real name, not a generic "App".
+    let fallbackTitle = 'Web App';
+    try {
+      const { data: proj } = await supabase
+        .from('projects')
+        .select('name, website_name')
+        .eq('id', projectId)
+        .maybeSingle();
+      fallbackTitle = ((proj?.website_name || proj?.name) as string)?.trim() || fallbackTitle;
+    } catch { /* keep the neutral default */ }
     const defaultIndexHtml = `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>eComGear App</title>
+    <title>${fallbackTitle}</title>
   </head>
   <body>
     <div id="root"></div>

@@ -409,6 +409,9 @@ GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
 PREVIEW_SERVICE_URL=${PREVIEW_SERVICE_URL:-https://preview.ecomgear.app}
 PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}
+# Cloudflare Turnstile secret (registration bot-gate). Value comes from
+# .deploy.env; the api-gateway reads TURNSTILE_SECRET_KEY in production.
+TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
 # Logger verbosity. Settable durably from .deploy.env; defaults to info.
 # Without this line, deploys silently deleted any live-set LOG_LEVEL.
 LOG_LEVEL=${LOG_LEVEL:-info}

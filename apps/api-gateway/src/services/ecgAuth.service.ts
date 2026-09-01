@@ -168,21 +168,6 @@ export function ecgLogout(
   return ecgFetch('POST', '/auth/logout', { userId, ...(refreshToken ? { refreshToken } : {}) });
 }
 
-// ─── User profile ────────────────────────────────────────────────────────────
-
-/** GET /auth/profile?userId=... */
-export function ecgGetProfile(userId: string): Promise<EcgAuthResult<{ user: EcgAuthUser }>> {
-  return ecgFetch('GET', `/auth/profile?userId=${encodeURIComponent(userId)}`);
-}
-
-/** PATCH /auth/profile */
-export function ecgUpdateProfile(
-  userId: string,
-  updates: { firstName?: string; lastName?: string; enable2fa?: boolean },
-): Promise<EcgAuthResult<{ user: EcgAuthUser }>> {
-  return ecgFetch('PATCH', '/auth/profile', { userId, ...updates });
-}
-
 // ─── Password management ────────────────────────────────────────────────────
 
 /** POST /auth/password/change */

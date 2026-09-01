@@ -24,6 +24,7 @@ import { canonicalizeModelId, DEFAULT_PRIMARY_MODEL, DEFAULT_FALLBACK_MODEL } fr
 import { runPreviewSmokeCheck } from './previewSmokeCheck.service.js';
 import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols, getProvider } from '../knowledgebase/index.js';
 import { persistAgentRevision } from './agentRevisionPersist.service.js';
+import { priceFor, calcCost, createRunTokens } from './agentCost.js';
 import { captureThumbnail } from './thumbnailService.js';
 import { createStripToolsForCacheMiddleware } from './geminiToolCache.service.js';
 import { beginRun as beginNarration, updateThought, endRun as endNarration, generateStatus, getNarrationCost, type LifecyclePhase } from './narration.service.js';
@@ -575,47 +576,11 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // ── Per-run token accounting ──────────────────────────────────────────────
   // Tracks every token category across all steps so we can log cost per step
   // and store an accurate total in agent_runs at the end.
-  const runTokens = {
-    inputTokens:       0,
-    outputTokens:      0,
-    cacheReadTokens:   0,
-    cacheWriteTokens:  0,
-    get total()        { return this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens; },
-    // Cap comparisons use this, not .total: cacheRead bills at ~10% of a
-    // fresh token, and counting it fully killed well-cached runs at ~30% of
-    // the cost cap (CardPro fix run 2026-08-16: aborted at 709K raw of which
-    // ~400K was cacheRead, ~$1 actual spend against the $1.50 cap).
-    get billableTotal() { return this.inputTokens + this.outputTokens + this.cacheWriteTokens + Math.round(this.cacheReadTokens * 0.1); },
-  };
+  const runTokens = createRunTokens();
 
-  // Per-model pricing per 1M tokens. Keyed on the ACTUAL serving model, not
-  // the requested one   mid-run provider fallback (Anthropic circuit open →
-  // zai/gemini) used to price every step at the requested model's Claude
-  // rates, which is how the internal cost log drifted to 53% of the real
-  // provider invoices (production audit 2026-07-21).
-  function priceFor(mid: string): { input: number; output: number; cacheRead: number; cacheWrite: number } {
-    return mid.includes('claude')
-      ? { input: 3.00,   output: 15.00,  cacheRead: 0.30,  cacheWrite: 3.75  }  // Claude Sonnet 5
-      : mid.includes('gemini-3.1-pro-preview')
-      ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 3.1 Pro (thinking)
-      : mid.includes('gemini-2.5-pro')
-      ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 2.5 Pro
-      : mid.includes('gemini')
-      // "gemini-flash-latest" is a Google-managed alias   it silently moved
-      // 2.5 Flash -> 3.5 Flash -> 3.6 Flash (2026-07-21) while this price
-      // stayed frozen at the original 2.5 Flash rate, a ~20x undercount on
-      // every narration call and 'micro'-tier run. Verified current rate.
-      ? { input: 1.50,   output: 7.50,   cacheRead: 0.375,   cacheWrite: 0.00 } // Gemini Flash (latest, currently 3.6)
-      : mid.includes('deepseek')
-      ? { input: 0.27,   output: 1.10,   cacheRead: 0.07,  cacheWrite: 0.00  }  // DeepSeek Chat
-      : mid.toLowerCase().startsWith('glm')
-      ? { input: 0.60,   output: 2.20,   cacheRead: 0.11,  cacheWrite: 0.00  }  // z.ai GLM-4.5
-      : { input: 3.00,   output: 15.00,  cacheRead: 0.30,  cacheWrite: 3.75  };  // fallback: Claude
-  }
+  // Pricing keyed on the ACTUAL serving model, not the requested one (mid-run
+  // provider fallback would otherwise mis-price at Claude rates). See agentCost.ts.
   const PRICE = priceFor(modelId);
-  function calcCost(inp: number, out: number, cacheR: number, cacheW: number): number {
-    return (inp * PRICE.input + out * PRICE.output + cacheR * PRICE.cacheRead + cacheW * PRICE.cacheWrite) / 1_000_000;
-  }
   // Run cost accumulated per step at the SERVING model's price   the only
   // number safe to compare against provider invoices on mixed-provider runs.
   let runCostUsd = 0;
@@ -3139,7 +3104,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const totalCW  = runTokens.cacheWriteTokens || finishCache.cacheWrite;
             // Accumulated per-step (serving-model-priced) when available;
             // calcCost only as fallback for streams onStepFinish never saw.
-            const totalCost = runCostUsd > 0 ? runCostUsd : calcCost(totalIn, totalOut, totalCR, totalCW);
+            const totalCost = runCostUsd > 0 ? runCostUsd : calcCost(PRICE, totalIn, totalOut, totalCR, totalCW);
             agentGenerationComplete = true;
             logger.info('[AgentLoop] RUN COMPLETE', {
               projectId, userId, agentRunId,
@@ -5343,7 +5308,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // wroteFiles gate in ai.routes.ts's incrementEcoUsage call site.
     const chargeableRun = doneFilesToWrite.length > 0 || doneFilesToDelete.length > 0;
     const finalCostUsd = chargeableRun
-      ? (runCostUsd > 0 ? runCostUsd : calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens))
+      ? (runCostUsd > 0 ? runCostUsd : calcCost(PRICE, runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens))
       : 0;
     const finalEcoUsed = chargeableRun ? computeEcoCost(finalCostUsd) : 0;
 
@@ -5422,7 +5387,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         }
       }
 
-      const finalCost = runCostUsd > 0 ? runCostUsd : calcCost(runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens);
+      const finalCost = runCostUsd > 0 ? runCostUsd : calcCost(PRICE, runTokens.inputTokens, runTokens.outputTokens, runTokens.cacheReadTokens, runTokens.cacheWriteTokens);
 
       // Orchestration Phase 2b (2026-08-09): first real DOM/browser check.
       // Everything before this only proves the code compiles (esbuild, then
