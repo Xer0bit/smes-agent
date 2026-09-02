@@ -257,6 +257,14 @@ function attachSubscriber(run: ActiveRun, req: AuthenticatedRequest, res: Respon
 // (agentProjectLock.ts) still serializes the actual file writes even if this
 // lock is reclaimed early, so an early reclaim degrades to a rejected duplicate
 // rather than interleaved writes.
+/**
+ * A rollback pushes the WHOLE restored project to the preview, not a changeset,
+ * so it is bounded by upload size rather than by server think-time. Measured on
+ * CardPro: 199 files = 38.5 MB, successful pushes 104-139s. Anything under that
+ * aborts mid-body and the preview silently keeps serving the old files.
+ */
+const PREVIEW_RESTORE_TIMEOUT_MS = 240_000;
+
 // AGENT_LOCK_STALE_MS / AGENT_LOCK_HEARTBEAT_MS now live in services/agentLockState.ts
 // so the agent_runs watchdog can share the exact same staleness bound.
 
@@ -2151,18 +2159,37 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
                     const rolled = await rollbackToRevision(projectId, req.user!.id, targetRevisionId);
                     if (rolled.ok) {
                         const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001';
-                        await fetch(`${previewServiceUrl}/preview/${projectId}/update`, {
+                        const previewRes = await fetch(`${previewServiceUrl}/preview/${projectId}/update`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             // fullSync prunes anything not in the manifest, which is
                             // the point: the project ends up as exactly that revision.
                             body: JSON.stringify({ files, fullSync: true }),
-                            signal: AbortSignal.timeout(30_000),
-                        }).catch(() => { /* preview lag is not a failed rollback */ });
-                        logger.info('[rollback] restored from revision manifest', {
-                            projectId, targetRevisionId, newRevisionId: rolled.revisionId, files: files.length,
+                    // Restoring a whole project is a large upload: CardPro's
+                    // 199-file tree is 38.5 MB once binaries are base64'd, and
+                    // its successful pushes measure 104-139s. The previous 20-30s
+                    // ceilings aborted mid-upload EVERY time on any real project,
+                    // which nginx logged as a zero-byte 400 and nothing retried --
+                    // so HEAD was restored while the live preview kept serving the
+                    // old files (observed on CardPro, 2026-09-02 06:43/07:25/07:26).
+                            signal: AbortSignal.timeout(PREVIEW_RESTORE_TIMEOUT_MS),
                         });
-                        res.json({ success: true, source: 'manifest', revisionId: rolled.revisionId, fileCount: files.length });
+                        // A swallowed push is why a broken restore looked successful:
+                        // HEAD moved, the preview did not, and nothing said so.
+                        const previewRestored = previewRes?.ok === true;
+                        if (!previewRestored) {
+                            logger.warn('[rollback] revision restored but the PREVIEW push failed', {
+                                projectId, targetRevisionId, status: previewRes?.status, files: files.length,
+                            });
+                        }
+                        logger.info('[rollback] restored from revision manifest', {
+                            projectId, targetRevisionId, newRevisionId: rolled.revisionId,
+                            files: files.length, previewRestored,
+                        });
+                        res.json({
+                            success: true, source: 'manifest', revisionId: rolled.revisionId,
+                            fileCount: files.length, previewRestored,
+                        });
                         return;
                     }
                     logger.warn('[rollback] manifest rollback failed, falling back to snapshot', { projectId, error: rolled.error });
@@ -2205,13 +2232,24 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
         try {
             const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001';
             const updateUrl = `${previewServiceUrl}/preview/${projectId}/update`;
-            await fetch(updateUrl, {
+            const snapshotPreviewRes = await fetch(updateUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ files: restoredFiles, fullSync: true }),
-                signal: AbortSignal.timeout(20_000),
-            }).catch(() => {/* best-effort */});
-        } catch { /* preview push failure is non-fatal */ }
+                // See PREVIEW_RESTORE_TIMEOUT_MS: a whole-project restore is a
+                // multi-megabyte upload and 20s aborted it every time.
+                signal: AbortSignal.timeout(PREVIEW_RESTORE_TIMEOUT_MS),
+            });
+            if (!snapshotPreviewRes.ok) {
+                logger.warn('[rollback] snapshot restored but the PREVIEW push failed', {
+                    projectId, status: snapshotPreviewRes.status, files: restoredFiles.length,
+                });
+            }
+        } catch (pushErr) {
+            logger.warn('[rollback] preview push threw during snapshot restore', {
+                projectId, error: (pushErr as Error).message, files: restoredFiles.length,
+            });
+        }
 
         // Persist a new DB revision with the restored files so that refreshing the
         // editor loads these files instead of the previous latest revision.
