@@ -64,6 +64,12 @@ export interface FileRename {
 }
 
 export interface GenerationResponse {
+  /**
+   * Row id the SERVER already wrote for this run's answer. Save with it so the
+   * client's own save upserts that row instead of inserting a second one --
+   * without it, both sides wrote and one run produced two messages.
+   */
+  assistantMessageId?: string | null;
   /** Files to write / create / update */
   files: GeneratedFile[];
   /** Runtime mode selected by backend for this generation */

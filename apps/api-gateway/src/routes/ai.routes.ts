@@ -267,6 +267,12 @@ function attachSubscriber(run: ActiveRun, req: AuthenticatedRequest, res: Respon
  */
 const PREVIEW_RESTORE_TIMEOUT_MS = 240_000;
 
+/**
+ * Prompt the client sends to reattach to an in-flight run rather than to start
+ * one. Must never reach the generation path: it is a control signal, not a task.
+ */
+const REJOIN_SENTINEL = '__rejoin__';
+
 // AGENT_LOCK_STALE_MS / AGENT_LOCK_HEARTBEAT_MS now live in services/agentLockState.ts
 // so the agent_runs watchdog can share the exact same staleness bound.
 
@@ -1079,6 +1085,23 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             attachSubscriber(existingRunEarly, req, res);
             return;
         }
+    }
+
+    // ── Rejoin sentinel: attach only, NEVER start a run ─────────────────────
+    // The client sends prompt '__rejoin__' to reattach to a run it believes is
+    // still going. The server had no handling for it, so when the run had
+    // already finished there was nothing to attach to and this fell through and
+    // started a BRAND NEW RUN whose prompt was the literal string
+    // "__rejoin__" -- billing the user and appending another copy of the same
+    // answer. Observed on CardPro 2026-09-02: one user message ("what are the
+    // logins?") produced three runs and three identical replies.
+    //
+    // Reaching here means every attach path above already declined, so there is
+    // nothing live to join. Say so and stop.
+    if (prompt === REJOIN_SENTINEL) {
+        logger.info('[agent-stream] rejoin requested but no live run to attach to', { projectId });
+        res.status(409).json({ error: 'No active run to rejoin', code: 'NO_ACTIVE_RUN' });
+        return;
     }
 
     // ── Backend eco enforcement ─────────────────────────────────────────────

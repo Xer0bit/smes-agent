@@ -761,10 +761,15 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   },
                 },
                 signal: reconnectAbortRef.current.signal,
-              }).catch(() => {
-                if (!cancelled) {
-                  setIsGenerating(false);
-                  setMessages(prev => prev.filter(m => m.id !== asstId));
+              }).catch((err: unknown) => {
+                if (cancelled) return;
+                setIsGenerating(false);
+                // Drop the optimistic bubble either way. A NO_ACTIVE_RUN means
+                // the run finished before we reattached -- expected, not an
+                // error; history reload shows the persisted answer.
+                setMessages(prev => prev.filter(m => m.id !== asstId));
+                if (!(err as { noActiveRun?: boolean })?.noActiveRun) {
+                  console.warn('[AgentChatPanel] rejoin failed', err);
                 }
               });
             }
@@ -1284,7 +1289,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
             // Persist assistant message (skip for guests, save plan messages too)
             if (!isGuest && finalContent.trim()) {
-              messageService.saveAssistantMessage(projectId, finalContent, userId, asstId).catch(err => {
+              // Prefer the server's row id: it already wrote this answer, so
+              // reusing the id upserts that row. Falling back to the local
+              // asstId keeps older servers working, at the cost of two rows.
+              const saveId = result.assistantMessageId || asstId;
+              messageService.saveAssistantMessage(projectId, finalContent, userId, saveId).catch(err => {
                 console.error('Failed to save assistant message', err);
                 toast.error('Message could not be saved. Check your connection.');
               });

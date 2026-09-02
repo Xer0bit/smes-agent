@@ -252,6 +252,12 @@ export async function streamAgentGeneration(params: {
               callbacks.onError?.(message);
               throw Object.assign(new Error(message), { sessionExpired: true });
             }
+            if (errJson.code === 'NO_ACTIVE_RUN') {
+              // A rejoin that arrived after the run finished. Not an error the
+              // user should see -- the run is simply over. Silent, like the
+              // lock-retry path: the caller clears its optimistic bubble.
+              throw Object.assign(new Error('no active run to rejoin'), { noActiveRun: true });
+            }
             if (errJson.code === 'PROJECT_LOCKED') {
               if (allowLockRetry) {
                 // Silent   no onError, no toast. The caller decides whether
@@ -263,7 +269,7 @@ export async function streamAgentGeneration(params: {
               throw Object.assign(new Error(message), { projectLocked: true });
             }
           } catch (parseErr) {
-            if ((parseErr as any).guestLimitReached || (parseErr as any).ecoLimitReached || (parseErr as any).sessionExpired || (parseErr as any).projectLocked || (parseErr as any).projectLockedRetry) throw parseErr;
+            if ((parseErr as any).guestLimitReached || (parseErr as any).ecoLimitReached || (parseErr as any).sessionExpired || (parseErr as any).noActiveRun || (parseErr as any).projectLocked || (parseErr as any).projectLockedRetry) throw parseErr;
           }
 
           const message = `Agent stream failed (${candidateResponse.status}): ${errText}`;

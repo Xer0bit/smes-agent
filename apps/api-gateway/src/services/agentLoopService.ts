@@ -6,7 +6,7 @@ import { buildCapabilityPreamble, isSourceTruncated } from '../prompts/capabilit
 import { RunChangeSet, isTrackedMutation } from './runChangeSet.js';
 import { fetchRecentMaxFileCount } from './runSandbox.js';
 import { claimRun, setPhase, startRunHeartbeat, linkRevision } from './agentRunRecord.js';
-import { persistAssistantMessage } from './assistantMessagePersist.js';
+import { persistAssistantMessage, assistantMessageId } from './assistantMessagePersist.js';
 import { resolveStepBudget, resolveTokenCap, resolveRuntimeMode, substituteDisabledModel, isInternalRun as resolveIsInternalRun, resolveCostCapUsd } from './agentRunConfig.js';
 import { capContextFiles, renderContextFiles, rankContextCandidates } from './agentContextSelection.js';
 import { shouldRevertToPreAgentSnapshot } from './agentGating.js';
@@ -5449,6 +5449,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
     // NOW send 'done'   preview is synced, frontend shows correct state
     sink.emit('done', {
+      // The row the server just wrote. The client saves too (its own error and
+      // cancel paths still need to), and without a shared id the two writes
+      // produced TWO rows per run -- visible on CardPro 2026-09-02 as the same
+      // answer rendered repeatedly. Passing this back makes both sides upsert
+      // one row.
+      assistantMessageId: agentRunId ? assistantMessageId(agentRunId) : null,
       ghostRun: runtimeMode === 'build' && !agentWroteFiles,
       filesToWrite: clientFilesToWrite,
       filesToDelete: doneFilesToDelete,
