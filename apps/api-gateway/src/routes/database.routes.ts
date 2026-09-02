@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { databaseService, buildProjectEnvSecrets } from '../services/database.service.js';
 import { supabase } from '../config/database.js';
+import { checkCapacity } from '../services/entitlements.service.js';
 import { logger } from '../utils/logger.js';
 import { projectService } from '../services/project.service.js';
 import { safeErrorMessage } from '../utils/sendError.js';
@@ -25,7 +26,7 @@ function getProjectId(req: AuthenticatedRequest): string | undefined {
 // ── Plan gate ────────────────────────────────────────────────────────────────
 // Verifies BOTH that the org has a paid plan AND that the requesting user is
 // actually a member of that org (prevents org_id forgery from the request body).
-async function requirePaidPlan(req: AuthenticatedRequest, res: Response, organizationId?: string | null): Promise<boolean> {
+async function requireOrgMembership(req: AuthenticatedRequest, res: Response, organizationId?: string | null): Promise<boolean> {
   const projectId = getProjectId(req);
   let orgId = organizationId ?? null;
   if (!orgId) {
@@ -33,25 +34,21 @@ async function requirePaidPlan(req: AuthenticatedRequest, res: Response, organiz
     orgId = existing?.organization_id ?? null;
   }
   if (!orgId) {
-    res.status(403).json({ error: 'Hosted databases require a Pro or Agency plan.' });
+    res.status(403).json({ error: 'Hosted databases belong to a workspace. Open the project from a workspace.' });
     return false;
   }
 
-  // Verify membership + plan in one query   prevents org_id forgery
+  // Membership check prevents org_id forgery. Every workspace has at least the
+  // base plan (1 database included); capacity is checked at /provision.
   const { data } = await supabase
-    .from('organizations')
-    .select('plan_tier, org_members!inner(user_id)')
-    .eq('id', orgId)
-    .eq('org_members.user_id', req.user!.id)
+    .from('org_members')
+    .select('org_id')
+    .eq('org_id', orgId)
+    .eq('user_id', req.user!.id)
     .maybeSingle();
 
   if (!data) {
     res.status(403).json({ error: 'Organization not found or you are not a member.' });
-    return false;
-  }
-  const tier = (data as any)?.plan_tier || 'free';
-  if (tier === 'free') {
-    res.status(403).json({ error: 'Hosted databases require a Pro or Agency plan.' });
     return false;
   }
   return true;
@@ -94,6 +91,33 @@ async function requireProjectEdit(req: AuthenticatedRequest, res: Response, proj
 }
 
 // ── GET /api/v1/database/status ──────────────────────────────────────────────
+// Every hosted database in a workspace, with the project it belongs to.
+// Membership-checked; never returns credentials.
+router.get('/list', async (req: AuthenticatedRequest, res: Response) => {
+  const organizationId = typeof req.query.organization_id === 'string' ? req.query.organization_id : '';
+  if (!organizationId) return res.status(400).json({ error: 'organization_id is required' });
+  if (!(await requireOrgMembership(req, res, organizationId))) return;
+  const { data, error } = await supabase
+    .from('tenant_databases')
+    .select('id, project_id, schema_name, status, error_message, created_at, updated_at, projects(name)')
+    .eq('organization_id', organizationId)
+    .not('status', 'eq', 'deprovisioned')
+    .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  const databases = (data ?? []).map((row) => {
+    const project = Array.isArray(row.projects) ? row.projects[0] : row.projects;
+    return {
+      id: row.id, project_id: row.project_id, project_name: project?.name ?? 'Untitled project',
+      schema_name: row.schema_name, status: row.status, error_message: row.error_message,
+      created_at: row.created_at, updated_at: row.updated_at,
+    };
+  });
+  const { data: projects } = await supabase
+    .from('projects').select('id, name').eq('organization_id', organizationId).eq('status', 'active').order('name');
+  const withDb = new Set(databases.map((d) => d.project_id));
+  res.json({ databases, projects_without_database: (projects ?? []).filter((p) => !withDb.has(p.id)) });
+});
+
 router.get('/status', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const projectId = getProjectId(req);
   try {
@@ -112,7 +136,7 @@ router.get('/credentials', async (req: AuthenticatedRequest, res: Response, next
   const projectId = getProjectId(req);
   try {
     if (!(await requireProjectView(req, res, projectId))) return;
-    if (!(await requirePaidPlan(req, res))) return;
+    if (!(await requireOrgMembership(req, res))) return;
     const creds = await databaseService.getCredentials(req.user!.id, projectId);
     if (!creds) { res.status(404).json({ error: 'No active database' }); return; }
     logger.info('security_event', { event: 'sensitive_data_access', userId: req.user!.id, ip: req.ip, resource: 'project_secrets', projectId, outcome: 'success' });
@@ -364,7 +388,11 @@ router.post('/provision', dbProvisionLimiter, async (req: AuthenticatedRequest, 
   try {
     const { organization_id } = req.body;
     if (!(await requireProjectEdit(req, res, projectId))) return;
-    if (!(await requirePaidPlan(req, res, organization_id))) return;
+    if (!(await requireOrgMembership(req, res, organization_id))) return;
+    if (organization_id) {
+      const capacity = await checkCapacity(organization_id, 'databases');
+      if (!('ok' in capacity)) return res.status(capacity.status).json(capacity);
+    }
     const record = await databaseService.provision(req.user!.id, organization_id || null, projectId);
     const creds  = await databaseService.getCredentials(req.user!.id, projectId);
     res.status(201).json({ database: record, credentials: creds });
@@ -413,7 +441,7 @@ router.get('/ping', async (req: AuthenticatedRequest, res: Response, next: NextF
   const projectId = getProjectId(req);
   try {
     if (!(await requireProjectView(req, res, projectId))) return;
-    if (!(await requirePaidPlan(req, res))) return;
+    if (!(await requireOrgMembership(req, res))) return;
     const result = await databaseService.testConnection(req.user!.id, projectId);
     res.json(result);
   } catch (err) {
@@ -428,7 +456,7 @@ router.get('/dump', async (req: AuthenticatedRequest, res: Response, next: NextF
   const projectId = getProjectId(req);
   try {
     if (!(await requireProjectEdit(req, res, projectId))) return;
-    if (!(await requirePaidPlan(req, res))) return;
+    if (!(await requireOrgMembership(req, res))) return;
     const { sql, schema, truncated } = await databaseService.dumpDatabase(req.user!.id, projectId);
     res.setHeader('Content-Type', 'application/sql');
     res.setHeader('Content-Disposition', `attachment; filename="${schema}-dump-${Date.now()}.sql"`);
@@ -440,11 +468,24 @@ router.get('/dump', async (req: AuthenticatedRequest, res: Response, next: NextF
 });
 
 // ── GET /api/v1/database/tables ──────────────────────────────────────────────
+router.get('/overview', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const projectId = getProjectId(req);
+  try {
+    if (!(await requireProjectView(req, res, projectId))) return;
+    if (!(await requireOrgMembership(req, res))) return;
+    const overview = await databaseService.getOverview(req.user!.id, projectId);
+    if (!overview) return res.status(404).json({ error: 'No active database' });
+    res.json(overview);
+  } catch (err) {
+    next(createError(safeErrorMessage(err), 500, projectId));
+  }
+});
+
 router.get('/tables', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const projectId = getProjectId(req);
   try {
     if (!(await requireProjectView(req, res, projectId))) return;
-    if (!(await requirePaidPlan(req, res))) return;
+    if (!(await requireOrgMembership(req, res))) return;
     const tables = await databaseService.listTables(req.user!.id, projectId);
     res.json({ tables });
   } catch (err) {
@@ -457,7 +498,7 @@ router.get('/tables/:table/rows', async (req: AuthenticatedRequest, res: Respons
   try {
     const projectId = getProjectId(req);
     if (!(await requireProjectView(req, res, projectId))) return;
-    if (!(await requirePaidPlan(req, res))) return;
+    if (!(await requireOrgMembership(req, res))) return;
     const limit  = Math.min(parseInt(req.query.limit as string || '50', 10), 200);
     const offset = parseInt(req.query.offset as string || '0', 10);
     const result = await databaseService.queryTable(req.user!.id, req.params.table, limit, offset, projectId);
@@ -487,7 +528,7 @@ router.post('/query', dbQueryLimiter, async (req: AuthenticatedRequest, res: Res
     if (!accessOk) return;
 
     // Both roles require a paid plan (anon could otherwise be used by downgraded users)
-    if (!(await requirePaidPlan(req, res))) return;
+    if (!(await requireOrgMembership(req, res))) return;
 
     const result = await databaseService.runQuery(req.user!.id, sql, role || 'anon', projectId);
     res.json(result);
@@ -516,10 +557,11 @@ router.get('/admin-sql/pending', async (req: AuthenticatedRequest, res: Response
     if (!(await requireProjectEdit(req, res, projectId))) return;
     const { data, error } = await supabase
       .from('admin_sql_pending_changes')
-      .select('id, sql_text, status, created_at, staged_by_user_id')
+      .select('id, sql_text, status, created_at, staged_by_user_id, batch_id, error_message')
       .eq('project_id', projectId)
       .eq('status', 'pending')
-      .order('created_at', { ascending: false });
+      // Staging order, oldest first: that is the order they must run in.
+      .order('created_at', { ascending: true });
     if (error) throw new Error(error.message);
     res.json({ pending: data ?? [] });
   } catch (err) {
@@ -534,12 +576,52 @@ router.get('/admin-sql/pending', async (req: AuthenticatedRequest, res: Response
 // of whoever staged it, since the confirming user may be a different
 // collaborator than the one chatting with the agent.
 //
-// Deliberately NO requirePaidPlan check here (unlike /query below): the
+// Deliberately NO requireOrgMembership check here (unlike /query below): the
 // agent's own query_database tool that STAGES a change has never had a
 // plan-tier gate, so requiring one only at confirm time let a free-plan
 // project stage a change through chat and then 403 the one human action
 // that was supposed to complete it (confirmed live 2026-08-19). Confirm
 // should never be MORE restrictive than the staging step it's completing.
+// ── POST /api/v1/database/admin-sql/run-all  { project_id, batch_id? } ────
+// Every pending statement (of one batch, or the whole project), in the order
+// it was staged, as one transaction. On failure nothing has run: the failing
+// row keeps status 'pending' and gets the error, so the owner can reject it
+// or have the agent fix it, then run again.
+router.post('/admin-sql/run-all', dbQueryLimiter, async (req: AuthenticatedRequest, res: Response) => {
+  const projectId = getProjectId(req);
+  const { batch_id } = (req.body ?? {}) as { batch_id?: unknown };
+  try {
+    if (!projectId) { res.status(400).json({ error: 'project_id required' }); return; }
+    if (!(await requireProjectEdit(req, res, projectId))) return;
+    let query = supabase
+      .from('admin_sql_pending_changes')
+      .select('id, sql_text')
+      .eq('project_id', projectId)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true });
+    if (typeof batch_id === 'string' && batch_id) query = query.eq('batch_id', batch_id);
+    const { data: rows, error } = await query;
+    if (error) throw new Error(error.message);
+    const pending = (rows ?? []) as Array<{ id: string; sql_text: string }>;
+    if (pending.length === 0) { res.json({ success: true, executed: [] }); return; }
+
+    const outcome = await databaseService.runStatementsAtomic(req.user!.id, pending.map((r) => r.sql_text), projectId);
+    const now = new Date().toISOString();
+    if (outcome.ok) {
+      await supabase.from('admin_sql_pending_changes')
+        .update({ status: 'executed', executed_at: now, executed_by_user_id: req.user!.id, error_message: null })
+        .in('id', pending.map((r) => r.id));
+      res.json({ success: true, executed: pending.map((r) => r.id) });
+      return;
+    }
+    const failed = pending[outcome.failedIndex];
+    await supabase.from('admin_sql_pending_changes').update({ error_message: outcome.error }).eq('id', failed.id);
+    res.status(422).json({ success: false, executed: [], failedId: failed.id, failedIndex: outcome.failedIndex, error: outcome.error });
+  } catch (err) {
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/admin-sql/:id/confirm', dbQueryLimiter, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   try {

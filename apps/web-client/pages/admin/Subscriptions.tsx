@@ -8,9 +8,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Search, CreditCard, Building2, Pencil, Zap, Sparkles, Crown, Loader2, ArrowUpRight, Users, Check, History, ShieldCheck } from 'lucide-react';
+import { Search, CreditCard, Building2, Pencil, Sparkles, Crown, Loader2, ArrowUpRight, Users, Check, History, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { fetchOrgPlan, updateOrgEntitlements, UNITS, UNIT_LABELS, formatDollars, type PlanSnapshot, type Unit } from '@/services/planService';
+import { PlanCatalogCard } from '@/components/admin/PlanCatalogCard';
 
 interface OrgSubscription {
     org_id: string;
@@ -70,6 +72,8 @@ export default function AdminSubscriptions() {
     const [editUsageLimit, setEditUsageLimit] = useState('');
     const [editResetAt, setEditResetAt] = useState('');
     const [saving, setSaving] = useState(false);
+    const [editPlan, setEditPlan] = useState<PlanSnapshot | null>(null);
+    const [editUnits, setEditUnits] = useState<Record<Unit, number>>({ apps: 1, users: 1, agents: 1, databases: 1 });
     const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
     const [auditLoading, setAuditLoading] = useState(true);
 
@@ -194,6 +198,13 @@ export default function AdminSubscriptions() {
         setEditSeats(String(sub.seats_total));
         setEditUsageLimit(String(sub.publish_lines_limit));
         setEditResetAt(sub.publish_lines_reset_at ? new Date(sub.publish_lines_reset_at).toISOString().slice(0, 16) : '');
+        setEditPlan(null);
+        fetchOrgPlan(sub.org_id)
+            .then((snapshot) => {
+                setEditPlan(snapshot);
+                setEditUnits({ apps: snapshot.entitlements.apps, users: snapshot.entitlements.users, agents: snapshot.entitlements.agents, databases: snapshot.entitlements.databases });
+            })
+            .catch((e: unknown) => toast.error(e instanceof Error ? e.message : 'Could not load plan units'));
     };
 
     const handleSave = async () => {
@@ -241,6 +252,9 @@ export default function AdminSubscriptions() {
                 billing_mode: editBillingMode,
             });
 
+            if (editPlan && UNITS.some((u) => editUnits[u] !== editPlan.entitlements[u])) {
+                await updateOrgEntitlements(editOrg.org_id, editUnits);
+            }
             toast.success(`Updated plan for ${editOrg.org_name}`);
             setEditOrg(null);
             loadSubscriptions();
@@ -337,6 +351,7 @@ export default function AdminSubscriptions() {
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
+            <PlanCatalogCard />
             {/* ─── Tier Breakdown Grid ───────────────────────────────────── */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {['free', 'pro', 'agency'].map((tier) => {
@@ -675,6 +690,35 @@ export default function AdminSubscriptions() {
                                     <SelectItem value="cancelled">Cancelled</SelectItem>
                                 </SelectContent>
                             </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Plan units ($19 each above included)</Label>
+                            {editPlan ? (
+                                <div className="grid grid-cols-2 gap-2">
+                                    {UNITS.map((unit) => (
+                                        <div key={unit} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs text-gray-300">{UNIT_LABELS[unit].plural}</span>
+                                                <Input
+                                                    type="number"
+                                                    min={0}
+                                                    value={editUnits[unit]}
+                                                    onChange={(e) => setEditUnits({ ...editUnits, [unit]: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                                                    className="h-7 w-16 bg-transparent border-white/10 text-white text-right px-2"
+                                                />
+                                            </div>
+                                            <p className={cn('text-[10px] mt-1', editPlan.usage[unit] > editUnits[unit] ? 'text-red-400' : 'text-gray-500')}>
+                                                {editPlan.usage[unit]} in use
+                                            </p>
+                                        </div>
+                                    ))}
+                                    <p className="col-span-2 text-[10px] text-gray-500">
+                                        Estimate {formatDollars(editPlan.catalog.base_price_cents + UNITS.reduce((n, u) => n + Math.max(0, editUnits[u] - editPlan.catalog[`included_${u}`]) * editPlan.catalog[`${u === 'databases' ? 'database' : u.slice(0, -1)}_price_cents`], 0))}/mo
+                                    </p>
+                                </div>
+                            ) : (
+                                <p className="text-[10px] text-gray-500">Loading plan units…</p>
+                            )}
                         </div>
                         <div className="space-y-2">
                             <Label className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Total Seat Allocation</Label>

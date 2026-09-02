@@ -1275,3 +1275,27 @@
   .ecg-landing .contact-body__inner { grid-template-columns: 1fr; }
   .ecg-landing .contact-form__row { grid-template-columns: 1fr; }
 }
+
+/* ── Pricing: single plan + estimator ─────────────────────────────────── */
+.pricing__single { display: grid; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); gap: 24px; align-items: start; max-width: 1080px; margin: 0 auto; }
+@media (max-width: 860px) { .pricing__single { grid-template-columns: 1fr; } }
+.calc { border: 1px solid var(--line-dk); border-radius: 20px; padding: 28px; background: rgba(246,245,241,0.03); }
+.calc__title { font-size: 18px; font-weight: 500; }
+.calc__sub { font-size: 13px; opacity: 0.55; margin-top: 4px; }
+.calc__row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 0; border-bottom: 1px solid var(--line-dk); }
+.calc__row--base { margin-top: 18px; border-top: 1px solid var(--line-dk); }
+.calc__label { font-size: 14px; font-weight: 500; }
+.calc__price { font-family: var(--mono); font-size: 11px; opacity: 0.55; margin-left: 6px; }
+.calc__hint { font-size: 12px; opacity: 0.5; margin-top: 3px; }
+.calc__ctl { display: flex; align-items: center; gap: 18px; flex-shrink: 0; }
+.calc__stepper { display: inline-flex; align-items: center; border: 1px solid var(--line-dk); border-radius: 999px; overflow: hidden; }
+.calc__stepper button { width: 34px; height: 34px; display: grid; place-items: center; color: rgba(246,245,241,0.7); transition: background 0.16s ease, color 0.16s ease; }
+.calc__stepper button:hover:not(:disabled) { background: rgba(246,245,241,0.06); color: var(--body); }
+.calc__stepper button:disabled { opacity: 0.3; cursor: default; }
+.calc__stepper span { min-width: 32px; text-align: center; font-family: var(--mono); font-size: 13px; }
+.calc__amount { font-family: var(--mono); font-size: 13px; min-width: 64px; text-align: right; opacity: 0.85; }
+.calc__total { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 0 6px; }
+.calc__sum { font-size: 34px; font-weight: 500; letter-spacing: -0.03em; line-height: 1; }
+.calc__sum span { font-size: 13px; opacity: 0.5; margin-left: 4px; font-weight: 400; letter-spacing: 0; }
+.calc__cta { width: 100%; margin-top: 18px; }
+.calc__foot { font-size: 12px; opacity: 0.45; margin-top: 12px; text-align: center; }

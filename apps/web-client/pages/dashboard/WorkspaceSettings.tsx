@@ -1,7 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { motion } from 'framer-motion';
 import { supabase } from '@/integrations/supabase/client';
-import { TIER_LIMITS } from '@/services/subscriptionService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,13 +17,15 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import {
-  Search, Building2, Users, Send, Crown, CreditCard, User, Trash2, Copy, Check, Edit,
+  Search, Building2, Users, Send, Bot, Database, FolderKanban, ArrowUpRight, Crown, CreditCard, User, Trash2, Copy, Check, Edit,
   FolderOpen, Settings2, Shield, PlusCircle, UserCog, BarChart3, Zap, Loader2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import { OrganizationBillingContent } from '@/components/referral/settings/OrganizationBillingContent';
+import { PlanUsageContent } from '@/components/referral/settings/PlanUsageContent';
+import { fetchPlan, formatDollars, UNITS, UNIT_LABELS, type PlanSnapshot, type Unit } from '@/services/planService';
 import { DashboardPageHeader } from '@/components/dashboard/DashboardPageHeader';
 import { useOrganization } from '@/contexts/OrganizationContext';
 import { getApiServerUrl } from '@/config/external-api';
@@ -129,7 +129,7 @@ function initials(name?: string, email?: string) {
 function orgInitialClasses(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff;
-  const palettes = ['bg-primary/15 text-primary', 'bg-secondary/15 text-secondary', 'bg-accent/15 text-accent'];
+  const palettes = ['bg-primary/15 text-primary', 'bg-amber-500/15 text-amber-700 dark:text-amber-300', 'bg-violet-500/15 text-violet-700 dark:text-violet-300'];
   return palettes[h % palettes.length];
 }
 
@@ -140,6 +140,12 @@ export default function WorkspaceSettings() {
   const [org, setOrg] = useState<OrgDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>('');
+  const [plan, setPlan] = useState<PlanSnapshot | null>(null);
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get('tab') ?? 'overview');
+  const goTab = (next: string) => { setTab(next); setSearchParams({ tab: next }, { replace: true }); };
 
   // General tab
   const [editOrgName, setEditOrgName] = useState('');
@@ -238,6 +244,7 @@ export default function WorkspaceSettings() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       setCurrentUserId(user.id);
+      setCurrentUserEmail(user.email ?? '');
 
       const { data: orgRow } = await supabase
         .from('organizations')
@@ -309,7 +316,7 @@ export default function WorkspaceSettings() {
           user_id: m.user_id,
           role: m.role as OrgRole,
           joined_at: m.joined_at,
-          email: p?.email || '',
+          email: p?.email || (m.user_id === currentUserId ? currentUserEmail : ''),
           full_name: p?.full_name || undefined,
           is_creator: m.user_id === org?.created_by,
         };
@@ -330,12 +337,14 @@ export default function WorkspaceSettings() {
         .eq('status', 'pending')
         .order('created_at', { ascending: false });
       setOrgInvitations(invitations || []);
+
+      fetchPlan(currentOrganizationId).then(setPlan).catch(() => setPlan(null));
     } catch (error) {
       console.error('Failed to load members:', error);
     } finally {
       setLoadingMembers(false);
     }
-  }, [currentOrganizationId, org?.created_by]);
+  }, [currentOrganizationId, org?.created_by, currentUserId, currentUserEmail]);
 
   useEffect(() => { loadOrg(); }, [loadOrg]);
   useEffect(() => { if (org) loadMembers(); }, [org?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -446,7 +455,11 @@ export default function WorkspaceSettings() {
   // ── Members tab   invite new ───────────────────────────────────────────────
   const openInvite = () => {
     if (!org) return;
-    if (org.plan_tier === 'free') { setIsUpgradePromptOpen(true); return; }
+    if (plan && plan.usage.users >= plan.entitlements.users) {
+      toast.error(`All ${plan.entitlements.users} user seat${plan.entitlements.users === 1 ? '' : 's'} on the plan are in use. Add a user in Billing.`);
+      goTab('billing');
+      return;
+    }
     setIsInviteOpen(true);
   };
 
@@ -665,8 +678,8 @@ export default function WorkspaceSettings() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+      <div className="mx-auto max-w-4xl space-y-4 p-8" aria-busy="true">
+        <div className="skeleton h-6 w-48" /><div className="skeleton h-24 w-full rounded-xl" /><div className="skeleton h-40 w-full rounded-xl" />
       </div>
     );
   }
@@ -692,10 +705,11 @@ export default function WorkspaceSettings() {
         description={`Manage ${org.name}   members, billing, and workspace access.`}
       />
 
-      <Tabs defaultValue="members" orientation="vertical" className="mt-2 flex flex-col gap-8 lg:flex-row lg:items-start">
+      <Tabs value={tab} onValueChange={goTab} orientation="vertical" className="mt-2 flex flex-col gap-8 lg:flex-row lg:items-start">
         <TabsList className="flex h-auto shrink-0 flex-col items-stretch gap-4 bg-transparent p-0 lg:w-56">
           <div className="space-y-1">
             <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Workspace</p>
+            <TabsTrigger value="overview" className="w-full justify-start rounded-lg px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Overview</TabsTrigger>
             <TabsTrigger value="general" className="w-full justify-start rounded-lg px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">General</TabsTrigger>
             <TabsTrigger value="members" className="w-full justify-start rounded-lg px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Members</TabsTrigger>
             <TabsTrigger value="billing" className="w-full justify-start rounded-lg px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Billing</TabsTrigger>
@@ -713,14 +727,96 @@ export default function WorkspaceSettings() {
         </TabsList>
 
         <div className="min-w-0 flex-1">
+        {/* ── Overview ─────────────────────────────────────────── */}
+        <TabsContent value="overview" className="mt-0 space-y-6">
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-border/60 px-5 py-4">
+            <div className="flex items-center gap-3 min-w-0">
+              {org.avatar_url ? (
+                <img src={org.avatar_url} alt="" className="h-10 w-10 rounded-full object-cover" />
+              ) : (
+                <span className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold ${orgInitialClasses(org.name)}`}>{org.name.charAt(0).toUpperCase()}</span>
+              )}
+              <div className="min-w-0">
+                <p className="text-sm font-semibold truncate">{org.name}</p>
+                <p className="text-xs text-muted-foreground truncate">@{org.slug} · {collaborators.length} member{collaborators.length === 1 ? '' : 's'} · {orgProjects.length} project{orgProjects.length === 1 ? '' : 's'}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Badge variant="outline" className="rounded-full capitalize">{org.user_role.replace('_', ' ')}</Badge>
+              <Badge variant={org.status === 'active' ? 'default' : 'destructive'} className="rounded-full capitalize">{org.status}</Badge>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-end justify-between gap-4 mb-3">
+              <div>
+                <h2 className="text-base font-semibold text-foreground">Plan units</h2>
+                <p className="text-sm text-muted-foreground">What this workspace uses against what it pays for.</p>
+              </div>
+              {plan && (
+                <div className="text-right">
+                  <div className="text-lg font-semibold tabular-nums">{formatDollars(plan.estimate.total_cents)}<span className="text-xs font-normal text-muted-foreground">/mo</span></div>
+                  <button type="button" onClick={() => goTab('billing')} className="text-xs text-primary hover:underline">Manage plan</button>
+                </div>
+              )}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {UNITS.map((unit) => {
+                const icons: Record<Unit, typeof Users> = { apps: FolderKanban, users: Users, agents: Bot, databases: Database };
+                const Icon = icons[unit];
+                const used = plan?.usage[unit] ?? 0;
+                const bought = plan?.entitlements[unit] ?? 1;
+                const full = plan ? used >= bought : false;
+                const targets: Record<Unit, () => void> = {
+                  apps: () => navigate('/dashboard/projects'),
+                  users: () => goTab('members'),
+                  agents: () => navigate('/dashboard/ecg-agents'),
+                  databases: () => navigate('/dashboard/projects'),
+                };
+                return (
+                  <div key={unit} className="rounded-xl border border-border/60 p-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-2 text-sm font-medium"><Icon className="h-4 w-4 text-muted-foreground" />{UNIT_LABELS[unit].plural}</span>
+                      {full && <Badge variant="outline" className="rounded-full text-[10px] border-amber-500/40 text-amber-600 dark:text-amber-400">Full</Badge>}
+                    </div>
+                    <div className="text-2xl font-semibold tabular-nums">
+                      {plan ? used : <span className="skeleton inline-block h-7 w-8 align-middle" />}
+                      <span className="text-sm font-normal text-muted-foreground"> / {plan ? bought : '…'}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <button type="button" onClick={targets[unit]} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1">Open <ArrowUpRight className="h-3 w-3" /></button>
+                      <button type="button" onClick={() => goTab('billing')} className="text-primary hover:underline">Add one</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <button type="button" onClick={openInvite} className="rounded-xl border border-border/60 p-4 text-left hover:bg-muted/40 transition-colors">
+              <p className="text-sm font-medium flex items-center gap-2"><Send className="h-4 w-4 text-muted-foreground" />Invite a member</p>
+              <p className="text-xs text-muted-foreground mt-1">{orgInvitations.length} pending invitation{orgInvitations.length === 1 ? '' : 's'}.</p>
+            </button>
+            <button type="button" onClick={() => goTab('general')} className="rounded-xl border border-border/60 p-4 text-left hover:bg-muted/40 transition-colors">
+              <p className="text-sm font-medium flex items-center gap-2"><Building2 className="h-4 w-4 text-muted-foreground" />Workspace profile</p>
+              <p className="text-xs text-muted-foreground mt-1">Name, avatar, handle and access.</p>
+            </button>
+            <button type="button" onClick={() => goTab('preferences')} className="rounded-xl border border-border/60 p-4 text-left hover:bg-muted/40 transition-colors">
+              <p className="text-sm font-medium flex items-center gap-2"><Settings2 className="h-4 w-4 text-muted-foreground" />Preferences</p>
+              <p className="text-xs text-muted-foreground mt-1">Language, invitations, sounds.</p>
+            </button>
+          </div>
+        </TabsContent>
+
         {/* ── General ─────────────────────────────────────────────────────── */}
         <TabsContent value="general" className="mt-0 space-y-8">
           <div>
-            <h2 className="font-display text-lg font-semibold text-foreground">Workspace profile</h2>
+            <h2 className="text-base font-semibold text-foreground">Workspace profile</h2>
             <p className="text-sm text-muted-foreground">Control how this workspace appears and identifies itself.</p>
           </div>
 
-          <div className="rounded-xl border border-border/60 shadow-[var(--elev-1)]">
+          <div className="rounded-xl border border-border/60">
             {/* Avatar */}
             <div className="flex items-center justify-between gap-4 px-5 py-4">
               <div>
@@ -820,11 +916,13 @@ export default function WorkspaceSettings() {
               <div>
                 <p className="text-sm font-medium">Plan &amp; region</p>
                 <p className="text-sm text-muted-foreground">
-                  {org.status === 'suspended' ? 'Suspended due to outstanding payment.' : `${org.seats_used}/${org.seats_total} seats used.`}
+                  {org.status === 'suspended'
+                    ? 'Suspended due to outstanding payment.'
+                    : plan ? `${formatDollars(plan.estimate.total_cents)}/mo · ${plan.usage.users}/${plan.entitlements.users} users on the plan.` : 'Loading plan…'}
                 </p>
               </div>
               <div className="flex items-center gap-1.5">
-                <Badge variant="outline" className="rounded-full capitalize">{org.plan_tier}</Badge>
+                <Badge variant="outline" className="rounded-full">{plan?.catalog.name ?? 'SINGLE'}</Badge>
                 <Badge variant="outline" className="rounded-full uppercase">{org.region}</Badge>
                 <Badge variant={org.status === 'active' ? 'default' : 'destructive'} className="rounded-full capitalize">{org.status}</Badge>
               </div>
@@ -832,9 +930,9 @@ export default function WorkspaceSettings() {
           </div>
 
           <div>
-            <h2 className="font-display text-lg font-semibold text-foreground">Workspace access</h2>
+            <h2 className="text-base font-semibold text-foreground">Workspace access</h2>
           </div>
-          <div className="rounded-xl border border-border/60 shadow-[var(--elev-1)]">
+          <div className="rounded-xl border border-border/60">
             <div className="flex items-center justify-between gap-4 px-5 py-4">
               <div>
                 <p className="text-sm font-medium">Leave workspace</p>
@@ -858,7 +956,7 @@ export default function WorkspaceSettings() {
           <TabsContent value="danger" className="mt-0 space-y-5">
             <Card className="rounded-xl border-destructive/30">
               <CardHeader>
-                <CardTitle className="font-display text-lg font-semibold text-destructive">Delete workspace</CardTitle>
+                <CardTitle className="text-base font-semibold text-destructive">Delete workspace</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground mb-4">
@@ -893,8 +991,13 @@ export default function WorkspaceSettings() {
           </div>
 
           {loadingMembers ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <div className="space-y-2.5 py-2" aria-busy="true">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="flex items-center gap-4 rounded-xl border border-border/60 px-4 py-3">
+                  <div className="skeleton h-9 w-9 rounded-full" />
+                  <div className="flex-1 space-y-2"><div className="skeleton h-3 w-40" /><div className="skeleton h-2.5 w-56" /></div>
+                </div>
+              ))}
             </div>
           ) : filteredCollaborators.length === 0 ? (
             <Card className="rounded-xl border-dashed border-border/60 bg-card/40">
@@ -907,13 +1010,10 @@ export default function WorkspaceSettings() {
             </Card>
           ) : (
             <div className="space-y-2.5">
-              {filteredCollaborators.map((c, i) => (
-                <motion.div
+              {filteredCollaborators.map((c) => (
+                <div
                   key={c.user_id}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.35, delay: Math.min(i, 10) * 0.03, ease: [0.16, 1, 0.3, 1] }}
-                  className="flex items-center gap-4 rounded-xl border border-border/60 bg-card/60 px-4 py-3 transition-colors duration-200 hover:bg-card"
+                  className="animate-msg-appear flex items-center gap-4 rounded-xl border border-border/60 bg-card/60 px-4 py-3 transition-colors duration-200 hover:bg-card"
                 >
                   <Avatar className="h-9 w-9 flex-shrink-0">
                     <AvatarFallback className="bg-primary/10 text-primary text-xs font-medium">
@@ -940,7 +1040,7 @@ export default function WorkspaceSettings() {
                       Manage
                     </Button>
                   )}
-                </motion.div>
+                </div>
               ))}
             </div>
           )}
@@ -987,14 +1087,14 @@ export default function WorkspaceSettings() {
 
         {/* ── Billing ─────────────────────────────────────────────────────── */}
         <TabsContent value="billing" className="mt-5">
-          <OrganizationBillingContent organizationId={org.id} userRole={org.user_role} />
+          <PlanUsageContent organizationId={org.id} />
         </TabsContent>
 
         {/* ── Preferences ───────────────────────────────────────────────────── */}
         <TabsContent value="preferences" className="mt-0 space-y-5">
-          <Card className="rounded-xl border-border/60 shadow-[var(--elev-1)]">
+          <Card className="rounded-xl border-border/60">
             <CardHeader>
-              <CardTitle className="font-display text-lg font-semibold">Preferences</CardTitle>
+              <CardTitle className="text-base font-semibold">Preferences</CardTitle>
               <p className="text-sm text-muted-foreground">Personalize how this workspace works for its members.</p>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -1137,8 +1237,13 @@ export default function WorkspaceSettings() {
           </SheetHeader>
 
           {loadingSheet ? (
-            <div className="flex flex-1 items-center justify-center py-16">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <div className="space-y-2.5 py-2" aria-busy="true">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="flex items-center gap-4 rounded-xl border border-border/60 px-4 py-3">
+                  <div className="skeleton h-9 w-9 rounded-full" />
+                  <div className="flex-1 space-y-2"><div className="skeleton h-3 w-40" /><div className="skeleton h-2.5 w-56" /></div>
+                </div>
+              ))}
             </div>
           ) : (
             <ScrollArea className="flex-1">
@@ -1213,7 +1318,7 @@ export default function WorkspaceSettings() {
                     {editEcoLimit !== '' && !isNaN(parseInt(editEcoLimit)) && parseInt(editEcoLimit) > 0 && (
                       <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
                         <div
-                          className={`h-full rounded-full transition-all ${memberEcoUsed / parseInt(editEcoLimit) >= 1 ? 'bg-destructive' : memberEcoUsed / parseInt(editEcoLimit) >= 0.8 ? 'bg-amber-500' : 'bg-primary'}`}
+                          className={`h-full rounded-full transition-colors ${memberEcoUsed / parseInt(editEcoLimit) >= 1 ? 'bg-destructive' : memberEcoUsed / parseInt(editEcoLimit) >= 0.8 ? 'bg-amber-500' : 'bg-primary'}`}
                           style={{ width: `${Math.min((memberEcoUsed / parseInt(editEcoLimit)) * 100, 100)}%` }}
                         />
                       </div>

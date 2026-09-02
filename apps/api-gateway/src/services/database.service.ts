@@ -162,6 +162,44 @@ export interface TenantRelationship {
 }
 
 /** Live access-control state for one table. */
+/** Supabase-style overview: health numbers plus the shape the ERD draws. */
+export interface TenantOverview {
+  schema: string;
+  health: {
+    connected: boolean;
+    latency_ms: number | null;
+    server_version: string | null;
+    size_bytes: number;
+    tables: number;
+    views: number;
+    functions: number;
+    sequences: number;
+    indexes: number;
+    policies: number;
+    triggers: number;
+    rls_enabled_tables: number;
+    tables_without_policies: string[];
+    connections: number;
+    roles: { anon: boolean; service: boolean; owner: boolean };
+    api_exposed: boolean | null;
+    dead_tuple_ratio: number | null;
+    last_analyze: string | null;
+  };
+  tables: Array<{
+    name: string;
+    row_estimate: number;
+    size_bytes: number;
+    index_count: number;
+    seq_scans: number;
+    idx_scans: number;
+    dead_tuples: number;
+    rls_enabled: boolean;
+    policy_count: number;
+    columns: Array<{ name: string; type: string; nullable: boolean; default: string | null; primary_key: boolean; unique: boolean }>;
+  }>;
+  relationships: TenantRelationship[];
+}
+
 export interface TenantTableAccess {
   table: string;
   rlsEnabled: boolean;
@@ -249,34 +287,6 @@ function splitSqlStatements(sql: string): string[] {
   return statements;
 }
 
-// ---------------------------------------------------------------------------
-// Platform auth secrets   VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are the
-// EcomGear platform's OWN Supabase instance (used for user sign-up/login in
-// generated apps), NOT the per-project hosted database. Nothing else in the
-// codebase ever wrote these into project_secrets, so every generated app's
-// `createClient(import.meta.env.VITE_SUPABASE_URL, ...)` call got `undefined`
-// and threw "supabaseUrl is required"   the system prompt told the agent to
-// use these env vars, but they never actually existed anywhere. Every project
-// gets these regardless of plan tier or hosted-database status (auth works
-// even on free/no-DB projects).
-// ---------------------------------------------------------------------------
-export async function syncPlatformAuthSecrets(projectId: string): Promise<void> {
-  const url = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
-  if (!url || !anonKey) {
-    logger.warn('[databaseService] SUPABASE_URL/SUPABASE_ANON_KEY not set on server   cannot sync platform auth secrets');
-    return;
-  }
-  const { error } = await supabase.from('project_secrets').upsert(
-    [
-      { project_id: projectId, key_name: 'VITE_SUPABASE_URL', key_value: url },
-      { project_id: projectId, key_name: 'VITE_SUPABASE_ANON_KEY', key_value: anonKey },
-    ],
-    { onConflict: 'project_id,key_name' }
-  );
-  if (error) logger.warn('[databaseService] failed to sync platform auth secrets', error);
-}
-
 export interface ProjectSecret {
   key_name: string;
   key_value: string;
@@ -300,16 +310,15 @@ export async function buildProjectEnvSecrets(userId: string, projectId: string):
 
   const derived: ProjectSecret[] = [];
 
-  // Platform auth   every project gets this, regardless of plan tier or
-  // hosted-database status (also persisted via syncPlatformAuthSecrets, fired
-  // below, so it self-heals in project_secrets for the NEXT run too).
-  const authUrl = process.env.SUPABASE_URL;
-  const authAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
-  if (authUrl && authAnonKey) {
-    derived.push({ key_name: 'VITE_SUPABASE_URL', key_value: authUrl });
-    derived.push({ key_name: 'VITE_SUPABASE_ANON_KEY', key_value: authAnonKey });
-  }
-  syncPlatformAuthSecrets(projectId).catch(() => {});
+  // Nothing from the platform's own environment is ever derived here. Until
+  // 2026-09-02 every project was handed EcomGear's own Supabase URL and anon
+  // key as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY (and they were upserted
+  // into project_secrets, 46 projects' worth), so every generated app's users
+  // signed up against the platform's auth database with the platform's key
+  // in their bundle. A project's environment holds the project's own
+  // credentials: its hosted database, its edge functions, and whatever the
+  // owner saved with set_secret or in Settings. Auth is the app's own edge
+  // functions against its own database.
 
   // Hosted DB   getCredentials() is a no-op (returns null) without an active
   // database, and already upserts these same rows into project_secrets.
@@ -810,6 +819,13 @@ export const databaseService = {
 
         // Drop roles
         for (const role of [`${schema}_anon`, `${schema}_service`, `${schema}_owner`]) {
+          // provision() granted these roles USAGE ON SCHEMA extensions, and a
+          // role that still holds a privilege cannot be dropped ("some objects
+          // depend on it"). DROP OWNED revokes every privilege the role holds in
+          // this database (the tenant schema itself is already gone above), so
+          // the DROP ROLE that follows is unconditional. Found by the local
+          // cloud check on 2026-09-02; production deprovision hit the same wall.
+          await c.query(`DROP OWNED BY "${role}"`);
           await c.query(`DROP ROLE IF EXISTS "${role}"`);
         }
 
@@ -1066,6 +1082,105 @@ export const databaseService = {
     return { rows: dataRes.rows, total: countRes.rows[0].count };
   },
 
+  // ── Overview: health + ERD shape. Catalog and statistics reads only; never
+  // touches tenant data rows (row numbers are planner estimates).
+  async getOverview(userId: string, projectId?: string): Promise<TenantOverview | null> {
+    const record = await this.getStatus(userId, projectId);
+    if (!record || record.status !== 'active') return null;
+    const schema = record.schema_name;
+    const pg = await pool();
+
+    const start = Date.now();
+    let connected = true; let latency: number | null = null; let version: string | null = null;
+    try {
+      const v = await pg.query<{ v: string }>('SHOW server_version');
+      latency = Date.now() - start; version = v.rows[0]?.v ?? null;
+    } catch { connected = false; }
+
+    const [stats, tables, columns, counts, conns, roles, exposed, analyze] = await Promise.all([
+      pg.query<{ tables: string; views: string; functions: string; sequences: string; indexes: string; policies: string; triggers: string; size: string }>(
+        `SELECT
+           (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relkind = 'r') AS tables,
+           (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relkind IN ('v','m')) AS views,
+           (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1) AS functions,
+           (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relkind = 'S') AS sequences,
+           (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relkind = 'i') AS indexes,
+           (SELECT count(*) FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1) AS policies,
+           (SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND NOT t.tgisinternal) AS triggers,
+           (SELECT coalesce(sum(pg_total_relation_size(c.oid)), 0) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relkind IN ('r','m')) AS size`,
+        [schema]),
+      pg.query<{ name: string; row_estimate: string; size_bytes: string; index_count: string; seq_scans: string; idx_scans: string; dead_tuples: string; rls_enabled: boolean; policy_count: string }>(
+        `SELECT c.relname AS name, greatest(c.reltuples, 0)::bigint AS row_estimate, pg_total_relation_size(c.oid) AS size_bytes,
+                (SELECT count(*) FROM pg_index i WHERE i.indrelid = c.oid) AS index_count,
+                coalesce(st.seq_scan, 0) AS seq_scans, coalesce(st.idx_scan, 0) AS idx_scans, coalesce(st.n_dead_tup, 0) AS dead_tuples,
+                c.relrowsecurity AS rls_enabled,
+                (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid) AS policy_count
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           LEFT JOIN pg_stat_user_tables st ON st.relid = c.oid
+          WHERE n.nspname = $1 AND c.relkind = 'r'
+          ORDER BY c.relname`,
+        [schema]),
+      pg.query<{ table_name: string; column_name: string; data_type: string; is_nullable: string; column_default: string | null; primary_key: boolean; is_unique: boolean }>(
+        `SELECT c.table_name, c.column_name, c.data_type, c.is_nullable, c.column_default,
+                EXISTS (SELECT 1 FROM pg_index i JOIN pg_class r ON r.oid = i.indrelid JOIN pg_namespace n ON n.oid = r.relnamespace
+                         JOIN pg_attribute a ON a.attrelid = r.oid AND a.attnum = ANY(i.indkey)
+                        WHERE n.nspname = c.table_schema AND r.relname = c.table_name AND a.attname = c.column_name AND i.indisprimary) AS primary_key,
+                EXISTS (SELECT 1 FROM pg_index i JOIN pg_class r ON r.oid = i.indrelid JOIN pg_namespace n ON n.oid = r.relnamespace
+                         JOIN pg_attribute a ON a.attrelid = r.oid AND a.attnum = ANY(i.indkey)
+                        WHERE n.nspname = c.table_schema AND r.relname = c.table_name AND a.attname = c.column_name AND i.indisunique AND NOT i.indisprimary) AS is_unique
+           FROM information_schema.columns c
+          WHERE c.table_schema = $1
+          ORDER BY c.table_name, c.ordinal_position`,
+        [schema]),
+      pg.query<{ rls_tables: string }>(
+        `SELECT count(*) AS rls_tables FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relkind = 'r' AND c.relrowsecurity`,
+        [schema]),
+      pg.query<{ n: string }>(`SELECT count(*) AS n FROM pg_stat_activity WHERE usename LIKE $1`, [`${schema}\_%`]),
+      pg.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname = ANY($1)`, [[`${schema}_anon`, `${schema}_service`, `${schema}_owner`]]),
+      pg.query<{ schemas: string | null }>(`SELECT current_setting('pgrst.db_schemas', true) AS schemas`).catch(() => ({ rows: [{ schemas: null }] })),
+      pg.query<{ last: string | null }>(
+        `SELECT max(greatest(st.last_analyze, st.last_autoanalyze))::text AS last FROM pg_stat_user_tables st WHERE st.schemaname = $1`, [schema]),
+    ]);
+
+    const colsByTable = new Map<string, TenantOverview['tables'][number]['columns']>();
+    for (const c of columns.rows) {
+      if (!colsByTable.has(c.table_name)) colsByTable.set(c.table_name, []);
+      colsByTable.get(c.table_name)!.push({
+        name: c.column_name, type: c.data_type, nullable: c.is_nullable === 'YES', default: c.column_default,
+        primary_key: c.primary_key, unique: c.is_unique,
+      });
+    }
+    const tableRows = tables.rows.map((t) => ({
+      name: t.name, row_estimate: Number(t.row_estimate), size_bytes: Number(t.size_bytes), index_count: Number(t.index_count),
+      seq_scans: Number(t.seq_scans), idx_scans: Number(t.idx_scans), dead_tuples: Number(t.dead_tuples),
+      rls_enabled: Boolean(t.rls_enabled), policy_count: Number(t.policy_count), columns: colsByTable.get(t.name) ?? [],
+    }));
+    const live = tableRows.reduce((n, t) => n + t.row_estimate, 0);
+    const dead = tableRows.reduce((n, t) => n + t.dead_tuples, 0);
+    const roleNames = new Set(roles.rows.map((r) => r.rolname));
+    const exposedSchemas = exposed.rows[0]?.schemas;
+    const s0 = stats.rows[0];
+
+    return {
+      schema,
+      health: {
+        connected, latency_ms: latency, server_version: version,
+        size_bytes: Number(s0?.size ?? 0), tables: Number(s0?.tables ?? 0), views: Number(s0?.views ?? 0), functions: Number(s0?.functions ?? 0),
+        sequences: Number(s0?.sequences ?? 0), indexes: Number(s0?.indexes ?? 0), policies: Number(s0?.policies ?? 0), triggers: Number(s0?.triggers ?? 0),
+        rls_enabled_tables: Number(counts.rows[0]?.rls_tables ?? 0),
+        tables_without_policies: tableRows.filter((t) => t.policy_count === 0).map((t) => t.name),
+        connections: Number(conns.rows[0]?.n ?? 0),
+        roles: { anon: roleNames.has(`${schema}_anon`), service: roleNames.has(`${schema}_service`), owner: roleNames.has(`${schema}_owner`) },
+        api_exposed: exposedSchemas == null ? null : exposedSchemas.split(',').map((x) => x.trim()).includes(schema),
+        dead_tuple_ratio: live + dead > 0 ? dead / (live + dead) : null,
+        last_analyze: analyze.rows[0]?.last ?? null,
+      },
+      tables: tableRows,
+      relationships: await this.listRelationships(userId, projectId),
+    };
+  },
+
   // ── Connection check   live ping, separate from the stored provisioning status ──
   async testConnection(userId: string, projectId?: string): Promise<{ connected: boolean; latencyMs?: number; error?: string }> {
     const record = await this.getStatus(userId, projectId);
@@ -1133,6 +1248,53 @@ export const databaseService = {
   },
 
   // ── Safe SQL execution (SELECT only for users, full for agent) ───────────
+  /**
+   * Run several staged statements as ONE transaction, in the given order, as
+   * the tenant's service role. Either every statement lands or none does; on
+   * failure the index of the statement that failed comes back with Postgres's
+   * message, so the caller can pin the error to the right row.
+   *
+   * This is what the "Run all in order" action uses. Running rows one by one
+   * from a newest-first list is how a CREATE TABLE ended up executed after
+   * the INSERT that needed it.
+   */
+  async runStatementsAtomic(
+    userId: string,
+    statements: readonly string[],
+    projectId?: string,
+  ): Promise<{ ok: true } | { ok: false; failedIndex: number; error: string }> {
+    const record = await this.getStatus(userId, projectId);
+    if (!record || record.status !== 'active') throw new Error('No active database');
+    if (statements.length === 0) return { ok: true };
+
+    const pg = await pool();
+    const c = await pg.connect();
+    let index = -1;
+    try {
+      await c.query(`SET ROLE "${record.schema_name}_service"`);
+      await c.query('BEGIN');
+      await c.query(`SET LOCAL search_path TO "${record.schema_name}"`);
+      await c.query('SET LOCAL statement_timeout TO 30000');
+      for (index = 0; index < statements.length; index++) {
+        await c.query(statements[index]);
+      }
+      const ranDdl = statements.some((st) => /^\s*(create|alter|drop)\s/i.test(st));
+      if (ranDdl) await enableRlsOnNewTables(c, record.schema_name);
+      await c.query('COMMIT');
+      if (ranDdl) {
+        try { await this._reloadPostgREST(); }
+        catch (err) { console.warn(`[DatabaseService] Schema-cache reload after batch DDL failed (non-fatal): ${(err as Error).message}`); }
+      }
+      return { ok: true };
+    } catch (err) {
+      try { await c.query('ROLLBACK'); } catch { /* connection may be gone */ }
+      return { ok: false, failedIndex: Math.max(0, index), error: (err as Error).message };
+    } finally {
+      try { await c.query('RESET ROLE'); } catch { /* ignore */ }
+      c.release();
+    }
+  },
+
   async runQuery(userId: string, sql: string, role: 'anon' | 'service' = 'anon', projectId?: string): Promise<{ rows: object[]; fields: string[]; statementsRun?: number }> {
     const record = await this.getStatus(userId, projectId);
     if (!record || record.status !== 'active') throw new Error('No active database');

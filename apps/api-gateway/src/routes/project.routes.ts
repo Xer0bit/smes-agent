@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { validateRequest, schemas } from '../middleware/validation.middleware.js';
 import { projectService } from '../services/project.service.js';
+import { checkCapacity } from '../services/entitlements.service.js';
 import { captureThumbnail } from '../services/thumbnailService.js';
 import { safeErrorMessage } from '../utils/sendError.js';
 
@@ -45,6 +46,11 @@ router.post(
     validateRequest({ body: schemas.project.create }),
     async (req: AuthenticatedRequest, res: Response) => {
         try {
+            const orgId = typeof req.body?.organizationId === 'string' ? req.body.organizationId : null;
+            if (orgId) {
+                const capacity = await checkCapacity(orgId, 'apps');
+                if (!('ok' in capacity)) return res.status(capacity.status).json(capacity);
+            }
             const project = await projectService.createProject(req.user!.id, req.body);
             res.status(201).json({ project });
         } catch (error) {

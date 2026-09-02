@@ -1,243 +1,137 @@
-import { useState } from "react";
-import { Check } from "lucide-react";
+/**
+ * Landing → Pricing: one plan, priced by unit.
+ *
+ *   SINGLE  $19/mo   includes 1 App · 1 Agent · 1 User · 1 Database · OneNET · OneMAIL
+ *   + $19/mo per additional App, User, Agent or Database
+ *
+ * The estimator reads the same price list the product enforces
+ * (GET /api/v1/plan/catalog) and falls back to the defaults if the API is
+ * unreachable so the page never renders empty.
+ */
+import { useEffect, useMemo, useState } from "react";
+import { Check, Minus, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { FaqSection } from "@/components/landing/FaqSection";
 import { useLandingContext } from "@/contexts/LandingContext";
+import {
+  DEFAULT_CATALOG, fetchPublicCatalog, formatDollars, includedQuantity, unitPriceCents,
+  UNITS, UNIT_LABELS, type Catalog, type Unit,
+} from "@/services/planService";
 
-const PLANS = {
-  monthly: [
-    {
-      name: "Free",
-      price: 0,
-      cadence: "free forever",
-      blurb: "Explore the platform. Build your first site with AI.",
-      features: [
-        "1 project",
-        "1 seat",
-        "10 ecos / month",
-        "30 publish lines / month",
-        "AI agent access",
-        "Hosting included",
-        "ecomgear subdomain",
-        "Community support",
-      ],
-      cta: "Start free",
-      highlight: false,
-    },
-    {
-      name: "Starter",
-      price: 9.99,
-      cadence: "/mo",
-      blurb: "For creators and small teams shipping real projects.",
-      features: [
-        "5 projects",
-        "3 seats",
-        "100 ecos / month",
-        "30 publish lines / month",
-        "Custom domains",
-        "Export code",
-        "Invite editors",
-        "Ali Cloud integration",
-        "ecomgear Cloud hosting",
-        "Integration apps",
-      ],
-      cta: "Get started",
-      highlight: false,
-    },
-    {
-      name: "Professional",
-      price: 49,
-      cadence: "/mo",
-      blurb: "For growing businesses publishing across markets.",
-      features: [
-        "Unlimited projects",
-        "10 seats",
-        "100 ecos / month",
-        "100 publish lines / month",
-        "Remove ecomgear branding",
-        "Analytics dashboard",
-        "API access",
-        "Auto Pilot agent mode",
-        "All Starter features",
-      ],
-      cta: "Go Pro",
-      highlight: true,
-    },
-    {
-      name: "Enterprise",
-      price: -1,
-      cadence: "custom",
-      blurb: "For agencies and multi-brand operators at scale.",
-      features: [
-        "Unlimited seats",
-        "Unlimited projects",
-        "Priority support & SLA",
-        "SSO / SAML",
-        "Invite clients",
-        "Client markup billing",
-        "Dedicated success engineer",
-        "All Professional features",
-      ],
-      cta: "Talk to sales",
-      highlight: false,
-    },
-  ],
-  yearly: [
-    {
-      name: "Free",
-      price: 0,
-      cadence: "free forever",
-      blurb: "Explore the platform. Build your first site with AI.",
-      features: [
-        "1 project",
-        "1 seat",
-        "10 ecos / month",
-        "30 publish lines / month",
-        "AI agent access",
-        "Hosting included",
-        "ecomgear subdomain",
-        "Community support",
-      ],
-      cta: "Start free",
-      highlight: false,
-    },
-    {
-      name: "Starter",
-      price: 7.99,
-      cadence: "/mo, billed yearly",
-      blurb: "For creators and small teams shipping real projects.",
-      features: [
-        "5 projects",
-        "3 seats",
-        "100 ecos / month",
-        "30 publish lines / month",
-        "Custom domains",
-        "Export code",
-        "Invite editors",
-        "Ali Cloud integration",
-        "ecomgear Cloud hosting",
-        "Integration apps",
-      ],
-      cta: "Get started",
-      highlight: false,
-    },
-    {
-      name: "Professional",
-      price: 39,
-      cadence: "/mo, billed yearly",
-      blurb: "For growing businesses publishing across markets.",
-      features: [
-        "Unlimited projects",
-        "10 seats",
-        "100 ecos / month",
-        "100 publish lines / month",
-        "Remove ecomgear branding",
-        "Analytics dashboard",
-        "API access",
-        "Auto Pilot agent mode",
-        "All Starter features",
-      ],
-      cta: "Go Pro",
-      highlight: true,
-    },
-    {
-      name: "Enterprise",
-      price: -1,
-      cadence: "custom",
-      blurb: "For agencies and multi-brand operators at scale.",
-      features: [
-        "Unlimited seats",
-        "Unlimited projects",
-        "Priority support & SLA",
-        "SSO / SAML",
-        "Invite clients",
-        "Client markup billing",
-        "Dedicated success engineer",
-        "All Professional features",
-      ],
-      cta: "Talk to sales",
-      highlight: false,
-    },
-  ],
+const UNIT_BLURB: Record<Unit, string> = {
+  apps: "Each app is its own project with hosting, preview and publish.",
+  users: "Teammates who can open the workspace and talk to the agent.",
+  agents: "Extra eCG agents running on your own data and keys.",
+  databases: "A dedicated hosted Postgres schema with REST access.",
 };
+
+const BASE_FEATURES = [
+  "AI agent that builds and ships the app",
+  "Hosting, preview and publish included",
+  "Hosted database with REST API",
+  "Edge functions for auth and integrations",
+  "OneNET and OneMAIL",
+  "Fair-use agent work per app",
+];
 
 export default function Pricing() {
   const { user, onLoginClick } = useLandingContext();
   const navigate = useNavigate();
-  const [period, setPeriod] = useState<"monthly" | "yearly">("monthly");
-  const plans = PLANS[period];
+  const [catalog, setCatalog] = useState<Catalog>(DEFAULT_CATALOG);
+  const [qty, setQty] = useState<Record<Unit, number>>({ apps: 1, users: 1, agents: 1, databases: 1 });
 
-  const handlePlanAction = (planName: string) => {
-    if (planName === "Enterprise") {
-      navigate("/contact");
-      return;
-    }
-    if (user) {
-      navigate("/dashboard/settings");
-    } else {
-      onLoginClick();
-    }
+  useEffect(() => {
+    fetchPublicCatalog().then((c) => {
+      setCatalog(c);
+      setQty({ apps: c.included_apps, users: c.included_users, agents: c.included_agents, databases: c.included_databases });
+    }).catch(() => { /* defaults stay */ });
+  }, []);
+
+  const estimate = useMemo(() => {
+    const lines = UNITS.map((unit) => {
+      const extra = Math.max(0, qty[unit] - includedQuantity(catalog, unit));
+      return { unit, extra, amount: extra * unitPriceCents(catalog, unit) };
+    });
+    return { lines, total: catalog.base_price_cents + lines.reduce((n, l) => n + l.amount, 0) };
+  }, [catalog, qty]);
+
+  const start = () => {
+    if (user) navigate("/dashboard/settings?section=workspace-plans");
+    else onLoginClick();
   };
 
   return (
     <>
-      {/* Pricing grid */}
       <section className="pricing" id="pricing">
-        <div className="pricing__head">
-          <div />
-          <div className="pricing__toggle">
-            <button
-              className={`pricing__toggle-btn ${period === "monthly" ? "is-active" : ""}`}
-              onClick={() => setPeriod("monthly")}
-              type="button"
-            >
-              Monthly
-            </button>
-            <button
-              className={`pricing__toggle-btn ${period === "yearly" ? "is-active" : ""}`}
-              onClick={() => setPeriod("yearly")}
-              type="button"
-            >
-              Yearly <span className="pricing__save-tag">Save 20%</span>
-            </button>
-          </div>
-        </div>
-        <div className="pricing__grid pricing__grid--4">
-          {plans.map((p) => (
-            <div key={p.name} className={`plan ${p.highlight ? "plan--highlight" : ""}`}>
-              {p.highlight && <div className="plan__tag">Most popular</div>}
-              <div className="plan__name">{p.name}</div>
-              <div className="plan__price">
-                {p.price === 0 ? (
-                  <span className="plan__num">$0</span>
-                ) : p.price === -1 ? (
-                  <span className="plan__num" style={{ fontSize: 36 }}>Custom</span>
-                ) : (
-                  <>
-                    <span className="plan__currency">$</span>
-                    <span className="plan__num">{p.price}</span>
-                  </>
-                )}
-                <span className="plan__cadence">{p.cadence}</span>
-              </div>
-              <div className="plan__blurb">{p.blurb}</div>
-              <ul className="plan__features">
-                {p.features.map((f) => (
-                  <li key={f}>
-                    <Check size={12} />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <button
-                className={`plan__cta ${p.highlight ? "plan__cta--primary" : ""}`}
-                onClick={() => handlePlanAction(p.name)}
-                type="button"
-              >
-                {p.cta}
-              </button>
+        <div className="pricing__single">
+          <div className="plan plan--highlight">
+            <div className="plan__tag">One plan</div>
+            <div className="plan__name">{catalog.name}</div>
+            <div className="plan__price">
+              <span className="plan__currency">$</span>
+              <span className="plan__num">{Math.round(catalog.base_price_cents / 100)}</span>
+              <span className="plan__cadence">/mo</span>
             </div>
-          ))}
+            <div className="plan__blurb">
+              Includes {catalog.included_apps} App · {catalog.included_agents} Agent · {catalog.included_users} User · {catalog.included_databases} Database · {catalog.includes.join(" · ")}
+            </div>
+            <ul className="plan__features">
+              {BASE_FEATURES.map((f) => (
+                <li key={f}><Check size={12} />{f}</li>
+              ))}
+            </ul>
+            <button className="plan__cta" onClick={start} type="button">Start with SINGLE</button>
+          </div>
+
+          <div className="calc">
+            <div className="calc__title">Estimate Monthly Cost</div>
+            <div className="calc__sub">Add what you need. Every unit is {formatDollars(catalog.app_price_cents)}/mo, drop it any time.</div>
+
+            <div className="calc__row calc__row--base">
+              <div>
+                <div className="calc__label">{catalog.name}</div>
+                <div className="calc__hint">Includes 1 of everything below</div>
+              </div>
+              <div className="calc__amount">{formatDollars(catalog.base_price_cents)}</div>
+            </div>
+
+            {UNITS.map((unit) => {
+              const included = includedQuantity(catalog, unit);
+              const line = estimate.lines.find((l) => l.unit === unit)!;
+              return (
+                <div key={unit} className="calc__row">
+                  <div>
+                    <div className="calc__label">Additional {UNIT_LABELS[unit].plural} <span className="calc__price">× {formatDollars(unitPriceCents(catalog, unit))}/mo</span></div>
+                    <div className="calc__hint">{UNIT_BLURB[unit]}</div>
+                  </div>
+                  <div className="calc__ctl">
+                    <div className="calc__stepper">
+                      <button type="button" aria-label={`Remove ${UNIT_LABELS[unit].singular}`} disabled={qty[unit] <= included} onClick={() => setQty({ ...qty, [unit]: qty[unit] - 1 })}><Minus size={14} /></button>
+                      <span>{qty[unit]}</span>
+                      <button type="button" aria-label={`Add ${UNIT_LABELS[unit].singular}`} onClick={() => setQty({ ...qty, [unit]: qty[unit] + 1 })}><Plus size={14} /></button>
+                    </div>
+                    <div className="calc__amount">{line.extra > 0 ? formatDollars(line.amount) : "included"}</div>
+                  </div>
+                </div>
+              );
+            })}
+
+            <div className="calc__total">
+              <div>
+                <div className="calc__label">Monthly total</div>
+                <div className="calc__hint">
+                  Base {formatDollars(catalog.base_price_cents)}
+                  {estimate.lines.filter((l) => l.extra > 0).map((l) => ` + ${l.extra} ${l.extra === 1 ? UNIT_LABELS[l.unit].singular : UNIT_LABELS[l.unit].plural} ${formatDollars(l.amount)}`).join("")}
+                </div>
+              </div>
+              <div className="calc__sum">{formatDollars(estimate.total)}<span>/mo</span></div>
+            </div>
+
+            <button className="plan__cta plan__cta--primary calc__cta" onClick={start} type="button">
+              Start at {formatDollars(estimate.total)}/mo
+            </button>
+            <div className="calc__foot">Fair use: {catalog.included_eco_per_app} eco of agent work per app per month. Cancel any unit any time.</div>
+          </div>
         </div>
       </section>
 

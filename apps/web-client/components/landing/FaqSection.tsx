@@ -5,7 +5,7 @@ const FAQS = [
   { q: "Do I need technical skills?", a: "No. You describe your business in plain language (English or 中文). The agent designs, builds, localizes, and publishes. You review and approve. If you're comfortable writing an email, you can launch a cross-border storefront." },
   { q: "Can I import an existing Shopify / Wix / WordPress store?", a: "Yes. Point the agent at your existing site, and it will mirror your catalog, brand, and content into a new Ecomgear instance   then localize for China. You can keep your old store running in parallel." },
   { q: "Who owns the site and data?", a: "You do. Full export to static HTML, CSV catalog, and standard database formats. No lock-in. Custom domains stay on your registrar." },
-  { q: "How does pricing compare to hiring an agency?", a: "A traditional localized China launch runs $30–80k and takes 3–6 months. Ecomgear's Business plan is $89/month and goes live in days. We're the first option that's priced like SaaS and works like an agency." },
+  { q: "How does pricing compare to hiring an agency?", a: "A traditional localized China launch runs $30–80k and takes 3–6 months. Ecomgear starts at $19/month for one app with its own agent, and goes live in days. We're the first option that's priced like SaaS and works like an agency." },
   { q: "Is the agent safe to leave running?", a: "Yes. Every agent action is logged, reversible, and gated by permissions you set. High-impact actions (price changes >10%, catalog deletions, domain changes) always require your approval by default." },
 ];
 

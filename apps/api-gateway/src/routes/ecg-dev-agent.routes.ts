@@ -26,6 +26,7 @@ import path from 'node:path';
 import { scryptSync, randomBytes } from 'node:crypto';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { supabase } from '../config/database.js';
+import { checkCapacity } from '../services/entitlements.service.js';
 import { projectService, getProjectServerPath } from '../services/project.service.js';
 import { initProjectFromTemplate } from '../services/baseTemplateService.js';
 import { databaseService, buildProjectEnvSecrets } from '../services/database.service.js';
@@ -34,6 +35,7 @@ import { seedEcgTemplate, loadTemplateEdgeFunctions } from '../services/ecg-temp
 import { saveEcgRevision, syncEcgPreviewService } from './ecg-connect.routes.js';
 import { captureThumbnail } from '../services/thumbnailService.js';
 import { logger } from '../utils/logger.js';
+import { recordKnowledge } from '../services/knowledge.service.js';
 import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
@@ -125,6 +127,12 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
       const { data: membership } = owned ? { data: null } : await supabase.from('org_members').select('org_id').eq('org_id', organizationId).eq('user_id', req.user!.id).maybeSingle();
       if (!owned && !membership) {
         sseWrite(res, 'error', { message: 'You do not have access to that organization' });
+        res.end();
+        return;
+      }
+      const capacity = await checkCapacity(organizationId, 'agents');
+      if (!('ok' in capacity)) {
+        sseWrite(res, 'error', { message: capacity.error, code: capacity.code, unit: capacity.unit });
         res.end();
         return;
       }
@@ -358,7 +366,11 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
       `Never edit src/pages/AccessGate.tsx or the token handling in ecgClient.ts -- they are this dashboard's authentication.`,
       `The project's own README.md documents the full architecture in more detail.`,
     ].join('\n\n');
-    await supabase.from('projects').update({ context_notes: contextNotes }).eq('id', project.id);
+    // Kept as an owner-visible knowledge note (Settings → Knowledge) that
+    // every run carries; projects.context_notes is no longer read by the agent.
+    await recordKnowledge(project.id, [
+      { source: 'note', source_ref: 'ecg-dashboard-base', heading: 'Dashboard architecture', content: contextNotes },
+    ]);
 
     const files: Record<string, string> = { ...templateFiles };
     for (const rel of SCAFFOLD_CONFIG_FILES) {

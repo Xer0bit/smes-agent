@@ -59,7 +59,7 @@ export function FooterCTA() {
             />
             <button className="btn btn--primary" type="submit">Get early access</button>
           </form>
-          <div className="foot__note">Free plan available · no credit card required</div>
+          <div className="foot__note">From $19/month · 1 App · 1 Agent · cancel anytime</div>
         </div>
 
         <div className="foot__nav">
