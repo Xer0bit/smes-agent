@@ -2,8 +2,9 @@
 import { streamText, generateText, ToolSet, stepCountIs, jsonSchema, wrapLanguageModel } from 'ai';
 import { phantomAbortThresholdFor, isStuckAndBuildKnownBroken, unfulfilledPromiseNote, DIAGNOSIS_TOOL_NAMES, extractImplicatedFiles, shouldSeedScope } from './agentGating.js';
 import { reconcileClientFilesToHead } from './agentFileReconcile.js';
-import { buildCapabilityPreamble } from '../prompts/capabilities.js';
+import { buildCapabilityPreamble, isSourceTruncated } from '../prompts/capabilities.js';
 import { RunChangeSet, isTrackedMutation } from './runChangeSet.js';
+import { fetchRecentMaxFileCount } from './runSandbox.js';
 import { shouldRevertToPreAgentSnapshot } from './agentGating.js';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -1794,6 +1795,21 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               '\n\nJoin on these. Do not infer a relationship from column naming.';
           }
 
+          // Which role the generated code actually runs as. Without this the
+          // agent reasonably assumes the Supabase convention (service role
+          // bypasses RLS) and writes an edge function that 403s on its own
+          // tables. Verified in provisioning: tenant roles are created plain
+          // NOLOGIN with no BYPASSRLS, and enableRlsOnNewTables turns RLS on for
+          // every table the agent creates.
+          liveSchemaBlock += '\n\n**Which role your code runs as (this decides every 403):**\n' +
+            '- Edge functions use the `<schema>_service` role. It does NOT bypass RLS here -- ' +
+            'unlike hosted Supabase, this tenant role has no BYPASSRLS. A table with RLS on and no ' +
+            'policy returns empty/403 even from an edge function.\n' +
+            '- Direct client fetches with the anon key use the `<schema>_anon` role, which has USAGE ' +
+            'on the schema only.\n' +
+            'So "it works in SQL but 403s at runtime" almost always means the table has RLS enabled ' +
+            'with no policy covering the role above. Add the policy; do not switch to a raw client.';
+
           if (access.length > 0) {
             // Replaces the static "every table is deny-all" warning with what is
             // actually true right now, so a 403 becomes a lookup instead of a
@@ -1931,9 +1947,21 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // dynamicContext (not the cached static prompt) since it varies per run.
   // 9.2% of steps across 477 traced runs ended in a refusal; the largest single
   // kind was a file cap that appeared in no prompt.
+  // Scale reference for the preamble: how much source this run can see, against
+  // how big the project recently was. A run handed a truncated copy otherwise
+  // sees an internally-consistent small tree and rebuilds the "missing" app.
+  const expectedProjectFiles = await fetchRecentMaxFileCount(projectId).catch(() => 0);
   const capabilityPreamble = runtimeMode === 'plan'
     ? ''
-    : buildCapabilityPreamble(_tier, toolSet ? Object.keys(toolSet) : []);
+    : buildCapabilityPreamble(_tier, toolSet ? Object.keys(toolSet) : [], [], {
+        sourceFiles: fileSources.length,
+        expectedFiles: expectedProjectFiles,
+      });
+  if (expectedProjectFiles > 0 && isSourceTruncated(fileSources.length, expectedProjectFiles)) {
+    logger.warn('[AgentLoop] source looks truncated vs project history', {
+      projectId, sourceFiles: fileSources.length, expectedFiles: expectedProjectFiles,
+    });
+  }
   const dynamicContextWithCapabilities = capabilityPreamble
     ? `${dynamicContext}\n\n${capabilityPreamble}`
     : dynamicContext;

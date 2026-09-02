@@ -6,7 +6,7 @@
  * impossible while two hashing primitives were available.)
  */
 import { describe, expect, it } from 'vitest';
-import { buildCapabilityPreamble } from '../capabilities.js';
+import { buildCapabilityPreamble, isSourceTruncated } from '../capabilities.js';
 import { TIER_FILE_CAPS, TIER_MAX_STEPS } from '../../services/intentClassifier.js';
 
 describe('buildCapabilityPreamble', () => {
@@ -50,5 +50,61 @@ describe('buildCapabilityPreamble', () => {
 
   it('returns nothing when there is no tier, rather than guessing', () => {
     expect(buildCapabilityPreamble(undefined, ['read_file'])).toBe('');
+  });
+});
+
+/**
+ * The scale guard. On 2026-09-02 a run was handed a 25-file copy of a 199-file
+ * project; the tree it saw was internally consistent, so it concluded the app
+ * was missing and rebuilt the UI. The agent had no reference for how big the
+ * project should be -- `file_count` appeared nowhere in any prompt.
+ */
+describe('buildCapabilityPreamble: project scale', () => {
+  it('warns loudly when the visible source is far smaller than the project history', () => {
+    const p = buildCapabilityPreamble('edit', [], [], { sourceFiles: 25, expectedFiles: 199 });
+    expect(p).toMatch(/STOP/);
+    expect(p).toMatch(/25 files/);
+    expect(p).toMatch(/199/);
+    expect(p).toMatch(/[Dd]o not recreate/);
+  });
+
+  it('states the size plainly when the source looks complete', () => {
+    const p = buildCapabilityPreamble('edit', [], [], { sourceFiles: 199, expectedFiles: 199 });
+    expect(p).not.toMatch(/STOP/);
+    expect(p).toMatch(/199 source files/);
+  });
+
+  it('tolerates a modest shortfall without crying wolf', () => {
+    // Build output and untracked files legitimately differ from a revision count.
+    const p = buildCapabilityPreamble('edit', [], [], { sourceFiles: 180, expectedFiles: 199 });
+    expect(p).not.toMatch(/STOP/);
+  });
+
+  it('says nothing about scale when history is unknown', () => {
+    const p = buildCapabilityPreamble('edit', [], [], { sourceFiles: 12, expectedFiles: 0 });
+    expect(p).not.toMatch(/STOP/);
+    expect(p).not.toMatch(/source files/);
+  });
+
+  it('carries the no-rebuild rule even without scale data', () => {
+    expect(buildCapabilityPreamble('edit', [])).toMatch(/NEVER rebuild or replace an existing app/);
+  });
+});
+
+describe('isSourceTruncated', () => {
+  it('fires on the CardPro shape', () => {
+    expect(isSourceTruncated(25, 199)).toBe(true);
+  });
+
+  it('does not fire on a small honest shortfall', () => {
+    expect(isSourceTruncated(180, 199)).toBe(false);
+  });
+
+  it('never judges a small project', () => {
+    expect(isSourceTruncated(1, 5)).toBe(false);
+  });
+
+  it('treats unknown history as no opinion, never as empty', () => {
+    expect(isSourceTruncated(0, 0)).toBe(false);
   });
 });

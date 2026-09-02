@@ -413,6 +413,34 @@ export function selectOrphanedSandboxes(
   return dirs.filter((d) => !liveProjectIds.has(d.projectId) && now - d.mtimeMs > minAgeMs);
 }
 
+/**
+ * The largest file count this project has recorded recently.
+ *
+ * A reference point for "how big is this project supposed to be". Without one,
+ * a run that starts from a truncated source sees a small file tree that is
+ * internally consistent and has no way to know anything is missing -- which on
+ * 2026-09-02 produced a run that treated a 25-file copy of a 199-file project as
+ * the whole app and rebuilt the UI it thought was absent.
+ *
+ * Returns 0 when unknown; callers must treat 0 as "no opinion", never as "empty".
+ */
+export async function fetchRecentMaxFileCount(projectId: string): Promise<number> {
+  if (!supabase) return 0;
+  const { data } = await supabase
+    .from('revisions')
+    .select('file_count')
+    .eq('project_id', projectId)
+    .not('file_count', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(HEAD_LOOKBACK);
+  let max = 0;
+  for (const row of data ?? []) {
+    const n = typeof row?.file_count === 'number' ? row.file_count : 0;
+    if (n > max) max = n;
+  }
+  return max;
+}
+
 /** path -> sha256 from the HEAD revision manifest, for diffing a run's output. */
 export async function fetchHeadHashes(projectId: string): Promise<Map<string, string>> {
   const head = await fetchHeadManifest(projectId);
