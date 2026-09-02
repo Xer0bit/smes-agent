@@ -7,6 +7,8 @@ import { RunChangeSet, isTrackedMutation } from './runChangeSet.js';
 import { fetchRecentMaxFileCount } from './runSandbox.js';
 import { claimRun, setPhase, startRunHeartbeat, linkRevision } from './agentRunRecord.js';
 import { persistAssistantMessage } from './assistantMessagePersist.js';
+import { resolveStepBudget, resolveTokenCap, resolveRuntimeMode, substituteDisabledModel } from './agentRunConfig.js';
+import { capContextFiles, renderContextFiles } from './agentContextSelection.js';
 import { shouldRevertToPreAgentSnapshot } from './agentGating.js';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -420,39 +422,15 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // Dynamic step budget: map request tier to a proportionate step ceiling.
   // Values must match TIER_MAX_STEPS in intentClassifier.ts.
   const _tier = promptIntent?.requestTier;
-  const MAX_STEPS = _tier === 'micro'   ?  8
-                  : _tier === 'fix'     ? 28
-                  : _tier === 'edit'    ? 25
-                  : _tier === 'feature' ? 35
-                  : _tier === 'build'   ? 45
-                  // Legacy fallback when no tier provided (e.g. old clients)
-                  : ((promptIntent?.isWebsiteBuild ?? false) || prompt.length > 600) ? 45 : 25;
+  const MAX_STEPS = resolveStepBudget(_tier, {
+    isWebsiteBuild: promptIntent?.isWebsiteBuild,
+    promptLength: prompt.length,
+  });
 
-  // Tier-based token cap. The USD cost cap ($1.50) is the ultimate backstop.
-  // These limits just prevent runaway loops   they must be high enough that
-  // the final response step is never cut off (agent does work then goes silent).
-  // Observed abort patterns: fix hits 124-130K, edit hits 239K → raised accordingly.
-  //
-  // Doubled 2026-07-15: these counts are RAW tokens (input+output+cacheRead+
-  // cacheWrite)   cacheRead counts fully even though it bills at ~10% of a
-  // fresh token. Once the mid-run Anthropic cache-breakpoint fix landed, a
-  // real edit-tier run got killed at 536K raw tokens while only costing
-  // $0.4691   31% of the $1.50 cost cap, nowhere near the "ultimate backstop"
-  // this comment describes. The original values were tuned when caching was
-  // effectively zero (raw tokens ≈ cost 1:1); now that caching works, they
-  // fire before the cost cap ever does, on exactly the cheap/well-cached runs
-  // that should be allowed to keep going. Doubling restores the original
-  // intent   cost governs, this is just the runaway-loop backstop again. An
-  // uncached run would still hit the $1.50 cost cap well before these new
-  // ceilings, so this doesn't loosen the actual worst-case protection.
-  const TIER_TOKEN_CAP = _tier === 'micro'   ?  160_000
-                       : _tier === 'fix'     ?  700_000
-                       : _tier === 'edit'    ?  900_000
-                       : _tier === 'feature' ? 1_200_000
-                       : /* build / legacy */  1_600_000;
-  const RUN_TOKEN_CAP = process.env.AGENT_TOKEN_CAP
-    ? Math.min(parseInt(process.env.AGENT_TOKEN_CAP, 10), TIER_TOKEN_CAP)
-    : TIER_TOKEN_CAP;
+  // Tier-based raw-token backstop; the $1.50 cost cap is the real control.
+  // See agentRunConfig.ts for why these were doubled on 2026-07-15.
+  const RUN_TOKEN_CAP = resolveTokenCap(_tier, process.env.AGENT_TOKEN_CAP);
+  const TIER_TOKEN_CAP = RUN_TOKEN_CAP;
   logger.debug('_runAgentLoopInner: step/token budget resolved', {
     projectId, tier: _tier ?? 'unset', MAX_STEPS, TIER_TOKEN_CAP, RUN_TOKEN_CAP,
   });
@@ -461,40 +439,25 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   const boundedOlderSummary = olderSummary
     ? clampContextSection('Earlier conversation summary', olderSummary, MAX_OLDER_SUMMARY_CHARS)
     : undefined;
-  // When the client is in plan mode but the user's message reads as an
-  // execution confirmation ("yes", "go ahead", "do it", "ship it"...),
-  // switch to build for this turn instead of producing another plan.
-  // This decision used to live client-side (AgentChatPanel.tsx's EXECUTE_RE)
-  // and only updated the client's own toggle -- the server just trusted
-  // whatever `mode` the client sent. Moved here so the actual mode a run
-  // executes under is decided in one place, not duplicated in the browser
-  // with no server-side awareness of the override. AgentRunResult.runtimeMode
-  // reports back whichever mode actually ran, so the client can resync its
-  // toggle after the fact instead of deciding upfront.
-  const EXECUTE_CONFIRM_RE = /^(execute|apply|do\s+it|go\s+ahead|proceed|yes|confirm|run|ship\s+it|make\s+(the\s+)?changes|ok\s+do\s+it|let'?s?\s+(do\s+it|go)|build\s+it)/i;
-  const runtimeMode: 'build' | 'plan' =
-    mode === 'plan' && EXECUTE_CONFIRM_RE.test(prompt.trim()) ? 'build'
-    : mode === 'plan' ? 'plan'
-    : 'build';
+  // A plan-mode request whose text confirms execution runs as build. Decided
+  // here, not in the browser -- see agentRunConfig.resolveRuntimeMode.
+  const runtimeMode = resolveRuntimeMode(mode, prompt);
   logger.debug('_runAgentLoopInner: runtime mode resolved', { projectId, requestedMode: mode, runtimeMode });
 
   let requestedModelId = canonicalizeModelId(model || process.env.AI_MODEL, DEFAULT_PRIMARY_MODEL);
 
-  // Per-model kill switch   separate from AI_DISABLE_GEMINI (which disables the
-  // whole provider). Needed because the client sends an explicit `model` on
-  // every request, so a server-side AI_MODEL env change alone doesn't stop a
-  // request for a specific quota-exhausted model id (confirmed live 2026-07-17:
-  // gemini-3.1-pro-preview hit its daily RPD cap, but requests kept asking for
-  // it by name and dying mid-run instead of using the swapped default).
-  const disabledModelIds = new Set(
-    (process.env.AI_DISABLED_MODEL_IDS || '').split(',').map((s) => s.trim()).filter(Boolean)
+  // Per-model kill switch, distinct from AI_DISABLE_<PROVIDER>. See
+  // agentRunConfig.substituteDisabledModel.
+  const modelSwap = substituteDisabledModel(
+    requestedModelId,
+    process.env.AI_DISABLED_MODEL_IDS,
+    canonicalizeModelId(process.env.AI_FALLBACK_MODEL, DEFAULT_FALLBACK_MODEL),
   );
-  if (disabledModelIds.has(requestedModelId)) {
-    const substitute = canonicalizeModelId(process.env.AI_FALLBACK_MODEL, DEFAULT_FALLBACK_MODEL);
+  if (modelSwap.substituted) {
     logger.warn('[AgentLoop] Requested model is disabled, substituting fallback', {
-      projectId, requestedModelId, substitute, disabledModelIds: [...disabledModelIds],
+      projectId, requestedModelId, substitute: modelSwap.modelId,
     });
-    requestedModelId = substitute;
+    requestedModelId = modelSwap.modelId;
   }
 
   if (requestedModelId === 'deepseek-reasoner') {
@@ -1135,57 +1098,21 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     contextContent: string;
     truncated: boolean;
   }> = [];
-  let totalChars = 0;
-
-  for (const file of sortedFiles) {
-    if (cappedFiles.length >= MAX_CONTEXT_FILES) break;
-
-    const perFileCap = directlyMentioned.has(file.path)
-      ? MAX_MENTIONED_FILE_CONTEXT_CHARS
-      : MAX_FILE_CONTEXT_CHARS;
-    const truncated = file.content.length > perFileCap;
-    const contextContent = truncated
-      ? `${file.content.slice(0, perFileCap)}\n\n/* peek only   call read_file("${file.path}") before editing */`
-      : file.content;
-    const entryChars = contextContent.length + file.path.length + 10;
-
-    if (totalChars + entryChars > MAX_CONTEXT_CHARS) {
-      continue;
-    }
-
-    cappedFiles.push({
-      path: file.path,
-      content: file.content,
-      contextContent,
-      truncated,
-    });
-    totalChars += entryChars;
-  }
-
-  if (cappedFiles.length === 0 && sortedFiles.length > 0) {
-    const file = sortedFiles[0];
-    const perFileCap = directlyMentioned.has(file.path)
-      ? MAX_MENTIONED_FILE_CONTEXT_CHARS
-      : MAX_FILE_CONTEXT_CHARS;
-    const truncated = file.content.length > perFileCap;
-    cappedFiles.push({
-      path: file.path,
-      content: file.content,
-      contextContent: truncated
-        ? `${file.content.slice(0, perFileCap)}\n\n/* peek only   call read_file("${file.path}") before editing */`
-        : file.content,
-      truncated,
-    });
-  }
+  const capped = capContextFiles(sortedFiles, directlyMentioned, {
+    maxFiles: MAX_CONTEXT_FILES,
+    maxTotalChars: MAX_CONTEXT_CHARS,
+    maxFileChars: MAX_FILE_CONTEXT_CHARS,
+    maxMentionedFileChars: MAX_MENTIONED_FILE_CONTEXT_CHARS,
+  });
+  cappedFiles.push(...capped.files);
+  const totalChars = capped.totalChars;
 
   logger.debug('_runAgentLoopInner: context file selection complete', {
     projectId, sortedFileCount: sortedFiles.length, cappedFileCount: cappedFiles.length,
     totalContextChars: totalChars, MAX_CONTEXT_CHARS, MAX_CONTEXT_FILES,
   });
 
-  const existingFilesContext = cappedFiles
-    .map((f) => `=== ${f.path} ===\n${f.contextContent}`)
-    .join('\n\n');
+  const existingFilesContext = renderContextFiles(cappedFiles);
 
   // Pre-mark non-truncated context files as already read   full content is in prompt.
   for (const f of cappedFiles) {
