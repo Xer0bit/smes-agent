@@ -3,6 +3,7 @@
  * Ported from server/src/agent/.../tools/write_file.ts (Electron removed).
  */
 import fs from 'node:fs';
+import { staleViewNotice } from './searchMissDiagnostics.js';
 import path from 'node:path';
 import { z } from 'zod';
 import ts from 'typescript';
@@ -274,9 +275,9 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
         importWarnings.map(p => `  • ${p}  ← does not exist on disk`).join('\n') +
         `\n\nYou MUST write these files NEXT before calling get_build_errors. ` +
         `If you do not, the build will fail with "Cannot find module" errors.`;
-      return `${depWarning}Wrote ${args.path}${fixNote}${warnNote}`;
+      return `${depWarning}Wrote ${args.path}${fixNote}${warnNote}${staleViewNotice(args.path)}`;
     }
 
-    return `${depWarning}Successfully wrote ${args.path}${fixNote}`;
+    return `${depWarning}Successfully wrote ${args.path}${fixNote}${staleViewNotice(args.path)}`;
   },
 };

@@ -16,7 +16,7 @@ import { ToolDefinition, AgentContext, safeJoin, extractAnonFetchTables, isOpaqu
 import { writeProjectFile } from '../services/projectFileWriter.js';
 import { sanitizeFileContent, checkSyntaxBalance } from './sanitize.js';
 import { logger } from '../utils/logger.js';
-import { classifySearchMiss, PREVIEW_LINES } from './searchMissDiagnostics.js';
+import { staleViewNotice, classifySearchMiss, PREVIEW_LINES } from './searchMissDiagnostics.js';
 
 const schema = z.object({
   path: z.string().describe('File path relative to the project root'),
@@ -339,6 +339,6 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
     const fixNote = fixes.length > 0
       ? `\nAuto-fixed: ${fixes.join('; ')}${sanitizeDiff ? `\n\nWhat actually changed:\n${sanitizeDiff}` : ''}`
       : '';
-    return `${depWarning}Successfully edited ${args.path}${fixNote}`;
+    return `${depWarning}Successfully edited ${args.path}${fixNote}${staleViewNotice(args.path)}`;
   },
 };

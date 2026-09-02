@@ -81,3 +81,28 @@ export function classifySearchMiss(
     likelyCause,
   };
 }
+
+/**
+ * Told to the model after a successful write, so its own earlier read of that
+ * file stops looking authoritative.
+ *
+ * 46% of SEARCH misses (25 of 54, measured over 477 traced runs) are the model
+ * building SEARCH text from a view of a file it had already overwritten itself:
+ *
+ *   step 1  read_file  src/pages/ExplorePage.tsx
+ *   step 6  write_file src/pages/ExplorePage.tsx      <- view now stale
+ *   step 7  edit_file  src/pages/ExplorePage.tsx      <- SEARCH built from step 1
+ *
+ * That is a harness defect, not a reasoning defect: the write tools returned a
+ * bare success string, nothing marked the earlier read superseded, and the stale
+ * content was the most recent authoritative-looking view of that path in
+ * context. Inferring SEARCH text from it is the correct move given what the
+ * model was told.
+ *
+ * Deliberately one short line rather than returning the new content: echoing the
+ * whole file on every write would cost far more context than the misses it
+ * prevents, and the model can re-read precisely when it needs to.
+ */
+export function staleViewNotice(path: string): string {
+  return `\n\nNote: "${path}" on disk has changed as a result of this call. Any earlier read of it in this conversation is now out of date -- re-read it before writing a SEARCH/REPLACE block against it.`;
+}
