@@ -21,5 +21,13 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
     storage: localStorage,
     persistSession: true,
     autoRefreshToken: true,
+    // Pass-through lock, matching social-template. Every preview is served from
+    // one origin, so GoTrue's default Navigator Lock (keyed off the Supabase
+    // URL) is contended across every open preview tab of every project, not
+    // just this one. A losing tab throws an uncaught
+    // NavigatorLockAcquireTimeoutError during the init + visibility-change
+    // auto-refresh race and can blank the page before it mounts. A preview does
+    // not need cross-tab-synced refresh, so skip the lock.
+    lock: (_name, _acquireTimeout, fn) => fn(),
   }
 });

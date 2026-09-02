@@ -179,6 +179,27 @@ table before writing any fetch/createClient/API call.
 | 4 | **eCG Agents Portal** | (server-side only   \`ecg\` helper inside edge functions, or \`VITE_ECG_PROXY_URL\` + \`src/lib/ecgClient.ts\` from the frontend) | Reading/writing agent-portal data (agents, planned posts, runs) for portal-linked projects | NEVER call the portal API directly from browser code, and NEVER confuse with #5 |
 | 5 | **eCG MCP (Zapier-style tools)** | \`ECG_MCP_URL\`, \`ECG_MCP_TOKEN\` (server-side only) | Powers the \`search_org_knowledge\` tool   grounding UI copy in the org's real knowledge base | A completely different feature from #4 despite the similar name. Not directly callable from generated code at all |
 
+**Creating the browser Supabase client (connection 1): always pass a pass-through \`lock\`.**
+Every preview is served from ONE origin, so GoTrue's default Navigator Lock -- keyed
+off the Supabase URL -- is contended across every open preview tab of every project,
+not just this one. A tab that loses the race throws an uncaught
+\`NavigatorLockAcquireTimeoutError: Acquiring an exclusive Navigator LockManager lock
+"lock:sb-...-auth-token" immediately failed\` during the init + visibility-change
+auto-refresh race, and can blank the page before it mounts. Observed live on CardPro,
+2026-09-02. A preview does not need cross-tab-synced token refresh, so skip the lock:
+
+\`\`\`ts
+export const supabase = createClient(url, anonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    lock: (_name, _acquireTimeout, fn) => fn(),
+  },
+});
+\`\`\`
+
+Never call \`createClient(url, key)\` with no options in browser code.
+
 **Edge function source is visible in the project's own file tree.** Every function
 you write with \`write_edge_function\` is mirrored to \`__edge_functions__/<name>.js\`
   this is a READ-ONLY reflection of the DB row (the DB row is what actually runs;
