@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react';
 import * as React from 'react';
 import { useNavigate, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectSeparator } from '@/components/ui/select';
 import {
-  Loader2,
   LogOut,
   FolderKanban,
   Building2,
@@ -18,6 +16,7 @@ import {
   Plus,
   Sparkles,
   Bot,
+  Database,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import ecomgearLogo from '@/assets/ecomgear-logo.png';
@@ -65,14 +64,20 @@ const DashboardSidebar = ({
 
   const menuItems = [
     { title: t('dashboard.home'), url: '/dashboard', icon: Home, end: true },
-    { title: 'Workspace Settings', url: '/dashboard/organizations', icon: Building2 },
     { title: t('dashboard.projects'), url: '/dashboard/projects', icon: FolderKanban },
     { title: 'Templates', url: '/dashboard/designs', icon: Sparkles },
-    { title: t('dashboard.settings'), url: '/dashboard/settings', icon: Settings },
+  ];
+
+  const workspaceItems = [
+    { title: 'Workspace', url: '/dashboard/organizations', icon: Building2 },
   ];
 
   const ecgAgentItems = [
     { title: 'eCG Agents', url: '/dashboard/ecg-agents', icon: Bot },
+  ];
+
+  const ecgCloudItems = [
+    { title: 'Databases', url: '/dashboard/cloud', icon: Database },
   ];
 
   const renderNavItem = (item: { title: string; url: string; icon: typeof Home; end?: boolean }) => (
@@ -94,15 +99,11 @@ const DashboardSidebar = ({
       {({ isActive }) => (
         <>
           {isActive && (
-            <motion.span
-              layoutId="sidebar-nav-active"
-              className="absolute inset-0 rounded-lg bg-primary/10"
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            />
+            <span className="absolute inset-0 rounded-lg bg-primary/10" />
           )}
           <item.icon className="relative z-[1] h-4 w-4 shrink-0" />
           <span
-            className={`relative z-[1] overflow-hidden whitespace-nowrap transition-all duration-200 ${
+            className={`relative z-[1] overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 ease-smooth ${
               collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100 delay-100'
             }`}
           >
@@ -119,7 +120,7 @@ const DashboardSidebar = ({
     <aside
       onMouseEnter={() => setHoverOpen(true)}
       onMouseLeave={() => setHoverOpen(false)}
-      className={`border-b border-border/60 bg-card md:fixed md:left-0 md:top-0 md:z-20 md:h-screen md:border-b-0 md:border-r md:overflow-hidden transition-[width] duration-300 ease-in-out ${collapsed ? 'md:w-[60px]' : 'md:w-64'}`}
+      className={`border-b border-border/60 bg-card md:fixed md:left-0 md:top-0 md:z-20 md:h-screen md:border-b-0 md:border-r md:overflow-hidden transition-[width] duration-smooth ease-smooth ${collapsed ? 'md:w-[60px]' : 'md:w-64'}`}
     >
       <div className="flex h-full flex-col">
         <div className={`border-b border-border/60 px-3 py-3 ${collapsed ? 'flex justify-center' : ''}`}>
@@ -145,7 +146,7 @@ const DashboardSidebar = ({
               <SelectTrigger className="mt-2.5 h-10 rounded-full border-border/60 bg-background/60 pl-1.5 pr-2.5 text-xs text-foreground focus:ring-0 [&>span]:flex [&>span]:min-w-0 [&>span]:flex-1">
                 <SelectValue placeholder={loadingOrganizations ? 'Loading…' : 'No workspace'} className="truncate" />
               </SelectTrigger>
-              <SelectContent className="min-w-[15rem] rounded-xl border-border/60 bg-card p-1.5 text-foreground shadow-[var(--elev-2)]">
+              <SelectContent className="min-w-[15rem] rounded-xl border-border/60 bg-card p-1.5 text-foreground">
                 {organizations.map((organization) => (
                   <SelectItem
                     key={organization.id}
@@ -182,7 +183,7 @@ const DashboardSidebar = ({
         <div className="flex-1 space-y-4 px-2 py-4 overflow-hidden">
           <div>
             <p
-              className={`mb-2 hidden px-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:block overflow-hidden transition-all duration-200 ${
+              className={`mb-2 hidden px-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:block overflow-hidden transition-[max-width,opacity] duration-200 ease-smooth ${
                 collapsed ? 'max-h-0 opacity-0 mb-0' : 'max-h-4 opacity-100 delay-100'
               }`}
             >
@@ -195,7 +196,20 @@ const DashboardSidebar = ({
 
           <div>
             <p
-              className={`mb-2 hidden px-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:block overflow-hidden transition-all duration-200 ${
+              className={`mb-2 hidden px-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:block overflow-hidden transition-[max-width,opacity] duration-200 ease-smooth ${
+                collapsed ? 'max-h-0 opacity-0 mb-0' : 'max-h-4 opacity-100 delay-100'
+              }`}
+            >
+              eCG Cloud
+            </p>
+            <nav className="flex gap-1.5 overflow-x-auto pb-1 md:block md:space-y-0.5 md:overflow-visible md:pb-0">
+              {ecgCloudItems.map((item) => renderNavItem(item))}
+            </nav>
+          </div>
+
+          <div>
+            <p
+              className={`mb-2 hidden px-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:block overflow-hidden transition-[max-width,opacity] duration-200 ease-smooth ${
                 collapsed ? 'max-h-0 opacity-0 mb-0' : 'max-h-4 opacity-100 delay-100'
               }`}
             >
@@ -205,31 +219,66 @@ const DashboardSidebar = ({
               {ecgAgentItems.map((item) => renderNavItem(item))}
             </nav>
           </div>
+
+          <div>
+            <p
+              className={`mb-2 hidden px-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:block overflow-hidden transition-[max-width,opacity] duration-200 ease-smooth ${
+                collapsed ? 'max-h-0 opacity-0 mb-0' : 'max-h-4 opacity-100 delay-100'
+              }`}
+            >
+              Workspace
+            </p>
+            <nav className="flex gap-1.5 overflow-x-auto pb-1 md:block md:space-y-0.5 md:overflow-visible md:pb-0">
+              {workspaceItems.map((item) => renderNavItem(item))}
+            </nav>
+          </div>
         </div>
 
         <div className="border-t border-border/60 px-2 py-3">
           <div
-            className={`overflow-hidden transition-all duration-200 ${
+            className={`overflow-hidden transition-[max-width,opacity] duration-200 ease-smooth ${
               collapsed ? 'max-h-0 opacity-0' : 'mb-3 max-h-10 opacity-100 delay-100'
             }`}
           >
-            <div className="flex items-center gap-2.5 px-2">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                {userInitial}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium text-foreground">
-                  {user?.user_metadata?.full_name || user?.email}
-                </p>
-                <p className="truncate text-[11px] text-muted-foreground">
-                  {currentOrganization?.slug ? `@${currentOrganization.slug}` : 'No workspace'}
-                </p>
-              </div>
+            <div className="flex items-center gap-1.5">
+              <NavLink
+                to="/dashboard/settings"
+                title={t('dashboard.settings')}
+                className={({ isActive }) =>
+                  `flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors duration-150 ${
+                    isActive ? 'bg-primary/10 text-primary' : 'hover:bg-background/60'
+                  }`
+                }
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                  {userInitial}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium text-foreground">
+                    {user?.user_metadata?.full_name || user?.email}
+                  </p>
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    {currentOrganization?.slug ? `@${currentOrganization.slug}` : 'No workspace'}
+                  </p>
+                </div>
+                <Settings className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              </NavLink>
               <NotificationBell />
             </div>
           </div>
           {collapsed && (
-            <div className="mb-3 flex justify-center">
+            <div className="mb-3 flex flex-col items-center gap-2">
+              <NavLink
+                to="/dashboard/settings"
+                title={t('dashboard.settings')}
+                className={({ isActive }) =>
+                  `flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition-colors duration-150 ${
+                    isActive ? 'bg-primary text-primary-foreground' : 'bg-primary/15 text-primary hover:bg-primary/25'
+                  }`
+                }
+              >
+                {userInitial}
+              </NavLink>
               <NotificationBell />
             </div>
           )}
@@ -313,11 +362,14 @@ export function DashboardLayout({ children }: { children?: React.ReactNode }) {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card px-5 py-4">
-          <Loader2 className="h-4 w-4 animate-spin text-primary" />
-          <div>
-            <p className="text-sm font-medium text-foreground">Preparing your workspace</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Checking access…</p>
+        {/* The frame of the dashboard, not a spinner: sidebar and a few cards. */}
+        <div className="flex h-screen w-screen" aria-busy="true">
+          <div className="hidden w-64 shrink-0 border-r border-border/60 p-4 md:block">
+            <div className="skeleton mb-6 h-6 w-32" />
+            {[0, 1, 2, 3, 4].map((i) => <div key={i} className="skeleton mb-3 h-8 w-full" />)}
+          </div>
+          <div className="flex-1 p-8"><div className="skeleton mb-8 h-40 w-full rounded-2xl" />
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-56 w-full rounded-xl" />)}</div>
           </div>
         </div>
       </div>
@@ -345,20 +397,12 @@ export function DashboardLayout({ children }: { children?: React.ReactNode }) {
         onUpgradeRequired={() => navigate('/dashboard/organizations')}
       />
 
-      <div className={`flex min-h-screen flex-1 flex-col transition-[margin] duration-300 ease-in-out ${sidebarCollapsed ? 'md:ml-[60px]' : 'md:ml-64'}`}>
+      <div className={`flex min-h-screen flex-1 flex-col transition-[margin] duration-smooth ease-smooth ${sidebarCollapsed ? 'md:ml-[60px]' : 'md:ml-64'}`}>
         <main className="flex-1 pb-12">
           <div className="mx-auto min-h-full max-w-[1400px]">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={children ? 'static' : location.pathname}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-              >
-                {children ?? <Outlet />}
-              </motion.div>
-            </AnimatePresence>
+            <div key={children ? 'static' : location.pathname} className="animate-msg-appear">
+              {children ?? <Outlet />}
+            </div>
           </div>
         </main>
       </div>

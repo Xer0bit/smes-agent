@@ -9,11 +9,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Database, Trash2, Zap, Lock, Table, Terminal, ChevronRight, RefreshCw, Play, AlertCircle, Download, Wifi, WifiOff } from "lucide-react";
-import { useSubscription } from "@/contexts/SubscriptionContext";
+import { Database, Trash2, Zap, Table, Terminal, Activity, Waypoints, ChevronRight, RefreshCw, Play, AlertCircle, Download, Wifi, WifiOff } from "lucide-react";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { cn } from "@/lib/utils";
 import { getApiServerUrl } from "@/config/external-api";
+import { DatabaseOverview } from "@/components/cloud/DatabaseOverview";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface TenantDb { id: string; schema_name: string; status: string; error_message: string | null; created_at: string; }
@@ -291,10 +291,8 @@ function SqlEditor({ projectId }: { projectId?: string | null }) {
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
-export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectId }: { organizationId?: string | null; projectId?: string | null }) => {
-  const { hasFeature } = useSubscription();
+export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectId, onChange }: { organizationId?: string | null; projectId?: string | null; onChange?: () => void }) => {
   const { currentOrganizationId } = useOrganization();
-  const isPaid = hasFeature("ecomgear_cloud");
   const queryClient = useQueryClient();
 
   const [db, setDb]         = useState<TenantDb | null>(null);
@@ -394,6 +392,7 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
       await apiFetch('/sync-secrets', { method: 'POST' }, 20_000, projectId).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ["project-secrets", projectId] });
       toast.success("Database provisioned!");
+      onChange?.();
     } catch (err) { toast.error((err as Error).message); }
     finally { setProvisioning(false); }
   };
@@ -404,35 +403,10 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
       await apiFetch('/deprovision', { method: 'DELETE' }, 60_000, projectId);
       setDb(null); setTables([]); setSelectedTable(null);
       toast.success("Database removed.");
+      onChange?.();
     } catch (err) { toast.error((err as Error).message); }
     finally { setDeprovisioning(false); }
   };
-
-  // ── Free plan gate ──────────────────────────────────────────────────────
-  if (!isPaid) return (
-    <div className="space-y-6 w-full max-w-full overflow-hidden">
-      <div>
-        <h2 className="text-xl font-semibold mb-1">ECG CLOUD DB</h2>
-        <p className="text-sm text-white/45">Dedicated PostgreSQL database with REST API and agent access</p>
-      </div>
-      <Card className="bg-workspace-surface border-indigo-500/25">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Lock className="h-4 w-4 text-primary" />
-            <CardTitle className="text-base">Pro or Agency plan required</CardTitle>
-          </div>
-          <CardDescription>
-            Get a dedicated schema with REST API, schema browser, SQL editor, and full AI agent access. Zero setup   instant connection string.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button className="w-full" size="sm" onClick={() => window.open('/dashboard/settings?section=workspace-plans', '_self')}>
-            Manage Billing
-          </Button>
-        </CardContent>
-      </Card>
-    </div>
-  );
 
   if (loading) return (
     <div className="space-y-6 w-full max-w-full overflow-hidden animate-pulse">
@@ -612,8 +586,18 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
       <DbInfoPanel schemaName={db.schema_name} />
 
       {/* Tabs */}
-      <Tabs defaultValue="tables">
-        <TabsList className="w-full grid grid-cols-2">
+      <Tabs defaultValue={projectId ? "overview" : "tables"}>
+        <TabsList className={cn("w-full grid", projectId ? "grid-cols-4" : "grid-cols-2")}>
+          {projectId && (
+            <TabsTrigger value="overview" className="flex items-center gap-1.5">
+              <Activity className="h-3.5 w-3.5" />Overview
+            </TabsTrigger>
+          )}
+          {projectId && (
+            <TabsTrigger value="erd" className="flex items-center gap-1.5">
+              <Waypoints className="h-3.5 w-3.5" />ERD
+            </TabsTrigger>
+          )}
           <TabsTrigger value="tables" className="flex items-center gap-1.5">
             <Table className="h-3.5 w-3.5" />Tables
           </TabsTrigger>
@@ -622,6 +606,16 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
           </TabsTrigger>
         </TabsList>
 
+        {projectId && (
+          <TabsContent value="overview" className="mt-4">
+            <DatabaseOverview projectId={projectId} view="health" />
+          </TabsContent>
+        )}
+        {projectId && (
+          <TabsContent value="erd" className="mt-4">
+            <DatabaseOverview projectId={projectId} view="erd" />
+          </TabsContent>
+        )}
         <TabsContent value="tables" className="mt-4">
           {activeTable ? (
             <div className="space-y-3">
