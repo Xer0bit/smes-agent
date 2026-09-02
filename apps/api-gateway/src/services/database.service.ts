@@ -153,6 +153,22 @@ export interface TenantFunction {
   returnType: string;
 }
 
+/** One foreign-key edge: `table.column -> refTable.refColumn`. */
+export interface TenantRelationship {
+  table: string;
+  column: string;
+  refTable: string;
+  refColumn: string;
+}
+
+/** Live access-control state for one table. */
+export interface TenantTableAccess {
+  table: string;
+  rlsEnabled: boolean;
+  /** Policy summaries, e.g. `select(anon)`. Empty with rlsEnabled means deny-all. */
+  policies: string[];
+}
+
 // ---------------------------------------------------------------------------
 // SQL literal formatting   used by dumpDatabase for INSERT statements
 // ---------------------------------------------------------------------------
@@ -968,6 +984,68 @@ export const databaseService = {
     );
 
     return rows.map((r) => ({ name: r.name, argTypes: r.arg_types, returnType: r.return_type }));
+  },
+
+  // ── Foreign keys ─────────────────────────────────────────────────────────
+  // listTables reports columns only, so the agent was told the exact column
+  // names but nothing about how tables relate, and inferred relationships from
+  // naming. Wrong joins on anything non-obvious follow directly from that.
+  async listRelationships(userId: string, projectId?: string): Promise<TenantRelationship[]> {
+    const record = await this.getStatus(userId, projectId);
+    if (!record || record.status !== 'active') return [];
+
+    const pg = await pool();
+    const { rows } = await pg.query<{ table: string; column: string; ref_table: string; ref_column: string }>(
+      `SELECT tc.table_name AS table, kcu.column_name AS column,
+              ccu.table_name AS ref_table, ccu.column_name AS ref_column
+         FROM information_schema.table_constraints tc
+         JOIN information_schema.key_column_usage kcu
+           ON kcu.constraint_name = tc.constraint_name AND kcu.constraint_schema = tc.constraint_schema
+         JOIN information_schema.constraint_column_usage ccu
+           ON ccu.constraint_name = tc.constraint_name AND ccu.constraint_schema = tc.constraint_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = $1
+        ORDER BY tc.table_name, kcu.column_name`,
+      [record.schema_name]
+    );
+    return rows.map((r) => ({ table: r.table, column: r.column, refTable: r.ref_table, refColumn: r.ref_column }));
+  },
+
+  // ── RLS state + policies ─────────────────────────────────────────────────
+  // The prompt carried a STATIC "every table is deny-all by default (RLS on,
+  // zero policies)" warning. It stops being true the moment the agent creates a
+  // policy, and nothing updated it -- so a 403 could mean "no policy", "policy
+  // excludes this role", or "no grant", and the agent had no way to tell them
+  // apart. It guessed, which is the retry loop.
+  async listTableAccess(userId: string, projectId?: string): Promise<TenantTableAccess[]> {
+    const record = await this.getStatus(userId, projectId);
+    if (!record || record.status !== 'active') return [];
+
+    const pg = await pool();
+    const { rows } = await pg.query<{ table: string; rls_enabled: boolean; cmd: string | null; roles: string | null }>(
+      `SELECT c.relname AS table, c.relrowsecurity AS rls_enabled,
+              p.cmd, array_to_string(p.polroles_names, ',') AS roles
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         LEFT JOIN (
+           SELECT pol.polrelid,
+                  CASE pol.polcmd WHEN 'r' THEN 'select' WHEN 'a' THEN 'insert'
+                                  WHEN 'w' THEN 'update' WHEN 'd' THEN 'delete' ELSE 'all' END AS cmd,
+                  ARRAY(SELECT pg_get_userbyid(unnest(pol.polroles))) AS polroles_names
+             FROM pg_policy pol
+         ) p ON p.polrelid = c.oid
+        WHERE n.nspname = $1 AND c.relkind = 'r'
+        ORDER BY c.relname`,
+      [record.schema_name]
+    );
+
+    const byTable = new Map<string, TenantTableAccess>();
+    for (const r of rows) {
+      if (!byTable.has(r.table)) {
+        byTable.set(r.table, { table: r.table, rlsEnabled: Boolean(r.rls_enabled), policies: [] });
+      }
+      if (r.cmd) byTable.get(r.table)!.policies.push(r.roles ? `${r.cmd}(${r.roles})` : r.cmd);
+    }
+    return [...byTable.values()];
   },
 
   // ── Query rows from a table ──────────────────────────────────────────────

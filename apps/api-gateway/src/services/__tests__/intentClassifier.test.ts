@@ -127,3 +127,48 @@ describe('resolveRequestTier', () => {
     expect(r.tier).toBe('build');
   });
 });
+
+/**
+ * Error payloads and explicit no-modify requests.
+ *
+ * Measured over 477 real prompts: 42 (9%) carried a pasted error or log body and
+ * routed AWAY from fix, at a median of 8 steps and $13.42 of spend; several
+ * opened with "DO NOT modify code yet" and were handed an editing agent.
+ * FIX_RE matched "build error"/"console error" but not the shape errors actually
+ * arrive in from this product's own edge-function console.
+ */
+describe('classifyRequestDetailed: pasted error payloads', () => {
+  it('routes a JSON error body to fix even with no defect vocabulary', () => {
+    const d = classifyRequestDetailed('{ "result": null, "logs": [], "error": "Invalid credentials or inactive account." } I still got the same issue', false);
+    expect(d.tier).toBe('fix');
+    expect(d.rule).toBe('error-payload');
+  });
+
+  it('handles an unquoted error key, which is how console output pastes', () => {
+    expect(classifyRequestDetailed('result { error: "An internal error occurred." } logs [ "[error] Database e', false).tier).toBe('fix');
+  });
+
+  it('routes a named JS error class to fix', () => {
+    expect(classifyRequestDetailed('the page throws TypeError: cannot read x of undefined', false).tier).toBe('fix');
+  });
+
+  it('does NOT fire on the ordinary word "error" in a feature request', () => {
+    // "add an error message" is a request, not a defect report. It must not be
+    // pulled into the diagnostic tier by the bare word "error". (Which tier it
+    // lands on is the pre-existing cascade's business -- only the absence of a
+    // false error-payload match is asserted here.)
+    const d = classifyRequestDetailed('add an error message to the signup form', false);
+    expect(d.rule).not.toBe('error-payload');
+    expect(d.tier).not.toBe('fix');
+  });
+
+  it('routes an explicit "do not modify" request to the diagnostic tier', () => {
+    const d = classifyRequestDetailed('Investigate the CURRENT login failure. Do not modify anything yet.', false);
+    expect(d.tier).toBe('fix');
+    expect(d.rule).toBe('no-modify-request');
+  });
+
+  it('keeps an explicit defect statement on fix-strong, not the new rules', () => {
+    expect(classifyRequestDetailed('fix the broken button color', false).rule).toBe('fix-strong');
+  });
+});

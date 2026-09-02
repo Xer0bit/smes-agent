@@ -2,6 +2,8 @@
 import { streamText, generateText, ToolSet, stepCountIs, jsonSchema, wrapLanguageModel } from 'ai';
 import { phantomAbortThresholdFor, isStuckAndBuildKnownBroken, unfulfilledPromiseNote, DIAGNOSIS_TOOL_NAMES, extractImplicatedFiles, shouldSeedScope } from './agentGating.js';
 import { reconcileClientFilesToHead } from './agentFileReconcile.js';
+import { buildCapabilityPreamble } from '../prompts/capabilities.js';
+import { RunChangeSet, isTrackedMutation } from './runChangeSet.js';
 import { shouldRevertToPreAgentSnapshot } from './agentGating.js';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -701,6 +703,8 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // text, which is empty on an aborted run even if native write_file/edit_file
   // tool calls already succeeded earlier in the same run. Track that directly.
   let anySuccessfulWriteThisRun = false;
+  /** Tool-derived record of this run's file mutations -- see runChangeSet.ts. */
+  const runChangeSet = new RunChangeSet();
   // True once the main generation loop finished (RUN COMPLETE). After this, the
   // disk holds the agent's COMPLETED output, so a timeout during the slow post-run
   // preview push must NOT revert to the pre-agent snapshot -- that would discard
@@ -1097,8 +1101,19 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
 
   // GitHub Copilot-style context selection: small focused working set   agent uses
   // read_file/list_files tools to pull anything else it needs.
+  //
+  // MAX_CONTEXT_FILES was 4 while KB retrieval returns 10 ranked results, so
+  // SIX of every ten retrieved files were computed (an embedding round trip that
+  // succeeds -- measured 4/4, zero timeouts) and then discarded. Live runs used
+  // only 2.9-3.7 KB of the 8 KB char budget, so the char cap was never the
+  // binding constraint; the file count was.
+  //
+  // Raised to match what retrieval actually produces. MAX_CONTEXT_CHARS is
+  // deliberately unchanged, so this spends a budget already paid for rather than
+  // enlarging the prompt: files are added in relevance order until the 8 KB cap
+  // is reached, and the cap still governs.
   const MAX_CONTEXT_CHARS = parseInt(process.env.AI_MAX_CONTEXT_CHARS || '8000', 10);
-  const MAX_CONTEXT_FILES = parseInt(process.env.AI_MAX_CONTEXT_FILES || '4', 10);
+  const MAX_CONTEXT_FILES = parseInt(process.env.AI_MAX_CONTEXT_FILES || '10', 10);
   const MAX_FILE_CONTEXT_CHARS = parseInt(process.env.AI_MAX_FILE_CONTEXT_CHARS || '800', 10);
   const MAX_MENTIONED_FILE_CONTEXT_CHARS = parseInt(process.env.AI_MAX_MENTIONED_FILE_CONTEXT_CHARS || '3000', 10);
 
@@ -1762,8 +1777,36 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // which repeatedly produced duplicate/near-duplicate helper functions
         // across runs. Unconditional like the table block above, for the same
         // reason: don't rely on the agent remembering to ask.
+        // Relationships + live access state, fetched IN PARALLEL with the
+        // function list. The schema fetch already costs ~10s on a real project
+        // (measured 19:08:05->19:08:15 on CardPro), so these must not be three
+        // more serial round trips.
         try {
-          const functions = await databaseService.listFunctions(userId, projectId);
+          const [functions, relationships, access] = await Promise.all([
+            databaseService.listFunctions(userId, projectId),
+            databaseService.listRelationships(userId, projectId).catch(() => []),
+            databaseService.listTableAccess(userId, projectId).catch(() => []),
+          ]);
+
+          if (relationships.length > 0) {
+            liveSchemaBlock += '\n\n**Relationships (foreign keys):**\n' +
+              relationships.map((r) => `- ${r.table}.${r.column} -> ${r.refTable}.${r.refColumn}`).join('\n') +
+              '\n\nJoin on these. Do not infer a relationship from column naming.';
+          }
+
+          if (access.length > 0) {
+            // Replaces the static "every table is deny-all" warning with what is
+            // actually true right now, so a 403 becomes a lookup instead of a
+            // guess between "no policy", "policy excludes this role" and "no grant".
+            liveSchemaBlock += '\n\n**Row-level security (live):**\n' +
+              access.map((a) => {
+                if (!a.rlsEnabled) return `- ${a.table}: RLS OFF (readable by any granted role)`;
+                return a.policies.length === 0
+                  ? `- ${a.table}: RLS ON, NO POLICIES -> deny-all; anon and service reads/writes will 403 until you add one`
+                  : `- ${a.table}: RLS ON, policies: ${a.policies.join(', ')}`;
+              }).join('\n');
+          }
+
           if (functions.length > 0) {
             liveSchemaBlock += '\n\n**Existing functions/RPCs (callable via `db.rpc(name, args)` inside an edge function):**\n' +
               functions.map((f) => `- ${f.name}(${f.argTypes}) -> ${f.returnType}`).join('\n') +
@@ -1771,6 +1814,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           }
           logger.debug('_runAgentLoopInner: live schema fetch complete', {
             projectId, tableCount: tables.length, functionCount: functions.length,
+            relationshipCount: relationships.length, accessRows: access.length,
           });
         } catch (fnListErr: any) {
           // Non-fatal   agent can still call get_database_schema itself
@@ -1880,6 +1924,20 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     projectId, runtimeMode, tier: _tier ?? 'unset', toolNames: toolSet ? Object.keys(toolSet) : [],
   });
 
+  // Capability preamble: state the budgets and gate rules BEFORE the agent
+  // discovers them by being refused. Built here rather than with the rest of the
+  // prompt because it names the tools this run actually got, which is only known
+  // once buildToolSet has applied its tier/guest filters. Folded into
+  // dynamicContext (not the cached static prompt) since it varies per run.
+  // 9.2% of steps across 477 traced runs ended in a refusal; the largest single
+  // kind was a file cap that appeared in no prompt.
+  const capabilityPreamble = runtimeMode === 'plan'
+    ? ''
+    : buildCapabilityPreamble(_tier, toolSet ? Object.keys(toolSet) : []);
+  const dynamicContextWithCapabilities = capabilityPreamble
+    ? `${dynamicContext}\n\n${capabilityPreamble}`
+    : dynamicContext;
+
   // ── Gemini run-level context cache ───────────────────────────────────────
   // Plan mode has no tools   cache just the system prompt (createGeminiRunCache).
   // Build/edit/fix/feature modes have tools   Gemini rejects generateContent
@@ -1953,12 +2011,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         },
         // Dynamic part   changes per request (file tree, project files, attachments)
         // Also cached: it's stable across all steps of this run, so subsequent steps are cache hits.
-        ...(dynamicContext.trim() ? [{ role: 'system' as const, content: dynamicContext, providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } }] : []),
+        ...(dynamicContextWithCapabilities.trim() ? [{ role: 'system' as const, content: dynamicContextWithCapabilities, providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } }] : []),
       ];
     }
     return geminiRunCacheName
       ? [] // plan mode: the FULL system prompt lives in the cache   sending it again would conflict
-      : [{ role: 'system' as const, content: systemPrompt }];
+      : [{ role: 'system' as const, content: capabilityPreamble ? `${systemPrompt}\n\n${capabilityPreamble}` : systemPrompt }];
   }
   const systemMessages = buildSystemMessagesFor(providerName);
   // Whole system prompt, unclipped: the single most-needed artifact when
@@ -2705,6 +2763,25 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
                 : undefined,
             });
           }
+          // ── Real change-set: record what the TOOLS did ─────────────────
+          // Paired call->result so the path comes from the call's args (results
+          // carry only an outcome string). Uses the same success predicate as
+          // hadSuccessfulWriteThisStep below -- there must be exactly one
+          // definition of "did a write happen" in this file.
+          for (const tr of (toolResults ?? []) as any[]) {
+            const toolName = tr?.toolName as string | undefined;
+            if (!isTrackedMutation(toolName)) continue;
+            const result = tr?.output;
+            const succeeded = typeof result !== 'string' ? true : !isFailureResult(result);
+            if (!succeeded) continue;
+            const call = (toolCalls ?? []).find((tc: any) =>
+              (tc?.toolCallId && tr?.toolCallId && tc.toolCallId === tr.toolCallId) || tc?.toolName === toolName);
+            const rawArgs = call?.input ?? call?.args;
+            const argPath = typeof rawArgs?.path === 'string' ? rawArgs.path
+              : typeof rawArgs?.destName === 'string' ? rawArgs.destName : '';
+            if (argPath && toolName) runChangeSet.record(toolName, argPath);
+          }
+
           const hadSuccessfulWriteThisStep = (toolResults ?? []).some((tr: any) => {
             const toolName = tr?.toolName as string | undefined;
             const result = tr?.output;
@@ -5500,6 +5577,26 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       const distinctAgentEditCount = (runtimeMode === 'plan' || !agentWroteFiles)
         ? 0
         : new Set<string>([...filesToWrite.map((f) => f.path), ...filesEdited]).size;
+
+      // Shadow-compare the narration-derived count against the tool-derived one
+      // BEFORE switching any consumer to it. The two previous fixes in this area
+      // (the whole-disk `183`, and the stuck counter) each shipped a second bug
+      // by changing the source without first measuring the disagreement. Log
+      // only; `files_written` still uses the old value this release.
+      const changeSet = runChangeSet.summary();
+      if (runtimeMode !== 'plan' && (changeSet.touched.length > 0 || distinctAgentEditCount > 0)) {
+        const agrees = changeSet.touched.length === distinctAgentEditCount;
+        logger.info('[AgentLoop] changeset vs narration', {
+          projectId, agrees,
+          toolDerived: changeSet.touched.length,
+          narrationDerived: distinctAgentEditCount,
+          written: changeSet.written.length,
+          edited: changeSet.edited.length,
+          deleted: changeSet.deleted.length,
+          renamed: changeSet.renamed.length,
+          touchedPreview: changeSet.touched.slice(0, 8),
+        });
+      }
 
       // Update agent_runs with all completion data (status + token count + snapshot_id)
       if (supabase && agentRunId) {

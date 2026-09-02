@@ -1,4 +1,5 @@
 import { ToolSet, jsonSchema } from 'ai';
+import { TIER_FILE_CAPS, type RequestTier } from './intentClassifier.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import type { AgentContext } from '../agent-tools/types.js';
@@ -177,8 +178,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
   // mechanism (the confirmed cost drivers are serial-edit routing and
   // transcript size, handled separately). Mirrors the DDL confirm-gate shape:
   // blocked-with-instructions, not a hard kill; feature/build stay uncapped.
-  const TIER_FILE_CAPS: Record<string, number> = { micro: 3, edit: 10, fix: 10 };
-  const tierFileCap = tier ? TIER_FILE_CAPS[tier] : undefined;
+  const tierFileCap = tier ? TIER_FILE_CAPS[tier as RequestTier] : undefined;
   const editedPathsThisRun = new Set<string>();
 
   const toolSet: ToolSet = {};

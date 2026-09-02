@@ -78,11 +78,44 @@ export interface TierDecision {
   confidence: TierConfidence;
 }
 
+/**
+ * A pasted error payload or log block: a defect report that carries no defect
+ * VOCABULARY.
+ *
+ * FIX_RE matches "build error", "compile error", "console error" -- but not the
+ * shape errors actually arrive in from this product's own edge-function console:
+ *
+ *   { "result": null, "logs": [], "error": "Invalid credentials or inactive account." }
+ *
+ * Measured over 477 real prompts: 42 (9%) carried a pasted error or log and were
+ * routed AWAY from fix, median 8 steps, $13.42 of spend. Several of them open
+ * with an explicit "DO NOT modify code yet" -- the user asking for diagnosis and
+ * getting an editing agent.
+ *
+ * Requires real structure (a JSON error field, a named JS error class, or a
+ * fenced block containing error text) rather than the bare word "error", which
+ * appears constantly in ordinary requests like "add an error message".
+ */
+const ERROR_PAYLOAD_RE = /["']?error["']?\s*:\s*["'\[{]|["']?error["']?\s*:\s*null|\b(TypeError|ReferenceError|SyntaxError|RangeError)\b|```[\s\S]*\berror\b[\s\S]*```/i;
+
+/** An explicit instruction not to change anything yet. */
+const NO_MODIFY_RE = /\b(do not|don'?t)\s+(modify|change|edit|rewrite|touch|write)\b/i;
+
 export function classifyRequestDetailed(prompt: string, isEmptyProject: boolean): TierDecision {
   if (isEmptyProject) return { tier: 'build', rule: 'empty-project', confidence: 'high' };
   // Unambiguous defect signal wins over a cosmetic-only match, even one
   // that mentions a MICRO_RE word like "color"   see FIX_STRONG_RE comment.
   if (FIX_STRONG_RE.test(prompt)) return { tier: 'fix', rule: 'fix-strong', confidence: 'high' };
+  // A pasted error payload is a defect report even without defect vocabulary,
+  // and it outranks a cosmetic word: "{ error: ... } make the button blue" is
+  // still a bug report. Placed after FIX_STRONG (which already routes to fix)
+  // and before MICRO for that reason.
+  if (ERROR_PAYLOAD_RE.test(prompt)) return { tier: 'fix', rule: 'error-payload', confidence: 'high' };
+  // "Do not modify anything yet" plus an error payload is an investigation
+  // request. There is no read-only tier yet (designed, not built), so route to
+  // fix -- it is the diagnostic tier and gates edits behind get_build_errors,
+  // which is far closer to the intent than edit tier's write-first posture.
+  if (NO_MODIFY_RE.test(prompt)) return { tier: 'fix', rule: 'no-modify-request', confidence: 'high' };
   // Micro next   "change the button color" (no defect signal) stays micro.
   if (MICRO_RE.test(prompt)) return { tier: 'micro', rule: 'micro', confidence: 'high' };
   // Fix before build   "build error" must not trigger build tier. This is the
@@ -110,6 +143,17 @@ export function classifyRequest(prompt: string, isEmptyProject: boolean): Reques
  *  fix needs 28+   agent reads 3-4 files, diagnoses, writes, verifies, may re-edit
  *  edit needs 25+   read + write + build check + possible re-edit cycle
  */
+/**
+ * How many DISTINCT files one run of each tier may modify, enforced in
+ * agentToolSet.ts. Lives next to TIER_MAX_STEPS because they are the same
+ * concept -- a tier's budget -- and because the capability preamble generates
+ * its text from both. Keeping the cap in a single exported place is what lets
+ * the prompt state it and the gate enforce it without the two drifting.
+ *
+ * Tiers absent here are uncapped.
+ */
+export const TIER_FILE_CAPS: Partial<Record<RequestTier, number>> = { micro: 3, edit: 10, fix: 10 };
+
 export const TIER_MAX_STEPS: Record<RequestTier, number> = {
   micro:    8,
   fix:     28,
