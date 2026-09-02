@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
 import {
   ChevronDown, ChevronRight, Settings as SettingsIcon, Server, Building2, Search, Lock,
 } from "lucide-react";
@@ -52,6 +51,7 @@ function buildGroups(isChinaOrg: boolean, isEcgProject: boolean): NavGroup[] {
         { id: "project-knowledge", label: "Knowledge", featureKey: "knowledge_base" },
         { id: "project-git", label: "Git" },
         { id: "project-secrets", label: "Secrets" },
+        { id: "project-template", label: "Community template", badge: 'new' as const },
       ],
     },
     {
@@ -163,11 +163,7 @@ export const SettingsSidebar = ({ activeSection, onSectionChange, projectId }: S
         )}
       >
         {isActive && !item.disabled && (
-          <motion.span
-            layoutId="settings-nav-active"
-            className="absolute inset-0 rounded-md bg-indigo-500/10 border-l-2 border-indigo-500/60"
-            transition={{ duration: 0.2 }}
-          />
+          <span className="absolute inset-0 rounded-md bg-white/[0.06] border-l-2 border-white/40" />
         )}
         <span className="relative z-[1] flex-1 truncate">{item.label}</span>
         {item.badge === 'new' && (
