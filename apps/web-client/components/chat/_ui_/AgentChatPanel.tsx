@@ -661,7 +661,12 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             }
             if (json.active && !isGenerating) {
               // A run is in progress server-side   reconnect to it
-              const asstId = `reconnect-${Date.now()}`;
+              // A real UUID, not `reconnect-<ts>`: saveAssistantMessage upserts
+              // only when given one and plain-inserts otherwise, so the old id
+              // guaranteed a duplicate row if this path ever persisted. The
+              // server now writes the message itself (keyed by run id), and this
+              // keeps the client's own identity valid either way.
+              const asstId = crypto.randomUUID();
               setMessages(prev => [...prev, { id: asstId, role: 'assistant', content: '', status: 'pending' }]);
               setIsGenerating(true);
               startProgressFeedback();

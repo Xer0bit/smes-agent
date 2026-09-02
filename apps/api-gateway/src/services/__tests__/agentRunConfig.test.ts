@@ -10,6 +10,8 @@ import {
   resolveStepBudget,
   resolveTokenCap,
   substituteDisabledModel,
+  isInternalRun,
+  resolveCostCapUsd,
 } from '../agentRunConfig.js';
 import { TIER_MAX_STEPS } from '../intentClassifier.js';
 
@@ -107,5 +109,50 @@ describe('substituteDisabledModel', () => {
   it('does nothing when nothing is disabled', () => {
     expect(substituteDisabledModel('a', undefined, 'fb').substituted).toBe(false);
     expect(substituteDisabledModel('a', '', 'fb').substituted).toBe(false);
+  });
+});
+
+describe('isInternalRun', () => {
+  it('trusts the org flag on its own', () => {
+    expect(isInternalRun(true, undefined, undefined)).toBe(true);
+  });
+
+  it('matches a user in the env list, for testers outside the seeded orgs', () => {
+    expect(isInternalRun(false, 'u-1', 'u-0, u-1 ,u-2')).toBe(true);
+  });
+
+  it('is false for an ordinary customer run', () => {
+    expect(isInternalRun(false, 'u-9', 'u-1,u-2')).toBe(false);
+    expect(isInternalRun(false, 'u-9', undefined)).toBe(false);
+  });
+
+  it('does not match a guest with no user id against an empty list', () => {
+    expect(isInternalRun(false, undefined, '')).toBe(false);
+  });
+});
+
+describe('resolveCostCapUsd', () => {
+  it('defaults to the $1.50 customer wall', () => {
+    expect(resolveCostCapUsd(false, {})).toBe(1.5);
+  });
+
+  it('lets an internal run use its own higher cap', () => {
+    // Internal accounts were 81% of aborts because dogfooding hit the customer wall.
+    expect(resolveCostCapUsd(true, { AGENT_COST_CAP_USD_INTERNAL: '10' })).toBe(10);
+  });
+
+  it('falls an empty internal cap through to the shared one', () => {
+    expect(resolveCostCapUsd(true, { AGENT_COST_CAP_USD_INTERNAL: '', AGENT_COST_CAP_USD: '3' })).toBe(3);
+  });
+
+  it('does not let an internal cap leak into a customer run', () => {
+    expect(resolveCostCapUsd(false, { AGENT_COST_CAP_USD_INTERNAL: '99' })).toBe(1.5);
+  });
+
+  it('NEVER returns NaN, which would remove the cap entirely', () => {
+    // `cost > NaN` is always false, so a malformed env must not disable the cap.
+    for (const bad of ['', 'abc', '0', '-5']) {
+      expect(resolveCostCapUsd(false, { AGENT_COST_CAP_USD: bad })).toBe(1.5);
+    }
   });
 });

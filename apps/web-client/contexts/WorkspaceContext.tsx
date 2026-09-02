@@ -284,6 +284,14 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
                 if (latestRevisionId) {
                     baseRevisionIdRef.current = latestRevisionId; // M1: this tab now bases on head
                     const { revisionService } = await import('@/services/revisionService');
+                    // NOT lazy here, deliberately. Setting empty content for
+                    // deferred paths would reach saveToDatabase, whose dirty
+                    // check compares content -- an empty body reads as "changed
+                    // to empty" and would be saved, which is the clobber this
+                    // codebase already paid for. The Editor's own lazy path is
+                    // safe because it populates pendingLazy so the save knows
+                    // which paths are deferred; wiring that signal through here
+                    // is the prerequisite for making this lazy too.
                     const revisionFiles = await revisionService.getRevisionFiles(projectId, latestRevisionId);
                     if (revisionFiles.length > 0) {
                         console.log(`[WorkspaceContext] Loaded ${revisionFiles.length} files from latest revision ${latestRevisionId}.`);

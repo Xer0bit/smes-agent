@@ -7,7 +7,7 @@ import { RunChangeSet, isTrackedMutation } from './runChangeSet.js';
 import { fetchRecentMaxFileCount } from './runSandbox.js';
 import { claimRun, setPhase, startRunHeartbeat, linkRevision } from './agentRunRecord.js';
 import { persistAssistantMessage } from './assistantMessagePersist.js';
-import { resolveStepBudget, resolveTokenCap, resolveRuntimeMode, substituteDisabledModel } from './agentRunConfig.js';
+import { resolveStepBudget, resolveTokenCap, resolveRuntimeMode, substituteDisabledModel, isInternalRun as resolveIsInternalRun, resolveCostCapUsd } from './agentRunConfig.js';
 import { capContextFiles, renderContextFiles } from './agentContextSelection.js';
 import { shouldRevertToPreAgentSnapshot } from './agentGating.js';
 import fs from 'node:fs';
@@ -549,10 +549,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // the per-run cost cap for internal runs via AGENT_COST_CAP_USD_INTERNAL so
   // testing stops dead-ending at the $1.50 customer wall (audit 2026-07-21:
   // internal accounts were 81% of aborts).
-  const isInternalRun = orgIsInternal || Boolean(
-    userId && (process.env.AGENT_INTERNAL_USER_IDS ?? '')
-      .split(',').map((s) => s.trim()).filter(Boolean).includes(userId),
-  );
+  const isInternalRun = resolveIsInternalRun(orgIsInternal, userId, process.env.AGENT_INTERNAL_USER_IDS);
 
   // ── Per-run token accounting ──────────────────────────────────────────────
   // Tracks every token category across all steps so we can log cost per step
@@ -3079,9 +3076,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // Two gates: token count + dollar cost. Whichever fires first aborts the run.
           // Token cap is tier-based (RUN_TOKEN_CAP) so build gets more headroom than micro.
           // Cost cap is a hard ceiling regardless of tier.
-          const HARD_COST_CAP = isInternalRun
-            ? parseFloat(process.env.AGENT_COST_CAP_USD_INTERNAL || process.env.AGENT_COST_CAP_USD || '1.50')
-            : parseFloat(process.env.AGENT_COST_CAP_USD || '1.50');
+          const HARD_COST_CAP = resolveCostCapUsd(isInternalRun, {
+            AGENT_COST_CAP_USD: process.env.AGENT_COST_CAP_USD,
+            AGENT_COST_CAP_USD_INTERNAL: process.env.AGENT_COST_CAP_USD_INTERNAL,
+          });
           if (runTokens.billableTotal > RUN_TOKEN_CAP || runCost > HARD_COST_CAP) {
             const reason = runCost > HARD_COST_CAP
               ? `cost cap $${HARD_COST_CAP} hit ($${runCost.toFixed(3)} spent)`

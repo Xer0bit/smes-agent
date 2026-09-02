@@ -96,3 +96,41 @@ export function substituteDisabledModel(
   if (!disabled.has(requestedModelId)) return { modelId: requestedModelId, substituted: false };
   return { modelId: fallbackModelId, substituted: true };
 }
+
+/**
+ * Whether this run belongs to an internal (dogfooding) account.
+ *
+ * Two independent signals, either sufficient: the org's own `is_internal`
+ * flag, or a comma-separated AGENT_INTERNAL_USER_IDS env list, which catches
+ * internal testers outside the seeded orgs without a migration each time.
+ */
+export function isInternalRun(orgIsInternal: boolean, userId: string | undefined, envList?: string): boolean {
+  if (orgIsInternal) return true;
+  if (!userId) return false;
+  return (envList ?? '').split(',').map((s) => s.trim()).filter(Boolean).includes(userId);
+}
+
+/** Default per-run USD ceiling. The ultimate backstop above the token caps. */
+const DEFAULT_COST_CAP_USD = 1.50;
+
+/**
+ * The run's hard cost ceiling.
+ *
+ * Internal runs may use a separate, usually higher cap: a 2026-07-21 audit found
+ * internal accounts were 81% of all aborts, i.e. dogfooding kept dead-ending at
+ * the customer wall. A malformed env value falls back to the default rather than
+ * producing NaN -- `cost > NaN` is always false, which would remove the cap
+ * entirely and is the one failure mode this must not have.
+ */
+export function resolveCostCapUsd(
+  internal: boolean,
+  env: { AGENT_COST_CAP_USD?: string; AGENT_COST_CAP_USD_INTERNAL?: string },
+): number {
+  // `||` not `??`, matching the original chain: an EMPTY internal cap falls
+  // through to the shared one rather than being treated as "set to nothing".
+  const raw = internal
+    ? (env.AGENT_COST_CAP_USD_INTERNAL || env.AGENT_COST_CAP_USD)
+    : env.AGENT_COST_CAP_USD;
+  const parsed = parseFloat(raw ?? '');
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_COST_CAP_USD;
+}
