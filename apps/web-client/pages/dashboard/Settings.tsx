@@ -5,9 +5,10 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { Settings as SettingsIcon, Lock, CreditCard, User, Loader2 } from 'lucide-react';
+import { Settings as SettingsIcon, Lock, CreditCard, User, Loader2, Sun, Moon, Monitor } from 'lucide-react';
+import { useTheme, type ThemePreference } from '@/lib/theme';
 import { useTranslation } from 'react-i18next';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -176,13 +177,13 @@ export default function DashboardSettings() {
 
       <div className="space-y-6">
         <div className="grid gap-4 md:grid-cols-3">
-          <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+          <Card className="rounded-xl border-border/60">
             <CardContent className="p-5">
               <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Email</p>
               <p className="mt-3 truncate text-sm font-medium text-foreground">{authUser?.email || 'No email'}</p>
             </CardContent>
           </Card>
-          <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+          <Card className="rounded-xl border-border/60">
             <CardContent className="p-5">
               <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Eco</p>
               <p className="mt-3 font-display text-xl font-semibold text-foreground">
@@ -191,7 +192,7 @@ export default function DashboardSettings() {
               <Progress value={getUsagePercentage()} className="mt-3 h-1.5" />
             </CardContent>
           </Card>
-          <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+          <Card className="rounded-xl border-border/60">
             <CardContent className="p-5">
               <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Plan</p>
               {loading ? (
@@ -208,9 +209,11 @@ export default function DashboardSettings() {
           </Card>
         </div>
 
-        <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+        <AppearanceCard />
+
+        <Card className="rounded-xl border-border/60">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 font-display text-lg font-semibold">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <User className="h-5 w-5 text-primary" />
               Profile
             </CardTitle>
@@ -244,9 +247,9 @@ export default function DashboardSettings() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+        <Card className="rounded-xl border-border/60">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 font-display text-lg font-semibold">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <SettingsIcon className="h-5 w-5 text-primary" />
               Preferences
             </CardTitle>
@@ -270,9 +273,9 @@ export default function DashboardSettings() {
           </CardContent>
         </Card>
 
-        <Card ref={billingCardRef} className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)] scroll-mt-6">
+        <Card ref={billingCardRef} className="rounded-xl border-border/60 scroll-mt-6">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 font-display text-lg font-semibold">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <CreditCard className="h-5 w-5 text-primary" />
               Billing
             </CardTitle>
@@ -311,9 +314,9 @@ export default function DashboardSettings() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)]">
+        <Card className="rounded-xl border-border/60">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 font-display text-lg font-semibold">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <Lock className="h-5 w-5 text-primary" />
               Security
             </CardTitle>
@@ -372,5 +375,40 @@ export default function DashboardSettings() {
 
       </div>
     </div>
+  );
+}
+
+/** Dashboard theme. Dark is the existing blue-tinted palette; light is white. Follows the OS until chosen. */
+function AppearanceCard() {
+  const { preference, setPreference } = useTheme();
+  const options: Array<{ value: ThemePreference; label: string; icon: ReactNode }> = [
+    { value: 'light', label: 'Light', icon: <Sun className="h-3.5 w-3.5" /> },
+    { value: 'dark', label: 'Dark', icon: <Moon className="h-3.5 w-3.5" /> },
+    { value: 'system', label: 'System', icon: <Monitor className="h-3.5 w-3.5" /> },
+  ];
+  return (
+    <Card className="rounded-xl border-border/60">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base font-semibold">
+          <Sun className="h-4 w-4" />
+          Appearance
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="mb-3 text-sm text-muted-foreground">Applies to the dashboard. The editor and project pages stay dark.</p>
+        <div className="inline-flex rounded-lg border border-border/60 p-0.5">
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => setPreference(o.value)}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors ${preference === o.value ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              {o.icon}{o.label}
+            </button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

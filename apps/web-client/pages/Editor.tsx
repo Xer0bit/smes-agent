@@ -8,17 +8,13 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { revisionService, computePublishFilesHash } from "@/services/revisionService";
 import { consumePendingPrompt } from "@/services/pendingPromptHandoff";
-import { RevisionPanel } from "@/components/RevisionPanel";
-import { VersionHistoryPanel } from "@/components/VersionHistoryPanel";
-import { WorkspaceLoader } from "@/components/WorkspaceLoader";
-import { CodeEditorPanel } from "@/components/CodeEditorPanel";
 import { useWorkspace, WorkspaceProvider } from "@/contexts/WorkspaceContext";
 import { MultiDevicePreview, type MultiDevicePreviewHandle } from "@/components/MultiDevicePreview";
 import type { ActivityType } from "@/components/ProjectActivityIndicator";
 import { AgentChatPanel } from "@/components/chat/_ui_/AgentChatPanel";
-import { SettingsDialog } from "@/components/referral/settings/SettingsDialog";
-import { CloudRegionDialog } from "@/components/editor/CloudRegionDialog";
-import { GithubStatusPopover } from "@/components/editor/GithubStatusPopover";
+// Dialogs and side panels load on first use (see lazyPanels.tsx); the chat
+// and the preview are the only things a project needs at first paint.
+import { SettingsDialog, CloudRegionDialog, GithubStatusPopover, RevisionPanel, VersionHistoryPanel, CodeEditorPanel } from "@/components/editor/lazyPanels";
 import { buildPreviewNavigationUrl, normalizePreviewRoute } from "@/utils/previewNavigation";
 import { getApiServerUrl } from "@/config/external-api";
 
@@ -35,7 +31,6 @@ import {
   Cloud,
   Bot,
   Globe,
-  Paperclip,
   Edit,
   FileCode,
   ExternalLink,
@@ -70,11 +65,9 @@ import {
 } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { toast } from "sonner";
-import { promptService } from "@/eCG/UserPrompt";
 import type { AgentAttachment } from "@/eCG/UserPrompt/types";
-import { uploadChatAttachment, isAllowedFile } from "@/services/chatAttachmentService";
 import { messageService } from "@/eCG/UserPrompt/messageService";
 import { generatePreview } from "@/eCG/Preview/previewGenerator";
 import { checkPreviewHealth, updateDockerPreview, syncPreviewFromRevision, getPreviewUrl, handlePreviewSessionExpired, createPreviewSession, getPreviewSyncState } from "@/services/previewHealthService";
@@ -119,9 +112,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
   // Track if initial workspace load has completed (for preview refresh)
   const [hasInitialLoadCompleted, setHasInitialLoadCompleted] = useState(false);
-  const [previewFirstPaint, setPreviewFirstPaint] = useState(false);
   const prevWorkspaceLoadingRef = useRef(true);
-  const [prompt, setPrompt] = useState("");
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // M1 fast-forward guard: the ISO timestamp of the state this tab's preview
   // pushes derive from. Advanced on load and whenever newer state lands here
@@ -157,7 +148,6 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   }, []);
   const lastAgentEcoRef = useRef(0);
   const [isLoading, setIsLoading] = useState(false);
-  const [workflowComplete, setWorkflowComplete] = useState(false);
   const [project, setProject] = useState<any>(null);
   const [viewMode, setViewMode] = useState<"desktop" | "tablet" | "mobile">("desktop");
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -334,6 +324,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
       } else if (event.data?.type === 'navigation') {
         lastUserNavigationAtRef.current = Date.now();
         setPreviewPath(normalizePreviewRoute(event.data.pathname));
+        setPreviewNav({ back: event.data.canGoBack === true, forward: event.data.canGoForward === true });
       } else if (event.data?.type === 'PREVIEW_BLANK') {
         const now = Date.now();
         const cooldownOk = now - lastAutoRepairAtRef.current > AUTO_REPAIR_COOLDOWN_MS;
@@ -438,6 +429,10 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
   // Track current path from preview iframe   initialised from URL so refresh restores it
   const [previewPath, setPreviewPath] = useState<string>(() => searchParams.get('page') || '/');
+  // Whether the preview's OWN route stack (nav-patch.js) has entries behind /
+  // ahead of the current page. The toolbar buttons never touch the browser's
+  // history, so they are disabled at the ends of that stack.
+  const [previewNav, setPreviewNav] = useState({ back: false, forward: false });
   const previewPathRef = useRef(previewPath);
   const previewHandleRef = useRef<MultiDevicePreviewHandle>(null);
   useEffect(() => { previewPathRef.current = previewPath; }, [previewPath]);
@@ -507,7 +502,11 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   // repairPrompt is being reused for something other than an actual repair
   // (e.g. showing the user's real typed text for the first-prompt case).
   const [agentTriggerDisplayText, setAgentTriggerDisplayText] = useState<string | undefined>(undefined);
+  /** Attachments sent with the trigger prompt (dashboard "New project" with files). */
+  const [agentTriggerAttachments, setAgentTriggerAttachments] = useState<AgentAttachment[] | undefined>(undefined);
   const [agentStreamText, setAgentStreamText] = useState<string>('');
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentProgress, setAgentProgress] = useState<{ status: string; steps: string[] }>({ status: '', steps: [] });
 
   const handleAgentStreamText = useCallback((chunk: string) => {
     setAgentStreamText(prev => prev + chunk);
@@ -905,28 +904,18 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
       // Clear the navigation state to prevent re-triggering
       window.history.replaceState({}, document.title);
 
-      // Set the prompt in the UI so user can see what they typed
-      setPrompt(initialPrompt);
 
       // Defer by one tick so React can flush the setPrompt update first.
       const timerId = setTimeout(() => {
-        if (attachments && attachments.length > 0) {
-          // AgentChatPanel's triggerPrompt path (below) doesn't carry
-          // attachments yet -- promptService.handlePrompt already does
-          // (upload wiring, message-row persistence), so keep using it for
-          // this narrower case rather than dropping attachment support.
-          handleGenerateWithContext(initialPrompt, fileContext, attachments);
-        } else {
-          // No attachments: route through AgentChatPanel's own send flow --
-          // same live streaming/narration every later prompt already gets --
-          // instead of promptService's dead-ended status lines that nothing
-          // renders (Editor's own `messages` state isn't shown anywhere;
-          // AgentChatPanel owns the actual visible chat).
-          setAgentTriggerDisplayText(initialPrompt);
-          setRepairPrompt(
-            fileContext ? `${initialPrompt}\n\n--- Attached file content ---\n${fileContext}` : initialPrompt
-          );
-        }
+        // One send path for the first message and every later one: the
+        // panel's own. A second client implementation (promptService) used to
+        // handle the with-attachments case and disagreed with this one about
+        // message identity, which is where the duplicate-reply bugs came from.
+        setAgentTriggerDisplayText(initialPrompt);
+        setAgentTriggerAttachments(attachments && attachments.length > 0 ? attachments : undefined);
+        setRepairPrompt(
+          fileContext ? `${initialPrompt}\n\n--- Attached file content ---\n${fileContext}` : initialPrompt
+        );
       }, 100);
       return () => clearTimeout(timerId);
     }
@@ -1671,189 +1660,6 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     toast.success(`Previewing ${file.path}`);
   };
 
-  const handleGenerateWithContext = async (promptText: string, fileContext?: string, attachments?: AgentAttachment[]) => {
-    if (!promptText.trim()) {
-      toast.error("Please enter a prompt");
-      return;
-    }
-
-    setPrompt(""); // Clear input
-    setIsLoading(true);
-    setWorkflowComplete(false);
-    sentMessagesRef.current.clear();
-
-    let latestFiles: Array<{ path: string; content: string }> = [];
-
-    try {
-      console.log('[Editor] Starting promptService stream generation...');
-
-      const promptResult = await promptService.handlePrompt(
-        {
-          promptText,
-          projectId: projectId!,
-          userId: currentUser?.id || '',
-          currentUser,
-          organizationId: currentOrganizationId,
-          fileContext,
-          attachments,
-          existingFiles: generatedFiles,
-          hasRealApp:
-            generatedFiles.length > 1 ||
-            (generatedFiles.length === 1 && !generatedFiles[0].path.endsWith('index.html')),
-          fingerprint: isGuest ? guestFingerprint : undefined,
-        },
-        {
-          onMessageAdd: (message) => {
-            if (message.role !== 'assistant' && message.role !== 'user') return;
-            const normalizedMessage: { role: 'assistant' | 'user'; content: string } = {
-              role: message.role,
-              content: message.content,
-            };
-            setMessages((prev) => [...prev, normalizedMessage]);
-          },
-          onSystemMessage: addSystemMessage,
-          onFilesUpdate: (files) => {
-            const normalized = normalizeProjectFiles(files);
-            latestFiles = normalized;
-            setGeneratedFiles(normalized);
-
-            const htmlFile = normalized.find((f) => f.path === 'index.html') || normalized[0];
-            setGeneratedCode(htmlFile?.content || '');
-
-            normalized.forEach((file) => {
-              writeFileWorkspace(file.path, file.content, 'ai');
-            });
-          },
-          onCodeUpdate: setGeneratedCode,
-          onLoadingChange: setIsLoading,
-          onWorkflowComplete: setWorkflowComplete,
-          onPreviewStatusChange: (status) => transitionPreviewStatus(status),
-          onPreviewUrlChange: (url) => {
-            setPreviewUrl(url);
-            setLatestPreviewUrl(url);
-          },
-        }
-      );
-
-      // Eco deducted by backend. Refresh usage display to sync counter.
-      if (!isGuest) {
-        refreshUsage().catch((err) => console.error('[Editor] Error refreshing usage:', err));
-      }
-    } catch (error) {
-      console.error('Error generating app:', error);
-      setWorkflowComplete(false);
-
-      const message = error instanceof Error
-        ? error.message
-        : 'AI generation failed. Please try again.';
-
-      const errorMessage = {
-        role: 'assistant' as const,
-        content: ` Generation failed: ${message}`,
-      };
-      setMessages((prev) => [...prev, errorMessage]);
-
-      if (!isGuest) {
-        await supabase.from('messages').insert({
-          project_id: projectId,
-          role: 'assistant',
-          content: errorMessage.content,
-        });
-      }
-
-      toast.warning('Generation failed. Existing project files were kept.');
-    } finally {
-      if (generationProgressRef.current) {
-        clearInterval(generationProgressRef.current);
-        generationProgressRef.current = null;
-      }
-      sentMessagesRef.current.clear();
-      setIsLoading(false);
-    }
-  };
-
-  const handleGenerate = async () => {
-    console.log('[Editor] handleGenerate called with prompt:', prompt);
-
-    // Reset to core stage for new generations
-    setGenerationStage('core');
-    setShowExpandButton(false);
-
-    // Check if this is a temp project and user is trying to generate 2nd prompt
-    const TEMP_PROJECT_KEY = 'ecomgear_temp_project';
-    const tempProjectData = localStorage.getItem(TEMP_PROJECT_KEY);
-
-    if (!currentUser && tempProjectData && !isGuest) {
-      try {
-        const { projectId: tempProjectId } = JSON.parse(tempProjectData);
-        // If this temp project has any messages, require login
-        if (tempProjectId === projectId && messages.length > 0) {
-          toast.error("Please log in to continue generating");
-          navigate('/auth?tab=login');
-          return;
-        }
-      } catch (e) {
-        console.error("Error checking temp project:", e);
-      }
-    }
-
-    // Guest mode: check remaining requests
-    if (isGuest) {
-      const guestReqKey = 'ecg_guest_requests';
-      const used = parseInt(localStorage.getItem(guestReqKey) || '0', 10);
-      if (used >= 3) {
-        toast.error("You've used all 3 free generations. Please sign up to continue!");
-        navigate('/auth', {
-          state: {
-            message: 'Sign up to unlock unlimited AI generations',
-            redirectTo: '/',
-          },
-        });
-        return;
-      }
-      // Optimistically increment local counter (backend does the real check)
-      localStorage.setItem(guestReqKey, String(used + 1));
-    }
-
-    let fileContext = "";
-    const attachments: AgentAttachment[] = [];
-
-    try {
-      // Upload attachments through the agent pipeline (images get vision +
-      // place_asset server-side); parse-file is only the fallback for types
-      // the attachment service doesn't accept.
-      if (attachedFiles && attachedFiles.length > 0) {
-        toast.info("Processing attached files...");
-        for (const file of attachedFiles) {
-          if (isAllowedFile(file).ok && currentUser?.id && projectId) {
-            try {
-              const att = await uploadChatAttachment(file, currentUser.id, projectId);
-              attachments.push({ name: att.name, type: att.type, category: att.category, tempPath: att.tempPath, publicUrl: att.publicUrl });
-              continue;
-            } catch (err) {
-              console.error('Attachment upload failed, falling back to parse-file:', err);
-            }
-          }
-          const formData = new FormData();
-          formData.append('file', file);
-          const { data: parseData, error: parseError } = await supabase.functions.invoke('parse-file', { body: formData });
-          if (parseError) {
-            console.error('Error parsing file:', parseError);
-            toast.error(`Failed to parse ${file.name}`);
-          } else if (parseData?.extractedText) {
-            fileContext += `\n\n${parseData.extractedText}`;
-          }
-        }
-      }
-
-      await handleGenerateWithContext(prompt, fileContext, attachments.length > 0 ? attachments : undefined);
-    } catch (error) {
-      console.error("Error in handleGenerate:", error);
-      toast.error("Failed to start generation: " + (error instanceof Error ? error.message : 'Unknown error'));
-      setIsLoading(false);
-    }
-  };
-
   const handleExpandToComplete = async () => {
     setGenerationStage('complete');
     setShowExpandButton(false);
@@ -1862,7 +1668,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     const lastUserMessage = messages.filter(m => m.role === 'user').pop();
     const expandPrompt = lastUserMessage?.content || 'Expand to complete application';
 
-    await handleGenerateWithContext(expandPrompt, '');
+    setAgentTriggerDisplayText(expandPrompt);
+    setRepairPrompt(expandPrompt);
   };
 
   // ── Initialise publish dialog state whenever it opens ─────────────────────
@@ -2455,15 +2262,6 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#09090b]">
-      <WorkspaceLoader
-        visible={isWorkspaceLoading && !hasInitialLoadCompleted}
-        projectName={project?.name}
-        fileCount={workspaceFiles.size > 0 ? workspaceFiles.size : undefined}
-        authResolved={!!currentUser}
-        projectFetched={!!project}
-        filesRestored={!isWorkspaceLoading && workspaceFiles.size > 0}
-        previewFirstPaint={previewFirstPaint}
-      />
       {!isMobileViewport && !isMinimized && (
         <button
           type="button"
@@ -2525,10 +2323,12 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       initialAttachments={seedChatAttachments}
                       onInitialAttachmentsConsumed={() => setSeedChatAttachments(undefined)}
                       triggerPrompt={repairPrompt}
+              triggerAttachments={agentTriggerAttachments}
                       triggerDisplayText={agentTriggerDisplayText}
                       onTriggerConsumed={() => {
                         setRepairPrompt(null);
                         setAgentTriggerDisplayText(undefined);
+                        setAgentTriggerAttachments(undefined);
                         isAgentRunningRef.current = true;
                       }}
                       inspectMode={inspectMode}
@@ -2603,7 +2403,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       onUsage={(_tokensUsed) => {}}
                       onAgentStreamText={handleAgentStreamText}
                       onAgentStreamClear={handleAgentStreamClear}
-                      onGeneratingChange={handleGeneratingChange}
+                      onGeneratingChange={(g) => { handleGeneratingChange(g); setAgentBusy(g); }}
+              onProgress={setAgentProgress}
                       onNoChangesChange={setLastRunNoChanges}
                     />
                   )}
@@ -2626,7 +2427,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               onClick={() => setIsMinimized(false)}
               className="fixed bottom-5 right-5 z-50 flex h-12 w-12 items-center justify-center
                 rounded-full bg-indigo-600 text-white shadow-lg shadow-black/40
-                hover:bg-indigo-500 active:scale-95 transition"
+                hover:bg-indigo-500 transition-colors"
             >
               <Bot className="h-5 w-5" />
             </button>
@@ -2743,10 +2544,12 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               initialAttachments={seedChatAttachments}
               onInitialAttachmentsConsumed={() => setSeedChatAttachments(undefined)}
               triggerPrompt={repairPrompt}
+              triggerAttachments={agentTriggerAttachments}
               triggerDisplayText={agentTriggerDisplayText}
               onTriggerConsumed={() => {
                 setRepairPrompt(null);
                 setAgentTriggerDisplayText(undefined);
+                setAgentTriggerAttachments(undefined);
                 isAgentRunningRef.current = true;
               }}
               inspectMode={inspectMode}
@@ -2927,7 +2730,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               }}
               onAgentStreamText={handleAgentStreamText}
               onAgentStreamClear={handleAgentStreamClear}
-              onGeneratingChange={handleGeneratingChange}
+              onGeneratingChange={(g) => { handleGeneratingChange(g); setAgentBusy(g); }}
+              onProgress={setAgentProgress}
               onNoChangesChange={setLastRunNoChanges}
             />
           </div>
@@ -3061,13 +2865,15 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               gap between the tabs and the eco/settings cluster. */}
           {showRouteNavigator && (
             <div className="flex items-center gap-1 flex-1 min-w-0 mx-2">
-              {/* Back / Forward   drive the preview iframe's own session history
-                  (its HashRouter), same as a real browser tab's controls. */}
+              {/* Back / Forward   walk the preview's own route stack (nav-patch.js
+                  inside the iframe), never the browser's history, so they can
+                  never move the editor page itself. */}
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7 shrink-0 text-white/20 hover:text-white/60 hover:bg-white/[0.04] rounded-md"
                 title="Back"
+                disabled={!previewNav.back}
                 onClick={() => previewHandleRef.current?.goBack()}
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
@@ -3077,6 +2883,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                 size="icon"
                 className="h-7 w-7 shrink-0 text-white/20 hover:text-white/60 hover:bg-white/[0.04] rounded-md"
                 title="Forward"
+                disabled={!previewNav.forward}
                 onClick={() => previewHandleRef.current?.goForward()}
               >
                 <ChevronRight className="h-3.5 w-3.5" />
@@ -3632,14 +3439,15 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                   onViewModeChange={setViewMode}
                   onRefresh={() => buildPreviewNow()}
                   onOpenExternal={effectivePreviewUrl ? () => window.open(effectivePreviewUrl, '_blank') : undefined}
-                  onPreviewFirstPaint={() => setPreviewFirstPaint(true)}
                   status={previewStatus}
                   currentPath={previewPath}
                   projectId={projectId ?? undefined}
                   inspectMode={inspectMode}
                   onInspectModeChange={setInspectMode}
                   installingDependency={installingDependency}
+                  loading={isWorkspaceLoading && !hasInitialLoadCompleted}
                   noChanges={lastRunNoChanges}
+                  runProgress={{ generating: agentBusy, status: agentProgress.status, steps: agentProgress.steps }}
                   onRepair={(errorSummary) => {
                     setRepairPrompt(errorSummary);
                     setIsMinimized(false);

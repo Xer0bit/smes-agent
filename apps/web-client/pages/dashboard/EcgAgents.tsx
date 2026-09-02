@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { supabase } from '@/integrations/supabase/client';
 import { getApiServerUrl } from '@/config/external-api';
 import { DashboardPageHeader } from '@/components/dashboard/DashboardPageHeader';
@@ -83,9 +82,14 @@ export default function EcgAgentsPage() {
 
   if (loadingProjects) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary" />
-      </div>
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3" aria-busy="true">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="overflow-hidden rounded-xl border border-border/60 bg-card">
+              <div className="skeleton h-48 w-full rounded-none" />
+              <div className="space-y-2 p-4"><div className="skeleton h-3.5 w-2/3" /><div className="skeleton h-3 w-1/3" /></div>
+            </div>
+          ))}
+        </div>
     );
   }
 
@@ -108,14 +112,12 @@ export default function EcgAgentsPage() {
       ) : (
         <div className="mb-6 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
           {connectedProjects.map((p, i) => (
-            <motion.div
+            <div
+              className="animate-msg-appear"
               key={p.id}
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: Math.min(i, 8) * 0.04, ease: [0.16, 1, 0.3, 1] }}
             >
               <Card
-                className="group flex cursor-pointer flex-col overflow-hidden rounded-xl border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)] transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-[0_18px_44px_hsl(220_45%_5%/0.3)]"
+                className="group flex cursor-pointer flex-col overflow-hidden rounded-xl border-border/60 transition-colors duration-150 hover:border-primary/40"
                 onClick={() => navigate(`/project/${p.id}`)}
               >
                 <ProjectThumbnail
@@ -139,7 +141,7 @@ export default function EcgAgentsPage() {
                   </Button>
                 </CardContent>
               </Card>
-            </motion.div>
+            </div>
           ))}
           <button
             onClick={() => setShowConnectForm(true)}

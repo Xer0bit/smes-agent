@@ -61,6 +61,21 @@ if [[ "${1:-}" == "--stop" ]]; then
     exit 0
 fi
 
+# ── Heal a half-dead local Supabase ─────────────────────────────────────────
+# After a Docker daemon restart the project network is recreated; containers
+# with restart=unless-stopped (db, kong, auth) come back, the rest (rest,
+# realtime, inbucket, edge) stay Exited on the old network id, and every REST
+# call answers 500 "An unexpected error occurred". Seen twice on 2026-09-02.
+# supabase stop/start keeps the data volume and rebuilds every container.
+SB_PROJECT="$(grep -aoE '^project_id *= *"[^"]+"' "$ROOT/supabase/config.toml" 2>/dev/null | sed -E 's/.*"([^"]+)"/\1/')"
+if [ -n "$SB_PROJECT" ] && docker ps --format '{{.Names}}' 2>/dev/null | grep -aq "^supabase_db_$SB_PROJECT$"; then
+    DEAD="$(docker ps -a --filter "status=exited" --format '{{.Names}}' 2>/dev/null | grep -aE "^supabase_(rest|auth|realtime|kong)_$SB_PROJECT$" || true)"
+    if [ -n "$DEAD" ]; then
+        info "Local Supabase is half-dead after a Docker restart ($(echo "$DEAD" | tr '\n' ' ')); rebuilding with supabase stop/start (data is kept)..."
+        (cd "$ROOT" && supabase stop >/dev/null 2>&1 && supabase start >/dev/null 2>&1) && success "Supabase rebuilt" || warn "supabase stop/start failed; run it by hand"
+    fi
+fi
+
 # ── Parse flags (any combination), or ask interactively if none given ───────
 START_FRONTEND=0; START_BACKEND=0; START_PREVIEW=0; PROD_BACKEND=0
 if [ $# -eq 0 ]; then
@@ -151,6 +166,13 @@ fi
 
 # ── Backend ───────────────────────────────────────────────────────────────────
 if [ "$START_BACKEND" -eq 1 ]; then
+    # Local eCG Cloud: when the backend's tenant DB points at the local
+    # Supabase, make sure the tenant PostgREST container and the tenant API
+    # proxy (:54330) are up too. See scripts/local-tenant-db.sh.
+    if grep -aq '^TENANT_DB_HOST=127.0.0.1' "$ROOT/apps/api-gateway/.env" 2>/dev/null; then
+        info "Local tenant DB configured; starting tenant PostgREST + proxy (:54330)..."
+        bash "$ROOT/scripts/local-tenant-db.sh" > "$LOG_DIR/tenant-setup.log" 2>&1 || warn "tenant stack setup failed; see logs/tenant-setup.log"
+    fi
     free_port "$BACKEND_PORT" "backend"
     info "Starting backend on :$BACKEND_PORT..."
     # tsx watch, not plain tsx: code edits must hot-reload. A plain-tsx backend

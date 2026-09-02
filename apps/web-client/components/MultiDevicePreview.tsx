@@ -5,6 +5,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { PreviewPlaceholder, type RunProgress } from '@/components/PreviewPlaceholder';
 import { Monitor, Tablet, Smartphone, ExternalLink, RotateCcw, Wrench, AlertTriangle, MousePointerClick } from 'lucide-react';
 
 const PREVIEW_SERVICE_URL =
@@ -81,6 +82,10 @@ interface MultiDevicePreviewProps {
      * before the prompt, so it's dimmed with a "no changes" note rather than
      * doing a reveal that implies work landed. Cleared when the next run starts. */
     noChanges?: boolean;
+    /** Live agent run state, shown in place of the frame while there is nothing to render. */
+    runProgress?: RunProgress;
+    /** Workspace still restoring: draw a page skeleton, not a loader, until there is a frame. */
+    loading?: boolean;
 }
 
 /** Imperative handle for driving the preview iframe's own session history
@@ -137,6 +142,8 @@ export const MultiDevicePreview = React.forwardRef<MultiDevicePreviewHandle, Mul
     onInspectModeChange,
     installingDependency = false,
     noChanges = false,
+    runProgress,
+    loading = false,
 }, ref) => {
     const config = DEVICE_CONFIGS[viewMode];
     const [previewDiagnostics, setPreviewDiagnostics] = useState<PreviewStatus>({ healthy: true, errors: [], diagnosticKind: 'healthy' });
@@ -273,17 +280,9 @@ export const MultiDevicePreview = React.forwardRef<MultiDevicePreviewHandle, Mul
     };
 
     const renderContent = () => {
+        if (loading && !hasRenderableFrame) return <PreviewSkeleton />;
         if ((status === 'building' || installingDependency) && !hasRenderableFrame) {
-            return (
-                <div className="flex items-center justify-center h-full bg-gray-900">
-                    <div className="text-center">
-                        <div className="animate-spin w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full mx-auto" />
-                        {installingDependency && (
-                            <p className="text-gray-400 text-xs mt-3">Installing dependencies…</p>
-                        )}
-                    </div>
-                </div>
-            );
+            return <PreviewPlaceholder progress={runProgress} previewStatus={status} installingDependency={installingDependency} />;
         }
 
         // If there is no renderable frame yet, show blocking error states.
@@ -292,59 +291,21 @@ export const MultiDevicePreview = React.forwardRef<MultiDevicePreviewHandle, Mul
         // during that window, and it isn't the user's code that's broken.
         if (hasBuildErrors && !hasRenderableFrame && !installingDependency) {
             return (
-                <div className="flex items-center justify-center h-full bg-gray-900">
-                    <div className="text-center max-w-sm px-6">
-                        <div className="flex justify-center mb-3">
-                            <AlertTriangle className="w-10 h-10 text-amber-400" />
-                        </div>
-                        <p className="text-white font-semibold text-sm mb-1">{blockingCopy.title}</p>
-                        <p className="text-gray-400 text-xs mb-4">
-                            {blockingCopy.description}
-                        </p>
-                                        <div className="flex gap-2 justify-center">
-                            {onRepair && (
-                                <Button size="sm" onClick={handleRepair} className="bg-indigo-600 hover:bg-indigo-500 text-white gap-1.5">
-                                    <Wrench className="w-3.5 h-3.5" />
-                                    Repair
-                                </Button>
-                            )}
-                            {onRefresh && (
-                                <Button variant="outline" size="sm" onClick={onRefresh} className="gap-1.5">
-                                    <RotateCcw className="w-3.5 h-3.5" />
-                                    Retry
-                                </Button>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                <PreviewPlaceholder
+                    progress={runProgress}
+                    previewStatus={status}
+                    issue={{ title: blockingCopy.title, description: blockingCopy.description, onRepair: onRepair ? handleRepair : undefined, onRetry: onRefresh }}
+                />
             );
         }
 
         if (status === 'failed' && !hasRenderableFrame) {
             return (
-                <div className="flex items-center justify-center h-full bg-gray-900">
-                    <div className="text-center max-w-sm px-6">
-                        <div className="flex justify-center mb-3">
-                            <AlertTriangle className="w-10 h-10 text-amber-400" />
-                        </div>
-                        <p className="text-white font-semibold text-sm mb-1">Something needs fixing</p>
-                        <p className="text-gray-400 text-xs mb-4">We detected an issue. Click Repair to auto-fix it.</p>
-                        <div className="flex gap-2 justify-center">
-                            {onRepair && (
-                                <Button size="sm" onClick={handleRepair} className="bg-indigo-600 hover:bg-indigo-500 text-white gap-1.5">
-                                    <Wrench className="w-3.5 h-3.5" />
-                                    Repair
-                                </Button>
-                            )}
-                            {onRefresh && (
-                                <Button variant="outline" size="sm" onClick={onRefresh} className="gap-1.5">
-                                    <RotateCcw className="w-3.5 h-3.5" />
-                                    Retry
-                                </Button>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                <PreviewPlaceholder
+                    progress={runProgress}
+                    previewStatus={status}
+                    issue={{ title: 'Something needs fixing', description: 'We detected an issue with the last update.', onRepair: onRepair ? handleRepair : undefined, onRetry: onRefresh }}
+                />
             );
         }
 
@@ -431,21 +392,7 @@ export const MultiDevicePreview = React.forwardRef<MultiDevicePreviewHandle, Mul
             );
         }
 
-        return (
-            <div className="relative flex h-full items-center justify-center overflow-hidden bg-gray-900">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.18),transparent_35%),radial-gradient(circle_at_bottom,rgba(168,85,247,0.14),transparent_30%)]" />
-                <div className="relative z-10 flex w-full max-w-lg flex-col items-center px-6">
-                    <video
-                        src="/assets/loading.mp4"
-                        autoPlay
-                        loop
-                        muted
-                        playsInline
-                        className="w-full border border-white/10 object-cover shadow-[0_24px_80px_rgba(3,12,27,0.4)]"
-                    />
-                </div>
-            </div>
-        );
+        return <PreviewPlaceholder progress={runProgress} previewStatus={status} installingDependency={installingDependency} />;
     };
 
     return (
@@ -482,5 +429,39 @@ export const MultiDevicePreview = React.forwardRef<MultiDevicePreviewHandle, Mul
 });
 
 MultiDevicePreview.displayName = 'MultiDevicePreview';
+
+/**
+ * The shape of a page, in the space the page will take. Shown while the
+ * workspace restores, instead of the full-screen step list that used to
+ * cover the whole editor. Static apart from the shared skeleton shimmer.
+ */
+function PreviewSkeleton() {
+    return (
+        <div className="h-full w-full overflow-hidden bg-[#0c0c0e] p-6">
+            <div className="mx-auto flex max-w-3xl flex-col gap-6">
+                <div className="flex items-center gap-3">
+                    <div className="skeleton h-6 w-6 rounded-md" />
+                    <div className="skeleton h-3 w-24" />
+                    <div className="ml-auto flex gap-2"><div className="skeleton h-3 w-12" /><div className="skeleton h-3 w-12" /><div className="skeleton h-3 w-12" /></div>
+                    <div className="skeleton h-7 w-20 rounded-full" />
+                </div>
+                <div className="mt-4 space-y-3">
+                    <div className="skeleton h-8 w-3/5" />
+                    <div className="skeleton h-8 w-2/5" />
+                    <div className="skeleton h-3 w-1/2" />
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                    {[0, 1, 2].map((i) => (
+                        <div key={i} className="space-y-2 rounded-lg border border-white/[0.06] p-3">
+                            <div className="skeleton h-20 w-full" />
+                            <div className="skeleton h-2.5 w-3/4" />
+                            <div className="skeleton h-2.5 w-1/2" />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
 
 export default MultiDevicePreview;

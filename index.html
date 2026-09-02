@@ -4,6 +4,33 @@
     <meta charset="UTF-8" />
     <link rel="icon" href="/favicon.ico" type="image/jpeg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- The app is dark everywhere. Paint that before a single stylesheet
+         arrives, so the first frame is never a white page with unstyled text.
+         Fonts load in parallel with display=swap instead of as a CSS @import
+         that held the whole stylesheet until Google answered. -->
+    <script>
+      // Theme before first paint. Same rule as lib/theme.ts: the dashboard
+      // follows the stored preference (or the OS), every other route is dark.
+      (function () {
+        var p = 'system';
+        try { p = localStorage.getItem('ecomgear:theme') || 'system'; } catch (e) {}
+        var onDashboard = location.pathname === '/dashboard' || location.pathname.indexOf('/dashboard/') === 0;
+        var dark = !onDashboard || p === 'dark' || (p === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      })();
+    </script>
+    <style>
+      html { background: #fafafa; }
+      html.dark { background: #09090b; }
+      body { margin: 0; background: inherit; color: #1c2230; font-family: Manrope, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+      html.dark body { color: #e5e7eb; }
+      #root { min-height: 100vh; }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700&display=swap" /></noscript>
     <title>ecomGear AI-Driven Web &amp; App Launch - Zero to One Without Borders</title>
     <meta name="description" content="AI-Driven Web & App Launch - Zero to One Without Borders">
     <meta name="author" content="eComGear" />

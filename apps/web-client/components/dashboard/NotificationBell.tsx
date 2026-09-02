@@ -207,7 +207,7 @@ export function NotificationBell() {
         </button>
       </PopoverTrigger>
 
-      <PopoverContent side="top" align="start" sideOffset={8} className="w-[380px] rounded-xl border-border/60 bg-card/95 p-0 shadow-[0_18px_44px_hsl(220_45%_5%/0.3)] backdrop-blur-xl">
+      <PopoverContent side="top" align="start" sideOffset={8} className="w-[380px] rounded-xl border-border/60 bg-card p-0 shadow-none">
         <div className="border-b border-border/60 px-4 py-3">
           <div className="flex items-center justify-between">
             <div>
@@ -226,8 +226,8 @@ export function NotificationBell() {
 
         <ScrollArea className="max-h-[360px]">
           {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            <div className="space-y-2 p-3" aria-busy="true">
+              {[0, 1, 2].map((i) => <div key={i} className="skeleton h-12 w-full" />)}
             </div>
           ) : totalCount === 0 ? (
             <div className="flex flex-col items-center gap-2 py-8 text-center">

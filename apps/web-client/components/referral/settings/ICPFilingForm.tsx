@@ -148,7 +148,7 @@ export const ICPFilingForm = () => {
       {filingType === "enterprise" && (
         <Card className="bg-workspace-surface border-white/[0.07]">
           <CardHeader>
-            <CardTitle className="text-lg">Enterprise Details</CardTitle>
+            <CardTitle className="text-base">Enterprise Details</CardTitle>
             <CardDescription>Business license information</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -205,7 +205,7 @@ export const ICPFilingForm = () => {
 
       <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
-          <CardTitle className="text-lg">Principal Information (负责人信息)</CardTitle>
+          <CardTitle className="text-base">Principal Information (负责人信息)</CardTitle>
           <CardDescription>
             {filingType === "enterprise" ? "Legal representative or authorized person" : "Your personal information"}
           </CardDescription>
@@ -325,7 +325,7 @@ export const ICPFilingForm = () => {
 
       <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
-          <CardTitle className="text-lg">Province Selection</CardTitle>
+          <CardTitle className="text-base">Province Selection</CardTitle>
           <CardDescription>Choose the province where your server is located</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -347,7 +347,7 @@ export const ICPFilingForm = () => {
 
       <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
-          <CardTitle className="text-lg">Domain List</CardTitle>
+          <CardTitle className="text-base">Domain List</CardTitle>
           <CardDescription>Add all domains that need ICP filing (must be real-name verified)</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -383,7 +383,7 @@ export const ICPFilingForm = () => {
 
       <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
-          <CardTitle className="text-lg">Website Information</CardTitle>
+          <CardTitle className="text-base">Website Information</CardTitle>
           <CardDescription>Details about your website content and purpose</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -423,7 +423,7 @@ export const ICPFilingForm = () => {
 
       <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
-          <CardTitle className="text-lg">Required Documents</CardTitle>
+          <CardTitle className="text-base">Required Documents</CardTitle>
           <CardDescription>Province-specific document requirements</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -555,7 +555,7 @@ export const ICPFilingForm = () => {
 
       <Card className="bg-workspace-surface border-white/[0.07]">
         <CardHeader>
-          <CardTitle className="text-lg">Application Summary</CardTitle>
+          <CardTitle className="text-base">Application Summary</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid grid-cols-2 gap-4 text-sm">

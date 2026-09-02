@@ -7,7 +7,6 @@
  * templates moved to their own page (Designs.tsx).
  */
 import { useState, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { supabase, lovableCloud } from '@/integrations/supabase/client';
 import { useOrganization } from '@/contexts/OrganizationContext';
@@ -636,15 +635,13 @@ export default function DashboardProjects() {
       ) : (
         <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3' : 'space-y-3'}>
           {filteredProjects.map((project, i) => (
-            <motion.div
+            <div
+              className="animate-msg-appear"
               key={project.id}
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: Math.min(i, 8) * 0.04, ease: [0.16, 1, 0.3, 1] }}
             >
               <Card
-                className={`group flex cursor-pointer flex-col overflow-hidden rounded-xl transition-all duration-300 hover:-translate-y-0.5 ${project.organization_id
-                  ? 'border-border/60 shadow-[0_8px_24px_hsl(220_45%_5%/0.16)] hover:border-primary/40 hover:shadow-[0_18px_44px_hsl(220_45%_5%/0.3)]'
+                className={`group flex cursor-pointer flex-col overflow-hidden rounded-xl transition-colors duration-150 ${project.organization_id
+                  ? 'border-border/60 hover:border-primary/40'
                   : 'border-amber-500/40 bg-amber-500/[0.04] hover:border-amber-500/60'
                   }`}
                 onClick={() => {
@@ -714,7 +711,7 @@ export default function DashboardProjects() {
                   )}
                 </CardContent>
               </Card>
-            </motion.div>
+            </div>
           ))}
         </div>
       )}

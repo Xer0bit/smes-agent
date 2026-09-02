@@ -104,6 +104,12 @@ export default {
       transitionDuration: {
         smooth: '300ms',
       },
+      // The app's one easing for motion that changes size or position
+      // (sidebar width, panel widths). Arbitrary `ease-[cubic-bezier(...)]`
+      // classes are ambiguous to Tailwind and get dropped silently.
+      transitionTimingFunction: {
+        smooth: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      },
       // Fraunces + Manrope are already @import'd in src/index.css (line 1) but
       // were never wired to a Tailwind utility, so neither font was actually
       // reachable anywhere in the app. font-display / font-body activate them.

@@ -13,6 +13,7 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "test": "vitest run",
+    "cloud:check": "node scripts/ecg-cloud-check.mjs",
     "test:usage-quota": "node verify_usage_quota.js",
     "test:watch": "vitest",
     "lint": "eslint .",

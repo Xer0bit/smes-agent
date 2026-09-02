@@ -3,7 +3,8 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { useEffect, useState, lazy, Suspense } from "react";
+import { useEffect, useState, lazy, Suspense, type ReactNode } from "react";
+import { useApplyTheme } from "@/lib/theme";
 import { OrganizationProvider } from "./contexts/OrganizationContext";
 import { SubscriptionProvider } from "./contexts/SubscriptionContext";
 import { UsageProvider } from "./contexts/UsageContext";
@@ -12,7 +13,9 @@ import RouteLoadingFallback from "./components/RouteLoadingFallback";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
-import Editor from "./pages/Editor";
+// The editor is the heaviest route and never the first paint of a cold visit;
+// it loads as its own chunk behind a dark shell skeleton.
+const Editor = lazy(() => import("./pages/Editor"));
 import { DashboardLayout } from "./pages/Dashboard";
 // Route-level code-splitting: these previously all imported eagerly, bundling
 // marketing pages, dashboard pages, and rarely-hit utility routes into one
@@ -22,6 +25,37 @@ import { DashboardLayout } from "./pages/Dashboard";
 // code, and vice versa. Index/NotFound/Auth/AuthCallback stay eager: Index is
 // the very first paint most cold visitors hit, and Auth/AuthCallback are
 // needed immediately in the sign-in flow.
+/**
+ * The dashboard is the only light-capable surface; everything else was built
+ * on dark. Force `dark` on <html> off the dashboard so those pages and their
+ * portals (dialogs, sheets, popovers render on body) stay as designed.
+ */
+function ThemeScope({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
+  const onDashboard = pathname === '/dashboard' || pathname.startsWith('/dashboard/');
+  useApplyTheme(!onDashboard);
+  return <>{children}</>;
+}
+
+/** The editor's frame, drawn before its code arrives: sidebar, toolbar, an empty stage. */
+function EditorShellFallback() {
+  return (
+    <div className="flex h-screen w-screen overflow-hidden bg-[#09090b]">
+      <div className="hidden lg:flex w-[380px] shrink-0 flex-col border-r border-white/[0.06] bg-[#0c0c0e]">
+        <div className="h-10 border-b border-white/[0.06] px-3 flex items-center"><div className="skeleton h-3 w-28" /></div>
+        <div className="flex-1 p-4 space-y-3"><div className="skeleton h-3 w-32" /><div className="skeleton h-3 w-56" /></div>
+        <div className="p-2.5"><div className="skeleton h-[92px] w-full rounded-2xl" /></div>
+      </div>
+      <div className="flex flex-1 flex-col">
+        <div className="h-10 border-b border-white/[0.06] px-3 flex items-center gap-2">
+          <div className="skeleton h-5 w-16" /><div className="skeleton h-5 w-5" /><div className="skeleton h-5 w-5" /><div className="skeleton ml-auto h-6 w-20 rounded-full" />
+        </div>
+        <div className="flex-1 p-1"><div className="h-full w-full rounded-lg bg-[#0c0c0e] ring-1 ring-white/[0.06]" /></div>
+      </div>
+    </div>
+  );
+}
+
 const ProjectSettings = lazy(() => import("./pages/ProjectSettings"));
 const SeoManager = lazy(() => import("./pages/SeoManager"));
 const BatchValidate = lazy(() => import("./pages/BatchValidate"));
@@ -30,6 +64,7 @@ const WorkspaceSettings = lazy(() => import("./pages/dashboard/WorkspaceSettings
 const DashboardProjects = lazy(() => import("./pages/dashboard/Projects"));
 const DashboardDesigns = lazy(() => import("./pages/dashboard/Designs"));
 const EcgAgentsPage = lazy(() => import("./pages/dashboard/EcgAgents"));
+const EcgCloudPage = lazy(() => import("./pages/dashboard/EcgCloud"));
 const DashboardSettings = lazy(() => import("./pages/dashboard/Settings"));
 const AdminLogin = lazy(() => import("./pages/admin/Login"));
 const AdminApp = lazy(() => import("./pages/admin/AdminApp"));
@@ -112,6 +147,7 @@ const App = () => (
                   v7_relativeSplatPath: true,
                 }}
               >
+                <ThemeScope>
                 <Routes>
                 {/* Index has its own nav/footer from the v2 landing design */}
                 <Route path="/" element={<Index />} />
@@ -128,8 +164,8 @@ const App = () => (
                 </Route>
                 <Route path="/auth" element={<Auth />} />
                 <Route path="/auth/callback" element={<AuthCallback />} />
-                <Route path="/project/:projectId" element={<RequireAuth><Editor /></RequireAuth>} />
-                <Route path="/editor/:projectId" element={<RequireAuth><Editor /></RequireAuth>} />
+                <Route path="/project/:projectId" element={<RequireAuth><Suspense fallback={<EditorShellFallback />}><Editor /></Suspense></RequireAuth>} />
+                <Route path="/editor/:projectId" element={<RequireAuth><Suspense fallback={<EditorShellFallback />}><Editor /></Suspense></RequireAuth>} />
                 <Route path="/project/:projectId/settings" element={<RequireAuth><Suspense fallback={<RouteLoadingFallback />}><ProjectSettings /></Suspense></RequireAuth>} />
                 <Route path="/project/:projectId/seo" element={<RequireAuth><Suspense fallback={<RouteLoadingFallback />}><SeoManager /></Suspense></RequireAuth>} />
                 <Route path="/dashboard" element={<RequireAuth><DashboardLayout /></RequireAuth>}>
@@ -138,6 +174,7 @@ const App = () => (
                   <Route path="projects" element={<Suspense fallback={<RouteLoadingFallback />}><DashboardProjects /></Suspense>} />
                   <Route path="designs" element={<Suspense fallback={<RouteLoadingFallback />}><DashboardDesigns /></Suspense>} />
                   <Route path="ecg-agents" element={<Suspense fallback={<RouteLoadingFallback />}><EcgAgentsPage /></Suspense>} />
+                  <Route path="cloud" element={<Suspense fallback={<RouteLoadingFallback />}><EcgCloudPage /></Suspense>} />
                   <Route path="profile" element={<Navigate to="/dashboard/settings" replace />} />
                   <Route path="team" element={<Navigate to="/dashboard/organizations" replace />} />
                   <Route path="settings" element={<Suspense fallback={<RouteLoadingFallback />}><DashboardSettings /></Suspense>} />
@@ -151,6 +188,7 @@ const App = () => (
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
+                </ThemeScope>
             </BrowserRouter>
           </UsageProvider>
         </SubscriptionProvider>

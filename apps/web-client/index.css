@@ -1,11 +1,72 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  /* Light (white) dashboard palette. Same token names as .dark below; the
+     dashboard is the only surface that renders on it. */
   :root {
+    --background: 0 0% 98%;
+    --foreground: 220 20% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 12%;
+    --primary: 180 70% 34%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 180 70% 34%;
+    --secondary: 220 14% 94%;
+    --secondary-foreground: 220 20% 16%;
+    --muted: 220 14% 95%;
+    --muted-foreground: 220 10% 42%;
+    --accent: 220 14% 93%;
+    --accent-foreground: 220 20% 12%;
+    --trigger: 220 14% 94%;
+    --trigger-foreground: 220 20% 16%;
+    --destructive: 0 70% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 13% 88%;
+    --input: 220 13% 92%;
+    --ring: 180 70% 34%;
+    --radius: 0.625rem;
+    --gradient-hero: linear-gradient(hsl(0 0% 98%), hsl(0 0% 98%));
+    --gradient-primary: linear-gradient(hsl(180 70% 34%), hsl(180 70% 34%));
+    --gradient-accent: linear-gradient(hsl(220 14% 93%), hsl(220 14% 93%));
+    --gradient-card: linear-gradient(hsl(0 0% 100%), hsl(0 0% 100%));
+    --gradient-orange: linear-gradient(hsl(220 14% 93%), hsl(220 14% 93%));
+    --shadow-glow: 0 1px 2px hsl(220 30% 10% / 0.06);
+    --shadow-glow-accent: 0 1px 2px hsl(220 30% 10% / 0.06);
+    --shadow-elegant: 0 8px 24px hsl(220 30% 10% / 0.08);
+    --transition-smooth: all 0.15s ease-out;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+    --spring: cubic-bezier(0.16, 1, 0.3, 1);
+    --text-strong: var(--foreground);
+    --text-muted: var(--muted-foreground);
+    --text-soft: 220 10% 35%;
+    --action-primary: var(--primary);
+    --action-primary-contrast: var(--primary-foreground);
+    --action-secondary: var(--secondary);
+    --action-secondary-contrast: var(--secondary-foreground);
+    --feedback-success: 145 45% 36%;
+    --feedback-warning: 32 70% 42%;
+    --feedback-danger: var(--destructive);
+    --feedback-info: 198 60% 40%;
+    --focus-ring: var(--ring);
+    --interactive-hover: 220 14% 94%;
+    --interactive-active: 220 14% 90%;
+    --elev-1: 0 1px 2px hsl(220 30% 10% / 0.05);
+    --elev-2: 0 4px 12px hsl(220 30% 10% / 0.08);
+    --workspace-surface: 0 0% 100%;
+    --workspace-surface-recessed: 220 14% 96%;
+    --admin-surface: 0 0% 100%;
+    --admin-surface-dialog: 0 0% 100%;
+  }
+
+  /* Dark: the palette every surface was designed on. Applied via html.dark
+     (see lib/theme.ts); non-dashboard routes force it. */
+  .dark {
     /* ── Minimal design language ───────────────────────────────────────────
      * One accent (cyan --primary), everything else collapsed to neutral
      * grayscale. Gradients removed (solid fallbacks kept under the same
@@ -14,38 +75,38 @@
      * single moderate scale (not pill-shaped). Spring/bounce easing
      * replaced with ease-out everywhere by default.
      */
-    --background: 210 18% 10%;
+    --background: 240 6% 4%;
     --foreground: 210 20% 96%;
-    --card: 210 16% 13%;
+    --card: 240 7% 7%;
     --card-foreground: 210 20% 96%;
-    --popover: 210 16% 13%;
+    --popover: 240 7% 7%;
     --popover-foreground: 210 20% 96%;
     --primary: 180 70% 45%;
     --primary-foreground: 210 18% 10%;
     --primary-glow: 180 70% 45%;
-    --secondary: 210 14% 22%;
+    --secondary: 240 5% 12%;
     --secondary-foreground: 210 20% 96%;
-    --muted: 210 14% 20%;
-    --muted-foreground: 210 10% 62%;
-    --accent: 210 14% 22%;
+    --muted: 240 5% 11%;
+    --muted-foreground: 240 5% 60%;
+    --accent: 240 5% 12%;
     --accent-foreground: 210 20% 96%;
-    --trigger: 210 14% 22%;
+    --trigger: 240 5% 12%;
     --trigger-foreground: 210 20% 96%;
     --destructive: 0 70% 55%;
     --destructive-foreground: 210 20% 96%;
-    --border: 210 14% 20%;
-    --input: 210 14% 16%;
+    --border: 240 5% 14%;
+    --input: 240 6% 9%;
     --ring: 180 70% 45%;
     --radius: 0.625rem;
     /* Flat (non-visible) linear-gradients: kept as gradients, not plain
        colors, because these feed Tailwind's backgroundImage theme key
        (background-image: var(...)) -- a bare color is an invalid value
        there and silently drops, which breaks bg-clip-text usages. */
-    --gradient-hero: linear-gradient(hsl(210 18% 10%), hsl(210 18% 10%));
+    --gradient-hero: linear-gradient(hsl(240 6% 4%), hsl(240 6% 4%));
     --gradient-primary: linear-gradient(hsl(180 70% 45%), hsl(180 70% 45%));
-    --gradient-accent: linear-gradient(hsl(210 14% 22%), hsl(210 14% 22%));
-    --gradient-card: linear-gradient(hsl(210 16% 13%), hsl(210 16% 13%));
-    --gradient-orange: linear-gradient(hsl(210 14% 22%), hsl(210 14% 22%));
+    --gradient-accent: linear-gradient(hsl(240 5% 12%), hsl(240 5% 12%));
+    --gradient-card: linear-gradient(hsl(240 7% 7%), hsl(240 7% 7%));
+    --gradient-orange: linear-gradient(hsl(240 5% 12%), hsl(240 5% 12%));
     --shadow-glow: 0 1px 2px hsl(220 45% 3% / 0.3);
     --shadow-glow-accent: 0 1px 2px hsl(220 45% 3% / 0.3);
     --shadow-elegant: 0 8px 24px hsl(220 45% 3% / 0.24);
@@ -60,7 +121,7 @@
     --surface-3: 210 14% 19%;
     --text-strong: var(--foreground);
     --text-muted: var(--muted-foreground);
-    --text-soft: 210 10% 70%;
+    --text-soft: 240 5% 68%;
     --action-primary: var(--primary);
     --action-primary-contrast: var(--primary-foreground);
     --action-secondary: var(--secondary);
@@ -70,10 +131,10 @@
     --feedback-danger: var(--destructive);
     --feedback-info: 198 55% 52%;
     --focus-ring: var(--ring);
-    --interactive-hover: 210 14% 18%;
-    --interactive-active: 210 14% 22%;
-    --elev-1: 0 1px 3px hsl(220 45% 3% / 0.2);
-    --elev-2: 0 4px 12px hsl(220 45% 3% / 0.24);
+    --interactive-hover: 240 5% 9%;
+    --interactive-active: 240 5% 12%;
+    --elev-1: 0 1px 3px hsl(240 10% 2% / 0.4);
+    --elev-2: 0 4px 12px hsl(240 10% 2% / 0.5);
 
     /* ── Workspace tokens (editor, settings, in-app chrome) ──────────────────
      * Deliberately separate from the --surface and --background tokens above: those serve
@@ -146,20 +207,17 @@
     border-radius: 4px;
   }
 
-  /* ── Button press micro-interaction ─────────────────────────────────────── */
-  button:not(:disabled) {
-    transition: transform 0.1s cubic-bezier(0.34, 1.56, 0.64, 1),
-                opacity 0.15s ease;
-  }
-  button:not(:disabled):active {
-    transform: scale(0.95);
-  }
+  /* Buttons change colour on press, never size: the global scale(0.95) on
+     :active made every click in the app bounce. */
+  /* No press-scale on buttons (the old global :active scale(0.95) made every
+     click bounce). Colour, border and opacity still ease below; a separate
+     button rule here would outrank that one and make clicks snap. */
 
   /* ── Smooth color transitions on interactive elements ──────────────────── */
-  a, button, [role="button"] {
-    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
-    transition-duration: 150ms;
-    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  a, button, [role="button"], input, select, textarea, [data-state] {
+    transition-property: color, background-color, border-color, box-shadow, opacity;
+    transition-duration: 160ms;
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   /* Input transitions */
@@ -337,7 +395,7 @@
   .animate-fade-in-down  { animation: fade-in-down 0.22s ease-out both; }
   .animate-slide-in-right { animation: slide-in-right 0.25s cubic-bezier(0.16,1,0.3,1) both; }
   .animate-slide-in-left  { animation: slide-in-left 0.25s cubic-bezier(0.16,1,0.3,1) both; }
-  .animate-scale-in      { animation: scale-in 0.22s cubic-bezier(0.34,1.56,0.64,1) both; }
+  .animate-scale-in      { animation: msg-appear 0.18s ease-out both; }
   .animate-float         { animation: float 3.5s ease-in-out infinite; }
   .animate-shimmer       { animation: shimmer 1.8s ease-in-out infinite; }
   .animate-border-flash  { animation: border-flash 4s ease-in-out infinite; }
@@ -345,9 +403,9 @@
   .animate-blink              { animation: blink 0.85s step-end infinite; }
   .animate-pulse-dot     { animation: pulse-dot 1.2s ease-in-out infinite; }
   .animate-pulse-subtle  { animation: pulse-subtle 2s ease-in-out infinite; }
-  .animate-slide-in-file { animation: slide-in-file 0.22s cubic-bezier(0.34,1.56,0.64,1) both; }
+  .animate-slide-in-file { animation: msg-appear 0.18s ease-out both; }
   .animate-msg-appear    { animation: msg-appear 0.18s ease-out both; }
-  .animate-chip-pop      { animation: chip-pop 0.22s cubic-bezier(0.34,1.56,0.64,1) both; }
+  .animate-chip-pop      { animation: msg-appear 0.18s ease-out both; }
   .animate-thinking-1    { animation: thinking-dot 1.1s ease-in-out infinite; }
   .animate-thinking-2    { animation: thinking-dot 1.1s ease-in-out 0.18s infinite; }
   .animate-thinking-3    { animation: thinking-dot 1.1s ease-in-out 0.36s infinite; }
@@ -355,7 +413,7 @@
   .animate-glow-breathe  { animation: glow-breathe 2.5s ease-in-out infinite; }
   .animate-status-in     { animation: status-in 0.18s ease-out both; }
   .animate-ping-ring     { animation: ping-ring 1.4s cubic-bezier(0,0,0.2,1) infinite; }
-  .animate-count-in      { animation: count-in 0.2s cubic-bezier(0.34,1.56,0.64,1) both; }
+  .animate-count-in      { animation: msg-appear 0.18s ease-out both; }
   .animate-panel-enter   { animation: panel-enter 0.3s cubic-bezier(0.16,1,0.3,1) both; }
   .animate-page-enter    { animation: page-enter 0.35s cubic-bezier(0.16,1,0.3,1) both; }
 
@@ -374,7 +432,7 @@
   .skeleton {
     position: relative;
     overflow: hidden;
-    background: rgba(255,255,255,0.04);
+    background: hsl(var(--foreground) / 0.06);
     border-radius: 6px;
   }
   .skeleton::after {
@@ -407,7 +465,7 @@
 
   /* ── Interactive lift ───────────────────────────────────────────────────── */
   .hover-lift {
-    transition: transform 0.2s cubic-bezier(0.34,1.56,0.64,1),
+    transition: transform 0.2s ease-out,
                 box-shadow 0.2s ease;
   }
   .hover-lift:hover {
@@ -444,7 +502,7 @@
 
   /* ── Tooltip animation ──────────────────────────────────────────────────── */
   [data-radix-tooltip-content] {
-    animation: tooltip-pop 0.15s cubic-bezier(0.34,1.56,0.64,1) both;
+    animation: tooltip-pop 0.15s ease-out both;
   }
 
   /* ── Popover / dropdown ─────────────────────────────────────────────────── */
@@ -452,12 +510,12 @@
     z-index: 9999 !important;
   }
   [data-radix-popper-content-wrapper] > * {
-    animation: scale-in 0.15s cubic-bezier(0.34,1.56,0.64,1) both;
+    animation: scale-in 0.15s ease-out both;
   }
 
   /* ── Dialog ─────────────────────────────────────────────────────────────── */
   [role="dialog"] {
-    animation: scale-in 0.22s cubic-bezier(0.34,1.56,0.64,1) both;
+    animation: scale-in 0.22s ease-out both;
   }
 
   /* ── Select content ─────────────────────────────────────────────────────── */
@@ -475,4 +533,21 @@
       transition-duration: 0.01ms !important;
     }
   }
+}
+
+/* ── Preview placeholder: a page wireframe assembling itself ─────────────── */
+@keyframes eg-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes eg-draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes eg-pop  { 0% { opacity: 0; transform: scale(0.94); } 60% { opacity: 1; transform: scale(1.02); } 100% { transform: scale(1); } }
+@keyframes eg-sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }
+@keyframes eg-cursor { 0%, 100% { transform: translate(0, 0); } 30% { transform: translate(140px, 54px); } 60% { transform: translate(60px, 120px); } 85% { transform: translate(200px, 90px); } }
+@keyframes eg-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+.eg-scene > * { animation: eg-rise 0.6s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.eg-bar    { transform-origin: left; animation: eg-draw 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.eg-card   { animation: eg-pop 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.eg-cursor { animation: eg-cursor 8s ease-in-out infinite; }
+.eg-sweep  { animation: eg-sweep 2.4s ease-in-out infinite; }
+.eg-pulse  { animation: eg-pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .eg-scene > *, .eg-bar, .eg-card, .eg-cursor, .eg-sweep, .eg-pulse { animation: none !important; opacity: 1 !important; transform: none !important; }
 }

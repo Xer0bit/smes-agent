@@ -8,7 +8,6 @@
  * pre-emit critique: P4 H4 E4 S4 R4 V4
  */
 import { useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -359,11 +358,8 @@ export default function DashboardHome() {
     <div className="space-y-6 px-5 py-6 sm:px-6 lg:px-8">
 
       {/* ── Hero: greeting + prompt bar ── */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-        className="relative overflow-hidden rounded-2xl border border-border/60 bg-card px-6 py-16 sm:px-10 lg:py-24"
+      <div
+        className="animate-msg-appear relative overflow-hidden rounded-2xl border border-border/60 bg-card px-6 py-16 sm:px-10 lg:py-24"
       >
         <div className="relative mx-auto max-w-2xl text-center">
           {invitationCount > 0 && (
@@ -378,7 +374,7 @@ export default function DashboardHome() {
             Describe what you want and I&apos;ll start a new project around it.
           </p>
 
-          <div className="mt-9 rounded-2xl border border-border/60 bg-background/70 p-3 text-left shadow-[var(--elev-2)] transition-colors duration-150 focus-within:border-primary/50">
+          <div className="mt-9 rounded-2xl border border-border/60 bg-background/70 p-3 text-left transition-colors duration-150 focus-within:border-primary/50">
             {attachedFiles.length > 0 && (
               <div className="mb-2.5 flex flex-wrap gap-1.5">
                 {attachedFiles.map((file, i) => (
@@ -432,7 +428,7 @@ export default function DashboardHome() {
             </div>
           </div>
         </div>
-      </motion.div>
+      </div>
 
       {/* ── Recent projects ── */}
       <div>
@@ -457,21 +453,18 @@ export default function DashboardHome() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {recentProjects.map((project, i) => (
-              <motion.button
+              <button
                 key={project.id}
                 type="button"
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.35, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
                 onClick={() => navigate(`/project/${project.id}`)}
-                className="group overflow-hidden rounded-xl border border-border/60 bg-card text-left shadow-[var(--elev-1)] transition-shadow duration-200 hover:shadow-[var(--elev-2)]"
+                className="animate-msg-appear group overflow-hidden rounded-xl border border-border/60 bg-card text-left transition-colors duration-150 hover:border-border"
               >
                 <ProjectThumbnail projectName={project.name} thumbnailUrl={project.thumbnail_url} previewUrl={null} />
                 <div className="p-4">
                   <p className="truncate font-display text-sm font-semibold text-foreground">{project.name}</p>
                   <p className="mt-1 text-xs text-muted-foreground">Updated {new Date(project.updated_at).toLocaleDateString()}</p>
                 </div>
-              </motion.button>
+              </button>
             ))}
           </div>
         )}
@@ -487,7 +480,7 @@ export default function DashboardHome() {
 
           {/* Invitations */}
           {!loadingInvitations && invitationCount > 0 ? (
-            <div className="rounded-xl border border-border/60 bg-card p-6 shadow-[var(--elev-1)]">
+            <div className="rounded-xl border border-border/60 bg-card p-6">
               <div className="mb-5 flex items-center justify-between">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Collaboration</p>
@@ -554,7 +547,7 @@ export default function DashboardHome() {
               </div>
             </div>
           ) : (
-            <div className="rounded-xl border border-border/60 bg-card p-6 shadow-[var(--elev-1)]">
+            <div className="rounded-xl border border-border/60 bg-card p-6">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Collaboration</p>
@@ -574,7 +567,7 @@ export default function DashboardHome() {
         <div className="space-y-4">
 
           {/* Quick access */}
-          <div className="rounded-xl border border-border/60 bg-card p-5 shadow-[var(--elev-1)]">
+          <div className="rounded-xl border border-border/60 bg-card p-5">
             <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Actions</p>
             <p className="mt-1.5 text-sm font-medium text-foreground">Quick access</p>
             <div className="mt-4 space-y-1">
@@ -597,7 +590,7 @@ export default function DashboardHome() {
           </div>
 
           {/* AI Agents promo */}
-          <div className="relative overflow-hidden rounded-xl border border-primary/20 bg-card p-5 shadow-[var(--elev-1)]">
+          <div className="relative overflow-hidden rounded-xl border border-primary/20 bg-card p-5">
             <div className="relative">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
                 <Bot className="h-5 w-5 text-primary" />

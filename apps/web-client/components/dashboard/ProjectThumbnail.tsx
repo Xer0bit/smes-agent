@@ -14,7 +14,8 @@ function nameToGradient(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff;
   const hue = h % 360;
-  return `linear-gradient(135deg, hsl(${hue},60%,18%) 0%, hsl(${(hue + 40) % 360},50%,12%) 100%)`;
+  // One flat tint per project name; no gradient.
+  return `hsl(${hue},40%,14%)`;
 }
 
 export function ProjectThumbnail({ projectName, thumbnailUrl, previewUrl }: ProjectThumbnailProps) {
@@ -85,16 +86,7 @@ export function ProjectThumbnail({ projectName, thumbnailUrl, previewUrl }: Proj
             />
           )}
 
-          {/* ── Shimmer while iframe loads ───────────────────────────── */}
-          {loadState === 'loading' && (
-            <div className="absolute inset-0 overflow-hidden">
-              <div className="absolute inset-0 animate-pulse bg-white/5" />
-              <div
-                className="absolute inset-0 -translate-x-full animate-[shimmer_1.8s_infinite]"
-                style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.06) 50%, transparent 100%)' }}
-              />
-            </div>
-          )}
+          {loadState === 'loading' && <div className="skeleton absolute inset-0 rounded-none" />}
 
           {/* ── Placeholder when no preview and no iframe loaded ────── */}
           {(loadState === 'idle' || loadState === 'error') && (
@@ -109,19 +101,16 @@ export function ProjectThumbnail({ projectName, thumbnailUrl, previewUrl }: Proj
         </>
       )}
 
-      {/* ── Subtle bottom gradient ───────────────────────────────────── */}
-      <div className="absolute bottom-0 inset-x-0 h-12 bg-gradient-to-t from-black/40 to-transparent pointer-events-none" />
-
       {/* ── Hover overlay ────────────────────────────────────────────── */}
       {isHovered && (
-        <div className="absolute inset-0 bg-black/50 flex items-center justify-center gap-2 backdrop-blur-[1px] transition-all">
+        <div className="absolute inset-0 bg-black/55 flex items-center justify-center gap-2 transition-colors">
           {previewUrl && (
             <a
               href={previewUrl}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="flex items-center gap-1.5 bg-white/15 backdrop-blur-sm text-white text-xs font-medium px-3 py-1.5 rounded-lg border border-white/25 hover:bg-white/25 transition-colors"
+              className="flex items-center gap-1.5 bg-white/15 text-white text-xs font-medium px-3 py-1.5 rounded-lg border border-white/25 hover:bg-white/25 transition-colors"
             >
               <ExternalLink className="h-3.5 w-3.5" />
               Open Preview

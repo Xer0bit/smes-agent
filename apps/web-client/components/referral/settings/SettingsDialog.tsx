@@ -58,7 +58,7 @@ export const SettingsDialog = ({
             </div>
             <button
               onClick={() => onOpenChange(false)}
-              className="flex items-center gap-1.5 h-7 px-2.5 rounded-md text-white/60 hover:text-white/90 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.07] text-[11px] font-medium transition-colors duration-smooth active:scale-95"
+              className="flex items-center gap-1.5 h-7 px-2.5 rounded-md text-white/60 hover:text-white/90 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.07] text-[11px] font-medium transition-colors duration-smooth"
               title="Back to project (Esc)"
             >
               <ArrowLeft className="h-3 w-3" />
