@@ -1,10 +1,9 @@
-import React, { useState } from 'react';
+import React, { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { Copy, Check } from 'lucide-react';
 import { FileText } from 'lucide-react';
-import agentLogo from '@/assets/ecgagent.png';
 
 // ─── Code block ───────────────────────────────────────────────────────────────
 
@@ -86,18 +85,24 @@ interface ChatMessageProps {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status, attachments }) => {
+/**
+ * Memoised: the panel re-renders on every streamed chunk, and each render used
+ * to re-parse the markdown of EVERY message in the list, not just the one
+ * still streaming. Props are primitives plus a stable attachments array, so a
+ * shallow compare is exact.
+ */
+export const ChatMessage = memo(function ChatMessage({ role, content, status, attachments }: ChatMessageProps) {
 
   // ── User bubble ──────────────────────────────────────────────────────────────
   if (role === 'user') {
     return (
       <div className="flex justify-end animate-msg-appear">
-        <div className="max-w-[82%] group">
+        <div className="max-w-[85%]">
           {attachments && attachments.length > 0 && (
             <div className="mb-1.5 flex flex-wrap gap-1.5 justify-end">
               {attachments.map((att) =>
                 att.category === 'image' ? (
-                  <div key={att.id} className="rounded-xl overflow-hidden ring-1 ring-white/10">
+                  <div key={att.id} className="rounded-lg overflow-hidden ring-1 ring-white/10">
                     <img
                       src={att.previewUrl}
                       alt={att.name}
@@ -117,10 +122,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
             </div>
           )}
           {content && (
-            <div className="relative px-3.5 py-2.5 rounded-2xl rounded-tr-sm
-              bg-primary/[0.14]
-              border border-primary/[0.2]
-              text-[12.5px] text-gray-100 leading-[1.65] whitespace-pre-wrap break-words">
+            <div className="px-3.5 py-2 rounded-2xl bg-white/[0.06] text-[13px] text-gray-100 leading-[1.6] whitespace-pre-wrap break-words">
               {content}
             </div>
           )}
@@ -129,16 +131,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
     );
   }
 
-  // ── Assistant pending   three-dot thinking ────────────────────────────────────
-  if (status === 'pending') {
+  // ── Assistant: waiting for the first token ──────────────────────────────────
+  // No avatar, no gutter: the reply renders full-width like a document, and
+  // the only signal that something is happening is these dots, in the exact
+  // spot the first line of text will land.
+  const waiting = status === 'pending' || (status === 'streaming' && !content.trim());
+  if (waiting) {
     return (
-      <div className="flex items-start gap-2 animate-msg-appear">
-        <AvatarBadge thinking />
-        <div className="flex items-center gap-1 h-6 px-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400/60 animate-thinking-1" />
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400/60 animate-thinking-2" />
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400/60 animate-thinking-3" />
-        </div>
+      <div className="flex items-center gap-1 h-6 animate-msg-appear" aria-label="Thinking">
+        <span className="w-1.5 h-1.5 rounded-full bg-gray-400/70 animate-thinking-1" />
+        <span className="w-1.5 h-1.5 rounded-full bg-gray-400/70 animate-thinking-2" />
+        <span className="w-1.5 h-1.5 rounded-full bg-gray-400/70 animate-thinking-3" />
       </div>
     );
   }
@@ -146,106 +149,47 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, status,
   // ── Assistant error ───────────────────────────────────────────────────────────
   if (status === 'error') {
     return (
-      <div className="flex items-start gap-2 animate-msg-appear">
-        <AvatarBadge error />
-        <div className="flex-1 min-w-0 px-3.5 py-2 rounded-xl rounded-tl-sm
-          bg-red-500/[0.06] border border-red-500/[0.15] text-[12px] text-red-400/80 leading-relaxed">
-          {content}
-        </div>
+      <div className="animate-msg-appear px-3 py-2 rounded-lg border-l-2 border-red-400/60 bg-red-500/[0.05] text-[12.5px] text-red-300/90 leading-relaxed">
+        {content}
       </div>
     );
   }
 
-  // ── Assistant streaming / complete ────────────────────────────────────────────
-  const isStreaming = status === 'streaming';
-  // Before any text has arrived, show the same three-dot "thinking" language as the
-  // pending state instead of a second, differently-worded status line   the detailed
-  // headline (what file, how long) lives once, in AgentChatPanel's status ticker below.
-  const showThinkingDots = isStreaming && !content.trim();
-
+  // ── Assistant text ────────────────────────────────────────────────────────────
+  // Streaming and complete render identically. Text arriving from the network
+  // is its own progress indicator; the cursor, the pulsing side bar and the
+  // per-paragraph blur reveal that used to accompany it were three animations
+  // competing for the same 380px, and the cursor sat on its own line under
+  // the text because it was a sibling of the markdown block, not part of it.
   return (
-    <div className="flex items-start gap-2 animate-msg-appear">
-      <AvatarBadge streaming={isStreaming} />
-
-      {/* Pulsing left accent   sits outside the content box so it's never clipped */}
-      {isStreaming && (
-        <div
-          aria-hidden="true"
-          className="w-[2px] self-stretch rounded-full shrink-0 animate-stream-border"
-          style={{
-            background: 'linear-gradient(180deg, #a78bfa 0%, #6366f1 55%, transparent 100%)',
-          }}
-        />
-      )}
-
-      <div className="flex-1 min-w-0 relative">
-        <div className={isStreaming ? 'animate-fade-in-stream' : ''}>
-          {showThinkingDots ? (
-            <div className="flex items-center gap-1 h-6 px-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400/60 animate-thinking-1" />
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400/60 animate-thinking-2" />
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400/60 animate-thinking-3" />
-            </div>
-          ) : (
-            <MarkdownBody content={content} />
-          )}
-        </div>
-
-        {/* Premium gradient cursor with glow */}
-        {isStreaming && (
-          <span
-            className="inline-block w-[2.5px] h-[15px] rounded-full ml-0.5 animate-cursor-glow align-middle"
-            style={{
-              background: 'linear-gradient(180deg, #c4b5fd 0%, #818cf8 100%)',
-            }}
-          />
-        )}
-      </div>
+    <div className="animate-msg-appear min-w-0">
+      <MarkdownBody content={content} />
     </div>
   );
-};
+});
 
 export default ChatMessage;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function AvatarBadge({ error = false, streaming = false, thinking = false }: {
-  error?: boolean; streaming?: boolean; thinking?: boolean;
-}) {
-  if (error) {
-    return (
-      <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5
-        bg-red-600/20 border border-red-500/30">
-        <span className="text-[8px] font-bold text-red-400">!</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`w-5 h-5 shrink-0 mt-0.5 overflow-hidden transition-opacity duration-300 ${thinking ? 'opacity-60 animate-pulse' : 'opacity-100'}`}>
-      <img src={agentLogo} alt="Agent" className="w-full h-full object-contain" />
-    </div>
-  );
-}
 
 function MarkdownBody({ content }: { content: string }) {
   return (
     <div
       className={`
         prose prose-sm prose-invert max-w-none
-        prose-p:text-[12.5px] prose-p:text-gray-200/90 prose-p:leading-[1.7] prose-p:my-1.5 first:prose-p:mt-0 last:prose-p:mb-0
+        prose-p:text-[13px] prose-p:text-gray-200/90 prose-p:leading-[1.65] prose-p:my-2 first:prose-p:mt-0 last:prose-p:mb-0
         prose-headings:text-white prose-headings:font-semibold
         prose-h1:text-[14px] prose-h1:mt-3 prose-h1:mb-1.5 prose-h1:tracking-tight
-        prose-h2:text-[13px] prose-h2:mt-2.5 prose-h2:mb-1
-        prose-h3:text-[12px] prose-h3:mt-2 prose-h3:mb-1 prose-h3:text-white/80
-        prose-ul:my-1.5 prose-ul:pl-3.5
-        prose-ol:my-1.5 prose-ol:pl-3.5
-        prose-li:text-[12px] prose-li:text-gray-200/85 prose-li:my-0
-        prose-li:marker:text-indigo-400/50
+        prose-h2:text-[13.5px] prose-h2:mt-3 prose-h2:mb-1
+        prose-h3:text-[13px] prose-h3:mt-2.5 prose-h3:mb-1 prose-h3:text-white/85
+        prose-ul:my-2 prose-ul:pl-4
+        prose-ol:my-2 prose-ol:pl-4
+        prose-li:text-[13px] prose-li:text-gray-200/85 prose-li:my-0.5
+        prose-li:marker:text-gray-500
         prose-strong:text-white prose-strong:font-semibold
         prose-em:text-gray-300 prose-em:italic
-        prose-a:text-indigo-400/90 prose-a:no-underline hover:prose-a:underline prose-a:underline-offset-2
-        prose-blockquote:border-l-2 prose-blockquote:border-indigo-500/40 prose-blockquote:text-gray-400 prose-blockquote:not-italic prose-blockquote:pl-3 prose-blockquote:py-0.5 prose-blockquote:my-2
+        prose-a:text-indigo-300 prose-a:no-underline hover:prose-a:underline prose-a:underline-offset-2
+        prose-blockquote:border-l-2 prose-blockquote:border-white/15 prose-blockquote:text-gray-400 prose-blockquote:not-italic prose-blockquote:pl-3 prose-blockquote:py-0.5 prose-blockquote:my-2
         prose-hr:border-white/[0.07] prose-hr:my-3
         prose-table:text-xs
         prose-th:text-gray-400 prose-th:bg-white/[0.03] prose-th:font-medium prose-th:text-[11px]

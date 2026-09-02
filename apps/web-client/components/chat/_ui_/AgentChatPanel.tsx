@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowUp, Square, Loader2, StopCircle, ChevronDown, Paperclip, X, FileText, RotateCcw, Sparkles, MousePointerClick, ShieldAlert } from 'lucide-react';
-import ecgAgentLogo from '@/assets/ecgagent.png';
+import { ArrowUp, Square, Loader2, StopCircle, ChevronDown, Paperclip, X, FileText, RotateCcw, MousePointerClick, ShieldAlert } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import type { MagicCursorTarget } from '@/pages/editor/types';
@@ -35,6 +34,7 @@ import {
   tokenize,
   relevanceScore,
   seededChatAttachment,
+  perFrame,
 } from '../_utils_/agentChatHelpers';
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -512,8 +512,14 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   //     even though the message content was already fully up to date.
   useEffect(() => {
     if (skipAutoScrollRef.current) { skipAutoScrollRef.current = false; return; }
-    const el = scrollRef.current;
-    if (el && isNearBottomRef.current) el.scrollTop = el.scrollHeight;
+    if (!isNearBottomRef.current) return;
+    // Deferred a frame: reading scrollHeight right after a commit forces a
+    // synchronous layout on every streamed update.
+    const frame = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [messages, statusText, pendingAdminSql.length]);
 
   // ── Load older messages when scrolled to top ──────────────────────────────
@@ -674,6 +680,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               let currentContent = '';
               let toolXmlAccum = '';
               let generationDone = false;
+              const paint = perFrame(() => {
+                if (generationDone || cancelled) return;
+                const displayContent = stripEcomgearTags(currentContent);
+                setMessages(prev => prev.map(m => m.id === asstId
+                  ? { ...m, content: displayContent, status: 'streaming' }
+                  : m));
+              });
 
               reconnectAbortRef.current = new AbortController();
               streamAgentGeneration({
@@ -684,9 +697,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   onTextDelta: (chunk) => {
                     if (generationDone || cancelled) return;
                     currentContent += chunk;
-                    setMessages(prev => prev.map(m => m.id === asstId
-                      ? { ...m, content: stripEcomgearTags(currentContent), status: 'streaming' }
-                      : m));
+                    paint.schedule();
                   },
                   onTextReset: () => {
                     // Cheap-first escalation superseded the previous attempt.
@@ -694,6 +705,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                     // duplicate of itself.
                     if (generationDone || cancelled) return;
                     currentContent = '';
+                    paint.cancel();
                     setMessages(prev => prev.map(m => m.id === asstId
                       ? { ...m, content: '', status: 'streaming' }
                       : m));
@@ -728,6 +740,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   },
                   onDone: (result) => {
                     generationDone = true;
+                    paint.cancel();
                     setIsGenerating(false);
                     setStatusText('');
                     const rawContent = currentContent || result.summary || '';
@@ -755,6 +768,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   },
                   onError: () => {
                     if (cancelled) return;
+                    paint.cancel();
                     setIsGenerating(false);
                     setStatusText('');
                     setMessages(prev => prev.filter(m => m.id !== asstId));
@@ -1035,6 +1049,19 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       const snapshot = [...stepsAccum];
       setMessages(prev => prev.map(m => (m.id === asstId ? { ...m, steps: snapshot } : m)));
     };
+    // One paint per frame for streamed text. The tag-stripping regexes and the
+    // live-tool scan run here, once per frame, instead of once per chunk.
+    const paint = perFrame(() => {
+      if (generationDone) return;
+      const displayContent = stripEcomgearTags(currentContent);
+      const liveTool = detectLiveTool(currentContent);
+      if (liveTool) pushStatus(liveTool);
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === asstId ? { ...m, content: displayContent, status: 'streaming' } : m
+        )
+      );
+    });
 
     try {
       abortRef.current = new AbortController();
@@ -1080,22 +1107,14 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             // prepended to it.
             if (generationDone) return;
             currentContent = '';
+            paint.cancel();
             setMessages(prev => prev.map(m => m.id === asstId ? { ...m, content: '' } : m));
           },
           onTextDelta: (chunk) => {
             if (generationDone) return;          // drop late post-done events
             onAgentStreamText?.(chunk);
             currentContent += chunk;
-            const displayContent = stripEcomgearTags(currentContent);
-
-            const liveTool = detectLiveTool(currentContent);
-            if (liveTool) pushStatus(liveTool);
-
-            setMessages(prev =>
-              prev.map(m =>
-                m.id === asstId ? { ...m, content: displayContent, status: 'streaming' } : m
-              )
-            );
+            paint.schedule();
           },
           onToolOutput: (xml) => {
             if (generationDone) return;
@@ -1203,6 +1222,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           },
           onDone: (result) => {
             generationDone = true;             // block any further text-delta updates
+            paint.cancel();
             setIsGenerating(false);
             setStatusText('');
             setLiveThought('');
@@ -1375,6 +1395,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             setTimeout(() => handleSubmit(autoFixPrompt, '🔧 Auto-fix', 'build', true), 300);
           },
           onError: (errMsg, serverMessageId) => {
+            paint.cancel();
             setIsGenerating(false);
             setStatusText('');
             setPlanTasks(prev => finalizeTasks(prev, true));
@@ -1556,7 +1577,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full w-full" style={{ background: 'radial-gradient(ellipse 80% 50% at 50% 0%, rgba(99,102,241,0.04) 0%, transparent 70%), #09090b' }}>
+    <div className="flex flex-col h-full w-full bg-[#0c0c0e]">
 
       {/* ── Header ── */}
       <div>
@@ -1582,7 +1603,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
       {/* ── Messages   plain div so scrollTop works directly ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0" aria-busy={isGenerating}>
-        <div className="px-3 py-3 space-y-3">
+        <div className="px-4 py-4 space-y-5">
           {/* Load-more indicator at top */}
           {isLoadingMore && (
             <div className="flex justify-center py-2">
@@ -1600,27 +1621,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           {dedupedMessages.map((msg, msgIndex) => (
             <div key={msg.id} className="group">
               {msg.id === 'greeting' ? (
-                <div className="relative overflow-hidden rounded-2xl p-4 mb-1"
-                  style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.18) 0%, rgba(139,92,246,0.14) 40%, rgba(6,182,212,0.08) 100%)' }}>
-                  {/* Grid dot texture */}
-                  <div className="absolute inset-0 opacity-[0.04]"
-                    style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.9) 1px, transparent 1px)' }} />
-                  {/* Glow orb */}
-                  <div className="absolute -top-6 -right-6 w-28 h-28 rounded-full opacity-20"
-                    style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.8), transparent 70%)' }} />
-                  <div className="relative z-10 flex items-center gap-3 mb-3">
-                    {/* Decorative -- the adjacent label already says "EcomGear Agent",
-                        so alt="" here (not a repeated alt text) prevents the browser
-                        from ever showing a second "EcomGear Agent" as broken-image
-                        fallback text, and avoids double-announcing it to screen readers. */}
-                    <img src={ecgAgentLogo} alt="" className="w-10 h-8 shrink-0" />
-                    <div>
-                      <p className="text-[13px] font-semibold text-white/90 leading-tight">EcomGear Agent</p>
-                      <p className="text-[10px] text-indigo-300/60 font-medium tracking-wide">App Builder · AI Powered</p>
-                    </div>
-                  </div>
-                  <p className="relative z-10 text-[12.5px] text-white/75 leading-relaxed">
-                    Welcome to <span className="font-semibold text-white">EcomGear App Builder</span> describe what you want to build and I'll generate it for you.
+                <div className="py-1">
+                  <p className="text-[13px] font-medium text-white/85">EcomGear Agent</p>
+                  <p className="text-[13px] text-white/45 leading-relaxed">
+                    Describe what you want to build or change, and I'll do it.
                   </p>
                 </div>
               ) : (<>
@@ -1672,7 +1676,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   Once done, one neutral count chip replaces what used to be
                   one colored pill per file. */}
               {msg.role === 'assistant' && msg.steps && msg.steps.length > 0 && msg.status !== 'streaming' && msg.status !== 'pending' && (
-                <div className="mt-1.5 ml-[30px]">
+                <div className="mt-2">
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-white/10 bg-white/[0.03] text-[10px] font-medium text-gray-400">
                     {msg.steps.length} {msg.steps.length === 1 ? 'change' : 'changes'}
                   </span>
@@ -1686,7 +1690,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   follow-up chips below. */}
               {((!isGuest && msg.role === 'assistant' && msg.status === 'complete' && !msg.isPlan && msg.snapshotId) ||
                 (msg.role === 'assistant' && msg.status === 'complete' && msg.suggestedCommands && msg.suggestedCommands.length > 0)) && (
-                <div className="mt-1.5 ml-[30px] flex flex-wrap gap-1.5">
+                <div className="mt-2 flex flex-wrap gap-1.5">
                   {!isGuest && !msg.isPlan && msg.snapshotId && (
                     <button
                       disabled={isGenerating || rollingBack}
@@ -1746,7 +1750,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
               {/* Follow-up suggestion chips   skeleton while Gemini is loading (null), chips when ready */}
               {msg.role === 'assistant' && msg.status === 'complete' && msg.followUpSuggestions !== undefined && !isGenerating && (
-                <div className="mt-2 ml-[30px]">
+                <div className="mt-2">
                   {msg.followUpSuggestions === null ? (
                     /* Skeleton loading chips */
                     <div className="flex flex-wrap gap-1.5">
@@ -1786,14 +1790,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               Never added to `messages`, so it's never part of the saved transcript;
               it just replaces itself each time a new `think` step arrives and
               disappears the moment the agent moves to a real action or finishes. ── */}
-          {isGenerating && liveThought && (
-            <div className="ml-[28px] mb-1 flex items-start gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5 max-w-[320px]" aria-hidden="true">
-              <Sparkles className="w-3 h-3 mt-0.5 shrink-0 text-indigo-300/60 animate-pulse" />
-              <p className="text-[11px] leading-snug text-white/40 italic line-clamp-3">
-                {liveThought}
-              </p>
-            </div>
-          )}
 
           {/* ── Live narration ──────────────────────────────────────────────
               One line, replaced in place as the agent works, gone when it
@@ -1804,13 +1800,17 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               not it said anything new. The narration was only ever visible
               inside that card, so surfacing it here is what makes removing the
               card safe rather than a silent loss of feedback. ── */}
-          {isGenerating && statusText && (
-            <div className="ml-[28px] mb-1 flex items-center gap-2" aria-live="polite">
-              <span className="relative flex h-1.5 w-1.5 shrink-0">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400/70" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-indigo-400" />
-              </span>
-              <p className="text-[11px] leading-snug text-white/55 truncate">{statusText}</p>
+          {isGenerating && (statusText || liveThought) && (
+            <div className="mb-1" aria-hidden="true">
+              {statusText && (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-3 h-3 shrink-0 animate-spin text-white/40" />
+                  <p className="text-[12px] leading-snug text-white/60 truncate">{statusText}</p>
+                </div>
+              )}
+              {liveThought && (
+                <p className="mt-1 pl-5 text-[12px] leading-snug text-white/35 line-clamp-2">{liveThought}</p>
+              )}
             </div>
           )}
 
@@ -1872,7 +1872,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       )}
 
       <div
-        className="p-2.5 border-t border-white/[0.06]"
+        className="p-2.5"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -1891,10 +1891,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         />
 
         <div
-          className={`rounded-3xl px-3 pt-3 pb-2 transition-all duration-200
+          className={`rounded-2xl px-3 pt-2.5 pb-2 transition-colors duration-150
             ${isDragOver
-              ? 'border border-primary/40 bg-[#0e0e14] shadow-[0_0_0_1px_rgba(45,212,191,0.22)]'
-              : 'border border-white/[0.08] bg-[#0c0c10] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04),0_8px_30px_rgba(0,0,0,0.24)] focus-within:border-primary/35 focus-within:shadow-[0_0_0_1px_rgba(45,212,191,0.18)]'}`}
+              ? 'border border-primary/40 bg-white/[0.04]'
+              : 'border border-white/[0.08] bg-white/[0.03] focus-within:border-white/20'}`}
         >
           <div className="max-h-[32vh] overflow-y-auto overscroll-contain pr-1 sm:max-h-[45vh]">
             {/* Drag overlay */}
@@ -1964,7 +1964,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 }
               }}
               disabled={isGenerating || !projectId}
-              className="min-h-[44px] max-h-[140px] w-full resize-none overflow-y-auto bg-transparent border-0 focus-visible:ring-0 shadow-none text-[12px] text-gray-200 placeholder:text-gray-600 px-0 py-1"
+              className="min-h-[44px] max-h-[140px] w-full resize-none overflow-y-auto bg-transparent border-0 focus-visible:ring-0 shadow-none text-[13px] text-gray-200 placeholder:text-gray-500 px-0 py-1"
             />
           </div>
 

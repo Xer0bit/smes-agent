@@ -2638,11 +2638,11 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
       {!isMobileViewport && <div
         ref={chatPanelRef}
         className={cn(
-          'order-1 flex-shrink-0 flex flex-col relative animate-panel-enter',
+          'order-1 flex-shrink-0 flex flex-col relative bg-[#0c0c0e]',
           'fixed lg:relative inset-y-0 left-0 lg:inset-auto lg:left-auto z-40 lg:z-auto',
           isMinimized ? 'w-14' : ''
         )}
-        style={!isMinimized ? { width: chatWidth, background: 'linear-gradient(180deg, #0f0f12 0%, #0c0c0e 100%)' } : undefined}
+        style={!isMinimized ? { width: chatWidth } : undefined}
       >
         {/* Drag-to-resize handle */}
         {!isMinimized && (
@@ -2656,7 +2656,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
           </div>
         )}
         {/* Header */}
-        <div className="h-10 flex items-center justify-between px-3 bg-[#131315]/60 backdrop-blur-xl border-b border-white/[0.04] relative z-[100]">
+        <div className="h-10 flex items-center justify-between px-3 border-b border-white/[0.06] relative z-[100]">
           {!isMinimized && (
             <>
               {isEditingProjectName ? (

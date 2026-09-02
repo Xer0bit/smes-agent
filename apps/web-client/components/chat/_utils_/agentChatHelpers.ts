@@ -253,3 +253,29 @@ export function seededChatAttachment(a: AgentAttachment): ChatAttachment {
     category: a.category,
   };
 }
+
+/**
+ * Collapse a burst of calls into one per animation frame.
+ *
+ * The SSE stream delivers text in chunks of a few characters, and each one
+ * used to run the tag-stripping regexes and a `setMessages` map, so the whole
+ * message list re-rendered and every message re-parsed its markdown many
+ * times per frame. Everything between two frames is invisible anyway, so
+ * one flush per frame loses nothing the user could have seen.
+ *
+ * `cancel` exists for the terminal handlers: a flush left queued behind
+ * `onDone` would overwrite the final message with the last streaming state.
+ */
+export function perFrame(flush: () => void): { schedule: () => void; cancel: () => void } {
+  let frame = 0;
+  return {
+    schedule() {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; flush(); });
+    },
+    cancel() {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+    },
+  };
+}
