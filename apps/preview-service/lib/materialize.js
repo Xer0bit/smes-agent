@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { PLACEHOLDER_APP_TSX } = require('./placeholderApp');
 const path = require('path');
 const crypto = require('crypto');
 const { activeServers } = require('./previewState');
@@ -451,18 +452,18 @@ function preprocessFile(filePath, content) {
     // intentional regardless of declaration keyword.
     if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx') || filePath.endsWith('.ts') || filePath.endsWith('.js')) {
         const before = fixed;
+        // VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are not platform-provided
+        // (2026-09-02): rewriting `supabaseUrl = undefined` to read them would
+        // just move the crash from module-eval to createClient with an empty
+        // URL. Those names are left for the agent to fix against the app's own
+        // auth functions.
         const KNOWN_ENV_VAR_NAMES = {
-            supabaseUrl: 'VITE_SUPABASE_URL',
-            supabaseAnonKey: 'VITE_SUPABASE_ANON_KEY',
             apiUrl: 'VITE_FUNCTIONS_API_URL',
             functionsApiUrl: 'VITE_FUNCTIONS_API_URL',
             anonKey: 'VITE_DB_ANON_KEY',
             dbApiUrl: 'VITE_DB_API_URL',
             dbAnonKey: 'VITE_DB_ANON_KEY',
             dbSchema: 'VITE_DB_SCHEMA',
-            SUPABASE_URL: 'VITE_SUPABASE_URL',
-            SUPABASE_ANON_KEY: 'VITE_SUPABASE_ANON_KEY',
-            SUPABASE_PUBLISHABLE_KEY: 'VITE_SUPABASE_ANON_KEY',
         };
         for (const [varName, envName] of Object.entries(KNOWN_ENV_VAR_NAMES)) {
             const re = new RegExp(`\\b((?:const|let)\\s+${varName}\\s*=\\s*)undefined(\\s*;)`, 'g');
@@ -883,19 +884,7 @@ function ensureEssentialFiles(projectRoot, userFiles) {
         if (!hasIndex) {
             const appPath = path.join(projectRoot, 'src', 'App.tsx');
             if (!fs.existsSync(appPath)) {
-                fs.writeFileSync(appPath, `function App() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="text-center p-8">
-        <h1 className="text-2xl font-bold text-gray-900">Preview Ready</h1>
-        <p className="text-gray-600 mt-2">Your app files have been loaded.</p>
-      </div>
-    </div>
-  );
-}
-
-export default App;
-`);
+                fs.writeFileSync(appPath, PLACEHOLDER_APP_TSX);
                 console.log(`[${path.basename(projectRoot)}] Created default App.tsx`);
             }
         }
@@ -1032,7 +1021,7 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
         // Security: block writes to sensitive directories that must never be
         // overwritten by agent-generated files.
         const topSegment = safePath.split('/')[0];
-        if (['node_modules', '.git', 'dist', '.cache', '.vite-cache', '.src-snapshot'].includes(topSegment)) {
+        if (['node_modules', '.deps', '.git', 'dist', '.cache', '.vite-cache', '.src-snapshot'].includes(topSegment)) {
             console.warn(`[Security] Write to protected directory blocked: "${safePath}"`);
             continue;
         }
@@ -1304,7 +1293,7 @@ const NEVER_PRUNE_EXT_RE = /\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3
 /** Count files a real fullSync would be expected to cover -- same walk/skip
  *  rules as pruneProjectFiles, used as the floor check before pruning. */
 function countProjectFiles(projectRoot) {
-    const protectedTopLevel = new Set(['node_modules', '.vite-cache', '.git', '.cache', '.src-snapshot']);
+    const protectedTopLevel = new Set(['node_modules', '.deps', '.vite-cache', '.git', '.cache', '.src-snapshot']);
     let count = 0;
     function walk(dir) {
         const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -1347,7 +1336,7 @@ function shouldSkipPrune(pushedFileCount, onDiskCount) {
 
 function pruneProjectFiles(projectRoot, userFilePaths) {
     const removed = [];
-    const protectedTopLevel = new Set(['node_modules', '.vite-cache', '.git', '.cache', '.src-snapshot']);
+    const protectedTopLevel = new Set(['node_modules', '.deps', '.vite-cache', '.git', '.cache', '.src-snapshot']);
 
     function walk(dir) {
         const entries = fs.readdirSync(dir, { withFileTypes: true });

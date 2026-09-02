@@ -57,7 +57,7 @@ describe('agentToolSet retrieval-consult telemetry (CP4a)', () => {
       toolOpts,
     );
 
-    expect(result).toBe('Successfully wrote src/NewComponent.tsx');
+    expect(result.split('\n')[0]).toBe('Successfully wrote src/NewComponent.tsx');
     expect(ctx.netNewWriteCount).toBe(1);
     expect(ctx.netNewWriteWithoutRetrievalCount).toBe(1);
     expect(fs.existsSync(path.join(tmpDir, 'src/NewComponent.tsx'))).toBe(true);
@@ -73,7 +73,7 @@ describe('agentToolSet retrieval-consult telemetry (CP4a)', () => {
       toolOpts,
     );
 
-    expect(result).toBe('Successfully wrote src/AnotherComponent.tsx');
+    expect(result.split('\n')[0]).toBe('Successfully wrote src/AnotherComponent.tsx');
     expect(ctx.netNewWriteCount).toBe(1);
     expect(ctx.netNewWriteWithoutRetrievalCount).toBeUndefined();
   });
@@ -93,7 +93,7 @@ describe('agentToolSet retrieval-consult telemetry (CP4a)', () => {
       toolOpts,
     );
 
-    expect(result).toBe(`Successfully edited ${relPath}`);
+    expect(result.split('\n')[0]).toBe(`Successfully edited ${relPath}`);
     expect(ctx.netNewWriteCount).toBeUndefined();
     expect(ctx.netNewWriteWithoutRetrievalCount).toBeUndefined();
     expect(fs.readFileSync(path.join(tmpDir, relPath), 'utf8')).toBe('function a() {\n  return 2;\n}\n');
@@ -104,7 +104,7 @@ describe('agentToolSet retrieval-consult telemetry (CP4a)', () => {
       { path: 'src/Plain.tsx', content: 'export default function Plain() { return null; }' },
       toolOpts,
     );
-    expect(netNewResult).toBe('Successfully wrote src/Plain.tsx');
+    expect(netNewResult.split('\n')[0]).toBe('Successfully wrote src/Plain.tsx');
     expect(netNewResult).not.toMatch(/retriev|telemetry|net-new/i);
   });
 });

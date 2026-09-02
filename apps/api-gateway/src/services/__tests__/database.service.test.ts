@@ -98,9 +98,11 @@ vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn()
 
 const pgQuery = vi.fn().mockResolvedValue({ rows: [] });
 vi.mock('pg', () => ({
-  Pool: vi.fn().mockImplementation(() => ({
-    connect: () => Promise.resolve({ query: pgQuery, release: vi.fn() }),
-  })),
+  // A plain function so `new Pool()` works: an arrow implementation is not a
+  // constructor under vitest 4's mock semantics.
+  Pool: vi.fn(function Pool() {
+    return { connect: () => Promise.resolve({ query: pgQuery, release: vi.fn() }) };
+  }),
 }));
 
 // Import AFTER mocks are registered.
@@ -314,9 +316,9 @@ describe('buildProjectEnvSecrets   platform-managed keys always win over stale s
     projectSecretsRows = [];
     const secrets = await buildProjectEnvSecrets('user-1', 'project-1');
     const keyNames = secrets.map((s) => s.key_name).sort();
+    // No VITE_SUPABASE_*: the platform's own auth is never a project secret.
     expect(keyNames).toEqual([
       'VITE_DB_ANON_KEY', 'VITE_DB_API_URL', 'VITE_DB_SCHEMA', 'VITE_FUNCTIONS_API_URL',
-      'VITE_SUPABASE_ANON_KEY', 'VITE_SUPABASE_URL',
     ]);
   });
 });

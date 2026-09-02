@@ -11,9 +11,10 @@ import { logger } from '../utils/logger.js';
 
 // Keep in sync with buildProjectEnvSecrets()'s `derived` key set in
 // database.service.ts -- these are always platform-computed, never user-set.
+// VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are deliberately NOT here any
+// more: the platform no longer provides them, so if an owner has their own
+// Supabase project they may save its keys under those names.
 const PLATFORM_MANAGED_KEYS = new Set([
-  'VITE_SUPABASE_URL',
-  'VITE_SUPABASE_ANON_KEY',
   'VITE_DB_API_URL',
   'VITE_DB_ANON_KEY',
   'VITE_DB_SCHEMA',

@@ -111,8 +111,8 @@ describe('POST /api/v1/database/sync-secrets', () => {
       .select('key_name, key_value')
       .eq('project_id', TEST_PROJECT_ID);
     const keyNames = (rows ?? []).map((r: any) => r.key_name).sort();
-    expect(keyNames).toContain('VITE_SUPABASE_URL');
-    expect(keyNames).toContain('VITE_SUPABASE_ANON_KEY');
+    expect(keyNames).not.toContain('VITE_SUPABASE_URL');
+    expect(keyNames).not.toContain('VITE_SUPABASE_ANON_KEY');
 
     // preview-service call: mocked, but constructed for real by the route.
     expect(previewCalls).toHaveLength(1);
@@ -121,7 +121,7 @@ describe('POST /api/v1/database/sync-secrets', () => {
     expect(opts.method).toBe('POST');
     const sentBody = JSON.parse(opts.body);
     const sentKeyNames = sentBody.secrets.map((s: any) => s.key_name).sort();
-    expect(sentKeyNames).toContain('VITE_SUPABASE_URL');
+    expect(sentKeyNames).not.toContain('VITE_SUPABASE_URL');
   });
 
   it('a genuine user-set secret survives the sync and is included in the pushed set', async () => {

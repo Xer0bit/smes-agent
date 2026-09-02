@@ -29,7 +29,9 @@ const {
     TAILWIND_CSS_BASE, ERROR_BOUNDARY_TSX, preprocessFile, ensureEssentialFiles,
     materializeProjectFiles, pruneProjectFiles, countProjectFiles, packageJsonNeedsRestart, shouldSkipPrune,
 } = require('./lib/materialize');
+const { ensureProjectDeps, ensureLayoutSync } = require('./lib/deps');
 const { snapshotProjectSrc, rollbackProjectSrc, cleanupSnapshot } = require('./lib/snapshot');
+const { PLACEHOLDER_APP_TSX } = require('./lib/placeholderApp');
 const { decidePushOutcome } = require('./lib/pushOutcome');
 // buildViteConfig/COMMON_DEPS shared by both the legacy in-process path
 // (below) and the per-project child-process runner (lib/viteChildRunner.js)
@@ -534,37 +536,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     }
 
     // Create minimal empty App.tsx only if missing - will be overwritten
+    // The billboard a new project shows until it has an app (lib/placeholderApp.js).
+    // Also replaces the old "Initializing Preview..." spinner on projects that
+    // never got past the scaffold, so the old screen is gone everywhere.
     const appTsxPath = path.join(projectRoot, 'src', 'App.tsx');
-    if (!fs.existsSync(appTsxPath)) {
-        fs.writeFileSync(appTsxPath, `function App() {
-  return (
-    <div style={{ 
-      display: 'flex', 
-      justifyContent: 'center', 
-      alignItems: 'center', 
-      height: '100vh', 
-      fontFamily: 'system-ui',
-      color: '#666'
-    }}>
-      <div style={{ textAlign: 'center' }}>
-        <div className="spinner" style={{ 
-          width: '24px', 
-          height: '24px', 
-          border: '3px solid #eee',
-          borderTop: '3px solid #333',
-          borderRadius: '50%',
-          animation: 'spin 1s linear infinite',
-          margin: '0 auto 16px'
-        }}></div>
-        <h2>Initializing Preview...</h2>
-        <style>{\`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }\`}</style>
-      </div>
-    </div>
-  );
-}
-
-export default App;
-`);
+    let currentApp = null;
+    try { currentApp = fs.readFileSync(appTsxPath, 'utf8'); } catch (_) { /* missing */ }
+    if (currentApp === null || currentApp.includes('Initializing Preview...')) {
+        fs.writeFileSync(appTsxPath, PLACEHOLDER_APP_TSX);
     }
 
 
@@ -724,33 +703,14 @@ export default {
         }, null, 2));
     }
 
-    // Symlink node_modules from the shared system install to the project directory.
-    // Using lstatSync (not existsSync) so we detect broken symlinks too.
-    const projectModules = path.join(projectRoot, 'node_modules');
-    const systemModules = path.join(__dirname, 'node_modules');
+    // node_modules: a symlink to the shared install, or a per-project layer of
+    // symlinks when the project has dependencies the shared install lacks
+    // (see lib/deps.js). Never destroy an existing layer here.
     try {
-        let needsSymlink = true;
-        try {
-            const stat = fs.lstatSync(projectModules);
-            if (stat.isSymbolicLink()) {
-                // Already a symlink   verify it points to the right place
-                const target = fs.readlinkSync(projectModules);
-                needsSymlink = (target !== systemModules);
-                if (needsSymlink) fs.rmSync(projectModules, { recursive: true, force: true }); // stale symlink
-            } else {
-                // Real directory   remove it so we can create the symlink
-                fs.rmSync(projectModules, { recursive: true, force: true });
-            }
-        } catch {
-            // lstatSync throws ENOENT   path doesn't exist, symlink needed
-        }
-        if (needsSymlink) {
-            fs.symlinkSync(systemModules, projectModules, 'dir');
-        }
+        ensureLayoutSync(projectRoot);
     } catch (e) {
         console.error(`[${projectId}] Failed to link node_modules:`, e);
     }
-
     return projectRoot;
 }
 
@@ -1218,76 +1178,11 @@ async function startMainServer() {
     // Auth: same x-update-secret header used by /preview/:id/update.
     // Body: { packages: ["chart.js", "lodash"] }
     app.options('/packages/install', cors(corsOptions));
-    app.post('/packages/install', cors(corsOptions), async (req, res) => {
-        if (PREVIEW_UPDATE_SECRET) {
-            const provided = req.headers['x-update-secret'];
-            if (!provided || provided !== PREVIEW_UPDATE_SECRET) {
-                return res.status(401).json({ error: 'Unauthorized' });
-            }
-        }
-
-        const { packages, projectId: requestingProjectId } = req.body || {};
-        if (!Array.isArray(packages) || packages.length === 0) {
-            return res.status(400).json({ error: 'packages[] array required' });
-        }
-
-        // Validate: only plain package names   no shell metacharacters, no paths
-        const NAME_RE = /^(@[a-z0-9_.-]+\/)?[a-z0-9_.-]+(@[\w.^~>=<-]+)?$/i;
-        const invalid = packages.filter(p => typeof p !== 'string' || !NAME_RE.test(p.trim()));
-        if (invalid.length > 0) {
-            return res.status(400).json({ error: `Invalid package name(s): ${invalid.join(', ')}` });
-        }
-
-        const pkgList = packages.map(p => p.trim()).join(' ');
-        const baseFlags = '--ignore-scripts --no-audit --no-fund';
-        const installCmd = `npm install ${baseFlags} ${pkgList}`;
-        const legacyCmd = `npm install ${baseFlags} --legacy-peer-deps ${pkgList}`;
-
-        console.log(`[Packages] Installing into preview node_modules: ${pkgList}`);
-
-        const { exec: execPkg } = require('child_process');
-        const runInstall = (cmd, cb) => execPkg(cmd, {
-            cwd: __dirname,
-            timeout: 120_000,
-            env: { ...process.env, NODE_ENV: 'development' },
-        }, cb);
-
-        runInstall(installCmd, (err, stdout, stderr) => {
-            let out = [stdout, stderr].filter(Boolean).join('\n');
-
-            const doFinish = (finalErr, finalOut) => {
-                if (finalErr) {
-                    console.error(`[Packages] Install failed: ${finalOut.slice(0, 500)}`);
-                    return res.status(500).json({ error: 'Install failed', detail: finalOut.slice(0, 1000) });
-                }
-
-                console.log(`[Packages] Installed ${pkgList}   invalidating Vite dep cache for ${requestingProjectId || 'all projects (no projectId given)'}`);
-                if (requestingProjectId) {
-                    // Scope the reload to the project that actually requested the
-                    // install   broadcasting to every active preview on every
-                    // install elsewhere reloaded unrelated users' unchanged apps.
-                    const instance = activeServers.get(requestingProjectId);
-                    if (instance) sendFullReload(instance, requestingProjectId);
-                } else {
-                    // Back-compat: no projectId supplied, fall back to the old
-                    // broadcast-to-all behavior rather than silently reloading no one.
-                    for (const [projectId, instance] of activeServers.entries()) {
-                        sendFullReload(instance, projectId);
-                    }
-                }
-                res.json({ success: true, installed: packages, output: finalOut.slice(0, 500) });
-            };
-
-            // Auto-retry with --legacy-peer-deps on peer dependency conflicts
-            if (err && out.includes('ERESOLVE')) {
-                console.log(`[Packages] Peer dep conflict   retrying with --legacy-peer-deps: ${pkgList}`);
-                runInstall(legacyCmd, (err2, stdout2, stderr2) => {
-                    doFinish(err2, [stdout2, stderr2].filter(Boolean).join('\n'));
-                });
-            } else {
-                doFinish(err, out);
-            }
-        });
+    app.post('/packages/install', cors(corsOptions), (req, res) => {
+        // Deprecated: dependencies are installed per project from the project's
+        // package.json on every push that carries it (lib/deps.js). Installing
+        // into the shared node_modules changed every project at once.
+        res.json({ success: true, deprecated: true, installed: [], message: 'Push package.json instead; dependencies install per project.' });
     });
 
     // Catch JSON parse errors from express.json()
@@ -1765,6 +1660,10 @@ async function startMainServer() {
             );
             fs.writeFileSync(indexHtmlPath, prodHtml);
             try {
+                const depsForBuild = await ensureProjectDeps(projectRoot);
+                if (depsForBuild.error) {
+                    return res.status(422).json({ error: `Dependency install failed: ${depsForBuild.error}` });
+                }
                 const { viteBuild, reactPluginFactory } = await getViteApi();
                 await viteBuild({
                     configFile: false,
@@ -2009,7 +1908,8 @@ async function startMainServer() {
 
         console.log(`[${projectId}] Updating ${files.length} files...`);
         const projectRoot = initProject(projectId);
-        const requiresServerRestart = shouldRestartViteForUpdate(files, projectRoot);
+        let requiresServerRestart = shouldRestartViteForUpdate(files, projectRoot);
+        let depsResult = null;
 
         // ── Cross-file import check (non-blocking warning) ────────────
         // Log unresolved imports as warnings but don't reject the update.
@@ -2036,6 +1936,14 @@ async function startMainServer() {
             // version the user is looking at with a broken one.
             const materialized = await materializeProjectFiles(projectId, projectRoot, files, { deferReload: true });
             const { userFilePaths, allFixedIssues, validationErrors, contentHash, shouldReload } = materialized;
+            // package.json is the source of truth for dependencies: install the
+            // project's extras now, before Vite restarts, and report the result.
+            const touchesPackageJson = fullSync || files.some((f) => String(f?.path || '').replace(/^\/+/, '') === 'package.json');
+            if (touchesPackageJson) {
+                depsResult = await ensureProjectDeps(projectRoot);
+                if (depsResult.changed) requiresServerRestart = true;
+                if (depsResult.error) console.warn(`[${projectId}] Dependency install failed: ${depsResult.error}`);
+            }
 
             // D-1: now that the actual materialized content (post preprocess/
             // repair) is known, backfill it onto this update's dedupe-cache
@@ -2223,6 +2131,7 @@ export default App;
                 // against its own record of what it believes is current.
                 contentHash,
                 revisionId,
+                deps: depsResult ?? undefined,
             });
 
             // ── Advisory type check, AFTER the response ──────────────────

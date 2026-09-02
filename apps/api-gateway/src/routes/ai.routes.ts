@@ -1348,10 +1348,11 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         const projectServerPath = typeof (projectRecord as any).server_path === 'string'
             ? (projectRecord as any).server_path
             : '';
-        const projectKnowledge = {
-            customSystemPrompt: typeof (projectRecord as any).custom_system_prompt === 'string' ? (projectRecord as any).custom_system_prompt.trim() : '',
-            contextNotes: typeof (projectRecord as any).context_notes === 'string' ? (projectRecord as any).context_notes.trim() : '',
-        };
+        // Every active knowledge chunk (owner notes, past chats, changes,
+        // uploads); the loop selects what fits this prompt. Best-effort: a
+        // knowledge read must never block a run.
+        const { loadActiveKnowledge } = await import('../services/knowledge.service.js');
+        const knowledgeChunks = await loadActiveKnowledge(projectId).catch(() => []);
 
         // Fetch project secrets (key=value pairs injected as env vars for the agent).
         // buildProjectEnvSecrets is the SINGLE source of truth for auth/DB/functions
@@ -1665,7 +1666,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             })(),
             olderSummary: typeof olderSummary === 'string' ? olderSummary : undefined,
             attachments: Array.isArray(attachments) ? attachments : undefined,
-            projectKnowledge,
+            knowledgeChunks,
             projectSecrets,
             promptIntent: {
                 requestTier,

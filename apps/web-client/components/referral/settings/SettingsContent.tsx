@@ -19,6 +19,7 @@ import { DatabaseSettings } from "./DatabaseSettings";
 import { EdgeFunctionsSettings } from "./EdgeFunctionsSettings";
 import { KnowledgeSettings } from "./KnowledgeSettings";
 import { SecretsSettings } from "./SecretsSettings";
+import { TemplateSettings } from "./TemplateSettings";
 import { SeoSettingsPanel } from "@/components/seo/SeoSettingsPanel";
 import { Globe, Smartphone, CreditCard, ExternalLink, Trash2 } from "lucide-react";
 import { useState, useEffect } from "react";
@@ -254,6 +255,8 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [],
       case "project-knowledge":
         return <KnowledgeSettings projectId={projectId} />;
 
+      case "project-template":
+        return <TemplateSettings projectId={projectId} />;
       case "project-secrets":
         return <SecretsSettings projectId={projectId} />;
         

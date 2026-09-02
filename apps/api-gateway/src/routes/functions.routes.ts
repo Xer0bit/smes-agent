@@ -9,6 +9,7 @@ import { projectService } from '../services/project.service.js';
 import { logger } from '../utils/logger.js';
 import { safeErrorMessage } from '../utils/sendError.js';
 import { createError } from '../middleware/error.middleware.js';
+import { extractParamKeys } from '../services/edgeFunctionInputs.js';
 
 const router = Router();
 
@@ -120,13 +121,17 @@ router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response,
     // collaborator viewing this list under their own req.user.id would see
     // nothing despite requireProjectAccess already confirming they may view
     // this project's functions.
+    // `code` is read here ONLY to derive the input names; it is stripped
+    // before the response. The settings UI shows what a function takes and
+    // returns, never its source (see edgeFunctionInputs.ts).
     const { data, error } = await supabase
       .from('edge_functions')
-      .select('id, name, description, is_active, created_at, updated_at')
+      .select('id, name, description, is_active, created_at, updated_at, code')
       .eq('project_id', projectId)
       .order('created_at', { ascending: true });
     if (error) throw new Error(error.message);
-    res.json({ functions: data || [] });
+    const functions = (data || []).map(({ code, ...fn }) => ({ ...fn, inputs: extractParamKeys(code) }));
+    res.json({ functions });
   } catch (err) {
     next(createError(safeErrorMessage(err), 500, projectId));
   }

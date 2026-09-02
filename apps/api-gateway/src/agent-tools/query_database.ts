@@ -174,7 +174,7 @@ async function stagePendingChange(ctx: AgentContext, sql: string): Promise<strin
   if (!ctx.projectId || !ctx.userId || !supabase) return null;
   const { data, error } = await supabase
     .from('admin_sql_pending_changes')
-    .insert({ project_id: ctx.projectId, staged_by_user_id: ctx.userId, sql_text: sql })
+    .insert({ project_id: ctx.projectId, staged_by_user_id: ctx.userId, sql_text: sql, batch_id: ctx.agentRunId ?? null })
     .select('id')
     .single();
   if (error || !data) return null;
@@ -195,6 +195,8 @@ export const queryDatabaseTool: ToolDefinition<z.infer<typeof schema>> = {
     "Run SQL against the project's hosted PostgreSQL database with full service-role access. " +
     "Supports any DDL or DML: create/alter/drop tables, insert/update/delete rows, run multi-statement migrations. " +
     "Multiple statements separated by semicolons execute atomically   if one fails, all roll back. " +
+    "Stage a whole migration in ONE call, in dependency order (tables before the rows and indexes that need them); " +
+    "everything you stage in this turn is later run together, in the order you staged it, as one transaction. " +
     "Returns the result of the last statement plus how many statements ran. " +
     "ALWAYS call get_database_schema first when you're unsure what tables exist. " +
     "SCHEMA-MUTATING SQL (CREATE/ALTER/DROP/TRUNCATE/GRANT/REVOKE) is NOT executed immediately: this call " +

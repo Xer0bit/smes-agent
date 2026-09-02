@@ -71,8 +71,8 @@ export function inspectGeneratedCode(path: string, source: string): GeneratedCod
         line: lineNo,
         message:
           `"${assign[1]}" is assigned the literal \`undefined\`. A config value must come from ` +
-          `import.meta.env (VITE_DB_API_URL, VITE_DB_ANON_KEY, VITE_FUNCTIONS_API_URL, ` +
-          `VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY) -- these are already set for this project. ` +
+          `import.meta.env (VITE_DB_API_URL, VITE_DB_ANON_KEY, VITE_FUNCTIONS_API_URL) -- these are ` +
+          `already set for this project; a VITE_SUPABASE_* value exists only if the owner saved one. ` +
           `As written the module throws at import time and the whole app shows an error screen.`,
       });
     }

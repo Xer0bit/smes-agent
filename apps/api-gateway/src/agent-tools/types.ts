@@ -140,6 +140,14 @@ export interface AgentContext {
   declaredScope?: Set<string>;
   scopeViolationCount?: number;
   /**
+   * Architecture-first contract (2026-09-02). On feature/build tiers a page
+   * or route write before declare_architecture warns once, then is refused.
+   * Set by the declare_architecture tool; turn-scoped, and also written to
+   * project knowledge so later runs inherit it.
+   */
+  declaredArchitecture?: { routes: string[]; dataModel: string[]; auth: string; edgeFunctions: string[]; notes?: string };
+  architectureWarned?: boolean;
+  /**
    * Counts edit_file SEARCH-block misses and get_build_errors circuit-breaker
    * trips this run. Previously these only reached a console.warn   the
    * edit_file.ts comment admits the miss rate was "unmeasurable... zero grep
@@ -166,6 +174,8 @@ export interface AgentContext {
   netNewWriteWithoutRetrievalCount?: number;
   /** URL of the preview service, e.g. http://localhost:3001 */
   previewServiceUrl?: string;
+  /** The run's agent_locks token, so tool-initiated preview pushes pass the lock check. */
+  agentLockToken?: string;
   /** Authenticated user id   required by database_query / get_database_schema to scope tenant DB access. */
   userId?: string;
   /**
@@ -250,6 +260,16 @@ export interface AgentContext {
    * host immediately   same "surface then confirm" gate as pendingDbChanges,
    * for the other live-effecting tool the 2026-08 audit flagged.
    */
+  /**
+   * Names (never values) of the env vars this project actually has. Lets the
+   * tool layer reject generated code that reads a variable the project does
+   * not have, instead of the app discovering that as a blank page. Added for
+   * the VITE_SUPABASE_* removal (2026-09-02): those used to be handed to
+   * every project, so old code everywhere still reads them.
+   */
+  envVarNames?: ReadonlySet<string>;
+  /** agent_runs id of this run; groups the SQL it stages (admin_sql_pending_changes.batch_id). */
+  agentRunId?: string;
   pendingEdgeFunctionDeploys?: Map<string, {
     name: string;
     code: string;

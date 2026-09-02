@@ -48,8 +48,6 @@ beforeEach(() => {
 });
 
 const PLATFORM_MANAGED_KEYS = [
-  'VITE_SUPABASE_URL',
-  'VITE_SUPABASE_ANON_KEY',
   'VITE_DB_API_URL',
   'VITE_DB_ANON_KEY',
   'VITE_DB_SCHEMA',
@@ -69,7 +67,7 @@ describe('set_secret   platform-managed key collision guard', () => {
   }
 
   it('rejects even when the key name is given lowercase/mixed-case (guard runs after normalization)', async () => {
-    const result = await setSecretTool.execute({ key_name: 'vite_supabase_url', value: 'x' }, makeCtx());
+    const result = await setSecretTool.execute({ key_name: 'vite_db_api_url', value: 'x' }, makeCtx());
     expect(result).toContain('is a platform-managed variable');
     expect(upsertCalls).toHaveLength(0);
   });

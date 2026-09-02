@@ -4,6 +4,5 @@
  * file normalization, and syntax validation
  */
 
-export { promptService } from './promptService';
 export { messageService } from './messageService';
 export * from './types';

@@ -79,7 +79,7 @@ describe('reading the count preview-service already reports', () => {
 
 describe('the short-write case this exists to catch', () => {
   it('a 200 that wrote fewer keys than sent is detectable', () => {
-    const sent = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY', 'VITE_DB_API_URL',
+    const sent = ['STRIPE_PUBLISHABLE_KEY', 'VITE_MAPS_KEY', 'VITE_DB_API_URL',
                   'VITE_DB_ANON_KEY', 'VITE_DB_SCHEMA', 'VITE_FUNCTIONS_API_URL'];
     const written = readSecretsWrittenCount('{"success":true,"secretsWritten":2,"restarted":true}');
     expect(written).toBe(2);

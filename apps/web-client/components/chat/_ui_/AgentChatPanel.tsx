@@ -1,13 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
-import { ArrowUp, Square, Loader2, StopCircle, ChevronDown, Paperclip, X, FileText, RotateCcw, MousePointerClick, ShieldAlert } from 'lucide-react';
+import { ArrowUp, Square, Loader2, StopCircle, ChevronDown, Paperclip, X, FileText, RotateCcw, MousePointerClick } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import type { MagicCursorTarget } from '@/pages/editor/types';
 import { buildMagicCursorPrompt } from '@/pages/editor/utils/magicCursorPrompt';
 import { toast } from 'sonner';
 import { streamAgentGeneration } from '@/eCG/UserPrompt/agentStreamService';
-import { fetchPendingAdminSql, confirmAdminSql, rejectAdminSql, type PendingAdminSqlChange } from '@/services/adminSqlService';
+import { fetchPendingAdminSql, runAdminSqlBatch, type PendingAdminSqlChange } from '@/services/adminSqlService';
+import { AdminSqlCard } from './AdminSqlCard';
 import type { StepFinishData } from '@/eCG/UserPrompt/agentStreamService';
 import { ChatMessage } from '@/components/ChatMessage';
 import { getGenServerUrl, getGenServerCandidateUrls } from '@/config/external-api';
@@ -17,12 +17,6 @@ import { uploadChatAttachment, isAllowedFile, formatFileSize, type ChatAttachmen
 import type { AgentAttachment } from '@/eCG/UserPrompt/types';
 import { useUsage } from '@/contexts/UsageContext';
 import type { StepEntry, Message } from '../_utils_/agentChatHelpers';
-// The Plan component is no longer rendered -- narration is shown as a live
-// line instead (see the render block below). The Task type and the mapper are
-// still used to accumulate step state; removing that machinery is follow-up
-// cleanup, deliberately not bundled into this UI change.
-import { type Task } from '@/components/ui/agent-plan';
-import { applyStepToTasks, finalizeTasks } from '../_utils_/agentPlanMapper';
 import {
   extractSummary,
   parseToolActivities,
@@ -35,6 +29,8 @@ import {
   relevanceScore,
   seededChatAttachment,
   perFrame,
+  describeToolCall,
+  formatChars,
 } from '../_utils_/agentChatHelpers';
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -59,6 +55,13 @@ interface AgentChatPanelProps {
   onInitialAttachmentsConsumed?: () => void;
   /** When set, automatically send this prompt to the agent (e.g. from Repair button). */
   triggerPrompt?: string | null;
+  /**
+   * Attachments to send WITH triggerPrompt. The dashboard's "New project"
+   * flow uploads files before navigating here; passing them alongside the
+   * prompt lets that first message use the same send path as every later one.
+   * Not seeded into the composer: they belong to this message, not the next.
+   */
+  triggerAttachments?: AgentAttachment[];
   /** Chat-message label shown for the auto-sent triggerPrompt. Defaults to the repair-flow label. */
   triggerDisplayText?: string;
   /** Called once after triggerPrompt has been consumed so the parent can clear it. */
@@ -90,6 +93,8 @@ interface AgentChatPanelProps {
    * every intermediate preview push (mid-run auto-fix passes included) --
    * see MultiDevicePreview's isGenerating prop. */
   onGeneratingChange?: (isGenerating: boolean) => void;
+  /** Live run progress (status line + file steps so far) for the preview pane's build view. */
+  onProgress?: (progress: { status: string; steps: string[] }) => void;
   /** Fires true when a run completes having written no files (server-side
    * `ghostRun` -- a question, clarification, or refusal), false when the next
    * run starts. Lets the preview dim itself instead of doing a reveal that
@@ -108,6 +113,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   initialAttachments,
   onInitialAttachmentsConsumed,
   triggerPrompt,
+  triggerAttachments,
   triggerDisplayText,
   onTriggerConsumed,
   onPreviewCommand,
@@ -122,6 +128,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   canUseInspect = true,
   onGeneratingChange,
   onNoChangesChange,
+  onProgress,
 }) => {
   const GREETING: Message = {
     id: 'greeting',
@@ -143,18 +150,19 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     if (isGenerating) onNoChangesChange?.(false);
   }, [isGenerating, onGeneratingChange, onNoChangesChange]);
   const [statusText, setStatusText] = useState('');
+  // The preview pane shows the run while there is nothing to preview; it gets
+  // the same status line and the steps recorded on the streaming message.
+  useEffect(() => {
+    if (!onProgress) return;
+    const live = [...messages].reverse().find((m) => m.role === 'assistant' && (m.status === 'streaming' || m.status === 'pending'));
+    onProgress({ status: isGenerating ? statusText : '', steps: live?.steps?.map((s) => s.label) ?? [] });
+  }, [onProgress, statusText, messages, isGenerating]);
   // The agent's real internal reasoning (the `think` tool's actual argument)
   // shown live only, cleared on the next step/completion, never saved to the
   // persisted chat transcript.
   const [liveThought, setLiveThought] = useState('');
   // Timestamp until which LLM-generated statuses block lower-priority overrides.
   const llmStatusLockedUntil = useRef<number>(0);
-  // Real-time task/subtask breakdown of the current run, built from the
-  // agent loop's actual onStepFinish events (real tool names) -- see
-  // ../_utils_/agentPlanMapper.ts. Never fake/demo data.
-  const [planTasks, setPlanTasks] = useState<Task[]>([]);
-  const [expandedPlanTasks, setExpandedPlanTasks] = useState<string[]>([]);
-  const [expandedPlanSubtasks, setExpandedPlanSubtasks] = useState<Record<string, boolean>>({});
 
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [chatModeMenuOpen, setChatModeMenuOpen] = useState(false);
@@ -207,7 +215,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   // /active-run poll that handles both busy->free and free->busy. See that effect.
 
   const [pendingAdminSql, setPendingAdminSql] = useState<PendingAdminSqlChange[]>([]);
-  const [confirmingSqlId, setConfirmingSqlId] = useState<string | null>(null);
+  // Ids already shown as a card under a reply; the composer-side card shows only the rest.
+  const shownStagedIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    for (const m of messages) for (const r of m.stagedSql ?? []) ids.add(r.id);
+    return ids;
+  }, [messages]);
+  const orphanAdminSql = pendingAdminSql.filter((r) => !shownStagedIds.has(r.id));
   const refreshPendingAdminSql = useCallback(async () => {
     if (!projectId) return;
     const pending = await fetchPendingAdminSql(projectId);
@@ -226,13 +240,12 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     // chatMode always resets to 'normal' on mount, so the routine mount-time
     // refresh below never auto-runs old leftovers.
     if (chatMode === 'admin' && pending.length > 0) {
-      let ranCount = 0;
-      for (const change of pending) {
-        const result = await confirmAdminSql(change.id);
-        if (result.success) ranCount++;
-        else toast.error(result.error || 'Failed to auto-run staged admin SQL.');
-      }
-      if (ranCount > 0) toast.success(ranCount === 1 ? 'Admin SQL auto-approved and executed.' : `${ranCount} admin SQL changes auto-approved and executed.`);
+      // One transaction, staging order. The previous loop confirmed rows one
+      // by one from a newest-first list, which ran dependents before their
+      // CREATE TABLE.
+      const result = await runAdminSqlBatch(projectId);
+      if (result.success) toast.success(result.executed.length === 1 ? 'Admin SQL auto-approved and executed.' : `${result.executed.length} admin SQL changes auto-approved and executed, in order.`);
+      else toast.error(`Staged SQL not applied: ${result.error ?? 'a statement failed'}. See the batch under the reply.`);
       setPendingAdminSql(await fetchPendingAdminSql(projectId));
       return;
     }
@@ -246,14 +259,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [uploadingCount, setUploadingCount] = useState(0);
   const [isDragOver, setIsDragOver] = useState(false);
   const [rollingBack, setRollingBack] = useState(false);
-  // Real narration (onAgentNarration/onStepStatusRefine) arrives on its own
-  // stream, separate from onStepFinish -- it fires BEFORE the step's tool
-  // list is known. Stashed here and consumed by the next onStepFinish so the
-  // Plan mapper actually sees it as that step's statusText. Without this,
-  // the mapper only ever saw stepData.status, a rare secondary field (retry/
-  // fallback info) -- Plan stayed empty for almost every real run, since the
-  // *primary* narration channel was never reaching it.
-  const pendingNarrationRef = useRef<string | undefined>(undefined);
   // Synchronous re-entrancy guard for handleSubmit -- see its own comment.
   const submitInFlightRef = useRef(false);
 
@@ -324,12 +329,8 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const startProgressFeedback = () => {
     setStatusText('');
     setLiveThought('');
-    setPlanTasks([]);
-    setExpandedPlanTasks([]);
-    setExpandedPlanSubtasks({});
     isNearBottomRef.current = true;
     llmStatusLockedUntil.current = 0;
-    pendingNarrationRef.current = undefined;
   };
 
   // Persist plan/build mode across refreshes
@@ -356,7 +357,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   useEffect(() => {
     if (!triggerPrompt || isGenerating) return;
     onTriggerConsumed?.();
-    handleSubmit(triggerPrompt, triggerDisplayText || '🔧 Repair request', 'build');
+    handleSubmit(
+      triggerPrompt,
+      triggerDisplayText || '🔧 Repair request',
+      'build',
+      false,
+      triggerAttachments?.map(seededChatAttachment),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerPrompt]);
 
@@ -680,6 +687,12 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               let currentContent = '';
               let toolXmlAccum = '';
               let generationDone = false;
+              const rejoinSteps: StepEntry[] = [];
+              const paintSteps = perFrame(() => {
+                if (generationDone || cancelled) return;
+                const snapshot = [...rejoinSteps];
+                setMessages(prev => prev.map(m => m.id === asstId ? { ...m, steps: snapshot } : m));
+              });
               const paint = perFrame(() => {
                 if (generationDone || cancelled) return;
                 const displayContent = stripEcomgearTags(currentContent);
@@ -710,37 +723,37 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                       ? { ...m, content: '', status: 'streaming' }
                       : m));
                   },
+                  onToolProgress: ({ id, tool, path, chars, done }) => {
+                    if (generationDone || cancelled) return;
+                    const existing = rejoinSteps.find((st) => st.id === id);
+                    if (existing) { existing.chars = chars; if (done && existing.type === 'status') existing.done = true; }
+                    else {
+                      const { type, label } = describeToolCall(tool, path);
+                      rejoinSteps.push({ id, type, label, done: done && type === 'status', chars, target: path.replace(/^\/+/, '') });
+                      pushStatus(label);
+                    }
+                    paintSteps.schedule();
+                  },
                   onToolOutput: (xml) => {
                     if (generationDone || cancelled) return;
                     toolXmlAccum += xml + '\n';
+                    const target = /ecomgear-(?:write|edit|delete)[^>]*\bpath="([^"]+)"/.exec(xml)?.[1];
+                    const row = target ? rejoinSteps.find((st) => !st.done && st.target === target.replace(/^\/+/, '')) : undefined;
+                    if (row) { row.done = true; paintSteps.schedule(); }
                   },
                   onStepFinish: (stepData: StepFinishData) => {
                     if (generationDone || cancelled) return;
                     const isLLMStatus = stepData.step === 0 && stepData.toolCount === 0;
                     if (stepData.status) pushStatus(stepData.status, isLLMStatus);
-                    if (stepData.tools.length > 0) {
-                      const narrationForStep = stepData.status || pendingNarrationRef.current;
-                      pendingNarrationRef.current = undefined;
-                      setPlanTasks(prev => {
-                        const next = applyStepToTasks(prev, {
-                          tools: stepData.tools,
-                          statusText: narrationForStep,
-                          hadFailedEdits: stepData.failedEdits > 0,
-                        }, stepData.step);
-                        const active = next.find(t => t.status === 'in-progress');
-                        if (active) setExpandedPlanTasks(p => p.includes(active.id) ? p : [...p, active.id]);
-                        return next;
-                      });
-                    }
                   },
                   onAgentNarration: (narration) => {
                     if (generationDone || cancelled) return;
                     pushStatus(narration, true, true);
-                    pendingNarrationRef.current = narration;
                   },
                   onDone: (result) => {
                     generationDone = true;
                     paint.cancel();
+                    paintSteps.cancel();
                     setIsGenerating(false);
                     setStatusText('');
                     const rawContent = currentContent || result.summary || '';
@@ -860,7 +873,14 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   };
 
   // ── Submit ────────────────────────────────────────────────────────────────
-  const handleSubmit = async (overridePrompt?: string, displayText?: string, forcedMode?: 'build' | 'plan', isAutoFix?: boolean) => {
+  const handleSubmit = async (
+    overridePrompt?: string,
+    displayText?: string,
+    forcedMode?: 'build' | 'plan',
+    isAutoFix?: boolean,
+    /** Attachments for an override prompt; the composer's own are only used for a typed send. */
+    explicitAttachments?: ChatAttachment[],
+  ) => {
     // Synchronous re-entrancy guard. `isGenerating` (React state) doesn't
     // actually block a second call until the next render commits -- two
     // handleSubmit calls landing in the same tick (e.g. Enter and a Send
@@ -870,7 +890,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     submitInFlightRef.current = true;
     try {
       const raw = (overridePrompt ?? input).trim();
-      const hasAttachments = !overridePrompt && pendingAttachments.length > 0;
+      const hasAttachments = overridePrompt ? (explicitAttachments?.length ?? 0) > 0 : pendingAttachments.length > 0;
       if ((!raw && !hasAttachments) || isGenerating || !projectId) return;
 
       // Eco gate   block non-guest users who are at their daily limit
@@ -882,7 +902,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       if (!overridePrompt) setInput('');
 
     // Capture and clear pending attachments
-    const messageAttachments = !overridePrompt ? [...pendingAttachments] : [];
+    const messageAttachments = overridePrompt ? (explicitAttachments ?? []) : [...pendingAttachments];
     if (!overridePrompt) setPendingAttachments([]);
 
     let effectivePrompt = raw || (messageAttachments.length > 0 ? 'Please review the attached files.' : '');
@@ -1049,6 +1069,32 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       const snapshot = [...stepsAccum];
       setMessages(prev => prev.map(m => (m.id === asstId ? { ...m, steps: snapshot } : m)));
     };
+    // Progress ticks arrive every few hundred ms per tool call; one paint per frame.
+    const paintSteps = perFrame(syncSteps);
+    // A tool call announced while its arguments are still streaming. The row
+    // exists from the first bytes ("Writing src/pages/Home.tsx · 1.2 KB") and
+    // the matching tool-output later marks it done, so a 20 KB page is a
+    // growing number instead of a silent "Writing code".
+    const onToolProgress = ({ id, tool, path, chars, done }: { id: string; tool: string; path: string; chars: number; done: boolean }) => {
+      if (generationDone) return;
+      const existing = stepsAccum.find((st) => st.id === id);
+      if (existing) {
+        existing.chars = chars;
+        if (done && existing.type === 'status') existing.done = true; // reads/searches finish with their input
+      } else {
+        const { type, label } = describeToolCall(tool, path);
+        stepsAccum.push({ id, type, label, done: done && type === 'status', chars, target: path.replace(/^\/+/, '') });
+        pushStatus(label);
+      }
+      paintSteps.schedule();
+    };
+    // The finished write for a row that was announced by onToolProgress.
+    const completePending = (target: string): boolean => {
+      const row = stepsAccum.find((st) => !st.done && st.target === target.replace(/^\/+/, ''));
+      if (!row) return false;
+      row.done = true;
+      return true;
+    };
     // One paint per frame for streamed text. The tag-stripping regexes and the
     // live-tool scan run here, once per frame, instead of once per chunk.
     const paint = perFrame(() => {
@@ -1116,6 +1162,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             currentContent += chunk;
             paint.schedule();
           },
+          onToolProgress,
           onToolOutput: (xml) => {
             if (generationDone) return;
             toolXmlAccum += xml + '\n';
@@ -1135,15 +1182,15 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             if (writeMatch) {
               const label = `Building ${filePathToLabel(writeMatch[1])}...`;
               pushStatus(label);
-              stepsAccum.push({ type: 'write', label, done: true });
+              if (!completePending(writeMatch[1])) stepsAccum.push({ type: 'write', label, done: true });
             } else if (editMatch) {
               const label = `Updating ${filePathToLabel(editMatch[1])}...`;
               pushStatus(label);
-              stepsAccum.push({ type: 'edit', label, done: true });
+              if (!completePending(editMatch[1])) stepsAccum.push({ type: 'edit', label, done: true });
             } else if (deleteMatch) {
               const label = `Removing ${filePathToLabel(deleteMatch[1])}...`;
               pushStatus(label);
-              stepsAccum.push({ type: 'delete', label, done: true });
+              if (!completePending(deleteMatch[1])) stepsAccum.push({ type: 'delete', label, done: true });
             } else if (renameMatch) {
               const label = `Renaming ${filePathToLabel(renameMatch[1])}...`;
               pushStatus(label);
@@ -1174,25 +1221,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             } else if (stepData.toolCount > 0) {
               pushStatus('Reviewing generated changes...');
             }
-            if (stepData.tools.length > 0) {
-              // Prefer the step's own status; fall back to whatever real
-              // narration arrived on the separate onAgentNarration/
-              // onStepStatusRefine streams just before this step finished.
-              const narrationForStep = stepData.status || pendingNarrationRef.current;
-              pendingNarrationRef.current = undefined;
-              setPlanTasks(prev => {
-                const next = applyStepToTasks(prev, {
-                  tools: stepData.tools,
-                  statusText: narrationForStep,
-                  hadFailedEdits: stepData.failedEdits > 0,
-                }, stepData.step);
-                // Keep whichever task just became active expanded by default,
-                // so live progress is visible without the user clicking in.
-                const active = next.find(t => t.status === 'in-progress');
-                if (active) setExpandedPlanTasks(p => p.includes(active.id) ? p : [...p, active.id]);
-                return next;
-              });
-            }
           },
           onStepStatusRefine: ({ status }) => {
             // A cheap-model-generated description of what the step actually did,
@@ -1200,18 +1228,13 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             // tiers only   see generateDynamicStepStatus on the server).
             if (generationDone) return;
             pushStatus(status, true, true);
-            pendingNarrationRef.current = status;
           },
           onAgentNarration: (narration) => {
             // Real-time, LLM-written description of what the agent is doing RIGHT
             // NOW (from the narration microservice). Highest priority   force-push
             // so it always wins as the live headline, overriding canned strings.
-            // Also the PRIMARY source for Plan's subtask titles (see
-            // pendingNarrationRef above) -- stepData.status is a rare
-            // secondary field, not this.
             if (generationDone) return;
             pushStatus(narration, true, true);
-            pendingNarrationRef.current = narration;
           },
           onAgentThinking: ({ thought }) => {
             // The agent's real internal reasoning, live only   replaces the
@@ -1223,10 +1246,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           onDone: (result) => {
             generationDone = true;             // block any further text-delta updates
             paint.cancel();
+            paintSteps.cancel();
+            for (const st of stepsAccum) st.done = true;
             setIsGenerating(false);
             setStatusText('');
             setLiveThought('');
-            setPlanTasks(prev => finalizeTasks(prev, false));
 
             // The run may have just staged a dangerous SQL statement -- pull the
             // authoritative pending list from the DB rather than trying to parse
@@ -1273,7 +1297,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             setMessages(prev =>
               prev.map(m =>
                 m.id === asstId
-                  ? { ...m, status: 'complete', content: finalContent, isPlan, noChanges, summary, toolActivities, steps: stepsAccum, snapshotId: result.snapshotId, suggestedCommands, followUpSuggestions: initialSuggestions }
+                  ? { ...m, status: 'complete', content: finalContent, isPlan, noChanges, summary, toolActivities, steps: stepsAccum, snapshotId: result.snapshotId, suggestedCommands, followUpSuggestions: initialSuggestions, stagedSql: result.stagedSql ?? [], batchId: result.batchId ?? null }
                   : m
               )
             );
@@ -1335,6 +1359,9 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               if (!isGuest) refreshUsage().catch(() => {});
               if (!isGuest && result.ecoUsed && result.ecoUsed > 0) {
                 toast.success(`Used ${result.ecoUsed.toFixed(1)} eco`, { duration: 3000 });
+              }
+              if (result.previewDepsError) {
+                toast.error(`Preview could not install a dependency: ${result.previewDepsError}`, { duration: 8000 });
               }
               if (result.ghostRun) {
                 // Agent produced text but wrote no files   this is a normal conversational
@@ -1398,7 +1425,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             paint.cancel();
             setIsGenerating(false);
             setStatusText('');
-            setPlanTasks(prev => finalizeTasks(prev, true));
 
             // A run was already in flight server-side (another tab, another
             // device, or one still going from before a reload). The old
@@ -1465,7 +1491,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
       if (lockRejoinRef.current) { lockRejoinRef.current = false; return; }
       setIsGenerating(false);
       setStatusText('');
-      setPlanTasks(prev => finalizeTasks(prev, true));
       const errDisplay = err instanceof Error
         ? err.message.replace(/^Agent stream failed \(\d+\):\s*/i, '').slice(0, 300)
         : 'Model temporarily unavailable. Please try again.';
@@ -1535,7 +1560,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     }
     setIsGenerating(false);
     setStatusText('');
-    setPlanTasks(prev => finalizeTasks(prev, false)); // work already landed stays landed
     setMessages(prev => {
       const last = prev[prev.length - 1];
       if (last?.role === 'assistant' && (last.status === 'pending' || last.status === 'streaming')) {
@@ -1635,6 +1659,26 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 attachments={msg.attachments}
               />
 
+              {/* What the agent is doing, file by file, while it works. Rows
+                  appear the moment a tool call names its target and show the
+                  bytes generated so far; the check lands when the write is in.
+                  Gone once the run completes (the count chip below takes over). */}
+              {msg.role === 'assistant' && (msg.status === 'streaming' || msg.status === 'pending') && msg.steps && msg.steps.length > 0 && (
+                <ul className="mt-2 space-y-1" aria-live="polite">
+                  {msg.steps.slice(-8).map((st, i) => (
+                    <li key={st.id ?? `${st.label}-${i}`} className="flex items-center gap-2 text-[12.5px] animate-msg-appear">
+                      {st.done
+                        ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400/80" />
+                        : <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/70 animate-pulse" />}
+                      <span className={st.done ? 'text-white/45' : 'text-white/85'}>{st.label}</span>
+                      {!st.done && typeof st.chars === 'number' && st.chars > 0 && (
+                        <span className="text-white/35 tabular-nums">· {formatChars(st.chars)}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
               {/* Retry button   shown on hover below user messages */}
               {msg.role === 'user' && (
                 <div className="flex justify-end mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1648,6 +1692,18 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                     Retry
                   </button>
                 </div>
+              )}
+
+              {/* SQL this reply staged: an ordered batch with one run action. */}
+              {msg.role === 'assistant' && msg.stagedSql && msg.stagedSql.length > 0 && (
+                <AdminSqlCard
+                  projectId={projectId}
+                  rows={msg.stagedSql}
+                  batchId={msg.batchId}
+                  disabled={isGenerating}
+                  onChanged={async () => setPendingAdminSql(await fetchPendingAdminSql(projectId))}
+                  onAskAgentToFix={(prompt) => handleSubmit(prompt, 'Fix the failed database statement', 'build')}
+                />
               )}
 
               {/* Retry button   shown on an errored assistant message, resubmits the
@@ -1824,50 +1880,15 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
           handler below stays wired to this file's own real state: multi-file
           upload with progress, Build/Plan mode, char limit, Stop-during-generation,
           paste-to-upload, drag-drop. No fake toggles were carried over. ── */}
-      {pendingAdminSql.length > 0 && (
-        <div className="px-3 pt-2.5 flex flex-col gap-2">
-          {pendingAdminSql.map((change) => (
-            <div key={change.id} className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3">
-              <div className="flex items-start gap-2 mb-1.5">
-                <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                <p className="text-[11px] font-semibold text-amber-300 leading-tight">
-                  Admin SQL awaiting confirmation   this was NOT executed yet
-                </p>
-              </div>
-              <pre className="text-[11px] text-white/70 font-mono whitespace-pre-wrap break-all bg-black/20 rounded-lg p-2 mb-2 max-h-32 overflow-y-auto">
-                {change.sql_text}
-              </pre>
-              <div className="flex gap-2">
-                <button
-                  disabled={confirmingSqlId === change.id}
-                  onClick={async () => {
-                    setConfirmingSqlId(change.id);
-                    const result = await confirmAdminSql(change.id);
-                    setConfirmingSqlId(null);
-                    if (result.success) {
-                      toast.success('SQL executed.');
-                    } else {
-                      toast.error(result.error || 'Failed to execute.');
-                    }
-                    refreshPendingAdminSql();
-                  }}
-                  className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black text-[12px] font-semibold py-1.5 transition-colors"
-                >
-                  {confirmingSqlId === change.id ? 'Running…' : 'Confirm & Run'}
-                </button>
-                <button
-                  disabled={confirmingSqlId === change.id}
-                  onClick={async () => {
-                    await rejectAdminSql(change.id);
-                    refreshPendingAdminSql();
-                  }}
-                  className="rounded-lg border border-white/10 hover:bg-white/[0.06] disabled:opacity-50 text-white/70 text-[12px] font-medium py-1.5 px-3 transition-colors"
-                >
-                  Reject
-                </button>
-              </div>
-            </div>
-          ))}
+      {orphanAdminSql.length > 0 && (
+        <div className="px-3 pt-2.5">
+          <AdminSqlCard
+            projectId={projectId}
+            rows={orphanAdminSql}
+            disabled={isGenerating}
+            onChanged={async () => setPendingAdminSql(await fetchPendingAdminSql(projectId))}
+            onAskAgentToFix={(prompt) => handleSubmit(prompt, 'Fix the failed database statement', 'build')}
+          />
         </div>
       )}
 
@@ -2122,8 +2143,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               {/* Send / Stop   circular button, morphs to a Stop control while
                   generating (wired to the real cancelGeneration, unlike the
                   reference component's unwired Square icon). */}
-              <motion.button
-                whileTap={{ scale: 0.92 }}
+              <button
                 onClick={() => {
                   if (isGenerating) cancelGeneration();
                   else handleSubmit();
@@ -2139,7 +2159,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   ? <Square className="w-3.5 h-3.5 fill-current" />
                   : <ArrowUp className="w-4 h-4" />
                 }
-              </motion.button>
+              </button>
             </div>
           </div>
         </div>

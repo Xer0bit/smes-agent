@@ -13,6 +13,35 @@ export interface StepEntry {
   type: ToolActivity['type'] | 'status';
   label: string;
   done: boolean;
+  /** Tool-call id while the call's input is still streaming; lets progress updates find their row. */
+  id?: string;
+  /** Characters of tool input generated so far (a file body, mostly). */
+  chars?: number;
+  /** Project path or function name the step targets, for matching the finished tool-output. */
+  target?: string;
+}
+
+/** "write_file" + "src/pages/Home.tsx" -> a row label a person would write. */
+export function describeToolCall(tool: string, target: string): { type: StepEntry['type']; label: string } {
+  const t = target.replace(/^\/+/, '');
+  switch (tool) {
+    case 'write_file': return { type: 'write', label: `Writing ${t}` };
+    case 'edit_file': return { type: 'edit', label: `Editing ${t}` };
+    case 'delete_file': return { type: 'delete', label: `Removing ${t}` };
+    case 'rename_file': return { type: 'rename', label: `Renaming ${t}` };
+    case 'place_asset': return { type: 'write', label: `Placing ${t}` };
+    case 'run_command': return { type: 'dependency', label: `Running ${t.slice(0, 60)}` };
+    case 'write_edge_function': return { type: 'write', label: `Writing function ${t}` };
+    case 'confirm_edge_function_deploy': return { type: 'write', label: `Deploying function ${t}` };
+    case 'read_file': case 'read_files': return { type: 'status', label: `Reading ${t}` };
+    case 'grep': case 'search_codebase': return { type: 'status', label: `Searching for ${t.slice(0, 50)}` };
+    default: return { type: 'status', label: `${tool.replace(/_/g, ' ')} ${t}`.trim() };
+  }
+}
+
+export function formatChars(n: number): string {
+  if (n < 1024) return `${n} chars`;
+  return `${(n / 1024).toFixed(1)} KB`;
 }
 
 /** A file being actively written/edited during streaming */
@@ -41,6 +70,9 @@ export interface Message {
   suggestedCommands?: string[];
   /** AI-generated follow-up prompt chips shown after a build completes. null = loading */
   followUpSuggestions?: string[] | null;
+  /** SQL this reply staged; shown as an ordered batch under it (AdminSqlCard). */
+  stagedSql?: Array<{ id: string; sql_text: string; status: string; created_at: string; error_message?: string | null }>;
+  batchId?: string | null;
 }
 
 // ─── Tag helpers ──────────────────────────────────────────────────────────────

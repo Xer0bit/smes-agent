@@ -20,6 +20,9 @@ import headerIntegrationsRoutes from './routes/header-integrations.routes.js';
 import githubRoutes from './routes/github.routes.js';
 import stripeRoutes from './routes/stripe.routes.js';
 import functionsRoutes from './routes/functions.routes.js';
+import knowledgeRoutes from './routes/knowledge.routes.js';
+import planRoutes from './routes/plan.routes.js';
+import templatesRoutes from './routes/templates.routes.js';
 import ecgDevAgentRoutes from './routes/ecg-dev-agent.routes.js';
 import ecgCustomizeRoutes from './routes/ecg-customize.routes.js';
 import ecgProxyRoutes from './routes/ecg-proxy.routes.js';
@@ -223,6 +226,9 @@ if (servesApi) {
     // must match REDIRECT_URI in github.routes.ts exactly.
     mount('/auth/github', githubRoutes);
     mount('/api/v1/functions', functionsRoutes);
+    mount('/api/v1/knowledge', knowledgeRoutes);
+    mount('/api/v1/plan', planRoutes);
+    mount('/api/v1/templates', templatesRoutes);
     mount('/api/v1/ecg-connect', ecgCustomizeRoutes);
     mount('/api/v1/ecg-dev-agent', ecgDevAgentRoutes);
     mount('/api/v1/ecg-proxy', ecgProxyRoutes);

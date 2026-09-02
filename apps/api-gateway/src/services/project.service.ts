@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
-import { syncPlatformAuthSecrets, databaseService } from './database.service.js';
+import { databaseService } from './database.service.js';
 import { SNAPSHOTS_DIR } from './agentSnapshot.js';
 
 // /var/ecomgear is the real, root-owned path on VPS1 in production. Locally
@@ -74,9 +74,6 @@ export class ProjectService {
         }
 
         logger.info(`Project created successfully: ${projectId}`);
-        // Fire-and-forget   auth (VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY) must work
-        // from the very first build, not only after the owner visits Database settings.
-        syncPlatformAuthSecrets(projectId).catch(() => {});
         return data as Project;
     }
 

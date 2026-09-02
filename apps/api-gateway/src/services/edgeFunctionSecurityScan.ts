@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
+import { recordKnowledge, type KnowledgeEntry } from './knowledge.service.js';
 
 // Excludes webhooks deliberately: webhook handlers (e.g. stripe-webhook) are
 // legitimately called only by an external third party, never from src/, by
@@ -60,7 +61,6 @@ function isReferencedInSource(appPath: string, functionName: string): boolean {
   return false;
 }
 
-const FINDING_MARKER = (name: string) => `Edge function "${name}" `;
 
 export async function scanForDeadDangerousEdgeFunctions(projectId: string, appPath: string): Promise<void> {
   try {
@@ -75,32 +75,26 @@ export async function scanForDeadDangerousEdgeFunctions(projectId: string, appPa
       .filter((name: string) => SENSITIVE_NAME_RE.test(name) && !WEBHOOK_RE.test(name));
     if (candidates.length === 0) return;
 
-    const { data: projectRow } = await supabase
-      .from('projects')
-      .select('context_notes')
-      .eq('id', projectId)
-      .maybeSingle();
-    const existingNotes: string = projectRow?.context_notes ?? '';
-
-    const newFindings: string[] = [];
+    // One knowledge note per function, keyed by name: re-scanning updates the
+    // row instead of appending another copy, and the owner can archive or
+    // delete a finding they have decided about (Settings → Knowledge).
+    const findings: KnowledgeEntry[] = [];
     for (const name of candidates) {
-      if (existingNotes.includes(FINDING_MARKER(name))) continue; // already flagged, don't duplicate
       if (isReferencedInSource(appPath, name)) continue; // actually used, nothing to flag
-      newFindings.push(
-        `Edge function "${name}" touches auth/password/session logic but is not referenced anywhere in ` +
-        `the current frontend source (checked src/**/*.{ts,tsx,js,jsx} for '${name}' as a string literal). ` +
-        `It is still deployed and invokable by anyone with this project's anon key. Needs an explicit decision: ` +
-        `delete it with delete_edge_function if abandoned, or wire it up (and confirm it hashes passwords, not ` +
-        `compares them raw) if it's still needed. (auto-detected)`
-      );
+      findings.push({
+        source: 'note',
+        source_ref: `security:${name}`,
+        heading: `Security finding: edge function "${name}"`,
+        content:
+          `Edge function "${name}" touches auth/password/session logic but is not referenced anywhere in ` +
+          `the current frontend source (checked src/**/*.{ts,tsx,js,jsx} for '${name}' as a string literal). ` +
+          `It is still deployed and invokable by anyone with this project's anon key. Needs an explicit decision: ` +
+          `delete it with delete_edge_function if abandoned, or wire it up (and confirm it hashes passwords, not ` +
+          `compares them raw) if it's still needed. (auto-detected ${new Date().toISOString().slice(0, 10)})`,
+      });
     }
-    if (newFindings.length === 0) return;
-
-    const header = `## Security findings (auto-detected, ${new Date().toISOString().slice(0, 10)})`;
-    const updatedNotes = existingNotes
-      ? `${existingNotes}\n\n${header}\n\n${newFindings.join('\n\n')}`
-      : `${header}\n\n${newFindings.join('\n\n')}`;
-    await supabase.from('projects').update({ context_notes: updatedNotes }).eq('id', projectId);
+    if (findings.length === 0) return;
+    await recordKnowledge(projectId, findings);
   } catch (err) {
     logger.warn('[edgeFunctionSecurityScan] scan failed (non-fatal)', err);
   }

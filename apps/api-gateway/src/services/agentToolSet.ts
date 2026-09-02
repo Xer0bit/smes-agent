@@ -7,6 +7,9 @@ import { safeJoin, deriveDbMutationKey } from '../agent-tools/types.js';
 import { writeFileTool } from '../agent-tools/write_file.js';
 import { proposePlanTool } from '../agent-tools/propose_plan.js';
 import { declareScopeTool, pathMatchesScope } from '../agent-tools/declare_scope.js';
+import { saveKnowledgeTool } from '../agent-tools/save_knowledge.js';
+import { declareArchitectureTool } from '../agent-tools/declare_architecture.js';
+import { findClientSideAdminToggle, isStructuralFile, ADMIN_TOGGLE_BLOCK_MESSAGE } from '../agent-tools/architectureGuards.js';
 import { placeAssetTool } from '../agent-tools/place_asset.js';
 import { replaceAssetReferencesTool } from '../agent-tools/replace_asset_references.js';
 import { readFileTool } from '../agent-tools/read_file.js';
@@ -53,6 +56,7 @@ const MICRO_EXCLUDED_TOOLS = new Set([
   'run_command', 'get_database_schema', 'query_database', 'confirm_database_change', 'test_database_function', 'provision_database',
   'write_edge_function', 'confirm_edge_function_deploy', 'delete_edge_function', 'list_edge_functions', 'test_edge_function', 'set_secret', 'list_secrets',
   'push_to_github', 'publish_site',
+  'save_knowledge', 'declare_architecture',
 ]);
 
 // Direct database tools. These were briefly gated on AgentContext.chatMode
@@ -99,6 +103,8 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
     thinkTool,
     proposePlanTool,
     declareScopeTool,
+    declareArchitectureTool,
+    saveKnowledgeTool,
     getBuildErrorsTool,
     writeFileTool,
     readFileTool,
@@ -525,6 +531,35 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
         // tolerance-then-block pattern catches that shape without killing a
         // legitimate multi-file dependency edit (e.g. a shared type used by
         // several declared files).
+        // ── Architecture-first gate ─────────────────────────────────────────
+        // A feature/build run writing a page or the route table before it has
+        // said what the routes, tables and auth boundary are gets one warning,
+        // then a refusal. This is where "admin page" turned into a toggle on
+        // the user page: the model started from the first file, not the plan.
+        if (
+          (ctx.tier === 'feature' || ctx.tier === 'build') &&
+          !ctx.declaredArchitecture &&
+          def.name === 'write_file' && typeof args.path === 'string' && isStructuralFile(args.path)
+        ) {
+          if (ctx.architectureWarned) {
+            return (
+              `BLOCKED: "${args.path}" is a page or route file and this run has not declared its architecture. ` +
+              `Call declare_architecture first (routes, hosted-database tables, how sign-in and roles work, edge ` +
+              `functions), then write to that plan.`
+            );
+          }
+          ctx.architectureWarned = true;
+          pendingRoutingAdvisory =
+            `WARNING: you are writing "${args.path}" without declaring the architecture. Call declare_architecture ` +
+            `(routes, data model, auth, edge functions) before the next page or route write, or that write is refused.`;
+        }
+        if ((def.name === 'write_file' || def.name === 'edit_file') && typeof args.path === 'string' && /\.(tsx?|jsx?)$/.test(args.path)) {
+          const body = def.name === 'write_file'
+            ? (typeof args.content === 'string' ? args.content : '')
+            : (typeof args.diff === 'string' ? args.diff.replace(/<<<<<<< SEARCH[\s\S]*?=======/g, '') : '');
+          const toggle = findClientSideAdminToggle(body);
+          if (toggle) return `${ADMIN_TOGGLE_BLOCK_MESSAGE}\n\nMatched: ${toggle}`;
+        }
         const SCOPE_VIOLATION_TOLERANCE = 2;
         if (
           ctx.declaredScope &&
@@ -668,8 +703,8 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
             return (
               `BLOCKED: "${args.path}" contains a hardcoded EcomGear platform URL (${urlMatch[0]}). ` +
               `Platform/system URLs must NEVER be written into project code   not even as env-var fallbacks. ` +
-              `Use the env var directly with NO fallback: import.meta.env.VITE_SUPABASE_URL for auth, ` +
-              `import.meta.env.VITE_DB_API_URL for the hosted database, import.meta.env.VITE_FUNCTIONS_API_URL for edge functions. ` +
+              `Use the env var directly with NO fallback: import.meta.env.VITE_DB_API_URL for the hosted database, ` +
+              `import.meta.env.VITE_FUNCTIONS_API_URL for edge functions (auth is your own edge functions, not a platform server). ` +
               `If the env var you need is not in the project's environment variables, that integration is not provisioned   ` +
               `tell the user instead of inventing a URL.`
             );
@@ -694,6 +729,28 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
               `in Settings, NOT to silently substitute a different value that will point the app at the wrong place. ` +
               `Read the value directly with no fallback, and let it fail loudly (or show a clear "not configured" ` +
               `message) if missing.`
+            );
+          }
+
+          // ── Platform-auth guard ────────────────────────────────────────────────
+          // VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY were the platform's own
+          // Supabase, handed to every project until 2026-09-02. They no longer
+          // exist unless the OWNER saved their own. Code that reads them now
+          // creates a Supabase client with an undefined URL, which throws at
+          // module load: the whole app is a blank page. Old projects are full
+          // of this, so a write that keeps it must be turned back at the tool
+          // layer with the migration spelled out; the prompt alone was already
+          // telling the model the right thing and it still copied the old code.
+          const legacyAuthVar = newContent.match(/\b(VITE_SUPABASE_URL|VITE_SUPABASE_ANON_KEY|VITE_SUPABASE_PUBLISHABLE_KEY)\b/);
+          if (legacyAuthVar && !ctx.envVarNames?.has(legacyAuthVar[1])) {
+            return (
+              `BLOCKED: "${args.path}" reads \`${legacyAuthVar[1]}\`, which this project does not have. Authentication ` +
+              `is NOT a platform service: this app's users live in ITS OWN hosted database. Replace every Supabase auth ` +
+              `call (createClient, signUp, signInWithPassword, getSession, onAuthStateChange) with edge functions you ` +
+              `write against the hosted database (an auth-signup / auth-login / auth-session function that hashes and ` +
+              `verifies passwords with pgcrypto) invoked via \`${'${import.meta.env.VITE_FUNCTIONS_API_URL}'}/<name>/invoke\`, ` +
+              `and keep the session token in the app's own storage. Remove the Supabase client file entirely rather ` +
+              `than leaving it importable.`
             );
           }
 
@@ -730,8 +787,8 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
             return (
               `BLOCKED: "${args.path}" calls a root-relative "/api/..." URL. There is NO backend server behind ` +
               `this app -- previews and published sites serve static files only, so every "/api/*" request 404s. ` +
-              `Use the real integrations instead: auth via the client from VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY, ` +
-              `app data via PostgREST on VITE_DB_API_URL, and custom server logic as an edge function invoked with ` +
+              `Use the real integrations instead: auth and any server logic as edge functions invoked with ` +
+              `fetch on VITE_FUNCTIONS_API_URL, app data via PostgREST on VITE_DB_API_URL. Invoke a function with ` +
               '`fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/<function-name>/invoke`, ...)`. Rewrite and retry.'
             );
           }
@@ -754,7 +811,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
             const fix = kind === 'rest/v1'
               ? 'the hosted database: `fetch(`${import.meta.env.VITE_DB_API_URL}/rest/v1/<table>`, ...)`'
               : kind === 'auth/v1'
-              ? 'auth: `fetch(`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/...`, ...)` (or use the Supabase client, which builds this URL for you)'
+              ? 'auth: an edge function you write, e.g. `fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/auth-login/invoke`, ...)` (this app has no /auth/v1 server of its own)'
               : 'an edge function: `fetch(`${import.meta.env.VITE_FUNCTIONS_API_URL}/<function-name>/invoke`, ...)`';
             return (
               `BLOCKED: "${args.path}" calls a root-relative "/${kind}/..." URL with no base-URL prefix. This app ` +
@@ -789,8 +846,8 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
               `BLOCKED: "${args.path}" hardcodes \`${undefinedConfigMatch[1]} = undefined\`   this is the exact ` +
               `pattern that has broken auth in production before (a real "Auth service is not configured" incident ` +
               `traced to this literal statement). If this is meant to hold a connection URL or ` +
-              `key, read it from the actual env var: \`import.meta.env.VITE_SUPABASE_URL\` / \`VITE_SUPABASE_ANON_KEY\` ` +
-              `for auth, \`VITE_DB_API_URL\` / \`VITE_DB_ANON_KEY\` / \`VITE_DB_SCHEMA\` for the hosted database   ` +
+              `key, read it from the actual env var: \`VITE_DB_API_URL\` / \`VITE_DB_ANON_KEY\` / \`VITE_DB_SCHEMA\` ` +
+              `for the hosted database, \`VITE_FUNCTIONS_API_URL\` for edge functions (auth is your own edge functions)   ` +
               `never a bare \`undefined\` placeholder.`
             );
           }

@@ -272,6 +272,23 @@ function checkCrossFileImports(projectRoot, requestFiles, fullSync) {
 // needs fixing") on larger projects. Omit changedPaths (or pass a fullSync
 // push's own file list, which already covers ~the whole tree) to fall back
 // to the full walk.
+/**
+ * Whether a project-relative path is app source this check should parse.
+ *
+ * `__edge_functions__/*.js` mirrors are raw sandbox bodies: bare top-level
+ * statements, a top-level `return`, free `params`/`secrets`/`db` names. They
+ * are never bundled or served (see viteConfig.js and materializeProjectFiles,
+ * which both already skip the directory). Running esbuild over one produced a
+ * page of syntax errors for a file the app never loads, the push was rolled
+ * back, and the agent's only change that run was reverted with a "failed to
+ * build" notice (CardPro, 2026-09-02 10:41 UTC).
+ */
+function isBuildCheckable(relPath) {
+    const normalized = String(relPath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    if (normalized.startsWith('__edge_functions__/')) return false;
+    return /\.(tsx|jsx|ts|js)$/.test(normalized);
+}
+
 async function quickViteBuildCheck(projectId, projectRoot, changedPaths) {
     const instance = activeServers.get(projectId);
     // Guard is on instance existence only, not `.vite`   this check never
@@ -283,7 +300,7 @@ async function quickViteBuildCheck(projectId, projectRoot, changedPaths) {
     const candidateFiles = [];
     if (Array.isArray(changedPaths) && changedPaths.length > 0) {
         for (const relPath of changedPaths) {
-            if (!/\.(tsx|jsx|ts|js)$/.test(relPath)) continue;
+            if (!isBuildCheckable(relPath)) continue;
             const absPath = path.join(projectRoot, relPath.replace(/^\/+/, ''));
             if (fs.existsSync(absPath)) candidateFiles.push(absPath);
         }
@@ -377,6 +394,7 @@ function trimTrailingOrphanClosers(content) {
 }
 
 module.exports = {
+    isBuildCheckable,
     getEsbuildLoader,
     formatValidationError,
     SKIP_VALIDATION_FILES,

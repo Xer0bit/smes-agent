@@ -15,6 +15,34 @@ export interface PendingAdminSqlChange {
   status: string;
   created_at: string;
   staged_by_user_id: string;
+  /** agent run that staged it; groups rows under the reply that produced them */
+  batch_id?: string | null;
+  /** Postgres message from the last failed batch run, if any */
+  error_message?: string | null;
+}
+
+export interface RunAdminSqlBatchResult {
+  success: boolean;
+  executed: string[];
+  failedId?: string;
+  failedIndex?: number;
+  error?: string;
+}
+
+/**
+ * Run every pending statement (of one batch, or the project) in staging
+ * order as one transaction. On failure nothing was applied; `failedId`
+ * names the statement and `error` carries Postgres's message.
+ */
+export async function runAdminSqlBatch(projectId: string, batchId?: string): Promise<RunAdminSqlBatchResult> {
+  const headers = await authHeaders();
+  const res = await fetch(getApiServerUrl(`/api/v1/database/admin-sql/run-all?project_id=${encodeURIComponent(projectId)}`), {
+    method: 'POST', headers, body: JSON.stringify({ project_id: projectId, batch_id: batchId }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (res.status === 422) return { success: false, executed: [], failedId: json.failedId, failedIndex: json.failedIndex, error: json.error };
+  if (!res.ok) throw new Error(json.error || `Run failed (${res.status})`);
+  return { success: true, executed: json.executed ?? [] };
 }
 
 async function authHeaders(): Promise<Record<string, string>> {

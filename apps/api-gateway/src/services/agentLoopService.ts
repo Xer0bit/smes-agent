@@ -33,6 +33,8 @@ import { awaitPreviewSettled } from './previewSettle.js';
 import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols, getProvider } from '../knowledgebase/index.js';
 import { persistAgentRevision } from './agentRevisionPersist.service.js';
 import { priceFor, calcCost, createRunTokens, freshInputTokens } from './agentCost.js';
+import { type KnowledgeChunk, selectKnowledgeForPrompt, renderKnowledge, recordKnowledge, uploadsFromRun, distillRunKnowledge } from './knowledge.service.js';
+import { buildCodebaseMap, listProjectFiles, CODEBASE_MAP_REF, CODEBASE_MAP_HEADING } from './codebaseMap.js';
 import { fetchHeadHashes, diffFilesAgainstHead } from './runSandbox.js';
 import { buildSignatureMap } from './agentSignatureMap.js';
 import { withInvariantCore } from '../prompts/invariants.js';
@@ -294,11 +296,8 @@ export interface AgentRunParams {
      */
     publicUrl?: string;
   }>;
-  /** Project knowledge from KnowledgeSettings (custom system prompt + context notes) */
-  projectKnowledge?: {
-    customSystemPrompt: string;
-    contextNotes: string;
-  };
+  /** Active project knowledge (Settings → Knowledge); the loop picks what fits this prompt. */
+  knowledgeChunks?: KnowledgeChunk[];
   /** Project secrets   injected as env var hints for the agent, never echoed to user */
   projectSecrets?: Array<{ key_name: string; key_value: string }>;
   /** Event sink the run streams progress through (production: SSE over Express; tests: an in-memory collector) */
@@ -399,7 +398,7 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
 }
 
 async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResult> {
-  const { prompt, projectId, appPath, model, mode, chatMode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, sink, userId, abortSignal, agentLockToken, approvedPlanSteps, onRunId } = params;
+  const { prompt, projectId, appPath, model, mode, chatMode, existingFiles, history, olderSummary, promptIntent, attachments, knowledgeChunks, projectSecrets, sink, userId, abortSignal, agentLockToken, approvedPlanSteps, onRunId } = params;
   const _innerStartedAtMs = Date.now();
   logger.info('_runAgentLoopInner: invoked', {
     projectId, userId, appPath, model, mode, chatMode,
@@ -410,7 +409,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     hasOlderSummary: Boolean(olderSummary),
     promptIntent,
     attachmentCount: attachments?.length ?? 0,
-    hasProjectKnowledge: Boolean(projectKnowledge),
+    knowledgeChunks: knowledgeChunks?.length ?? 0,
     projectSecretsCount: projectSecrets?.length ?? 0,
     hasAbortSignal: Boolean(abortSignal),
     hasAgentLockToken: Boolean(agentLockToken),
@@ -717,6 +716,9 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     userId,
     runId: agentLockToken,
     chatMode: chatMode === 'admin' ? 'admin' : 'normal',
+    // Names only. Values reach the model through the secrets block, not ctx.
+    envVarNames: new Set((projectSecrets ?? []).map((s) => s.key_name)),
+    agentRunId: agentRunId ?? undefined,
     readFiles: new Set<string>(),
     pendingPreviewFiles: new Map<string, string>(),
     mutationFailureStreak: new Map<string, { message: string; count: number }>(),
@@ -728,6 +730,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     anonPolicyTables: new Set(),
     attachmentPublicUrls: new Map<string, string>(),
     previewServiceUrl: process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001',
+    agentLockToken,
     ledger: runLedger,
     ecgMcp: (() => {
       const url = projectSecrets?.find(s => s.key_name === 'ECG_MCP_URL')?.key_value;
@@ -1151,6 +1154,8 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // This prevents any image from silently overwriting project assets before the agent
   // understands the user's intent.
   let attachmentContext = '';
+  // Text pulled from uploaded documents, kept as knowledge once the run ends.
+  const uploadTexts: Array<{ name: string; text: string }> = [];
   if (attachments && attachments.length > 0) {
     logger.debug('_runAgentLoopInner: processing attachments', { projectId, attachmentCount: attachments.length, visionCapable });
     const TEXT_TYPES = new Set([
@@ -1384,6 +1389,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
           if (EXTRACTABLE_DOC_TYPES.has(att.type)) {
             const extractedText = await extractDocumentText(resolvedPath, att.type);
             if (extractedText) {
+              uploadTexts.push({ name: att.name, text: extractedText.slice(0, 4000) });
               let text = extractedText;
               if (text.length > 30_000) text = text.slice(0, 30_000) + '\n\n… (truncated)';
               parts.push(
@@ -1637,16 +1643,15 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     isEmptyProject,
   });
 
-  // Build the project knowledge block from KnowledgeSettings (custom_system_prompt + context_notes).
+  // Build the project knowledge block from Settings → Knowledge (project_knowledge rows;m_prompt + context_notes).
   // This is injected at the top of every request so the agent always has project-specific context.
   const knowledgeBlock = (() => {
     const parts: string[] = [];
-    if (projectKnowledge?.customSystemPrompt) {
-      parts.push(`## Custom Instructions\n\n${projectKnowledge.customSystemPrompt}`);
-    }
-    if (projectKnowledge?.contextNotes) {
-      parts.push(`## Project Context Notes\n\n${projectKnowledge.contextNotes}`);
-    }
+    // Owner notes always, then the chats/changes/uploads that share terms
+    // with this prompt, under a fixed budget. Archived chunks never arrive
+    // here (loadActiveKnowledge filters them).
+    const knowledgeSection = renderKnowledge(selectKnowledgeForPrompt(knowledgeChunks ?? [], prompt));
+    if (knowledgeSection) parts.push(knowledgeSection);
     return parts.length > 0
       ? `\n\n# Project Knowledge\n\nThe project owner has set the following custom instructions and context. Follow them throughout this entire session   they take precedence over default behavior.\n\n${parts.join('\n\n')}`
       : '';
@@ -1669,10 +1674,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const hasEcg = projectSecrets.some(s => s.key_name === 'ECG_PORTAL_TOKEN');
     const hasEcgMcp = projectSecrets.some(s => s.key_name === 'ECG_MCP_URL');
 
+    // VITE_SUPABASE_* are never platform-provided (2026-09-02). If present
+    // they are the OWNER's own Supabase project, saved by the owner.
     const sbNote = hasSb
-      ? (hasDb
-          ? '\n\nUse `import.meta.env.VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for AUTHENTICATION ONLY (sign up, log in, log out, session/user). This project also has its own hosted database (below)   ALL application data (tables like posts, products, orders, profiles, etc.) MUST go through `VITE_DB_API_URL`, NEVER through Supabase. Do not create or query app-data tables against Supabase when a hosted database is present. NEVER hardcode any `*.supabase.co` URL   it will cause CORS errors in the preview.'
-          : '\n\nFor Supabase auth/data in generated code ALWAYS use `import.meta.env.VITE_SUPABASE_URL` and `import.meta.env.VITE_SUPABASE_ANON_KEY`. NEVER hardcode any `*.supabase.co` URL   it will cause CORS errors in the preview.')
+      ? '\n\nThe owner saved their OWN Supabase project as `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`. Use it only for what the owner said it is for.' +
+        (hasDb ? ' Application data still lives in this project\'s hosted database (`VITE_DB_API_URL`), not there.' : '') +
+        ' NEVER hardcode any `*.supabase.co` URL.'
       : '';
     // Fetch the real current schema unconditionally   don't rely on the agent
     // remembering to call get_database_schema. Best-effort: a fetch failure
@@ -3101,9 +3108,51 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // context and the completion-claim gates, which must still see exactly
       // what was generated.
       const narration = new NarrationFilter();
+      // ── Live tool-input progress ───────────────────────────────────────
+      // A write_file call streams its JSON arguments token by token, and for
+      // a 20 KB page that is the longest silence a user sees: the only signal
+      // was a generic "Writing code" until the tool ran. The path appears in
+      // the first few hundred bytes of the arguments, so it is announced as
+      // soon as it is parsed and the growing byte count follows, throttled.
+      const liveToolInputs = new Map<string, { toolName: string; text: string; path?: string; lastEmit: number }>();
+      const TOOL_PROGRESS_EVERY_MS = 350;
+      const toolTarget = (toolName: string, text: string): string | undefined => {
+        const key = toolName === 'write_edge_function' || toolName === 'confirm_edge_function_deploy' ? 'name'
+          : toolName === 'run_command' ? 'command'
+          : toolName === 'rename_file' ? 'from'
+          : toolName === 'grep' || toolName === 'search_codebase' ? 'pattern|query'
+          : 'path';
+        const m = new RegExp(`"(?:${key})"\\s*:\\s*"((?:[^"\\\\]|\\\\.){1,200})"`).exec(text);
+        return m ? m[1] : undefined;
+      };
+      const emitToolProgress = (id: string, done: boolean) => {
+        const entry = liveToolInputs.get(id);
+        if (!entry || !entry.path) return;
+        sink.emit('tool-progress', { id, tool: entry.toolName, path: entry.path, chars: entry.text.length, done });
+        entry.lastEmit = Date.now();
+      };
       try {
         for await (const part of stream.fullStream) {
-          if (part.type === 'text-delta') {
+          if (part.type === 'tool-input-start') {
+            const p = part as { id: string; toolName: string };
+            liveToolInputs.set(p.id, { toolName: p.toolName, text: '', lastEmit: 0 });
+          } else if (part.type === 'tool-input-delta') {
+            const p = part as { id: string; delta: string };
+            const entry = liveToolInputs.get(p.id);
+            if (entry) {
+              entry.text += p.delta;
+              if (!entry.path) {
+                entry.path = toolTarget(entry.toolName, entry.text);
+                if (entry.path) emitToolProgress(p.id, false);
+              } else if (Date.now() - entry.lastEmit > TOOL_PROGRESS_EVERY_MS) {
+                emitToolProgress(p.id, false);
+              }
+            }
+          } else if (part.type === 'tool-input-end') {
+            const p = part as { id: string };
+            emitToolProgress(p.id, true);
+            liveToolInputs.delete(p.id);
+          } else if (part.type === 'text-delta') {
             textBuffer += part.text;
             const safeText = sanitizeUserFacingDelta(part.text);
             if (safeText) {
@@ -4338,6 +4387,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const droppedFiles: string[] = [];
 
     let previewPushOk = false;
+    let previewDepsError: string | null = null;
     // Result of the pre-response smoke gate (gap G2), read again by the
     // post-response observability write so one run never launches Chromium
     // twice to answer the same question. Declared at this scope because both
@@ -4610,6 +4660,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         // the same reply.
         const pushResult = interpretPreviewPush(firstAttempt.status, firstAttempt.body);
         const rolledBack = pushResult.rolledBack;
+        if (pushResult.depsError) {
+          previewDepsError = pushResult.depsError;
+          logger.warn('[AgentLoop] Preview could not install project dependencies', { projectId, error: pushResult.depsError });
+          tracer.event('preview-deps-failed', { error: pushResult.depsError });
+        }
 
         if (!pushResult.landed) {
           logger.warn('[AgentLoop] Preview push was ROLLED BACK by preview-service -- routing to repair loop', {
@@ -4714,7 +4769,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // unsettled preview is how a healthy run got routed into repair.
           settle.settled &&
           !abortController.signal.aborted &&
-          runTokens.total < RUN_TOKEN_CAP
+          // billableTotal, like the loop's own cap check: raw `total` counts
+          // every cache-read at full weight, so a 17-step run that was under
+          // the cap by the loop's measure read as 1.93M "used" here and was
+          // denied its repair pass (CardPro 977efe65, 2026-09-02).
+          runTokens.billableTotal < RUN_TOKEN_CAP
         ) {
           try {
             const smokeBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
@@ -4756,9 +4815,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           }).catch(() => {});
         }
         // Skip all repair attempts if already over token budget
-        if (abortController.signal.aborted || runTokens.total >= RUN_TOKEN_CAP) {
+        if (abortController.signal.aborted || runTokens.billableTotal >= RUN_TOKEN_CAP) {
           logger.warn('[AgentLoop] Skipping build repair: token budget already exhausted', {
-            projectId, runTokensTotal: runTokens.total, RUN_TOKEN_CAP,
+            projectId, runTokensBillable: runTokens.billableTotal, runTokensRaw: runTokens.total, RUN_TOKEN_CAP,
           });
         } else {
         let repairFiles = [...mergedWrites];
@@ -5386,13 +5445,28 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       });
     }
 
-    if (droppedFiles.length > 0) {
+    // The model may end a run inside a tool call with no prose at all (a cap
+    // hit mid-edit does exactly this). The summary built above was persisted
+    // as the message but never streamed, and the client prefers streamed
+    // text, so the ONLY thing the user saw was whichever caveat below got
+    // streamed: a bare "failed to build" line with no account of what ran
+    // (CardPro 977efe65, 2026-09-02). Stream the summary first, once.
+    if (!accumulatedText.trim() && summary.trim()) {
+      sink.emit('text-delta', { text: summary });
+    }
+
+    // Edge-function mirrors are never built by the preview; reverting the
+    // mirror file does not undo a deploy that confirm_edge_function_deploy
+    // already made. Listing one here as "failed to build, left out" was false
+    // on both counts.
+    const droppedAppFiles = droppedFiles.filter((f) => !f.startsWith(`${EDGE_FUNCTIONS_DIR}/`));
+    if (droppedAppFiles.length > 0) {
       // See droppedFiles' declaration above: this run wrote these but they
       // failed preview validation and got silently dropped/reverted so the
       // live preview stays healthy. Without this, the response above can
       // read as "done" while part of the request quietly never landed.
-      const shown = [...new Set(droppedFiles)].slice(0, 5);
-      const more = droppedFiles.length - shown.length;
+      const shown = [...new Set(droppedAppFiles)].slice(0, 5);
+      const more = droppedAppFiles.length - shown.length;
       sink.emit('text-delta', {
         text: `\n\n> ⚠️ ${shown.map((f) => `\`${f}\``).join(', ')}${more > 0 ? ` (+${more} more)` : ''} failed to build, so ${shown.length + more === 1 ? 'that change was' : 'those changes were'} left out to keep the live preview working. Tell me to try again if you still want ${shown.length + more === 1 ? 'it' : 'them'}.`,
       });
@@ -5459,8 +5533,55 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // and any client save target the same row.
     void persistAssistantMessage({ projectId, agentRunId, userId, content: summary });
 
+    // What this run leaves behind: uploaded text as-is, and whatever durable
+    // fact the cheap model distils from the exchange (usually nothing). The
+    // agent may also have saved facts itself via save_knowledge. Owner
+    // manages all of it in Settings → Knowledge.
+    if (agentRunId) {
+      void recordKnowledge(projectId, uploadsFromRun({ agentRunId, uploads: uploadTexts }));
+      void distillRunKnowledge({
+        projectId, prompt, summary,
+        touchedFiles: [...filesToWrite.map((f) => f.path), ...filesEdited, ...filesToDelete],
+        existingHeadings: (knowledgeChunks ?? []).map((c) => c.heading),
+      });
+      // The codebase map: what the app is made of, as the owner-visible
+      // `codebase` chunk. Rebuilt whenever this run changed files, and once
+      // for a project that has none yet.
+      const hasMap = (knowledgeChunks ?? []).some((c) => c.source === 'codebase');
+      if (agentWroteFiles || !hasMap) {
+        void (async () => {
+          try {
+            const { data: fns } = supabase
+              ? await supabase.from('edge_functions').select('name').eq('project_id', projectId)
+              : { data: [] as Array<{ name: string }> };
+            const content = buildCodebaseMap(listProjectFiles(appPath), { edgeFunctions: (fns ?? []).map((f: { name: string }) => f.name) });
+            await recordKnowledge(projectId, [{ source: 'codebase', source_ref: CODEBASE_MAP_REF, heading: CODEBASE_MAP_HEADING, content }]);
+          } catch (err) {
+            logger.debug('[knowledge] codebase map skipped', { projectId, error: err instanceof Error ? err.message : String(err) });
+          }
+        })();
+      }
+    }
+
+    // SQL this run staged (schema changes wait for the owner). Sent with the
+    // reply so the chat shows the ordered batch under it, not in a side panel.
+    let stagedSql: Array<{ id: string; sql_text: string; status: string; created_at: string; error_message: string | null }> = [];
+    if (agentRunId && supabase) {
+      try {
+        const { data } = await supabase
+          .from('admin_sql_pending_changes')
+          .select('id, sql_text, status, created_at, error_message')
+          .eq('project_id', projectId)
+          .eq('batch_id', agentRunId)
+          .order('created_at', { ascending: true });
+        stagedSql = (data ?? []) as typeof stagedSql;
+      } catch { /* best-effort */ }
+    }
+
     // NOW send 'done'   preview is synced, frontend shows correct state
     sink.emit('done', {
+      stagedSql,
+      batchId: agentRunId ?? null,
       // The row the server just wrote. The client saves too (its own error and
       // cancel paths still need to), and without a shared id the two writes
       // produced TWO rows per run -- visible on CardPro 2026-09-02 as the same
@@ -5484,6 +5605,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // rendered page broken and repair couldn't confirm a fix -- the frontend
       // uses this to hold back its success toast for this run only.
       smokeFailureSurvivedRepair,
+      previewDepsError,
       needsAutoContinue,
       continuationPrompt,
     });

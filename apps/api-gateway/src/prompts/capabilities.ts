@@ -41,6 +41,8 @@ const GATE_RULES: readonly string[] = [
   'A write that would ship syntactically broken code is refused before it reaches disk.',
   'Repeating an identical failing call is refused; change the approach rather than retrying it verbatim.',
   'After you write a file, any earlier read of that file in this conversation is stale. Re-read before building a SEARCH/REPLACE block against it.',
+  'On a feature or build task, a page or route write before `declare_architecture` is warned once and then refused. Declare routes, tables, auth and edge functions first.',
+  'Admin access from the client (a toggle, a stored role flag, a hardcoded password) is refused. Admin is its own routes behind a guard that reads the role from the hosted database session.',
   'NEVER rebuild or replace an existing app wholesale. If the project looks empty, or much smaller than you expected, that is a SYMPTOM -- say so and stop. Do not recreate files you believe are missing.',
 ];
 

@@ -105,7 +105,7 @@ describe('agentToolSet declared-scope gate (fixture: logo incident)', () => {
 
     expect(ctx.declaredScope).toBeUndefined();
     expect(result).not.toMatch(/WARNING|BLOCKED/);
-    expect(result).toBe('Successfully wrote src/anywhere/random-file.css');
+    expect(result.split('\n')[0]).toBe('Successfully wrote src/anywhere/random-file.css');
     expect(fs.existsSync(path.join(tmpDir, 'src/anywhere/random-file.css'))).toBe(true);
   });
 });
