@@ -380,6 +380,39 @@ export const revisionService = {
     return data?.[0] ?? null;
   },
 
+  /**
+   * The newest revision whose manifest is actually readable, not merely the
+   * newest row.
+   *
+   * Several writers create the revision row FIRST and set generated_files LAST
+   * (crash-safety: a half-written revision is unreadable rather than wrong), and
+   * a legacy writer could omit the format entirely. Taking strictly the latest
+   * row therefore made ONE interrupted write look like "this project has no
+   * revisions", which sent the client to the flat legacy storage path and a
+   * frozen snapshot. The server takes the same look-back approach
+   * (runSandbox.pickReadableHead); the two must agree or the client and the
+   * agent disagree about what the project is.
+   */
+  async getLatestReadableRevision(
+    projectId: string,
+    lookback = 10,
+  ): Promise<{ id: string; manifest: RevisionManifest } | null> {
+    const { data, error } = await supabase
+      .from('revisions')
+      .select('id, generated_files')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false })
+      .limit(lookback);
+    if (error || !data) return null;
+    for (const row of data) {
+      const gf = row.generated_files as unknown as RevisionManifest | null;
+      if (gf?.format === 'manifest-v1' && Array.isArray(gf.files) && gf.files.length > 0) {
+        return { id: row.id as string, manifest: gf };
+      }
+    }
+    return null;
+  },
+
   async getRevisionManifest(revisionId: string): Promise<RevisionManifest | null> {
     const { data, error } = await supabase
       .from('revisions')

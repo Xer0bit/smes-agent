@@ -273,13 +273,14 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({
             // path is now only a last-resort fallback for a project with zero
             // revisions at all.
             try {
-                const { data: latestRevisions } = await supabase
-                    .from('revisions')
-                    .select('id')
-                    .eq('project_id', projectId)
-                    .order('created_at', { ascending: false })
-                    .limit(1);
-                const latestRevisionId = latestRevisions?.[0]?.id;
+                // Newest READABLE revision, not merely the newest row: an
+                // interrupted or legacy write leaves a row whose manifest is
+                // null, and treating that as "no revisions" dropped the client
+                // to the flat legacy store and a frozen snapshot. Mirrors the
+                // server's pickReadableHead so both agree on what HEAD is.
+                const { revisionService: revSvc } = await import('@/services/revisionService');
+                const readable = await revSvc.getLatestReadableRevision(projectId);
+                const latestRevisionId = readable?.id;
                 if (latestRevisionId) {
                     baseRevisionIdRef.current = latestRevisionId; // M1: this tab now bases on head
                     const { revisionService } = await import('@/services/revisionService');
