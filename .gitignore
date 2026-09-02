@@ -66,3 +66,5 @@ tmp/
 docs/wiki
 docs/spec
 docs/design
+# TypeScript incremental build artifacts
+*.tsbuildinfo
