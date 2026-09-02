@@ -156,9 +156,14 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
 
     let res: Response;
     try {
+      // /check sits behind the same shared secret as /update and /secrets.
+      // Without it the preview answers 401, the toolset's diagnose-before-write
+      // gate turns that into "service issue, stop", and the run stalls with no
+      // edits (production, 2026-09-03 02:05 +05).
+      const updateSecret = process.env.PREVIEW_UPDATE_SECRET || '';
       res = await fetch(checkUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(updateSecret ? { 'x-update-secret': updateSecret } : {}) },
         body: JSON.stringify({ files }),
         signal: AbortSignal.timeout(30_000),
       });
@@ -180,7 +185,7 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
         );
       }
       return (
-        `Preview service returned HTTP ${res.status} for project ${args.projectId}. ` +
+        `Preview service returned HTTP ${res.status} for project ${projectId}. ` +
         'This is a service issue, not a code error. Do NOT retry get_build_errors for the same issue. ' +
         'Finish writing your files and stop.'
       );
