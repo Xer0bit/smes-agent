@@ -11,7 +11,7 @@
 // error to fix instead of a cryptic runtime failure, and blocks tampered
 // DB rows that bypassed write_edge_function's own check.
 import * as acorn from 'acorn';
-import { ancestor as walkAncestor } from 'acorn-walk';
+import { ancestor as walkAncestor, simple as walkSimple } from 'acorn-walk';
 
 export interface ValidationIssue {
   message: string;
@@ -43,6 +43,41 @@ const PASSWORD_NAME_RE = /password/i;
 // bcrypt/argon2/scrypt (JS-side hashing libs), or a generic "hash" call --
 // any of these means the value passed through *some* hashing step, which is
 // all this check can verify statically (it can't confirm the hash is strong).
+/**
+ * What to actually DO about a password, named precisely.
+ *
+ * The previous text told the agent that "this database/sandbox has no hashing
+ * primitive available (no pgcrypto, no Web Crypto, no npm packages)" and to use
+ * the platform Auth connection instead. Both factual claims were wrong, and the
+ * combination was unsatisfiable:
+ *
+ *  - pgcrypto IS installed, in the `extensions` schema. This repo's own SQL
+ *    preflight says so and tells the agent to qualify the call
+ *    (sqlPreflight.ts: "pgcrypto is installed in the `extensions` schema, which
+ *    is NOT on this role's search_path ... Write it as extensions.crypt(...)").
+ *  - Web Crypto IS injected into the sandbox: runEdgeFunction.js binds
+ *    `crypto: webcrypto` alongside TextEncoder/TextDecoder, and `crypto` is not
+ *    in BANNED_IDENTIFIERS.
+ *
+ * So the validator rejected the function, then told the agent the only fixes
+ * were impossible. The agent could not satisfy it, retried, and tripped the
+ * edge-function circuit breaker at 3 (observed on pm-auth, 2026-08-25 07:53:01).
+ *
+ * Detection is unchanged and still rejects genuinely unhashed passwords --
+ * HASH_CALL_RE already matches `extensions.crypt` and `crypto.subtle.*`, so
+ * correct code passed even before this change. Only the guidance was false.
+ */
+const HASHING_GUIDANCE =
+  'Hash it with one of the primitives this platform actually provides: ' +
+  '(1) pgcrypto in SQL -- it is installed in the `extensions` schema but is not on the role search_path, ' +
+  "so it must be schema-qualified: extensions.crypt(password, extensions.gen_salt('bf')) to hash and " +
+  'extensions.crypt(password, stored_hash) = stored_hash to verify; or ' +
+  '(2) Web Crypto in the sandbox -- `crypto.subtle` is available, so derive a key with PBKDF2 ' +
+  "(crypto.subtle.importKey + crypto.subtle.deriveBits, SHA-256, a per-user random salt from " +
+  'crypto.getRandomValues, and a high iteration count). ' +
+  'Do NOT use a bare crypto.subtle.digest (plain SHA-256) for a password: it is unsalted and fast, ' +
+  'which is exactly what makes it unsuitable. Prefer (1) unless the hash must be computed outside the database.';
+
 const HASH_CALL_RE = /crypt|hash|bcrypt|argon2|scrypt|verify/i;
 
 function propertyKeyName(node: acorn.Property): string | null {
@@ -92,6 +127,45 @@ function isHashCall(rawNode: acorn.Node): boolean {
 // hash: user.password_hash }` object literal passed to
 // `db.rpc('verify_password', {...})`. Forwarding a password INTO a
 // recognized hash/verify call is the point of that call, not a defect.
+/**
+ * Names bound to the result of a hash call, so a value that reached the field
+ * through a variable still counts as hashed.
+ *
+ * Without this, `isHashCall` only accepted an INLINE call as the property
+ * value, so the idiomatic shape was rejected:
+ *
+ *   const hashed = await db.rpc('hash_password', { pw: password });
+ *   await db.insert('users', { password_hash: hashed });   // <- was flagged
+ *
+ * That, not the wording, was the actual unsatisfiable half of the pm-auth trap:
+ * every natural way to write the correct code failed, and the message then said
+ * hashing was impossible anyway. Covers `const x = <hash call>` and reading a
+ * field off it (`rows[0].hash`, `res.hash`).
+ */
+function collectHashedBindings(ast: acorn.Node): Set<string> {
+  const names = new Set<string>();
+  walkSimple(ast, {
+    VariableDeclarator(node: acorn.VariableDeclarator) {
+      if (!node.init || node.id.type !== 'Identifier') return;
+      if (isHashCall(node.init)) names.add(node.id.name);
+    },
+  });
+  return names;
+}
+
+/** True when this expression's value originated from a hash-call binding. */
+function isHashedBindingRef(node: acorn.Node, hashed: ReadonlySet<string>): boolean {
+  const n = unwrapAwait(node);
+  if (n.type === 'Identifier') return hashed.has((n as acorn.Identifier).name);
+  if (n.type === 'MemberExpression') {
+    // Walk to the root object: rows[0].hash -> rows
+    let cur: acorn.Node = n;
+    while (cur.type === 'MemberExpression') cur = (cur as acorn.MemberExpression).object;
+    return cur.type === 'Identifier' && hashed.has((cur as acorn.Identifier).name);
+  }
+  return false;
+}
+
 function isInsideHashCallArgs(ancestors: acorn.Node[]): boolean {
   for (let i = ancestors.length - 2; i >= 0; i--) {
     const a = ancestors[i];
@@ -129,6 +203,10 @@ export function validateEdgeFunctionCode(code: string): ValidationIssue[] {
   } catch (err) {
     return [{ message: `Syntax error: ${(err as Error).message}` }];
   }
+
+  // Pre-pass: names bound to a hash call, so hashing into a variable before
+  // assigning the field counts as hashed (see collectHashedBindings).
+  const hashedBindings = collectHashedBindings(ast);
 
   walkAncestor(ast, {
     VariableDeclarator(node: acorn.VariableDeclarator) {
@@ -220,13 +298,12 @@ export function validateEdgeFunctionCode(code: string): ValidationIssue[] {
       const keyName = propertyKeyName(node);
       if (!keyName || !isPasswordLike(keyName)) return;
       if (isHashCall(node.value)) return;
+      if (isHashedBindingRef(node.value, hashedBindings)) return; // hashed into a variable first
       if (isInsideHashCallArgs(ancestors)) return; // forwarded into a recognized hash/verify call
       issues.push({
         message: `Field "${keyName}" is assigned a value that doesn't pass through a hash call ` +
-          '(crypt/bcrypt/etc). Storing or forwarding a raw password is a security defect. This database/sandbox ' +
-          'has no hashing primitive available (no pgcrypto, no Web Crypto, no npm packages) -- do not hand-roll ' +
-          'one. Route login/signup/password verification through the platform\'s Auth connection instead of a ' +
-          'custom password table (see the password-handling rule).',
+          '(crypt/bcrypt/etc). Storing or forwarding a raw password is a security defect. ' +
+          HASHING_GUIDANCE,
       });
     },
     // Plaintext-password comparison: `user.password_hash !== password` (also
@@ -241,11 +318,11 @@ export function validateEdgeFunctionCode(code: string): ValidationIssue[] {
       const touchesPassword = isPasswordLike(leftName) || isPasswordLike(rightName);
       if (!touchesPassword) return;
       if (isHashCall(node.left) || isHashCall(node.right)) return;
+      if (isHashedBindingRef(node.left, hashedBindings) || isHashedBindingRef(node.right, hashedBindings)) return;
       issues.push({
         message: 'Comparing a password/password_hash field without a hash call in the comparison -- this compares ' +
-          'a stored hash against a raw value (or two raw values) directly. This database/sandbox has no hashing ' +
-          'primitive available -- route login/signup through the platform\'s Auth connection instead of ' +
-          'verifying passwords yourself.',
+          'a stored hash against a raw value (or two raw values) directly. ' +
+          HASHING_GUIDANCE,
       });
     },
     // `db.*` call-shape validation (orchestration audit, 2026-08-09): the db

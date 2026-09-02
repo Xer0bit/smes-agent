@@ -103,3 +103,89 @@ describe('validateEdgeFunctionCode', () => {
     expect(issues[0].message).toMatch(/Syntax error/);
   });
 });
+
+// ── The pm-auth unsatisfiable-trap regression (2026-08-25 → fixed 2026-09-02) ──
+//
+// The plaintext-password rejection used to tell the agent that "this
+// database/sandbox has no hashing primitive available (no pgcrypto, no Web
+// Crypto, no npm packages)" and to route auth through the platform Auth
+// connection. Both claims were false:
+//   - pgcrypto is installed in the `extensions` schema (see sqlPreflight.ts)
+//   - runEdgeFunction.js injects `crypto: webcrypto`, and `crypto` is not banned
+// So a rejected function could not be repaired by following the message. The
+// agent retried and tripped the edge-function circuit breaker at 3.
+//
+// These assert the two halves that matter: correct code PASSES (so the trap
+// cannot re-form), and genuinely unhashed passwords are still REJECTED, now
+// with guidance that names primitives that exist.
+describe('password handling: guidance must be satisfiable', () => {
+  const issues = (code: string) => validateEdgeFunctionCode(code);
+  const text = (code: string) => issues(code).map((i) => i.message).join(' | ');
+
+  it('ACCEPTS pgcrypto hashing via schema-qualified extensions.crypt', () => {
+    const code = `
+      const { email, password } = params;
+      const rows = await db.rpc('hash_password', { pw: password });
+      await db.insert('users', { email, password_hash: rows[0].hash });
+      return { ok: true };
+    `;
+    expect(text(code)).not.toMatch(/raw password|without a hash call/);
+  });
+
+  it('ACCEPTS a SQL path that calls extensions.crypt directly', () => {
+    const code = `
+      const { email, password } = params;
+      const hashed = await db.rpc('crypt_password', { pw: password });
+      await db.insert('users', { email, password_hash: hashed });
+      return { ok: true };
+    `;
+    expect(text(code)).not.toMatch(/raw password|without a hash call/);
+  });
+
+  it('ACCEPTS Web Crypto PBKDF2 in the sandbox', () => {
+    const code = `
+      const { email, password } = params;
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+      const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 210000, hash: 'SHA-256' }, key, 256);
+      await db.insert('users', { email, password_hash: bits });
+      return { ok: true };
+    `;
+    expect(text(code)).not.toMatch(/raw password|without a hash call/);
+  });
+
+  it('still REJECTS a genuinely unhashed password', () => {
+    const code = `
+      const { email, password } = params;
+      await db.insert('users', { email, password_hash: password });
+      return { ok: true };
+    `;
+    expect(text(code)).toMatch(/doesn't pass through a hash call/);
+  });
+
+  it('still REJECTS comparing a stored hash against a raw password', () => {
+    const code = `
+      const user = await db.select('users');
+      if (user.password_hash !== password) { return { error: 'bad' }; }
+      return { ok: true };
+    `;
+    expect(text(code)).toMatch(/without a hash call in the comparison/);
+  });
+
+  it('the rejection names primitives that actually exist, and no longer claims they do not', () => {
+    const m = text("await db.insert('users', { password_hash: password });");
+    // Names the real primitives
+    expect(m).toMatch(/extensions\.crypt/);
+    expect(m).toMatch(/gen_salt/);
+    expect(m).toMatch(/crypto\.subtle/);
+    // And no longer asserts the falsehoods that made it unsatisfiable
+    expect(m).not.toMatch(/no pgcrypto/);
+    expect(m).not.toMatch(/no Web Crypto/);
+    expect(m).not.toMatch(/has no hashing primitive available/);
+  });
+
+  it('warns against bare SHA-256 digest for passwords rather than recommending it', () => {
+    const m = text("await db.insert('users', { password_hash: password });");
+    expect(m).toMatch(/Do NOT use a bare crypto\.subtle\.digest/);
+  });
+});
