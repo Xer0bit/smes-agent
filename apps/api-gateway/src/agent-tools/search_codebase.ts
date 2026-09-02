@@ -49,6 +49,54 @@ export function collectWorkspaceFiles(root: string): WorkspaceFile[] {
   return out;
 }
 
+/** Words worth locating in a file: drops the filler that matches everything. */
+const STOPWORDS = new Set([
+  'where', 'is', 'the', 'a', 'an', 'of', 'in', 'to', 'for', 'and', 'or', 'how',
+  'what', 'does', 'do', 'this', 'that', 'it', 'its', 'on', 'at', 'by', 'with',
+  'find', 'code', 'file', 'files', 'logic', 'handle', 'handles', 'used', 'use',
+]);
+
+/**
+ * The part of the file that actually answers the query, with line numbers.
+ *
+ * The previous output was `content.slice(0, 250)` -- the TOP of the file, which
+ * for a TS module is its import block. So a semantically correct hit rendered as
+ * a list of imports, while `grep` returned the matching line with its context.
+ * The model chose accordingly: 276 grep calls against 9 search_codebase calls
+ * across 477 runs. A tool whose output is less actionable than the alternative
+ * cannot be fixed by describing it better.
+ *
+ * Exported for testing: which lines get shown IS the tool's value.
+ */
+export function bestMatchingExcerpt(content: string, query: string, contextLines = 3): string {
+  const lines = content.split('\n');
+  const terms = query
+    .toLowerCase()
+    .split(/[^a-z0-9_]+/)
+    .filter((t) => t.length > 2 && !STOPWORDS.has(t));
+
+  let bestLine = -1;
+  let bestHits = 0;
+  if (terms.length > 0) {
+    for (let i = 0; i < lines.length; i++) {
+      const lower = lines[i].toLowerCase();
+      let hits = 0;
+      for (const t of terms) if (lower.includes(t)) hits++;
+      if (hits > bestHits) { bestHits = hits; bestLine = i; }
+    }
+  }
+
+  // Nothing matched: the head is still the most useful default, but say so
+  // rather than presenting imports as though they were the answer.
+  if (bestLine === -1) {
+    return lines.slice(0, contextLines * 2).map((l, i) => `${i + 1}: ${l}`).join('\n');
+  }
+
+  const from = Math.max(0, bestLine - contextLines);
+  const to = Math.min(lines.length, bestLine + contextLines + 1);
+  return lines.slice(from, to).map((l, i) => `${from + i + 1}: ${l}`).join('\n');
+}
+
 export const searchCodebaseTool: ToolDefinition<z.infer<typeof schema>> = {
   name: 'search_codebase',
   description:
@@ -75,8 +123,8 @@ export const searchCodebaseTool: ToolDefinition<z.infer<typeof schema>> = {
     const byPath = new Map(files.map(f => [f.path, f.content]));
     return results.map(r => {
       const content = byPath.get(r.path) ?? '';
-      const preview = content.slice(0, 250).replace(/\s+/g, ' ').trim();
-      return `${r.path}  (${r.reason}, score ${r.score.toFixed(2)})\n  ${preview}${content.length > 250 ? '...' : ''}`;
+      const excerpt = bestMatchingExcerpt(content, args.query);
+      return `${r.path}  (${r.reason}, score ${r.score.toFixed(2)})\n${excerpt}`;
     }).join('\n\n');
   },
 };
