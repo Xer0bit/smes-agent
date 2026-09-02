@@ -32,7 +32,7 @@ import { runPreviewSmokeCheck } from './previewSmokeCheck.service.js';
 import { awaitPreviewSettled } from './previewSettle.js';
 import { indexFile, indexFiles, retrieveRelevantFiles, extractSymbols, getProvider } from '../knowledgebase/index.js';
 import { persistAgentRevision } from './agentRevisionPersist.service.js';
-import { priceFor, calcCost, createRunTokens } from './agentCost.js';
+import { priceFor, calcCost, createRunTokens, freshInputTokens } from './agentCost.js';
 import { fetchHeadHashes, diffFilesAgainstHead } from './runSandbox.js';
 import { buildSignatureMap } from './agentSignatureMap.js';
 import { withInvariantCore } from '../prompts/invariants.js';
@@ -3003,23 +3003,25 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           }
 
           // ── Token accounting for this step ────────────────────────────
-          const stepInpRaw = (usage?.promptTokens     ?? usage?.inputTokens     ?? 0) as number;
-          const stepOut    = (usage?.completionTokens ?? usage?.outputTokens    ?? 0) as number;
+          // `usage.inputTokens` is the TOTAL prompt: fresh + cacheRead +
+          // cacheWrite. Confirmed in ai@6's asLanguageModelUsage
+          // (`inputTokens: usage.inputTokens.total`) and in
+          // @ai-sdk/anthropic@3's convertAnthropicMessagesUsage, which builds
+          // that total as `input_tokens + cache_creation + cache_read`.
+          //
+          // Billing the total at the fresh input rate AND adding cacheRead and
+          // cacheWrite on top charges every cached token two to three times.
+          // Measured live 2026-09-02 on CardPro: a 6-step run whose real cost
+          // was $0.45 was billed $1.817 and killed by the $1.50 cap at step 6
+          // with nothing written, then told the user the request "turned out to
+          // be bigger than I could finish in one go". Four such aborts that
+          // morning. The cap was never actually reached.
+          //
+          // The SDK hands us the fresh-only count directly; subtraction is only
+          // the fallback for a provider that omits the detail block.
+          const stepOut = (usage?.completionTokens ?? usage?.outputTokens ?? 0) as number;
           const { cacheRead: stepCacheR, cacheWrite: stepCacheW } = extractCacheUsage(providerMetadata);
-          // Gemini reports promptTokens as the FULL prompt (fresh + cached combined)  
-          // cachedContentTokenCount is a SUBSET of it, not an additional amount. Anthropic
-          // is the opposite: input_tokens is fresh-only, cache_read_input_tokens is a
-          // genuinely separate additive count (confirmed against @ai-sdk/anthropic's own
-          // convertAnthropicMessagesUsage   inputTokens = usage.input_tokens directly, no
-          // cache folded in). Adding stepInpRaw AND stepCacheR into the running total
-          // unconditionally double-counted every Gemini cache-read token   confirmed live
-          // 2026-07-15: a run logged cost $1.0018, but recomputing with cache correctly
-          // treated as a subset (not additive) gives $0.4826   the buggy formula was
-          // inflating Gemini run cost by ~2x, silently, since Gemini caching started
-          // working. This has been true since before today's token-cap change; the cap
-          // increase just made the inflated total visible sooner by letting runs go longer.
-          const isGeminiStep = Boolean(providerMetadata?.google);
-          const stepInp = isGeminiStep ? Math.max(0, stepInpRaw - stepCacheR) : stepInpRaw;
+          const stepInp = freshInputTokens(usage, stepCacheR, stepCacheW);
 
           runTokens.inputTokens      += stepInp;
           runTokens.outputTokens     += stepOut;
@@ -3134,7 +3136,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const u    = (part as any).usage;
             const finishCache = extractCacheUsage((part as any).providerMetadata);
             // Prefer values accumulated in runTokens (most complete); fall back to stream finish.
-            const totalIn  = runTokens.inputTokens      || (u?.promptTokens     ?? u?.inputTokens     ?? 0);
+            // Same total-vs-fresh distinction as onStepFinish above: `inputTokens`
+            // from the stream is the full prompt, so the fallback must use the
+            // fresh-only detail or it re-introduces the double-count.
+            const totalIn  = runTokens.inputTokens      || freshInputTokens(u, finishCache.cacheRead, finishCache.cacheWrite);
             const totalOut = runTokens.outputTokens     || (u?.completionTokens ?? u?.outputTokens    ?? 0);
             const totalCR  = runTokens.cacheReadTokens  || finishCache.cacheRead;
             const totalCW  = runTokens.cacheWriteTokens || finishCache.cacheWrite;

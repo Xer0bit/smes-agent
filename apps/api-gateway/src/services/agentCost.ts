@@ -68,3 +68,38 @@ export function createRunTokens(): RunTokens {
     get billableTotal() { return this.inputTokens + this.outputTokens + this.cacheWriteTokens + Math.round(this.cacheReadTokens * 0.1); },
   };
 }
+
+/**
+ * Shape of the usage object the AI SDK hands to `onStepFinish` and the stream
+ * `finish` part. Only the fields this accounting reads.
+ */
+export interface SdkUsage {
+  inputTokens?: number;
+  promptTokens?: number;
+  inputTokenDetails?: { noCacheTokens?: number };
+}
+
+/**
+ * How many of a step's prompt tokens were billed at the FRESH input rate.
+ *
+ * `usage.inputTokens` is the TOTAL prompt -- fresh + cacheRead + cacheWrite.
+ * That is explicit in ai@6's `asLanguageModelUsage`
+ * (`inputTokens: usage.inputTokens.total`) and in @ai-sdk/anthropic@3's
+ * `convertAnthropicMessagesUsage`, which computes that total as
+ * `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`.
+ *
+ * Charging that total at the fresh rate while ALSO adding cacheRead and
+ * cacheWrite bills every cached token two to three times. Observed live on
+ * CardPro 2026-09-02: a six-step run costing $0.45 was billed $1.817 and killed
+ * by the $1.50 cap having written nothing, four times that morning.
+ *
+ * The SDK reports the fresh count directly, so subtraction is only the fallback
+ * for a provider that omits the detail block. Clamped at 0: a negative fresh
+ * count would credit the run against its own cap.
+ */
+export function freshInputTokens(usage: SdkUsage | undefined, cacheRead: number, cacheWrite: number): number {
+  const reported = usage?.inputTokenDetails?.noCacheTokens;
+  if (typeof reported === 'number' && Number.isFinite(reported)) return reported;
+  const total = usage?.inputTokens ?? usage?.promptTokens ?? 0;
+  return Math.max(0, total - cacheRead - cacheWrite);
+}
