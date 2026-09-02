@@ -96,3 +96,57 @@ export function capContextFiles(
 export function renderContextFiles(files: readonly CappedContextFile[]): string {
   return files.map((f) => `=== ${f.path} ===\n${f.contextContent}`).join('\n\n');
 }
+
+/** Relevance signals gathered before ranking; each contributes a fixed weight. */
+export interface RankingSignals {
+  /** Paths the user named outright. Outrank everything. */
+  directlyMentioned: ReadonlySet<string>;
+  /** Files a mentioned file imports. */
+  relatedByImport: ReadonlySet<string>;
+  /** Files that import a mentioned file. */
+  importersOfMentioned: ReadonlySet<string>;
+  /** Entry points and other always-relevant files. */
+  criticalFiles: ReadonlySet<string>;
+  /** Semantic-retrieval bonus per path, already scaled. */
+  kbScores: ReadonlyMap<string, number>;
+}
+
+/**
+ * Relevance weight for one path.
+ *
+ * The KB bonus is scaled so a strong hit (0.8 -> 64) outranks the criticalFiles
+ * baseline of 60 and can therefore actually change the selection; below that it
+ * only breaks ties among equals.
+ */
+export function scoreCandidate(path: string, signals: RankingSignals): number {
+  const base =
+    signals.directlyMentioned.has(path) ? 100
+    : signals.relatedByImport.has(path) ? 80
+    : signals.importersOfMentioned.has(path) ? 70
+    : signals.criticalFiles.has(path) ? 60
+    : path.startsWith('src/pages/') ? 40
+    : path.startsWith('src/components/') && !path.includes('/ui/') ? 30
+    : 0;
+  return base + (signals.kbScores.get(path) ?? 0);
+}
+
+/**
+ * Order candidates by relevance, shorter files first on a tie.
+ *
+ * The tie-break matters: with a fixed character budget, preferring the smaller
+ * of two equally-relevant files fits more distinct files into the prompt.
+ *
+ * Previously an inline comparator that computed the same six-branch ladder twice
+ * per comparison, once for each side -- two copies that had to stay identical by
+ * hand.
+ */
+export function rankContextCandidates<T extends ContextCandidate>(
+  files: readonly T[],
+  signals: RankingSignals,
+): T[] {
+  return files.slice().sort((a, b) => {
+    const diff = scoreCandidate(b.path, signals) - scoreCandidate(a.path, signals);
+    if (diff !== 0) return diff;
+    return a.content.length - b.content.length;
+  });
+}

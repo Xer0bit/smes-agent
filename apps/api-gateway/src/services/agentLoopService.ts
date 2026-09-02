@@ -8,7 +8,7 @@ import { fetchRecentMaxFileCount } from './runSandbox.js';
 import { claimRun, setPhase, startRunHeartbeat, linkRevision } from './agentRunRecord.js';
 import { persistAssistantMessage } from './assistantMessagePersist.js';
 import { resolveStepBudget, resolveTokenCap, resolveRuntimeMode, substituteDisabledModel, isInternalRun as resolveIsInternalRun, resolveCostCapUsd } from './agentRunConfig.js';
-import { capContextFiles, renderContextFiles } from './agentContextSelection.js';
+import { capContextFiles, renderContextFiles, rankContextCandidates } from './agentContextSelection.js';
 import { shouldRevertToPreAgentSnapshot } from './agentGating.js';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -1050,25 +1050,8 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     }
   }
 
-  const sortedFiles = fileSources.slice().sort((a, b) => {
-    const aScore = directlyMentioned.has(a.path) ? 100
-      : relatedByImport.has(a.path) ? 80
-      : importersOfMentioned.has(a.path) ? 70
-      : criticalFiles.has(a.path) ? 60
-      : a.path.startsWith('src/pages/') ? 40
-      : a.path.startsWith('src/components/') && !a.path.includes('/ui/') ? 30
-      : 0;
-    const bScore = directlyMentioned.has(b.path) ? 100
-      : relatedByImport.has(b.path) ? 80
-      : importersOfMentioned.has(b.path) ? 70
-      : criticalFiles.has(b.path) ? 60
-      : b.path.startsWith('src/pages/') ? 40
-      : b.path.startsWith('src/components/') && !b.path.includes('/ui/') ? 30
-      : 0;
-    const aFinal = aScore + (kbScores.get(a.path) ?? 0);
-    const bFinal = bScore + (kbScores.get(b.path) ?? 0);
-    if (aFinal !== bFinal) return bFinal - aFinal;
-    return a.content.length - b.content.length;
+  const sortedFiles = rankContextCandidates(fileSources, {
+    directlyMentioned, relatedByImport, importersOfMentioned, criticalFiles, kbScores,
   });
 
   // GitHub Copilot-style context selection: small focused working set   agent uses

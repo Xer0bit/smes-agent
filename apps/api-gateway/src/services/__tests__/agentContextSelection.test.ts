@@ -5,7 +5,13 @@
  * decided what the agent knew.
  */
 import { describe, expect, it } from 'vitest';
-import { capContextFiles, renderContextFiles } from '../agentContextSelection.js';
+import {
+  capContextFiles,
+  rankContextCandidates,
+  renderContextFiles,
+  scoreCandidate,
+  type RankingSignals,
+} from '../agentContextSelection.js';
 
 const budget = { maxFiles: 10, maxTotalChars: 8000, maxFileChars: 800, maxMentionedFileChars: 3000 };
 const file = (path: string, len: number) => ({ path, content: 'x'.repeat(len) });
@@ -76,5 +82,72 @@ describe('renderContextFiles', () => {
 
   it('renders nothing for no files', () => {
     expect(renderContextFiles([])).toBe('');
+  });
+});
+
+/**
+ * Ranking decides which files reach the prompt at all, and was previously an
+ * inline comparator that computed the same six-branch ladder twice per
+ * comparison -- two hand-synchronised copies.
+ */
+const sig = (over: Partial<RankingSignals> = {}): RankingSignals => ({
+  directlyMentioned: new Set(),
+  relatedByImport: new Set(),
+  importersOfMentioned: new Set(),
+  criticalFiles: new Set(),
+  kbScores: new Map(),
+  ...over,
+});
+
+describe('scoreCandidate', () => {
+  it('ranks the signals in the documented order', () => {
+    const s = sig({
+      directlyMentioned: new Set(['m.ts']),
+      relatedByImport: new Set(['r.ts']),
+      importersOfMentioned: new Set(['i.ts']),
+      criticalFiles: new Set(['c.ts']),
+    });
+    expect(scoreCandidate('m.ts', s)).toBeGreaterThan(scoreCandidate('r.ts', s));
+    expect(scoreCandidate('r.ts', s)).toBeGreaterThan(scoreCandidate('i.ts', s));
+    expect(scoreCandidate('i.ts', s)).toBeGreaterThan(scoreCandidate('c.ts', s));
+    expect(scoreCandidate('c.ts', s)).toBeGreaterThan(scoreCandidate('src/pages/P.tsx', s));
+  });
+
+  it('scores pages above ordinary components, and skips the ui kit', () => {
+    const s = sig();
+    expect(scoreCandidate('src/pages/Home.tsx', s)).toBeGreaterThan(scoreCandidate('src/components/Card.tsx', s));
+    // shadcn-style primitives in components/ui are noise, not app code
+    expect(scoreCandidate('src/components/ui/button.tsx', s)).toBe(0);
+  });
+
+  it('lets a strong KB hit outrank the criticalFiles baseline', () => {
+    // This is the whole point of the x80 scaling: below it, retrieval could
+    // never change the selection, only break ties.
+    const s = sig({ criticalFiles: new Set(['crit.ts']), kbScores: new Map([['kb.ts', 64]]) });
+    expect(scoreCandidate('kb.ts', s)).toBeGreaterThan(scoreCandidate('crit.ts', s));
+  });
+
+  it('gives an unknown file no score rather than a negative one', () => {
+    expect(scoreCandidate('random.txt', sig())).toBe(0);
+  });
+});
+
+describe('rankContextCandidates', () => {
+  it('orders by relevance, highest first', () => {
+    const files = [file('plain.ts', 10), file('src/pages/P.tsx', 10), file('named.ts', 10)];
+    const ranked = rankContextCandidates(files, sig({ directlyMentioned: new Set(['named.ts']) }));
+    expect(ranked.map((f) => f.path)).toEqual(['named.ts', 'src/pages/P.tsx', 'plain.ts']);
+  });
+
+  it('prefers the SHORTER file on a tie, to fit more files in the budget', () => {
+    const ranked = rankContextCandidates([file('big.ts', 900), file('small.ts', 10)], sig());
+    expect(ranked.map((f) => f.path)).toEqual(['small.ts', 'big.ts']);
+  });
+
+  it('does not mutate the input array', () => {
+    const files = [file('b.ts', 10), file('a.ts', 5)];
+    const copy = [...files];
+    rankContextCandidates(files, sig());
+    expect(files.map((f) => f.path)).toEqual(copy.map((f) => f.path));
   });
 });
