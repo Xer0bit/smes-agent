@@ -11,6 +11,7 @@ import { createRunSink } from '../services/runSink.js';
 import { isLockLive, AGENT_LOCK_STALE_MS, AGENT_LOCK_HEARTBEAT_MS } from '../services/agentLockState.js';
 import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
 import { openSandbox, discardSandbox, findRunRevision, fetchRevisionFiles, rollbackToRevision } from '../services/runSandbox.js';
+import { persistAgentRevision } from '../services/agentRevisionPersist.service.js';
 import { checkUsageQuota } from '../services/billing.service.js';
 import { DEFAULT_FREE_MODEL } from '../config/models.js';
 import { projectService } from '../services/project.service.js';
@@ -2214,32 +2215,45 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
 
         // Persist a new DB revision with the restored files so that refreshing the
         // editor loads these files instead of the previous latest revision.
+        //
+        // Written through persistAgentRevision, NOT a hand-rolled insert.
+        //
+        // The previous insert here wrote `generated_files: { files: [...] }` with
+        // no `format` key and with every binary filtered out. Three consequences,
+        // all silent:
+        //   1. fetchHeadManifest requires format === 'manifest-v1', so after any
+        //      snapshot rollback the project's HEAD became unreadable TO THE
+        //      SERVER. openSandbox then took its no-HEAD branch and copied the
+        //      shared project dir -- the contamination reservoir the per-run
+        //      sandbox exists to eliminate -- and fetchHeadHashes returned empty,
+        //      so every preview push reverted to a whole-tree fullSync (measured
+        //      at 38.5 MB / 104-139s on CardPro, 2026-09-01).
+        //   2. Every image, font and PDF was dropped from the recorded state.
+        //   3. Content was stored inline in the row instead of in Storage.
+        // persistAgentRevision handles all three and is the path every other
+        // writer already uses, including the oversized-asset carry-forward.
         try {
-            if (supabase && restoredFiles.length > 0) {
-                // Postgres JSON rejects null bytes ( ) — strip them before insert.
-                const sanitize = (s: string) => s.replace(/ /g, '');
-                const textFiles = restoredFiles.filter((f: { path: string; content: string }) => !f.content.startsWith('__ECOMGEAR_BIN64__'));
-                const htmlFile = textFiles.find((f: { path: string; content: string }) => f.path === 'index.html' || f.path.endsWith('.html')) || textFiles[0];
-
-                const { data: insertData, error: insertErr } = await supabase
-                    .from('revisions')
-                    .insert({
-                        project_id: projectId,
-                        user_id: req.user!.id,
-                        created_by: req.user!.id,
-                        prompt: `Rolled back to snapshot ${snapshotId.slice(-8)}`,
-                        generated_code: sanitize(htmlFile?.content || ''),
-                        generated_files: {
-                            files: textFiles.map((f: { path: string; content: string }) => ({ path: f.path, content: sanitize(f.content) })),
-                        },
-                    })
-                    .select('id')
-                    .single();
-
-                if (insertErr) {
-                    logger.warn(`[rollback] Failed to persist rollback revision: ${insertErr.message}`);
+            if (restoredFiles.length > 0) {
+                const persisted = await persistAgentRevision(
+                    projectId,
+                    req.user!.id,
+                    restoredFiles,
+                    `Rolled back to snapshot ${snapshotId.slice(-8)}`,
+                    `Rolled back to snapshot ${snapshotId.slice(-8)}`,
+                );
+                if (persisted.ok) {
+                    logger.info('[rollback] Persisted rollback as manifest-v1 revision', {
+                        projectId, revisionId: persisted.revisionId,
+                        files: restoredFiles.length, skipped: persisted.skippedPaths,
+                    });
                 } else {
-                    logger.info(`[rollback] Persisted rollback as new revision ${insertData?.id}`);
+                    // Leave the previous good HEAD standing rather than writing an
+                    // unreadable one: a stale but READABLE HEAD still gets
+                    // HEAD-materialised sandboxes and changeset pushes, which is
+                    // strictly better than the silent degradation above.
+                    logger.warn('[rollback] Could not persist rollback revision; previous HEAD left intact', {
+                        projectId, error: persisted.error,
+                    });
                 }
             }
         } catch (revErr) {

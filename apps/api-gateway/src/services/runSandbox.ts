@@ -34,6 +34,8 @@ const SKIP_DIRS = new Set(['node_modules', '.git', '.vite', '.vite-cache', 'dist
 const SKIP_FILES = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production']);
 const MAX_TEXT_FILE_SIZE = 512 * 1024;
 const MAX_FILES = 5000;
+/** How far back to look for a readable manifest before giving up on HEAD. */
+const HEAD_LOOKBACK = 10;
 
 /** Ephemeral runs root. Sibling of the projects dir on the runner, tmp locally. */
 const RUNS_BASE_DIR = process.env.ECOMGEAR_RUNS_DIR
@@ -62,16 +64,46 @@ async function fetchHeadManifest(
   projectId: string,
 ): Promise<{ revisionId: string; files: ManifestEntry[] } | null> {
   if (!supabase) return null;
+  // Look back over the most recent revisions instead of only the newest one.
+  //
+  // Several writers create a revision row FIRST and set generated_files LAST
+  // (persistAgentRevision, ecg-connect) -- correct crash-safety ordering, since
+  // a half-written revision is unreadable rather than wrong. But the old query
+  // took strictly the latest row, so ONE interrupted write, or one legacy-format
+  // insert, made the whole project's HEAD unreadable: openSandbox then copied
+  // the shared project dir (the contamination reservoir) and fetchHeadHashes
+  // returned empty, forcing whole-tree pushes. Falling back to the most recent
+  // READABLE manifest keeps a project working through a failed write instead of
+  // silently degrading everything downstream of HEAD.
   const { data } = await supabase
     .from('revisions')
     .select('id, generated_files')
     .eq('project_id', projectId)
     .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const gf = data?.generated_files as { format?: string; files?: ManifestEntry[] } | null;
-  if (!data || gf?.format !== 'manifest-v1' || !Array.isArray(gf.files)) return null;
-  return { revisionId: data.id, files: gf.files };
+    .limit(HEAD_LOOKBACK);
+  return pickReadableHead(data ?? []);
+}
+
+/**
+ * First revision, newest-first, whose manifest the server can actually read.
+ *
+ * Extracted pure because this is the decision that determines whether a project
+ * has a usable HEAD at all, and everything downstream (sandbox materialisation,
+ * changeset diffing, push size) silently degrades when it answers null.
+ */
+export function pickReadableHead(
+  rows: ReadonlyArray<{ id?: unknown; generated_files?: unknown }>,
+): { revisionId: string; files: ManifestEntry[] } | null {
+  for (const row of rows) {
+    const gf = row?.generated_files;
+    if (!gf || typeof gf !== 'object') continue;
+    const manifest = gf as { format?: unknown; files?: unknown };
+    if (manifest.format !== 'manifest-v1') continue;
+    if (!Array.isArray(manifest.files) || manifest.files.length === 0) continue;
+    if (typeof row.id !== 'string') continue;
+    return { revisionId: row.id, files: manifest.files };
+  }
+  return null;
 }
 
 const SCAFFOLD_SKIP = new Set(['node_modules', '.git', '.vite', '.vite-cache', 'dist', 'build', '.tmp', '.cache', 'coverage']);

@@ -103,3 +103,60 @@ describe('diffFilesAgainstHead (real changeset vs whole-tree sweep)', () => {
     expect(d.deleted).toEqual([]);
   });
 });
+
+import { pickReadableHead } from '../runSandbox.js';
+
+/**
+ * HEAD selection decides whether a project has a usable source of truth at all.
+ * When it answers null, openSandbox falls back to copying the shared project dir
+ * (the contamination reservoir) and the changeset diff loses its baseline, so
+ * every push becomes a whole-tree fullSync. Both failures are silent, which is
+ * why the "skip an unreadable row" behaviour needs its own assertions.
+ */
+describe('pickReadableHead', () => {
+  const manifest = (n = 1) => ({ format: 'manifest-v1', files: Array.from({ length: n }, (_, i) => ({ path: `f${i}.ts`, hash: 'h', source_revision: 'r' })) });
+
+  it('takes the newest revision when it is readable', () => {
+    const head = pickReadableHead([
+      { id: 'new', generated_files: manifest() },
+      { id: 'old', generated_files: manifest() },
+    ]);
+    expect(head?.revisionId).toBe('new');
+  });
+
+  it('skips a half-written revision and falls back to the last good manifest', () => {
+    // The deferred-write shape: the row exists, the manifest never landed.
+    const head = pickReadableHead([
+      { id: 'interrupted', generated_files: null },
+      { id: 'good', generated_files: manifest() },
+    ]);
+    expect(head?.revisionId).toBe('good');
+  });
+
+  it('skips a legacy non-manifest revision (the snapshot-rollback shape)', () => {
+    const head = pickReadableHead([
+      { id: 'legacy', generated_files: { files: [{ path: 'a.ts', content: 'x' }] } }, // no format key
+      { id: 'good', generated_files: manifest() },
+    ]);
+    expect(head?.revisionId).toBe('good');
+  });
+
+  it('skips an empty manifest, which describes no project', () => {
+    const head = pickReadableHead([
+      { id: 'empty', generated_files: { format: 'manifest-v1', files: [] } },
+      { id: 'good', generated_files: manifest(3) },
+    ]);
+    expect(head?.revisionId).toBe('good');
+  });
+
+  it('returns null when nothing in the window is readable', () => {
+    expect(pickReadableHead([
+      { id: 'a', generated_files: null },
+      { id: 'b', generated_files: { files: [] } },
+    ])).toBe(null);
+  });
+
+  it('returns null for an empty project with no revisions', () => {
+    expect(pickReadableHead([])).toBe(null);
+  });
+});
