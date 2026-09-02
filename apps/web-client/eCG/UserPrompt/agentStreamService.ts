@@ -94,6 +94,13 @@ export interface AgentStreamCallbacks {
   onDone?: (result: GenerationResponse) => void;
   /** Called when the agent emits tool XML (e.g. <ecomgear-write>) */
   onToolOutput?: (xml: string) => void;
+  /**
+   * A tool call's arguments are being generated: which tool, which file (or
+   * function / command), how many characters so far, and whether the input
+   * is complete. Fires as soon as the target is known and then every few
+   * hundred ms, so the UI can show the file being written while it is.
+   */
+  onToolProgress?: (data: { id: string; tool: string; path: string; chars: number; done: boolean }) => void;
   /** Called when the agent finishes a thinking/tool step */
   onStepFinish?: (data: StepFinishData) => void;
   /** Called when a cheap-model-generated status arrives to replace the canned one for a given step (feature/build tiers only) */
@@ -407,6 +414,12 @@ export async function streamAgentGeneration(params: {
               streamedText = '';
               callbacks.onTextReset?.();
               break;
+            case 'tool-progress': {
+              if (typeof payload.id === 'string' && typeof payload.tool === 'string' && typeof payload.path === 'string') {
+                callbacks.onToolProgress?.({ id: payload.id, tool: payload.tool, path: payload.path, chars: Number(payload.chars) || 0, done: payload.done === true });
+              }
+              break;
+            }
             case 'tool-output': {
               const xml = payload.xml ?? '';
               if (xml) {
@@ -470,7 +483,10 @@ export async function streamAgentGeneration(params: {
                 snapshotId: typeof payload.snapshotId === 'string' ? payload.snapshotId : undefined,
                 previewPushed: payload.previewPushed === true,
                 ghostRun: payload.ghostRun === true,
+                stagedSql: Array.isArray(payload.stagedSql) ? payload.stagedSql : [],
+                batchId: typeof payload.batchId === 'string' ? payload.batchId : null,
                 smokeFailureSurvivedRepair: payload.smokeFailureSurvivedRepair === true,
+                previewDepsError: typeof payload.previewDepsError === 'string' ? payload.previewDepsError : null,
                 costUsd: typeof payload.costUsd === 'number' ? payload.costUsd : undefined,
                 ecoUsed: typeof payload.ecoUsed === 'number' ? payload.ecoUsed : undefined,
                 needsAutoContinue: payload.needsAutoContinue === true,

@@ -28,34 +28,39 @@ function parsePackageNames(cmd: string): string[] {
  * node_modules so Vite can resolve them. Fire-and-forget with a timeout  
  * a failure here is non-fatal; the local install already succeeded.
  */
-async function syncPackagesToPreviewService(
-  packages: string[],
-  previewServiceUrl: string,
-  projectId: string,
-): Promise<void> {
-  if (!packages.length) return;
-  const url = `${previewServiceUrl}/packages/install`;
+/**
+ * package.json is the dependency source of truth. After a local install, push
+ * it to the preview service, which installs the project's extra packages into
+ * a per-project layer (preview-service/lib/deps.js) and answers with the
+ * result -- synchronously, so a failed install is a failed tool call, not a
+ * silent divergence between the runner and the preview.
+ */
+async function syncPackageJsonToPreview(ctx: AgentContext): Promise<string> {
+  const previewUrl = ctx.previewServiceUrl || 'http://localhost:3001';
+  let content: string;
+  try { content = readFileSync(path.join(ctx.appPath, 'package.json'), 'utf8'); } catch { return 'package.json not found; preview not updated.'; }
   const secret = process.env.PREVIEW_UPDATE_SECRET || '';
   try {
     const res = await Promise.race([
-      fetch(url, {
+      fetch(`${previewUrl}/preview/${ctx.projectId}/update`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(secret ? { 'x-update-secret': secret } : {}),
+          ...(ctx.agentLockToken ? { 'x-agent-lock-token': ctx.agentLockToken } : {}),
         },
-        body: JSON.stringify({ packages, projectId }),
+        body: JSON.stringify({ files: [{ path: 'package.json', content }], fullSync: false }),
       }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('preview-service install timeout')), 90_000)
-      ),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('preview-service timeout after 200s')), 200_000)),
     ]);
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.warn(`[run_command] Preview-service install failed (${res.status}): ${body}`);
-    }
-  } catch (e: unknown) {
-    console.warn(`[run_command] Preview-service install error: ${e instanceof Error ? e.message : String(e)}`);
+    const body = (await res.json().catch(() => ({}))) as { deps?: { extras?: number; installed?: boolean; error?: string }; error?: string };
+    if (!res.ok) return `Preview did not accept package.json (${res.status}${body.error ? `: ${body.error}` : ''}).`;
+    const deps = body.deps;
+    if (!deps) return 'Preview updated.';
+    if (deps.error) return `PREVIEW INSTALL FAILED: ${deps.error}. The package is installed locally but the live preview cannot resolve it; fix the package name or version in package.json.`;
+    return deps.installed ? `Preview installed ${deps.extras} project-specific package(s).` : 'Preview already had every dependency.';
+  } catch (err) {
+    return `Preview sync failed: ${err instanceof Error ? err.message : String(err)}. The live preview may not resolve the new package until the next push.`;
   }
 }
 
@@ -308,10 +313,10 @@ export const runCommandTool: ToolDefinition<z.infer<typeof schema>> = {
     if (!ok) return `Command failed (${cmd}):\n${out}`;
 
     // Local install succeeded   sync packages to preview service + surface to UI
+    let previewNote = '';
     if (isInstall) {
       const pkgs = parsePackageNames(cmd);
-      const previewUrl = ctx.previewServiceUrl || 'http://localhost:3001';
-      await syncPackagesToPreviewService(pkgs, previewUrl, ctx.projectId);
+      previewNote = await syncPackageJsonToPreview(ctx);
       // Surface the install in the chat as an activity chip/steps entry.
       // The frontend already parses <ecomgear-add-dependency packages="…">
       // (agentChatHelpers.parseToolActivities)   previously dead because no tool
@@ -331,6 +336,6 @@ export const runCommandTool: ToolDefinition<z.infer<typeof schema>> = {
       }
     }
 
-    return `Command succeeded (${cmd}):\n${out}`;
+    return `Command succeeded (${cmd}):\n${out}${previewNote ? `\n${previewNote}` : ''}`;
   },
 };

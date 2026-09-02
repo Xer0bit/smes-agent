@@ -93,10 +93,16 @@ export interface GenerationResponse {
   previewPushed?: boolean;
   /** True when the agent ran in build mode but wrote zero files   ghost run */
   ghostRun?: boolean;
+  /** Schema-changing SQL this run staged for the owner to run, in staging order. */
+  stagedSql?: Array<{ id: string; sql_text: string; status: string; created_at: string; error_message: string | null }>;
+  /** agent_runs id; the batch key for stagedSql. */
+  batchId?: string | null;
   /** True when a browser smoke check found the rendered page broken after this
    *  run and repair couldn't confirm a fix, but the files were kept (not
    *  reverted). Frontend should not show an unqualified success toast. */
   smokeFailureSurvivedRepair?: boolean;
+  /** The preview could not install a package from package.json; the app may not resolve it. */
+  previewDepsError?: string | null;
   /** Actual USD cost of this run (0 on ghost/timeout runs) */
   costUsd?: number;
   /** Eco credits charged for this run (cost-based, clamped 0.5-2.0) */

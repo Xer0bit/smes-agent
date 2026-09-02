@@ -25,6 +25,12 @@ describe('interpreting a preview push response', () => {
     expect(interpretPreviewPush(200, JSON.stringify({ promoted: false })).landed).toBe(false);
   });
 
+  it('carries a dependency install failure through, without un-landing the push', () => {
+    const r = interpretPreviewPush(200, JSON.stringify({ promoted: true, rolledBack: false, deps: { extras: 1, installed: false, error: 'npm install failed for nope: E404' } }));
+    expect(r.landed).toBe(true);
+    expect(r.depsError).toBe('npm install failed for nope: E404');
+  });
+
   it('treats a normal success as landed', () => {
     const r = interpretPreviewPush(200, JSON.stringify({ promoted: true, rolledBack: false }));
     expect(r).toEqual({ landed: true, rolledBack: false });
