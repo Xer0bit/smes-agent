@@ -77,6 +77,12 @@ export const promptService = {
     params: PromptHandlerParams,
     callbacks: PromptHandlerCallbacks
   ): Promise<GenerationResponse> {
+    // Run-scoped assistant message id. saveAssistantMessage upserts when given a
+    // valid UUID and plain-inserts otherwise, so omitting it made every retry of
+    // this path insert another row -- one question rendering as three replies on
+    // the next history load. AgentChatPanel has passed an id since that fix;
+    // this second implementation of the same flow never did.
+    const assistantMessageId = crypto.randomUUID();
     const {
       promptText,
       projectId,
@@ -194,7 +200,7 @@ export const promptService = {
             // Persist whatever was streamed so far   otherwise a reload silently
             // erases the agent's partial reply, leaving only the user's prompt.
             if (!fingerprint && accumulatedText.trim()) {
-              void messageService.saveAssistantMessage(projectId, `${accumulatedText}\n\n*[error]*`, userId).catch(err => {
+              void messageService.saveAssistantMessage(projectId, `${accumulatedText}\n\n*[error]*`, userId, assistantMessageId).catch(err => {
                 console.error('Failed to save partial assistant message on error', err);
               });
             }
@@ -302,6 +308,9 @@ export const promptService = {
     onWorkflowComplete: (complete: boolean) => void;
     onMessageAdd: (message: { role: 'assistant'; content: string }) => void;
   }): Promise<void> {
+    // Its own id: this is a DIFFERENT assistant message from handlePrompt's, so
+    // it must not share one. The id makes a retry of this path idempotent.
+    const assistantMessageId = crypto.randomUUID();
     const {
       projectId,
       promptText,
@@ -397,7 +406,7 @@ export const promptService = {
       };
       onMessageAdd(aiMessage);
       if (!isGuestProject) {
-        await messageService.saveAssistantMessage(projectId, aiMessage.content);
+        await messageService.saveAssistantMessage(projectId, aiMessage.content, initialUserId, assistantMessageId);
       }
 
     } catch (error) {
