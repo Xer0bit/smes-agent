@@ -29,6 +29,8 @@ export interface AgentRunRow {
   id: string;
   project_id: string;
   started_at: string;
+  /** Present from 2026-09-02; null on older rows. See agentRunRecord.ts. */
+  heartbeat_at?: string | null;
 }
 
 export interface AgentLockRow {

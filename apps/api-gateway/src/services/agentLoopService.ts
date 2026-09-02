@@ -5,6 +5,7 @@ import { reconcileClientFilesToHead } from './agentFileReconcile.js';
 import { buildCapabilityPreamble, isSourceTruncated } from '../prompts/capabilities.js';
 import { RunChangeSet, isTrackedMutation } from './runChangeSet.js';
 import { fetchRecentMaxFileCount } from './runSandbox.js';
+import { claimRun, setPhase, startRunHeartbeat, linkRevision } from './agentRunRecord.js';
 import { shouldRevertToPreAgentSnapshot } from './agentGating.js';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -541,6 +542,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
 
   // ─── agent_runs tracking (fire-and-forget) ───────────────────────────────────
   let agentRunId: string | null = null;
+  let stopRunHeartbeat: () => void = () => {};
   if (supabase && userId) {
     logger.debug('_runAgentLoopInner: inserting agent_runs tracking row', { projectId, userId, modelId, projectOrgId });
     const { data, error: agentRunInsertErr } = await supabase
@@ -554,6 +556,14 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       });
     }
     agentRunId = data?.id ?? null;
+    // Claim ownership and start beating: this is what makes an abandoned run
+    // detectable from its own row instead of by inferring liveness from
+    // agent_locks. 84 of 477 traced runs produced steps and never recorded an
+    // outcome; nothing on the row said who owned them or when they last lived.
+    if (agentRunId) {
+      void claimRun(agentRunId);
+      stopRunHeartbeat = startRunHeartbeat(agentRunId);
+    }
     logger.debug('_runAgentLoopInner: agent_runs row created', { projectId, userId, agentRunId });
   }
 
@@ -3216,6 +3226,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             // calcCost only as fallback for streams onStepFinish never saw.
             const totalCost = runCostUsd > 0 ? runCostUsd : calcCost(PRICE, totalIn, totalOut, totalCR, totalCW);
             agentGenerationComplete = true;
+            void setPhase(agentRunId, 'publishing');
             // Disarm the agent timeout HERE, not 2500 lines later in the
             // finally. AGENT_TIMEOUT_MS exists to bound the model loop, but it
             // stayed armed across the whole post-run phase -- preview push,
@@ -4651,7 +4662,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       } catch (diffErr) {
         logger.warn('[AgentLoop] changeset diff failed, pushing full tree', { projectId, error: (diffErr as Error)?.message });
       }
-      logger.info('[AgentLoop] preview push starting', { projectId, updateUrl, fileCount: mergedWrites.length });
+      logger.info('[AgentLoop] preview push starting', {
+        projectId, updateUrl, fileCount: mergedWrites.length, pushing: pushFiles.length, fullSync: pushFullSync,
+      });
       let firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: pushFiles, fullSync: pushFullSync, baseSeq: new Date().toISOString() }), 120_000);
       for (let pushRetry = 1; pushRetry <= 3 && firstAttempt.status !== 200 && firstAttempt.status !== 422; pushRetry++) {
         logger.warn('[AgentLoop] Preview push transport failure, retrying', {
@@ -5628,8 +5641,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
       // Update agent_runs with all completion data (status + token count + snapshot_id)
       if (supabase && agentRunId) {
+        stopRunHeartbeat();
         supabase.from('agent_runs').update({
           status: 'completed',
+          phase: 'done',
           // The column has existed since 20260417100000 with DEFAULT false and
           // nothing ever wrote it, so all 3478 rows read "not promoted" --
           // indistinguishable from 3478 genuinely failed pushes. previewPushOk
@@ -5692,6 +5707,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             summary || `Agent run: ${stepCount} step(s)`, prompt,
           );
           if (persistResult.ok) {
+            void linkRevision(agentRunId, persistResult.revisionId);
             logger.info('[AgentLoop] Revision persisted server-side', {
               projectId, userId, revisionId: persistResult.revisionId, fileCount: doneFilesToWrite.length,
               skippedPaths: persistResult.skippedPaths,
@@ -5827,8 +5843,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       (abortError as { clientAborted?: boolean }).clientAborted = Boolean(abortSignal?.aborted);
 
       if (supabase && agentRunId) {
+        stopRunHeartbeat();
         supabase.from('agent_runs').update({
           status: 'failed',
+          phase: 'done',
           error_message: abortSignal?.aborted ? 'Cancelled: client disconnected' : 'Cancelled: aborted',
           completed_at: new Date().toISOString(),
           is_internal: isInternalRun,
@@ -5908,8 +5926,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     }
     // Update agent_runs on failure
     if (supabase && agentRunId) {
+      stopRunHeartbeat();
       supabase.from('agent_runs').update({
         status: 'failed',
+        phase: 'done',
         error_message: err?.message ?? 'Unknown error',
         completed_at: new Date().toISOString(),
         is_internal: isInternalRun,

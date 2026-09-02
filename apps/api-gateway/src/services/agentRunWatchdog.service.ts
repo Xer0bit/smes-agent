@@ -22,6 +22,7 @@
 import { supabase } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { isLockLive, selectAbandonedRuns, type AgentLockRow, type AgentRunRow } from './agentLockState.js';
+import { selectStaleByHeartbeat } from './agentRunRecord.js';
 import { discardSandbox, listSandboxDirs, selectOrphanedSandboxes } from './runSandbox.js';
 
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
@@ -43,7 +44,7 @@ export async function sweepStaleAgentRuns(reason = 'periodic'): Promise<number> 
 
   const { data: runs, error: runsError } = await supabase
     .from('agent_runs')
-    .select('id, project_id, started_at')
+    .select('id, project_id, started_at, heartbeat_at')
     .eq('status', 'running');
 
   if (runsError) {
@@ -74,7 +75,11 @@ export async function sweepStaleAgentRuns(reason = 'periodic'): Promise<number> 
   const overdue = runRows.filter(
     (r) => now - new Date(r.started_at).getTime() > HARD_CEILING_MS,
   );
-  const ids = [...new Set([...abandoned, ...overdue].map((r) => r.id))];
+  // A lapsed heartbeat is the run's OWN evidence that it is gone, rather than
+  // liveness inferred from agent_locks. Rows written before the heartbeat
+  // column existed have none, and are left to the lock-based rule above.
+  const heartbeatDead = selectStaleByHeartbeat(runRows, now);
+  const ids = [...new Set([...abandoned, ...overdue, ...heartbeatDead].map((r) => r.id))];
   if (ids.length === 0) return 0;
 
   const { error } = await supabase
