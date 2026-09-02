@@ -2211,9 +2211,10 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
                     const rolled = await rollbackToRevision(projectId, req.user!.id, targetRevisionId);
                     if (rolled.ok) {
                         const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001';
+                        const rollbackSecret = process.env.PREVIEW_UPDATE_SECRET || '';
                         const previewRes = await fetch(`${previewServiceUrl}/preview/${projectId}/update`, {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
+                            headers: { 'Content-Type': 'application/json', ...(rollbackSecret ? { 'x-update-secret': rollbackSecret } : {}) },
                             // fullSync prunes anything not in the manifest, which is
                             // the point: the project ends up as exactly that revision.
                             body: JSON.stringify({ files, fullSync: true }),
@@ -2284,9 +2285,10 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
         try {
             const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'http://localhost:3001';
             const updateUrl = `${previewServiceUrl}/preview/${projectId}/update`;
+            const snapshotSecret = process.env.PREVIEW_UPDATE_SECRET || '';
             const snapshotPreviewRes = await fetch(updateUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...(snapshotSecret ? { 'x-update-secret': snapshotSecret } : {}) },
                 body: JSON.stringify({ files: restoredFiles, fullSync: true }),
                 // See PREVIEW_RESTORE_TIMEOUT_MS: a whole-project restore is a
                 // multi-megabyte upload and 20s aborted it every time.
