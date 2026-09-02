@@ -40,6 +40,35 @@ const NAV_TIMEOUT_MS = 20_000;
  * @param rootChildCountAfter #root child count after the settle re-read (>0 = rendered)
  * @param consoleErrorCount   number of real console/page errors captured
  */
+/**
+ * Console errors this check must ignore, because the agent neither caused them
+ * nor can fix them.
+ *
+ * Every captured error routes the run into `repairDiagnosticKind: 'runtime'`,
+ * and the preview renders user-supplied markup in an iframe served from another
+ * box -- so third-party noise (a blocked analytics script, a CORS refusal on an
+ * external image, a missing favicon) is normal and constant. Treating it as a
+ * defect is an unearned repair pass over correct code.
+ *
+ * Deliberately a denylist of known-external shapes rather than an origin
+ * allowlist: the preview's own origin varies per project and per environment,
+ * and a wrong allowlist would silently swallow REAL crashes, which is the
+ * failure this check exists to catch.
+ */
+export function isExternalNoise(text: string): boolean {
+  return (
+    // A failed sub-resource is not a JS crash; a real crash throws separately.
+    /^Failed to load resource: the server responded with a status of \d+/i.test(text)
+    || /net::ERR_(BLOCKED_BY_CLIENT|BLOCKED_BY_RESPONSE|NAME_NOT_RESOLVED|CONNECTION_REFUSED)/i.test(text)
+    || /Access to (fetch|XMLHttpRequest|script|image) at .* has been blocked by CORS policy/i.test(text)
+    || /Cross-Origin Read Blocking|blocked by CORS policy/i.test(text)
+    || /favicon\.ico/i.test(text)
+    || /chrome-extension:\/\//i.test(text)
+    || /Content Security Policy directive/i.test(text)
+    || /\[vite\] connecting|\[vite\] connected|WebSocket connection to .* failed/i.test(text)
+  );
+}
+
 export function classifyEmptyRoot(
   rootChildCountAfter: number,
   consoleErrorCount: number,
@@ -80,9 +109,8 @@ export async function runPreviewSmokeCheck(previewUrl: string): Promise<SmokeChe
     // testing: without this filter, every healthy page failed this check.
     // Auditing every static asset is a different, out-of-scope concern for
     // this check, whose job is specifically catching JS runtime crashes.
-    const isResourceLoadNoise = (text: string) => /^Failed to load resource: the server responded with a status of \d+/i.test(text);
     page.on('console', (msg) => {
-      if (msg.type() === 'error' && !isResourceLoadNoise(msg.text())) {
+      if (msg.type() === 'error' && !isExternalNoise(msg.text())) {
         consoleErrors.push(msg.text().slice(0, 300));
       }
     });

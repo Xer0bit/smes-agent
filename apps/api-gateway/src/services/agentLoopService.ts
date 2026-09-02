@@ -6,6 +6,7 @@ import { buildCapabilityPreamble, isSourceTruncated } from '../prompts/capabilit
 import { RunChangeSet, isTrackedMutation } from './runChangeSet.js';
 import { fetchRecentMaxFileCount } from './runSandbox.js';
 import { claimRun, setPhase, startRunHeartbeat, linkRevision } from './agentRunRecord.js';
+import { persistAssistantMessage } from './assistantMessagePersist.js';
 import { shouldRevertToPreAgentSnapshot } from './agentGating.js';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -3227,6 +3228,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const totalCost = runCostUsd > 0 ? runCostUsd : calcCost(PRICE, totalIn, totalOut, totalCR, totalCW);
             agentGenerationComplete = true;
             void setPhase(agentRunId, 'publishing');
+            // Tell the client too: generation is done and the answer is
+            // readable, but the preview is still catching up.
+            sink.emit('status', { phase: 'publishing', message: 'Applying changes to the preview...' });
             // Disarm the agent timeout HERE, not 2500 lines later in the
             // finally. AGENT_TIMEOUT_MS exists to bound the model loop, but it
             // stayed armed across the whole post-run phase -- preview push,
@@ -4783,6 +4787,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           // micro stays excluded: 8-step trivial tweaks do not justify a browser
           // launch, and run_command is already excluded there for the same reason.
           _tier !== 'micro' &&
+          // Only smoke-test a preview that has SETTLED. The gate loads the live
+          // URL, so it conflates "the code is broken" with "the files are still
+          // arriving / Vite is still rebuilding" -- the same conflation the
+          // health probe had before awaitPreviewSettled. Running it against an
+          // unsettled preview is how a healthy run got routed into repair.
+          settle.settled &&
           !abortController.signal.aborted &&
           runTokens.total < RUN_TOKEN_CAP
         ) {
@@ -5511,6 +5521,23 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         bytesAfter: payloadBytes(clientFilesToWrite),
       });
     }
+
+    // Persist the answer BEFORE emitting 'done'. The client also saves it, but
+    // only if a browser is still attached -- and since runs now outlive their
+    // connection, a closed tab left the answer in no store at all. Keyed by run
+    // id, so this and any client save target the same row.
+    void persistAssistantMessage({
+      projectId,
+      agentRunId,
+      userId,
+      content: summary,
+    });
+
+    // Persist the answer BEFORE 'done'. The client also saves it, but only if a
+    // browser is still attached -- and runs now outlive their connection, so a
+    // closed tab left the answer in no store at all. Keyed by run id, so this
+    // and any client save target the same row.
+    void persistAssistantMessage({ projectId, agentRunId, userId, content: summary });
 
     // NOW send 'done'   preview is synced, frontend shows correct state
     sink.emit('done', {

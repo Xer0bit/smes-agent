@@ -202,6 +202,8 @@ interface ActiveRun {
     emit: (event: string, data: unknown) => void;
     /** Same, for a pre-formatted frame. `replayable: false` skips the buffer. */
     emitRaw: (frame: string, replayable?: boolean) => void;
+    /** Coarse stage, mirrored from the run so /active-run can report it. */
+    phase?: 'generating' | 'publishing' | 'persisting';
 }
 const activeAgentRuns = new Map<string, ActiveRun>();
 
@@ -1644,6 +1646,12 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                     // teardown window so a prompt arriving now waits for the
                     // real end instead of being swallowed as a subscriber.
                     if (event === 'done') currentRun.finishing = true;
+                    // Mirror the publish stage so /active-run can report it to a
+                    // client that is polling rather than streaming.
+                    if (event === 'status' && typeof data === 'object' && data !== null
+                        && 'phase' in data && (data as { phase?: unknown }).phase === 'publishing') {
+                      currentRun.phase = 'publishing';
+                    }
                     return currentRun.emit(event, data);
                 },
                 // Not replayable: a keepalive is meaningful only to a socket
@@ -1941,7 +1949,14 @@ router.get('/active-run/:projectId', optionalAuthMiddleware, async (req: Authent
     if (run) {
         // Owned by THIS worker, so its event bus is in our memory and the
         // caller's SSE reconnect can actually attach to it.
-        res.json({ active: true, attachable: true, startedAt: run.startedAt, ageMs: Date.now() - run.startedAt });
+        // phase distinguishes "still generating" from "generating done, now
+        // publishing" -- the publish stage measured 104-139s, long enough that
+        // the difference is user-visible. Without it the client polls preview
+        // /status independently and "ready" can contradict the run.
+        res.json({
+            active: true, attachable: true, phase: run.phase ?? 'generating',
+            startedAt: run.startedAt, ageMs: Date.now() - run.startedAt,
+        });
         return;
     }
 
