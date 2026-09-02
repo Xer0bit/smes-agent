@@ -225,6 +225,12 @@ export const FALSIFICATION_RE =
 // ─── Agent params / result types ──────────────────────────────────────────────
 
 export interface AgentRunParams {
+  /**
+   * Called once the agent_runs row exists, so the caller can associate its own
+   * run handle with the DB id. Needed so an interrupt can name the message row
+   * it belongs to and every client that saves on error upserts the same one.
+   */
+  onRunId?: (agentRunId: string) => void;
   /** User's prompt */
   prompt: string;
   /** Project ID (used as workspace identifier) */
@@ -393,7 +399,7 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
 }
 
 async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResult> {
-  const { prompt, projectId, appPath, model, mode, chatMode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, sink, userId, abortSignal, agentLockToken, approvedPlanSteps } = params;
+  const { prompt, projectId, appPath, model, mode, chatMode, existingFiles, history, olderSummary, promptIntent, attachments, projectKnowledge, projectSecrets, sink, userId, abortSignal, agentLockToken, approvedPlanSteps, onRunId } = params;
   const _innerStartedAtMs = Date.now();
   logger.info('_runAgentLoopInner: invoked', {
     projectId, userId, appPath, model, mode, chatMode,
@@ -527,6 +533,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
     if (agentRunId) {
       void claimRun(agentRunId);
       stopRunHeartbeat = startRunHeartbeat(agentRunId);
+      try { onRunId?.(agentRunId); } catch { /* caller bookkeeping must never fail a run */ }
     }
     logger.debug('_runAgentLoopInner: agent_runs row created', { projectId, userId, agentRunId });
   }

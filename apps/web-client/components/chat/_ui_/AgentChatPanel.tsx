@@ -1374,7 +1374,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             // Brief delay so the completed message renders before the new run starts
             setTimeout(() => handleSubmit(autoFixPrompt, '🔧 Auto-fix', 'build', true), 300);
           },
-          onError: (errMsg) => {
+          onError: (errMsg, serverMessageId) => {
             setIsGenerating(false);
             setStatusText('');
             setPlanTasks(prev => finalizeTasks(prev, true));
@@ -1412,7 +1412,10 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             // Persist whatever was streamed so far   otherwise a reload silently
             // erases the agent's partial reply, leaving only the user's prompt.
             if (!isGuest && errorContent.trim()) {
-              messageService.saveAssistantMessage(projectId, `${errorContent}\n\n*[error]*`, userId, asstId).catch(err => {
+              // Prefer the server's row id when it sent one: two client
+              // implementations save on error, and different ids meant one
+              // interrupt rendered as two bubbles.
+              messageService.saveAssistantMessage(projectId, `${errorContent}\n\n*[error]*`, userId, serverMessageId || asstId).catch(err => {
                 console.error('Failed to save partial assistant message on error', err);
               });
             }

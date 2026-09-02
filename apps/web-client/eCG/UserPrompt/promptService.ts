@@ -195,12 +195,15 @@ export const promptService = {
           onDone: (result) => {
             finalResult = result;
           },
-          onError: (message) => {
+          onError: (message, serverMessageId) => {
             void onSystemMessage(`Agent error: ${message}`);
             // Persist whatever was streamed so far   otherwise a reload silently
             // erases the agent's partial reply, leaving only the user's prompt.
             if (!fingerprint && accumulatedText.trim()) {
-              void messageService.saveAssistantMessage(projectId, `${accumulatedText}\n\n*[error]*`, userId, assistantMessageId).catch(err => {
+              // Server's row id wins: this is the SECOND client implementation
+              // that saves on error, and using its own id meant one interrupt
+              // wrote two rows and rendered twice.
+              void messageService.saveAssistantMessage(projectId, `${accumulatedText}\n\n*[error]*`, userId, serverMessageId || assistantMessageId).catch(err => {
                 console.error('Failed to save partial assistant message on error', err);
               });
             }

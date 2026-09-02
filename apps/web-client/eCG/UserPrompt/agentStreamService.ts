@@ -103,7 +103,7 @@ export interface AgentStreamCallbacks {
   /** Called with the agent's actual internal reasoning (the `think` tool's real argument)   live/transient only, never persisted */
   onAgentThinking?: (data: { step: number; thought: string }) => void;
   /** Called on error */
-  onError?: (message: string) => void;
+  onError?: (message: string, serverMessageId?: string) => void;
   /** Called when all auto-repair attempts fail   errors can be shown to user for manual fix */
   onRepairFailed?: (errors: string[]) => void;
   /** Called with the real token count once the AI SDK resolves usage (after 'done') */
@@ -328,6 +328,7 @@ export async function streamAgentGeneration(params: {
   let terminalEventReceived = false;
   let streamFailed = false;
   let streamFailedMessage = '';
+  let streamFailedMessageId: string | null = null;
   let streamedText = '';
   const streamedFiles = new Map<string, GeneratedFile>();
   const streamedDeletes = new Set<string>();
@@ -492,7 +493,15 @@ export async function streamAgentGeneration(params: {
               terminalEventReceived = true;
               streamFailed = true;
               streamFailedMessage = payload.message ?? 'Unknown agent error';
-              callbacks.onError?.(streamFailedMessage);
+              // The server persists interrupt/error messages itself, keyed by
+              // run id, and passes that id here. Both client implementations
+              // (this panel and promptService) also save on error, so without a
+              // shared id ONE interrupt produced two chat bubbles -- seen on
+              // CardPro 2026-09-02, two rows at the same second from one run.
+              streamFailedMessageId = typeof payload.assistantMessageId === 'string'
+                ? payload.assistantMessageId
+                : null;
+              callbacks.onError?.(streamFailedMessage, streamFailedMessageId ?? undefined);
               break;
             case 'repair-failed':
               callbacks.onRepairFailed?.(Array.isArray(payload.errors) ? payload.errors : []);

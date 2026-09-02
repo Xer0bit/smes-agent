@@ -12,6 +12,7 @@ import { isLockLive, AGENT_LOCK_STALE_MS, AGENT_LOCK_HEARTBEAT_MS } from '../ser
 import { runAgentLoop, restoreSnapshot, type AgentRunParams } from '../services/agentLoopService.js';
 import { openSandbox, discardSandbox, findRunRevision, fetchRevisionFiles, rollbackToRevision } from '../services/runSandbox.js';
 import { persistAgentRevision } from '../services/agentRevisionPersist.service.js';
+import { assistantMessageId } from '../services/assistantMessagePersist.js';
 import { checkUsageQuota } from '../services/billing.service.js';
 import { DEFAULT_FREE_MODEL } from '../config/models.js';
 import { projectService } from '../services/project.service.js';
@@ -204,6 +205,8 @@ interface ActiveRun {
     emitRaw: (frame: string, replayable?: boolean) => void;
     /** Coarse stage, mirrored from the run so /active-run can report it. */
     phase?: 'generating' | 'publishing' | 'persisting';
+    /** agent_runs id, so an interrupt can name the message row it belongs to. */
+    agentRunId?: string;
 }
 const activeAgentRuns = new Map<string, ActiveRun>();
 
@@ -499,11 +502,18 @@ export async function interruptRunsForThisProcess(): Promise<void> {
     const projectIds = [...activeAgentRuns.keys()];
     if (projectIds.length === 0) return;
 
+    const INTERRUPT_TEXT = 'This generation was interrupted because the server restarted. '
+        + 'Work already saved to a revision is kept; please re-send your request to continue.';
     for (const [, run] of activeAgentRuns) {
         try {
+            // Pass the run-derived message id so every client that saves on
+            // error upserts the SAME row. Two client implementations both
+            // persist here (AgentChatPanel and promptService), which is why one
+            // interrupt produced two identical bubbles on CardPro 2026-09-02.
             run.emit('error', {
-                message: 'This generation was interrupted because the server restarted. Work already saved to a revision is kept; please re-send your request to continue.',
+                message: INTERRUPT_TEXT,
                 interrupted: true,
+                assistantMessageId: run.agentRunId ? assistantMessageId(run.agentRunId) : null,
             });
             run.bus.emit('end');
         } catch { /* a run whose subscribers are already gone is fine */ }
@@ -1662,6 +1672,9 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 isWebsiteBuild: requestTier === 'build',
                 hasIntegrationRequest: /\b(database|supabase|api|connect|integration|webhook|backend)\b/i.test(prompt),
             },
+            // Associate the DB run id with this route's run handle, so an
+            // interrupt can name the message row it belongs to.
+            onRunId: (id: string) => { currentRun.agentRunId = id; },
             sink: {
                 emit: (event: string, data: any) => {
                     // 'done' means "the answer is complete", NOT "the run is
