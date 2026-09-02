@@ -41,11 +41,30 @@ export const messageService = {
     }
   },
 
-  async saveAssistantMessage(projectId: string, content: string, userId?: string): Promise<void> {
+  /**
+   * Persist an assistant reply. Pass `messageId` (the run's stable assistant id)
+   * to make this idempotent: every save for one run -- streamed done, an error
+   * save, a retry after reconnect -- upserts the SAME row instead of inserting
+   * a new one. Without it, one question produced three DB rows and rendered
+   * three identical replies on the next history load.
+   */
+  async saveAssistantMessage(projectId: string, content: string, userId?: string, messageId?: string): Promise<void> {
     if (!isValidUUID(projectId)) throw new Error('Invalid projectId');
 
     const row: Record<string, unknown> = { project_id: projectId, role: 'assistant', content };
     if (userId) row.user_id = userId;
+
+    // Upsert when a valid run-scoped id is given; plain insert otherwise so
+    // callers that never pass one keep their old behaviour.
+    if (messageId && isValidUUID(messageId)) {
+      row.id = messageId;
+      const { error } = await supabase.from('messages').upsert(row, { onConflict: 'id' });
+      if (error) {
+        console.error('[MessageService] Error upserting assistant message:', error);
+        throw error;
+      }
+      return;
+    }
 
     const { error } = await supabase.from('messages').insert(row);
     if (error) {
