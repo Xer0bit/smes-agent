@@ -36,6 +36,10 @@ const MAX_TEXT_FILE_SIZE = 512 * 1024;
 const MAX_FILES = 5000;
 /** How far back to look for a readable manifest before giving up on HEAD. */
 const HEAD_LOOKBACK = 10;
+/** Below this share of the on-disk file count, a HEAD manifest is treated as a clobber artifact. */
+const HEAD_PLAUSIBILITY_RATIO = 0.5;
+/** Projects smaller than this are not big enough for the ratio to mean anything. */
+const MIN_DISK_FILES_FOR_PLAUSIBILITY = 10;
 
 /** Ephemeral runs root. Sibling of the projects dir on the runner, tmp locally. */
 const RUNS_BASE_DIR = process.env.ECOMGEAR_RUNS_DIR
@@ -120,6 +124,36 @@ function linkNodeModules(projectDir: string | undefined, sandboxPath: string, pr
   }
 }
 
+/**
+ * True when a HEAD manifest describes so much less than the disk already holds
+ * that it is more likely a clobber artifact than the project's real state.
+ *
+ * Extracted pure because getting it wrong is expensive in both directions:
+ * too strict and every run silently degrades to the shared-disk path this whole
+ * design exists to remove; too loose and a 1-file manifest replaces a 200-file
+ * project (which is exactly what happened on CardPro, 2026-09-02).
+ */
+export function isHeadImplausiblySmall(headFiles: number, diskFiles: number): boolean {
+  if (diskFiles < MIN_DISK_FILES_FOR_PLAUSIBILITY) return false; // too small to judge
+  return headFiles < diskFiles * HEAD_PLAUSIBILITY_RATIO;
+}
+
+/** Source files on the shared project dir, for the HEAD plausibility check. */
+function countProjectFiles(projectDir: string): number {
+  let n = 0;
+  const walk = (rel: string) => {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(path.join(projectDir, rel), { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (SCAFFOLD_SKIP.has(e.name)) continue;
+      if (e.isDirectory()) walk(rel ? path.join(rel, e.name) : e.name);
+      else n++;
+    }
+  };
+  walk('');
+  return n;
+}
+
 /** Seed a brand-new project's sandbox from the pristine template scaffold on projectDir. */
 function copyScaffoldSource(projectDir: string, sandboxPath: string): void {
   const walk = (rel: string) => {
@@ -154,7 +188,29 @@ export async function openSandbox(projectId: string, projectDir?: string): Promi
   linkNodeModules(projectDir, sandboxPath, projectId);
 
   const head = await fetchHeadManifest(projectId);
-  if (!head || !supabase) {
+  // A readable manifest is not automatically a TRUSTWORTHY one.
+  //
+  // CardPro, 2026-09-02: the only readable manifest in recent history described
+  // ONE file, while the project dir held 200 -- the residue of the auto-save
+  // clobber that collapsed 193 files (see the client-side guard that now refuses
+  // a revision under half the head's file count). Materialising from it would
+  // hand the agent an almost-empty project and then persist that as the new
+  // HEAD, making each run's starting point worse than the last.
+  //
+  // Same rule as the client's guard, applied on the way IN: if HEAD describes
+  // implausibly less than the disk already holds, treat it as untrustworthy and
+  // fall back to the shared dir. That is the pre-existing degraded path -- worse
+  // isolation, but it preserves the project, and losing 99% of a codebase is not
+  // a trade worth making for cleanliness.
+  const diskFileCount = projectDir ? countProjectFiles(projectDir) : 0;
+  const headTooSmall = head != null && isHeadImplausiblySmall(head.files.length, diskFileCount);
+  if (headTooSmall) {
+    logger.warn('[runSandbox] HEAD manifest is implausibly small; using the project dir instead', {
+      projectId, headRevisionId: head?.revisionId, headFiles: head?.files.length, diskFiles: diskFileCount,
+    });
+  }
+
+  if (!head || !supabase || headTooSmall) {
     if (projectDir) copyScaffoldSource(projectDir, sandboxPath);
     return { sandboxPath, runId, headRevisionId: null, headPaths: new Set() };
   }

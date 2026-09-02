@@ -160,3 +160,42 @@ describe('pickReadableHead', () => {
     expect(pickReadableHead([])).toBe(null);
   });
 });
+
+import { isHeadImplausiblySmall } from '../runSandbox.js';
+
+/**
+ * CardPro, 2026-09-02: the only readable manifest described ONE file while the
+ * project dir held 200 -- residue of the auto-save clobber that collapsed 193
+ * files. Materialising from it handed the agent a near-empty project; the run
+ * then pushed 24 files, preview-service rolled the push back, and auto-repair
+ * fired. Same rule as the client's clobber guard, applied on the way in.
+ */
+describe('isHeadImplausiblySmall', () => {
+  it('rejects the CardPro shape: 1-file manifest against a 200-file project', () => {
+    expect(isHeadImplausiblySmall(1, 200)).toBe(true);
+  });
+
+  it('accepts a HEAD that matches the disk', () => {
+    expect(isHeadImplausiblySmall(199, 200)).toBe(false);
+  });
+
+  it('accepts a HEAD moderately smaller than the disk (build output, untracked files)', () => {
+    expect(isHeadImplausiblySmall(150, 200)).toBe(false);
+  });
+
+  it('rejects at just under half, accepts at just over', () => {
+    expect(isHeadImplausiblySmall(99, 200)).toBe(true);
+    expect(isHeadImplausiblySmall(101, 200)).toBe(false);
+  });
+
+  it('never judges a small project, where the ratio is meaningless', () => {
+    // A fresh scaffold legitimately has few files; degrading those runs to the
+    // shared disk would remove isolation for no benefit.
+    expect(isHeadImplausiblySmall(1, 4)).toBe(false);
+    expect(isHeadImplausiblySmall(0, 9)).toBe(false);
+  });
+
+  it('does not fire when the disk is empty (nothing to compare against)', () => {
+    expect(isHeadImplausiblySmall(50, 0)).toBe(false);
+  });
+});
