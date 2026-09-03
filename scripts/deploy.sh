@@ -349,6 +349,10 @@ if [ -d dist ]; then mv dist dist.old; fi
 # dist.new must exist   abort loudly if rsync didn't upload
 if [ ! -d dist.new ]; then echo "ERROR: dist.new missing   rsync may have failed" >&2; exit 1; fi
 mv dist.new dist
+# Tabs opened before this deploy still lazy-load chunks by their OLD hashes.
+# Keep the previous build's assets alongside the new ones for one generation
+# (never overwriting a new file) so those tabs keep working until they reload.
+if [ -d dist.old/assets ]; then cp -n dist.old/assets/* dist/assets/ 2>/dev/null || true; fi
 ln -sf /etc/nginx/sites-available/ecomgear /etc/nginx/sites-enabled/ecomgear
 ln -sf /etc/nginx/sites-available/1000.ecomgear.dev /etc/nginx/sites-enabled/1000.ecomgear.dev
 rm -f /etc/nginx/sites-enabled/ecomgear.conf
