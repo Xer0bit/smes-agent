@@ -176,6 +176,8 @@ export interface AgentContext {
   previewServiceUrl?: string;
   /** The run's agent_locks token, so tool-initiated preview pushes pass the lock check. */
   agentLockToken?: string;
+  /** write_file rejections per path this run; after two, whole-file rewrites of that file are refused. */
+  writeRejectCounts?: Map<string, number>;
   /** Authenticated user id   required by database_query / get_database_schema to scope tenant DB access. */
   userId?: string;
   /**

@@ -123,11 +123,29 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
     if (/\.(tsx?|jsx?)$/.test(args.path)) {
       const balance = checkSyntaxBalance(content);
       if (balance.score >= 1) {
+        // Resending a 500-line file whole is how a run burns its budget: the
+        // model produced the same truncated body five times in a row on
+        // 2026-09-03 before the timeout salvaged nothing. After the second
+        // rejection for the same path, refuse whole-file rewrites and point
+        // at hunk edits, which cannot truncate the rest of the file.
+        const rejects = (ctx.writeRejectCounts ??= new Map<string, number>());
+        const n = (rejects.get(args.path) ?? 0) + 1;
+        rejects.set(args.path, n);
+        const lineCount = args.content.split('\n').length;
+        const exists = fs.existsSync(fullPath);
+        if (exists && (n >= 2 || lineCount > 200)) {
+          return (
+            `ERROR: Cannot write ${args.path}   code has unbalanced brackets (score ${balance.score}). The file was NOT written. ` +
+            `STOP rewriting this whole file (${lineCount} lines${n >= 2 ? `, rejected ${n} times` : ''}): a full rewrite of a large file is what keeps truncating. ` +
+            `Instead: read_file the exact region, then change ONLY that region with replace_in_files (or edit_file) using small SEARCH/REPLACE hunks. ` +
+            `The rest of the file stays intact.`
+          );
+        }
         return (
           `ERROR: Cannot write ${args.path}   code has unbalanced brackets ` +
           `(${balance.braces} net braces, ${balance.parens} net parens, ${balance.brackets} net square brackets, score ${balance.score}). ` +
           `The file was NOT written. Your code is incomplete or has extra closing brackets. ` +
-          `Please rewrite the COMPLETE file with properly balanced brackets and try again. Keep it under 200 lines.`
+          `Rewrite the COMPLETE file with balanced brackets, or for an existing file change only the broken region with replace_in_files. Keep new files under 200 lines.`
         );
       }
 

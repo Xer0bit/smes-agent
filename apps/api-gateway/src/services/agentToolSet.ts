@@ -23,6 +23,7 @@ import { searchCodebaseTool } from '../agent-tools/search_codebase.js';
 import { findSymbolUsagesTool } from '../agent-tools/find_symbol_usages.js';
 import { editFileTool } from '../agent-tools/edit_file.js';
 import { getBuildErrorsTool } from '../agent-tools/get_build_errors.js';
+import { replaceInFilesTool } from '../agent-tools/replace_in_files.js';
 import { runCommandTool } from '../agent-tools/run_command.js';
 import { thinkTool } from '../agent-tools/think.js';
 import { getDatabaseSchemaTool } from '../agent-tools/get_database_schema.js';
@@ -119,6 +120,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
     searchCodebaseTool,
     findSymbolUsagesTool,
     editFileTool,
+    replaceInFilesTool,
     runCommandTool, // npm install/uninstall only   whitelist enforced inside the tool
     getDatabaseSchemaTool,
     queryDatabaseTool,
@@ -379,7 +381,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
         // are different guarantees, so this doesn't piggyback on that guard.
         // Scoped to tier === 'fix' only: build/feature/edit runs legitimately
         // write files with no pre-existing error to diagnose.
-        if (tier === 'fix' && (def.name === 'write_file' || def.name === 'edit_file') && !ctx.buildErrorCallCount) {
+        if (tier === 'fix' && (def.name === 'write_file' || def.name === 'edit_file' || def.name === 'replace_in_files') && !ctx.buildErrorCallCount) {
           // Self-arming: run the build check HERE instead of demanding the
           // model do it. The demand-form of this gate deadlocked a real run
           // (2026-08-16 16:07): the model's get_build_errors call was
@@ -411,7 +413,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
         // hypothesis (different reasoning, no falsification language, active
         // hypothesis not yet verified fixed)   block the write that would act
         // on that unreconciled pivot instead of letting it through ungated.
-        if (tier === 'fix' && (def.name === 'write_file' || def.name === 'edit_file') && ctx.rootCauseLockViolation) {
+        if (tier === 'fix' && (def.name === 'write_file' || def.name === 'edit_file' || def.name === 'replace_in_files') && ctx.rootCauseLockViolation) {
           return (
             `BLOCKED: you pivoted to a different explanation for this bug without reconciling it against your ` +
             `previous one. Call \`think\` again and either (1) state specifically what evidence showed the earlier ` +
@@ -563,11 +565,13 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
         const SCOPE_VIOLATION_TOLERANCE = 2;
         if (
           ctx.declaredScope &&
-          (def.name === 'write_file' || def.name === 'edit_file' || def.name === 'delete_file' || def.name === 'rename_file')
+          (def.name === 'write_file' || def.name === 'edit_file' || def.name === 'replace_in_files' || def.name === 'delete_file' || def.name === 'rename_file')
         ) {
-          const targetPaths = def.name === 'rename_file'
+          const targetPaths: string[] = def.name === 'rename_file'
             ? [args.from, args.to].filter((p): p is string => typeof p === 'string')
-            : (typeof args.path === 'string' ? [args.path] : []);
+            : def.name === 'replace_in_files'
+              ? (Array.isArray(args.edits) ? args.edits.map((e: { path?: unknown }) => e?.path).filter((p: unknown): p is string => typeof p === 'string') : [])
+              : (typeof args.path === 'string' ? [args.path] : []);
           const outOfScope = targetPaths.filter((p) => !pathMatchesScope(p, ctx.declaredScope!));
           if (outOfScope.length > 0) {
             ctx.scopeViolationCount = (ctx.scopeViolationCount ?? 0) + 1;

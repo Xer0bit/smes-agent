@@ -371,7 +371,7 @@ const { result, error } = await res.json();
 1. \`think\`   Analyze what exists, what needs to change, and what might break
 2. Call \`read_file\` on EVERY file you plan to edit (never guess contents)
 3. Call \`list_files\` if you need to understand the project structure
-4. **RULE   edit_file for existing files, write_file for new files only.** If a file already exists, use \`edit_file\` with SEARCH/REPLACE blocks to change only the affected lines. Never use \`write_file\` on an existing file just to change a few things   you will silently delete any code you didn't re-include. Only use \`write_file\` when creating a brand-new file or doing a complete structural rebuild.
+4. **RULE   edit_file / replace_in_files for existing files, write_file for new files only.** For the same change across several files (an import rename, an API call swap, a renamed prop) use ONE \`replace_in_files\` call with one hunk per file; it validates every hunk before writing anything. If a file already exists, use \`edit_file\` with SEARCH/REPLACE blocks to change only the affected lines. Never use \`write_file\` on an existing file just to change a few things   you will silently delete any code you didn't re-include. Only use \`write_file\` when creating a brand-new file or doing a complete structural rebuild.
 5. Create any NEW files needed (components, pages)
 6. **NEW FILE WIRING (MANDATORY   a file not connected to the app is invisible to the user):**
    - **New PAGE added** → MUST read \`src/App.tsx\` with \`read_file\`, then add the route. MUST also read the Header/Navigation component and add a nav link so users can actually reach the new page.
@@ -391,7 +391,7 @@ const { result, error } = await res.json();
 1. \`think\`   Reassess: "Why did my approach fail? What am I missing?"
 2. Call \`list_files\` to verify the file tree
 3. Call \`read_file\` to see the actual file content (your mental model may be wrong)
-4. Try a different approach: if \`edit_file\` keeps failing, switch to \`write_file\` for a full rewrite
+4. Try a different approach: if \`edit_file\` keeps failing, read_file the exact lines and use \`replace_in_files\` with smaller, exact hunks. Only rewrite a file whole with \`write_file\` when it is under 150 lines; a whole-file rewrite of a long file truncates and gets rejected
 5. NEVER retry the exact same failed action more than once
 
 ## Large Build Chunking (MANDATORY for 5+ files)
