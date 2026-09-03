@@ -457,6 +457,8 @@ export interface FileDiff {
   changed: SandboxFile[];
   deleted: string[];
   unchanged: number;
+  /** Files identical to HEAD; a full sync can send these by reference (`keep`) instead of by content. */
+  unchangedFiles: SandboxFile[];
 }
 
 /**
@@ -476,6 +478,7 @@ export function diffFilesAgainstHead(
   const added: SandboxFile[] = [];
   const changed: SandboxFile[] = [];
   let unchanged = 0;
+  const unchangedFiles: SandboxFile[] = [];
   const seen = new Set<string>();
   for (const f of files) {
     seen.add(f.path);
@@ -483,11 +486,11 @@ export function diffFilesAgainstHead(
     const hash = createHash('sha256').update(f.content ?? '', 'utf8').digest('hex');
     if (prev === undefined) added.push(f);
     else if (prev !== hash) changed.push(f);
-    else unchanged++;
+    else { unchanged++; unchangedFiles.push(f); }
   }
   const deleted: string[] = [];
   for (const p of headHashes.keys()) if (!seen.has(p)) deleted.push(p);
-  return { added, changed, deleted, unchanged };
+  return { added, changed, deleted, unchanged, unchangedFiles };
 }
 
 /**

@@ -178,6 +178,8 @@ export interface AgentContext {
   agentLockToken?: string;
   /** write_file rejections per path this run; after two, whole-file rewrites of that file are refused. */
   writeRejectCounts?: Map<string, number>;
+  /** Set when a deploy was refused by the per-project function limit; delete_edge_function refuses "making room" after it. */
+  edgeFunctionLimitHit?: boolean;
   /** Authenticated user id   required by database_query / get_database_schema to scope tenant DB access. */
   userId?: string;
   /**

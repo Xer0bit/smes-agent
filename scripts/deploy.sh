@@ -417,6 +417,10 @@ PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}
 # Cloudflare Turnstile secret (registration bot-gate). Value comes from
 # .deploy.env; the api-gateway reads TURNSTILE_SECRET_KEY in production.
 TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
+# Edge function invocation runs inside isolated-vm (functionRunner.service.ts) with
+# AST validation; the 2026-08 vm-escape kill switch is lifted. Set to anything
+# but 'true' to close it again without a code change.
+EDGE_FUNCTIONS_INVOKE_ENABLED=${EDGE_FUNCTIONS_INVOKE_ENABLED:-true}
 # Plan payments (Stripe). Empty = the plan page stays on the manual flow.
 STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
 STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}

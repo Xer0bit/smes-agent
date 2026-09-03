@@ -4626,6 +4626,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           if (diff.deleted.length === 0 && touched > 0) {
             pushFiles = [...diff.added, ...diff.changed];
             pushFullSync = false;
+          } else if (diff.deleted.length > 0) {
+            // A full sync is needed to prune, but the unchanged files (usually
+            // the base64 images that make a 195-file project 40 MB) are already
+            // on the preview's disk: send them by reference. The preview keeps
+            // a `keep` path through pruning and reports any it does not have,
+            // which are re-sent with content below.
+            pushFiles = [...diff.added, ...diff.changed, ...diff.unchangedFiles.map((f) => ({ path: f.path, keep: true }))] as typeof mergedWrites;
           }
           logger.info('[AgentLoop] run changeset', {
             projectId, added: diff.added.length, changed: diff.changed.length,
@@ -4639,13 +4646,29 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       logger.info('[AgentLoop] preview push starting', {
         projectId, updateUrl, fileCount: mergedWrites.length, pushing: pushFiles.length, fullSync: pushFullSync,
       });
-      let firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: pushFiles, fullSync: pushFullSync, baseSeq: new Date().toISOString() }), 120_000);
+      // A 40 MB full sync (195 files with base64 images) took ~2 min to land and
+      // the fixed 120 s timeout aborted it, then retried the same 40 MB: 8 min
+      // of pure waiting per run (CardPro, 2026-09-03). Scale the wait with size.
+      const pushBody = JSON.stringify({ files: pushFiles, fullSync: pushFullSync, baseSeq: new Date().toISOString() });
+      const pushTimeoutMs = Math.min(600_000, 120_000 + Math.ceil(Buffer.byteLength(pushBody) / 5_000_000) * 60_000);
+      let firstAttempt = await httpPost(updateUrl, pushBody, pushTimeoutMs);
+      // Preview lacked some files we sent by reference: send those with content.
+      try {
+        const parsedFirst = JSON.parse(firstAttempt.body || '{}') as { missingKeeps?: unknown };
+        const missing = Array.isArray(parsedFirst.missingKeeps) ? parsedFirst.missingKeeps.filter((p): p is string => typeof p === 'string') : [];
+        if (firstAttempt.status === 200 && missing.length > 0) {
+          const byPath = new Map(mergedWrites.map((f) => [f.path, f]));
+          const resend = missing.map((p) => byPath.get(p)).filter((f): f is typeof mergedWrites[number] => Boolean(f));
+          logger.warn('[AgentLoop] preview lacked files sent by reference; re-sending with content', { projectId, count: resend.length });
+          if (resend.length > 0) firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: resend, fullSync: false }), pushTimeoutMs);
+        }
+      } catch { /* not JSON or no keeps: nothing to do */ }
       for (let pushRetry = 1; pushRetry <= 3 && firstAttempt.status !== 200 && firstAttempt.status !== 422; pushRetry++) {
         logger.warn('[AgentLoop] Preview push transport failure, retrying', {
           projectId, status: firstAttempt.status, pushRetry, maxPushRetries: 3,
         });
         await new Promise<void>((r) => setTimeout(r, pushRetry * 1000));
-        firstAttempt = await httpPost(updateUrl, JSON.stringify({ files: pushFiles, fullSync: pushFullSync, baseSeq: new Date().toISOString() }), 120_000);
+        firstAttempt = await httpPost(updateUrl, pushBody, pushTimeoutMs);
       }
       if (firstAttempt.status === 200) {
         // A 200 does NOT mean the files went live. preview-service answers 200
@@ -4787,7 +4810,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
               await new Promise<void>(r => setTimeout(r, 2500));
               const confirmed = await runPreviewSmokeCheck(smokeUrl);
               smokeGateResult = confirmed; // the confirm pass is the authoritative reading
-              if (!confirmed.skipped && !confirmed.ok) {
+              const networkOnly = !confirmed.skipped && !confirmed.ok && confirmed.errors.length > 0 &&
+                confirmed.errors.every((e) => /net::ERR_|Failed to fetch|Fetch request failed|NetworkError|Load failed|ERR_FAILED|ERR_CONNECTION|503|504/i.test(e));
+              if (networkOnly) {
+                // Every error is a request to a backend that did not answer
+                // (functions API, database, third party). No edit to the app's
+                // source can fix that; the two LLM repair passes that used to
+                // follow cost ~10 min per run on CardPro and never landed.
+                logger.warn('[AgentLoop] Smoke check failed on network errors only; skipping code repair', {
+                  projectId, errorsPreview: confirmed.errors.join('; ').slice(0, 300),
+                });
+              } else if (!confirmed.skipped && !confirmed.ok) {
                 pendingSmokeErrors = confirmed.errors.slice(0, 4);
                 smokeTriggeredFailure = true;
                 previewPushOk = false;

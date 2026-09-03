@@ -63,7 +63,8 @@ export const confirmEdgeFunctionDeployTool: ToolDefinition<z.infer<typeof schema
         .eq('name', name)
         .maybeSingle();
       if (!existing && (count ?? 0) >= MAX_FUNCTIONS_PER_PROJECT) {
-        return `ERROR: this project already has ${count} edge functions (limit ${MAX_FUNCTIONS_PER_PROJECT}). Consolidate related logic into one function or delete unused ones instead of adding more.`;
+        ctx.edgeFunctionLimitHit = true;
+        return `ERROR: this project already has ${count} edge functions (limit ${MAX_FUNCTIONS_PER_PROJECT}). A new name was refused. Do NOT delete other functions to make room: the app still calls them. Instead UPDATE an existing function by writing it again with its EXACT current name (see list_edge_functions), e.g. add the new action to the router function that already exists.`;
       }
 
       // The invoke endpoint (functions.routes.ts) looks up a function by

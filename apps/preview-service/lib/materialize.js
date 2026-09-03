@@ -1003,7 +1003,10 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
 
     for (const file of files) {
         if (file.content == null) {
-            console.warn('[Materialize] Skipping file with null/undefined content:', file.path);
+            // `keep: true` entries are files the runner knows are unchanged and
+            // already on disk: counted as user files (so pruning keeps them),
+            // never written. Anything else without content is a caller bug.
+            if (!file.keep) console.warn('[Materialize] Skipping file with null/undefined content:', file.path);
             continue;
         }
         const safePath = file.path.replace(/^\/+/, '');

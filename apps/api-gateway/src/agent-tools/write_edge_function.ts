@@ -37,7 +37,7 @@ export const EDGE_FUNCTIONS_DIR = '__edge_functions__';
 
 // Exported so confirm_edge_function_deploy.ts (the tool that actually writes
 // the live row) enforces the same cap without duplicating the constant.
-export const MAX_FUNCTIONS_PER_PROJECT = 20;
+export const MAX_FUNCTIONS_PER_PROJECT = 40;
 
 const schema = z.object({
   name: z.string().describe(

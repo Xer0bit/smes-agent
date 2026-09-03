@@ -1936,6 +1936,13 @@ async function startMainServer() {
             // version the user is looking at with a broken one.
             const materialized = await materializeProjectFiles(projectId, projectRoot, files, { deferReload: true });
             const { userFilePaths, allFixedIssues, validationErrors, contentHash, shouldReload } = materialized;
+            // Files the runner sent by reference (`keep: true`) that are not on
+            // disk here: report them so the runner re-sends them with content.
+            const missingKeeps = files
+                .filter((f) => f && f.keep === true && typeof f.path === 'string')
+                .map((f) => f.path.replace(/^\/+/, ''))
+                .filter((p) => !fs.existsSync(path.join(projectRoot, p)));
+            if (missingKeeps.length > 0) console.warn(`[${projectId}] ${missingKeeps.length} file(s) sent by reference are missing on disk; asking the runner to re-send`);
             // package.json is the source of truth for dependencies: install the
             // project's extras now, before Vite restarts, and report the result.
             const touchesPackageJson = fullSync || files.some((f) => String(f?.path || '').replace(/^\/+/, '') === 'package.json');
@@ -2132,6 +2139,7 @@ export default App;
                 contentHash,
                 revisionId,
                 deps: depsResult ?? undefined,
+                missingKeeps: missingKeeps.length > 0 ? missingKeeps : undefined,
             });
 
             // ── Advisory type check, AFTER the response ──────────────────
