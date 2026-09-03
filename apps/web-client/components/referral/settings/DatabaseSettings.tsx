@@ -400,7 +400,8 @@ export const DatabaseSettings = ({ organizationId: _organizationIdProp, projectI
   const handleDeprovision = async () => {
     setDeprovisioning(true);
     try {
-      await apiFetch('/deprovision', { method: 'DELETE' }, 60_000, projectId);
+      // The API refuses without the exact schema name echoed back (typed-confirmation guard).
+      await apiFetch('/deprovision', { method: 'DELETE', body: JSON.stringify({ confirm: db?.schema_name ?? '' }) }, 60_000, projectId);
       setDb(null); setTables([]); setSelectedTable(null);
       toast.success("Database removed.");
       onChange?.();
