@@ -50,7 +50,7 @@ export function Table({ head, children, empty }: { head: string[]; children: Rea
   const rows = Array.isArray(children) ? children.filter(Boolean) : children ? [children] : [];
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-[13px]">
+      <table className="w-full text-[13px] tabular-nums">
         <thead>
           <tr className="text-left text-[11px] text-gray-500">
             {head.map((h, i) => <th key={i} className={cn('font-medium px-3 py-2', i === head.length - 1 && h === '' && 'text-right')}>{h}</th>)}
@@ -77,6 +77,7 @@ export const btn = {
   primary: 'h-8 px-3 rounded-md text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50',
   ghost: 'h-8 px-3 rounded-md text-xs font-medium border border-white/10 hover:bg-white/5 text-gray-200 disabled:opacity-50',
   icon: 'h-7 w-7 inline-flex items-center justify-center rounded-md text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-50',
+  row: 'h-7 px-2 inline-flex items-center justify-center rounded-md text-xs text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-50',
   danger: 'h-8 px-3 rounded-md text-xs font-medium border border-red-500/30 text-red-300 hover:bg-red-500/10 disabled:opacity-50',
 };
 

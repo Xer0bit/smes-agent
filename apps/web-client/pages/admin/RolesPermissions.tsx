@@ -128,9 +128,9 @@ export default function AdminRolesPermissions() {
               <td className="text-gray-400">{when(h.granted_at)}</td>
               <td className="text-right whitespace-nowrap">
                 {isSuper && <>
-                  <button className={btn.icon + ' w-auto px-2'} disabled={busy} onClick={() => { setRole(h.role); setTarget(h); }}>Change</button>
+                  <button className={btn.row} disabled={busy} onClick={() => { setRole(h.role); setTarget(h); }}>Change</button>
                   {h.user_id !== me && h.checks.auth_exists && (
-                    <button className={btn.icon + ' w-auto px-2 hover:text-red-400'} disabled={busy} onClick={() => run(() => adminRolesService.ban(h.user_id, !h.checks.not_banned), h.checks.not_banned ? 'Banned, role revoked' : 'Unbanned')}>{h.checks.not_banned ? 'Ban' : 'Unban'}</button>
+                    <button className={btn.row + ' hover:text-red-400'} disabled={busy} onClick={() => run(() => adminRolesService.ban(h.user_id, !h.checks.not_banned), h.checks.not_banned ? 'Banned, role revoked' : 'Unbanned')}>{h.checks.not_banned ? 'Ban' : 'Unban'}</button>
                   )}
                 </>}
               </td>

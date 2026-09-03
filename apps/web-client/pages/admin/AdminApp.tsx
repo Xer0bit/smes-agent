@@ -61,8 +61,8 @@ export default function AdminApp() {
   if (!ready) return <div className="min-h-screen bg-[#0b0c10]" />;
 
   return (
-    <div className="min-h-screen flex bg-[#0b0c10] text-gray-200">
-      <aside className="w-[200px] shrink-0 border-r border-white/10 flex flex-col sticky top-0 h-screen">
+    <div className="h-screen flex overflow-hidden bg-[#0b0c10] text-gray-200">
+      <aside className="w-[200px] shrink-0 border-r border-white/10 flex flex-col h-full">
         <div className="h-12 flex items-center gap-2 px-4 border-b border-white/10">
           <img src={logo} alt="" className="h-4 w-auto" />
           <span className="text-xs font-semibold text-white tracking-wide">Admin</span>
@@ -80,8 +80,8 @@ export default function AdminApp() {
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0">
-        <div className="h-12 flex items-center px-6 border-b border-white/10 text-xs text-gray-500">{title}</div>
+      <main className="flex-1 min-w-0 h-full overflow-y-auto [scrollbar-gutter:stable] [scroll-behavior:auto]">
+        <div className="h-12 flex items-center px-6 border-b border-white/10 text-xs text-gray-500 sticky top-0 bg-[#0b0c10] z-10">{title}</div>
         <div className="p-6 max-w-[1400px]">
           <Routes>
             <Route index element={<Navigate to="/admin/dashboard" replace />} />

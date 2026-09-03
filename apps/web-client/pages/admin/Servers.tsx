@@ -116,9 +116,9 @@ export default function AdminServers() {
       </>}
     >
       <Stats items={[
-        { label: 'Servers', value: enabled.length },
-        { label: 'Down', value: down, tone: down ? 'bad' : 'ok' },
-        { label: 'Degraded', value: degraded, tone: degraded ? 'warn' : 'ok' },
+        { label: 'Servers', value: loading ? '…' : enabled.length },
+        { label: 'Down', value: loading ? '…' : down, tone: loading ? undefined : down ? 'bad' : 'ok' },
+        { label: 'Degraded', value: loading ? '…' : degraded, tone: loading ? undefined : degraded ? 'warn' : 'ok' },
         { label: 'Uptime 24h', value: avgUptime === null ? '—' : `${avgUptime}%`, tone: avgUptime === null ? undefined : avgUptime >= 99 ? 'ok' : avgUptime >= 95 ? 'warn' : 'bad' },
       ]} />
 
@@ -137,10 +137,10 @@ export default function AdminServers() {
               <td><Strip history={s.history} /></td>
               <td className="text-gray-400" title={s.health_last_check ?? ''}>{ago(s.health_last_check)}</td>
               <td className="text-right whitespace-nowrap">
-                <button className={btn.icon + ' w-auto px-2'} disabled={checking !== null} onClick={() => checkOne(s)}>{checking === s.id ? '…' : 'Check'}</button>
-                <button className={btn.icon + ' w-auto px-2'} onClick={() => toggle(s)}>{s.enabled ? 'Pause' : 'Resume'}</button>
-                <button className={btn.icon + ' w-auto px-2'} onClick={() => open(s)}>Edit</button>
-                <button className={btn.icon + ' w-auto px-2 hover:text-red-400'} onClick={() => setRemoving(s)}>Delete</button>
+                <button className={btn.row} disabled={checking !== null} onClick={() => checkOne(s)}>{checking === s.id ? '…' : 'Check'}</button>
+                <button className={btn.row} onClick={() => toggle(s)}>{s.enabled ? 'Pause' : 'Resume'}</button>
+                <button className={btn.row} onClick={() => open(s)}>Edit</button>
+                <button className={btn.row + ' hover:text-red-400'} onClick={() => setRemoving(s)}>Delete</button>
               </td>
             </tr>
           ))}
