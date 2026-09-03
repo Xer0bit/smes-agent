@@ -136,6 +136,14 @@ router.post('/checkout', async (req: AuthenticatedRequest, res: Response) => {
     const email = (req.user as { email?: string } | undefined)?.email ?? null;
     res.json(await createPlanCheckout(orgId, req.user!.id, email, quantities));
   } catch (error) {
+    // A bad or expired Stripe key is a server configuration problem, not a
+    // user error; say so instead of a bare 500 (seen live 2026-09-03: an
+    // expired sk_live key answered "Internal error" to the plan page).
+    const message = error instanceof Error ? error.message : String(error);
+    if (/API Key|api key|No API key/i.test(message)) {
+      logger.error('[plan] Stripe rejected the configured key', { reason: message.replace(/sk_(live|test)_\S+/g, 'sk_***') });
+      return res.status(503).json({ error: 'Payments are misconfigured on this server (Stripe rejected the API key). Ask the administrator to update STRIPE_SECRET_KEY.' });
+    }
     res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
