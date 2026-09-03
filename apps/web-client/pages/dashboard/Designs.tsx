@@ -92,8 +92,9 @@ export default function DashboardDesigns() {
     try {
       const { project, starter_prompt } = await startBlueprint(b.id, { organization_id: currentOrganizationId ?? null });
       toast.success(`Started "${project.name}". The agent has the blueprint rules.`);
-      stashPendingPrompt(project.id, { initialPrompt: starter_prompt });
-      navigate(`/project/${project.id}`, { state: { initialPrompt: starter_prompt, shouldGenerate: false } });
+      // Plan first: the agent lays out the architecture and design for approval, then builds.
+      stashPendingPrompt(project.id, { initialPrompt: starter_prompt, mode: 'plan' });
+      navigate(`/project/${project.id}`, { state: { initialPrompt: starter_prompt, shouldGenerate: true, mode: 'plan' } });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not start from this blueprint');
     } finally {

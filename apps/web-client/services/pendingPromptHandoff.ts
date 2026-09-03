@@ -22,6 +22,8 @@ export interface PendingPrompt {
    * RequireAuth remount, so the payload is valid with a prompt OR attachments.
    */
   initialPrompt?: string;
+  /** Force the first run's mode; blueprints start in plan mode so the user approves the architecture first. */
+  mode?: 'build' | 'plan';
   fileContext?: string;
   attachments?: AgentAttachment[];
 }

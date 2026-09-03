@@ -55,6 +55,8 @@ interface AgentChatPanelProps {
   onInitialAttachmentsConsumed?: () => void;
   /** When set, automatically send this prompt to the agent (e.g. from Repair button). */
   triggerPrompt?: string | null;
+  /** Mode for the auto-sent prompt; blueprints start in plan mode. */
+  triggerMode?: 'build' | 'plan';
   /**
    * Attachments to send WITH triggerPrompt. The dashboard's "New project"
    * flow uploads files before navigating here; passing them alongside the
@@ -113,6 +115,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   initialAttachments,
   onInitialAttachmentsConsumed,
   triggerPrompt,
+  triggerMode,
   triggerAttachments,
   triggerDisplayText,
   onTriggerConsumed,
@@ -360,7 +363,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     handleSubmit(
       triggerPrompt,
       triggerDisplayText || '🔧 Repair request',
-      'build',
+      triggerMode ?? 'build',
       false,
       triggerAttachments?.map(seededChatAttachment),
     );

@@ -502,6 +502,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   // repairPrompt is being reused for something other than an actual repair
   // (e.g. showing the user's real typed text for the first-prompt case).
   const [agentTriggerDisplayText, setAgentTriggerDisplayText] = useState<string | undefined>(undefined);
+  const [agentTriggerMode, setAgentTriggerMode] = useState<'build' | 'plan' | undefined>(undefined);
   /** Attachments sent with the trigger prompt (dashboard "New project" with files). */
   const [agentTriggerAttachments, setAgentTriggerAttachments] = useState<AgentAttachment[] | undefined>(undefined);
   const [agentStreamText, setAgentStreamText] = useState<string>('');
@@ -879,6 +880,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
     let initialPrompt = state?.initialPrompt;
     let fileContext = state?.fileContext;
     let attachments = state?.attachments;
+    let triggerMode: 'build' | 'plan' | undefined = state?.mode === 'plan' ? 'plan' : undefined;
     let fromSessionStorage = false;
     if (!(initialPrompt && state?.shouldGenerate) && projectId) {
       const pending = consumePendingPrompt(projectId);
@@ -886,6 +888,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
         initialPrompt = pending.initialPrompt;
         fileContext = pending.fileContext;
         attachments = pending.attachments;
+        triggerMode = pending.mode === 'plan' ? 'plan' : triggerMode;
         fromSessionStorage = true;
       }
     }
@@ -907,6 +910,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
       // Defer by one tick so React can flush the setPrompt update first.
       const timerId = setTimeout(() => {
+        setAgentTriggerMode(triggerMode);
         // One send path for the first message and every later one: the
         // panel's own. A second client implementation (promptService) used to
         // handle the with-attachments case and disagreed with this one about
@@ -2325,6 +2329,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       triggerPrompt={repairPrompt}
               triggerAttachments={agentTriggerAttachments}
                       triggerDisplayText={agentTriggerDisplayText}
+                      triggerMode={agentTriggerMode}
                       onTriggerConsumed={() => {
                         setRepairPrompt(null);
                         setAgentTriggerDisplayText(undefined);
@@ -2546,6 +2551,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               triggerPrompt={repairPrompt}
               triggerAttachments={agentTriggerAttachments}
               triggerDisplayText={agentTriggerDisplayText}
+              triggerMode={agentTriggerMode}
               onTriggerConsumed={() => {
                 setRepairPrompt(null);
                 setAgentTriggerDisplayText(undefined);
