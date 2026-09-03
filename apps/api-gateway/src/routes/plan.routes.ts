@@ -20,6 +20,8 @@ import { safeErrorMessage } from '../utils/sendError.js';
 import {
   UNITS, Unit, getCatalog, getEntitlements, getUsage, estimateMonthly, overCapacity, includedQuantity,
 } from '../services/entitlements.service.js';
+import { stripeEnabled, createPlanCheckout, confirmCheckout, createPortalSession, constructWebhookEvent, handleWebhookEvent } from '../services/stripePlan.service.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 
@@ -29,7 +31,6 @@ router.get('/catalog', async (_req, res: Response) => {
   res.json({ catalog: await getCatalog() });
 });
 
-router.use(authMiddleware);
 
 const unitSchema = z.number().int().min(0).max(1000);
 const quantitiesSchema = z.object({
@@ -49,8 +50,28 @@ async function isAdmin(userId: string): Promise<boolean> {
 async function planSnapshot(orgId: string) {
   const catalog = await getCatalog();
   const [entitlements, usage] = await Promise.all([getEntitlements(orgId, catalog), getUsage(orgId)]);
-  return { catalog, entitlements, usage, estimate: estimateMonthly(catalog, entitlements), over: overCapacity(entitlements, usage) };
+  return {
+    catalog, entitlements, usage, estimate: estimateMonthly(catalog, entitlements), over: overCapacity(entitlements, usage),
+    payments: { stripe: stripeEnabled() },
+  };
 }
+
+// ── Stripe (webhook is mounted BEFORE auth: Stripe has no session) ──────────
+
+router.post('/webhook', async (req, res: Response) => {
+  const signature = req.headers['stripe-signature'];
+  if (typeof signature !== 'string' || !Buffer.isBuffer(req.body)) return res.status(400).json({ error: 'Missing signature or raw body' });
+  try {
+    const event = constructWebhookEvent(req.body, signature);
+    await handleWebhookEvent(event);
+    res.json({ received: true });
+  } catch (error) {
+    logger.warn('[stripe-plan] webhook rejected', { error: safeErrorMessage(error) });
+    res.status(400).json({ error: safeErrorMessage(error) });
+  }
+});
+
+router.use(authMiddleware);
 
 router.get('/', async (req: AuthenticatedRequest, res: Response) => {
   const orgId = typeof req.query.org_id === 'string' ? req.query.org_id : '';
@@ -86,6 +107,61 @@ router.patch('/', async (req: AuthenticatedRequest, res: Response) => {
     });
     if (error) throw new Error(error.message);
     res.json(await planSnapshot(orgId));
+  } catch (error) {
+    res.status(500).json({ error: safeErrorMessage(error) });
+  }
+});
+
+/**
+ * Start a Stripe Checkout for the wanted quantities. The plan changes only
+ * when Stripe reports the subscription (webhook or the confirm call below).
+ */
+router.post('/checkout', async (req: AuthenticatedRequest, res: Response) => {
+  if (!stripeEnabled()) return res.status(503).json({ error: 'Payments are not configured on this server yet.' });
+  const parsed = quantitiesSchema.extend({ org_id: z.string().uuid() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid body' });
+  const { org_id: orgId, ...wanted } = parsed.data;
+  if (!(await isOrgMember(req.user!.id, orgId))) return res.status(403).json({ error: 'Not a member of this organization' });
+  try {
+    const catalog = await getCatalog();
+    const [current, usage] = await Promise.all([getEntitlements(orgId, catalog), getUsage(orgId)]);
+    const quantities: Record<Unit, number> = { apps: current.apps, users: current.users, agents: current.agents, databases: current.databases };
+    for (const unit of UNITS) {
+      const q = wanted[unit];
+      if (q === undefined) continue;
+      const floor = Math.max(includedQuantity(catalog, unit), usage[unit]);
+      if (q < floor) return res.status(422).json({ error: `${unit} cannot go below ${floor}: ${usage[unit]} in use, ${includedQuantity(catalog, unit)} included in the base plan.` });
+      quantities[unit] = q;
+    }
+    const email = (req.user as { email?: string } | undefined)?.email ?? null;
+    res.json(await createPlanCheckout(orgId, req.user!.id, email, quantities));
+  } catch (error) {
+    res.status(500).json({ error: safeErrorMessage(error) });
+  }
+});
+
+/** Back from Checkout: apply the subscription if it exists and say what happened. */
+router.post('/checkout/confirm', async (req: AuthenticatedRequest, res: Response) => {
+  if (!stripeEnabled()) return res.status(503).json({ error: 'Payments are not configured on this server yet.' });
+  const parsed = z.object({ org_id: z.string().uuid(), session_id: z.string().min(1) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'org_id and session_id are required' });
+  if (!(await isOrgMember(req.user!.id, parsed.data.org_id))) return res.status(403).json({ error: 'Not a member of this organization' });
+  try {
+    const outcome = await confirmCheckout(parsed.data.session_id, parsed.data.org_id);
+    res.json({ ...outcome, plan: await planSnapshot(parsed.data.org_id) });
+  } catch (error) {
+    res.status(500).json({ error: safeErrorMessage(error) });
+  }
+});
+
+/** Stripe billing portal: invoices, card, cancel. */
+router.post('/portal', async (req: AuthenticatedRequest, res: Response) => {
+  if (!stripeEnabled()) return res.status(503).json({ error: 'Payments are not configured on this server yet.' });
+  const parsed = z.object({ org_id: z.string().uuid() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'org_id is required' });
+  if (!(await isOrgMember(req.user!.id, parsed.data.org_id))) return res.status(403).json({ error: 'Not a member of this organization' });
+  try {
+    res.json({ url: await createPortalSession(parsed.data.org_id) });
   } catch (error) {
     res.status(500).json({ error: safeErrorMessage(error) });
   }

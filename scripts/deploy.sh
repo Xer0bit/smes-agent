@@ -413,6 +413,11 @@ PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}
 # Cloudflare Turnstile secret (registration bot-gate). Value comes from
 # .deploy.env; the api-gateway reads TURNSTILE_SECRET_KEY in production.
 TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
+# Plan payments (Stripe). Empty = the plan page stays on the manual flow.
+STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
+FRONTEND_URL=${FRONTEND_URL:-https://www.ecomgear.dev}
 # Logger verbosity. Settable durably from .deploy.env; defaults to info.
 # Without this line, deploys silently deleted any live-set LOG_LEVEL.
 LOG_LEVEL=${LOG_LEVEL:-info}

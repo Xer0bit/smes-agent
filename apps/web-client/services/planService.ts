@@ -57,6 +57,7 @@ export interface PlanSnapshot {
   usage: Record<Unit, number>;
   estimate: { lines: EstimateLine[]; total_cents: number };
   over: Array<{ unit: Unit; used: number; purchased: number }>;
+  payments?: { stripe: boolean };
 }
 
 export const DEFAULT_CATALOG: Catalog = {
@@ -126,4 +127,17 @@ export function fetchOrgPlan(orgId: string): Promise<PlanSnapshot> {
 
 export function updateOrgEntitlements(orgId: string, patch: Partial<Record<Unit, number>> & { eco_per_app?: number | null }): Promise<PlanSnapshot> {
   return request<PlanSnapshot>(`/admin/entitlements/${encodeURIComponent(orgId)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
+/** Stripe Checkout for the wanted quantities; returns the hosted page URL. */
+export function startCheckout(orgId: string, quantities: Partial<Record<Unit, number>>): Promise<{ url: string; sessionId: string }> {
+  return request<{ url: string; sessionId: string }>('/checkout', { method: 'POST', body: JSON.stringify({ org_id: orgId, ...quantities }) });
+}
+
+export function confirmCheckout(orgId: string, sessionId: string): Promise<{ paid: boolean; status: string; subscriptionId: string | null; plan: PlanSnapshot }> {
+  return request('/checkout/confirm', { method: 'POST', body: JSON.stringify({ org_id: orgId, session_id: sessionId }) });
+}
+
+export function openBillingPortal(orgId: string): Promise<{ url: string }> {
+  return request<{ url: string }>('/portal', { method: 'POST', body: JSON.stringify({ org_id: orgId }) });
 }

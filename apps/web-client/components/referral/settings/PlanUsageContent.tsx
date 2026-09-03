@@ -9,14 +9,15 @@
  * `org_entitlements`; the routes that create each unit refuse past it.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useOrganization } from "@/contexts/OrganizationContext";
-import { Minus, Plus, Check } from "lucide-react";
+import { Minus, Plus, Check, CreditCard, PartyPopper } from "lucide-react";
 import { toast } from "sonner";
 import {
-  fetchPlan, updatePlan, formatDollars, includedQuantity, unitPriceCents,
+  fetchPlan, updatePlan, startCheckout, confirmCheckout, openBillingPortal, formatDollars, includedQuantity, unitPriceCents,
   UNITS, UNIT_LABELS, type PlanSnapshot, type Unit,
 } from "@/services/planService";
 
@@ -62,6 +63,9 @@ export function PlanUsageContent({ organizationId }: { organizationId?: string }
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<Unit, number> | null>(null);
   const [saving, setSaving] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [thanks, setThanks] = useState<{ paid: boolean; status: string } | null>(null);
+  const [portalOpening, setPortalOpening] = useState(false);
 
   const load = useCallback(async () => {
     if (!currentOrganizationId) return;
@@ -76,6 +80,29 @@ export function PlanUsageContent({ organizationId }: { organizationId?: string }
   }, [currentOrganizationId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Back from Stripe Checkout: confirm the session, then show the thanks card.
+  // Cancelled or unpaid sessions also land here; the card says so honestly.
+  useEffect(() => {
+    const checkout = searchParams.get("checkout");
+    const sessionId = searchParams.get("session_id");
+    if (!checkout || !currentOrganizationId) return;
+    const clear = () => {
+      const next = new URLSearchParams(searchParams);
+      next.delete("checkout"); next.delete("session_id");
+      setSearchParams(next, { replace: true });
+    };
+    if (checkout === "success" && sessionId) {
+      confirmCheckout(currentOrganizationId, sessionId)
+        .then((r) => { setThanks({ paid: r.paid, status: r.status }); setPlan(r.plan); setDraft({ apps: r.plan.entitlements.apps, users: r.plan.entitlements.users, agents: r.plan.entitlements.agents, databases: r.plan.entitlements.databases }); })
+        .catch((e) => { setThanks({ paid: false, status: e instanceof Error ? e.message : "unknown" }); })
+        .finally(clear);
+    } else {
+      if (checkout === "cancelled") toast.message("Checkout cancelled. Your plan is unchanged.");
+      clear();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, currentOrganizationId]);
 
   const estimate = useMemo(() => {
     if (!plan || !draft) return null;
@@ -97,6 +124,12 @@ export function PlanUsageContent({ organizationId }: { organizationId?: string }
     if (!currentOrganizationId || !draft) return;
     setSaving(true);
     try {
+      if (plan?.payments?.stripe) {
+        // Paid path: Stripe Checkout hosts the payment; the plan changes when it completes.
+        const { url } = await startCheckout(currentOrganizationId, draft);
+        window.location.assign(url);
+        return;
+      }
       const snapshot = await updatePlan(currentOrganizationId, draft);
       setPlan(snapshot);
       toast.success(`Plan updated: ${formatDollars(snapshot.estimate.total_cents)}/mo`);
@@ -117,8 +150,36 @@ export function PlanUsageContent({ organizationId }: { organizationId?: string }
 
   const { catalog, usage, over } = plan;
 
+  const openPortal = async () => {
+    if (!currentOrganizationId) return;
+    setPortalOpening(true);
+    try {
+      const { url } = await openBillingPortal(currentOrganizationId);
+      window.location.assign(url);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not open billing");
+      setPortalOpening(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {thanks && (
+        <Card className="border-primary/40">
+          <CardContent className="flex items-start gap-4 py-5">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"><PartyPopper className="h-5 w-5" /></div>
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-semibold">{thanks.paid ? "Thanks! Your plan is updated." : "Thanks for trying checkout."}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {thanks.paid
+                  ? `You are now on ${formatDollars(plan.estimate.total_cents)}/mo. Invoices and your card live in Manage billing.`
+                  : `No payment was taken (session ${thanks.status}). Your plan is unchanged; come back whenever you are ready.`}
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setThanks(null)}>Close</Button>
+          </CardContent>
+        </Card>
+      )}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between gap-4">
@@ -197,8 +258,13 @@ export function PlanUsageContent({ organizationId }: { organizationId?: string }
                 Reset
               </Button>
             )}
+            {plan.payments?.stripe && plan.entitlements.source === "stripe" && (
+              <Button variant="outline" size="sm" disabled={portalOpening} onClick={openPortal}>
+                <CreditCard className="h-3.5 w-3.5 mr-1" />{portalOpening ? "Opening" : "Manage billing"}
+              </Button>
+            )}
             <Button size="sm" disabled={!dirty || saving} onClick={save}>
-              {saving ? "Saving" : dirty ? "Update plan" : (<><Check className="h-3.5 w-3.5 mr-1" /> Up to date</>)}
+              {saving ? (plan.payments?.stripe ? "Redirecting to checkout" : "Saving") : dirty ? (plan.payments?.stripe ? "Continue to payment" : "Update plan") : (<><Check className="h-3.5 w-3.5 mr-1" /> Up to date</>)}
             </Button>
           </div>
         </CardContent>

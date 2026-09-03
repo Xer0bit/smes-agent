@@ -142,6 +142,7 @@ app.use(cors({
 
 // Raw body parser specifically for Stripe webhook signature verification
 app.use('/api/v1/billing/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/v1/plan/webhook', express.raw({ type: 'application/json' }));
 
 // Body parsing   limit raised for base64-encoded binary assets in sync payloads
 app.use(express.json({ limit: '50mb' }));
