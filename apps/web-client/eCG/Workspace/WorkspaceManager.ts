@@ -139,7 +139,8 @@ export class WorkspaceManager {
         const existingFile = this.state.files.get(normalizedPath);
 
         if (!existingFile) {
-            console.warn(`[WorkspaceManager] File not found for deletion: ${path}`);
+            // Already gone (deleted by an earlier run or never loaded lazily): nothing to do, not a fault.
+            console.debug(`[WorkspaceManager] Delete skipped, file not present: ${path}`);
             return;
         }
 

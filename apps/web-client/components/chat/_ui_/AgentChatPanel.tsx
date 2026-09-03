@@ -311,6 +311,16 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   // (e.g. sending "Hello" right after the reconnect effect ran). Each flow
   // now only ever touches its own controller.
   const reconnectAbortRef = useRef<AbortController | null>(null);
+  // A rejoin replays the run's buffered stream, so one run's `done` can arrive
+  // more than once (seen as six "refreshing iframe" cycles for one run).
+  // Apply a run's files once, keyed by its run id.
+  const appliedRunIdsRef = useRef<Set<string>>(new Set());
+  const filesAlreadyApplied = (runId?: string | null): boolean => {
+    if (!runId) return false;
+    if (appliedRunIdsRef.current.has(runId)) return true;
+    appliedRunIdsRef.current.add(runId);
+    return false;
+  };
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const chatModeMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -766,7 +776,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                     setMessages(prev => prev.map(m => m.id === asstId
                       ? { ...m, status: 'complete', content: displayContent, summary, toolActivities, snapshotId: result.snapshotId }
                       : m));
-                    if (onFilesGenerated && (result.filesToWrite?.length > 0 || result.filesToDelete?.length > 0)) {
+                    if (onFilesGenerated && !filesAlreadyApplied(result.batchId) && (result.filesToWrite?.length > 0 || result.filesToDelete?.length > 0)) {
                       onFilesGenerated(
                         (result.filesToWrite ?? []).map((f: { path: string; content: string | Buffer }) => ({
                           path: f.path,
@@ -1347,7 +1357,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             }
 
             if (!isPlan) {
-              if (onFilesGenerated && (result.filesToWrite?.length > 0 || result.filesToDelete?.length > 0)) {
+              if (onFilesGenerated && !filesAlreadyApplied(result.batchId) && (result.filesToWrite?.length > 0 || result.filesToDelete?.length > 0)) {
                 onFilesGenerated(
                   (result.filesToWrite ?? []).map((f: { path: string; content: string | Buffer }) => ({
                     path: f.path,

@@ -186,6 +186,7 @@ export async function streamAgentGeneration(params: {
   const candidateUrls = getGenServerCandidateUrls('/api/v1/ai/agent-stream');
   let response: globalThis.Response | null = null;
   let lastNetworkError = '';
+  let lastNoActiveRun = false;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -298,6 +299,7 @@ export async function streamAgentGeneration(params: {
         // caller's `err.name === 'AbortError'` check depends on that.
         if (error instanceof Error && error.name === 'AbortError') throw error;
         lastNetworkError = error instanceof Error ? error.message : String(error);
+        if ((error as { noActiveRun?: boolean })?.noActiveRun) lastNoActiveRun = true;
       }
     }
     return null;
@@ -320,6 +322,9 @@ export async function streamAgentGeneration(params: {
 
   if (!response) {
     const message = `Agent stream connection failed on all local endpoints: ${lastNetworkError}`;
+    // "No active run" on every endpoint is the run having finished before we
+    // reattached; keep the flag so the caller treats it as expected, not an error.
+    if (lastNoActiveRun) throw Object.assign(new Error(message), { noActiveRun: true });
     callbacks.onError?.(message);
     throw new Error(message);
   }
