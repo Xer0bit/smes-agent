@@ -1,391 +1,211 @@
-import { useEffect, useState, useCallback } from 'react';
+/**
+ * Roles: platform role holders verified against auth, the issues to act on,
+ * role changes (audited), and organization memberships.
+ */
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/adminClient';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Shield, Users, Info, Loader2, Building2, Crown, ArrowRight, CheckCircle2, Sliders } from 'lucide-react';
-import { Switch } from '@/components/ui/switch';
-import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/utils';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
-import { adminTierConfigService, type TierConfig, type TierFeatures, type TierLimits } from '@/services/adminTierConfigService';
+import { cn } from '@/lib/utils';
+import { Page, Stats, Panel, Table, Tag, btn, input, when } from '@/components/admin/ui';
+import { adminRolesService, type PlatformRole, type RoleHolder, type RoleReport } from '@/services/adminOpsService';
 
-interface OrganizationRole {
-    id: string;
-    org_name: string;
-    user_email: string;
-    role: string;
-    created_at: string;
-}
-
-const FEATURE_LIST: { key: keyof TierFeatures; label: string; description: string }[] = [
-    { key: 'ai_agent',        label: 'AI Agent',            description: 'Full AI agent for content & code generation' },
-    { key: 'hosting',         label: 'Hosting',             description: 'One-click publish to eComGear hosting' },
-    { key: 'custom_domains',  label: 'Custom Domains',      description: 'Map custom domains to projects' },
-    { key: 'remove_branding', label: 'Remove Branding',     description: 'Hide the "Made with eComGear" footer' },
-    { key: 'export_code',     label: 'Export Code',         description: 'Download the full project source' },
-    { key: 'analytics',       label: 'Analytics',           description: 'Traffic & usage analytics dashboard' },
-    { key: 'api_access',      label: 'API Access',          description: 'REST API for external integrations' },
-    { key: 'invite_editors',  label: 'Invite Editors',      description: 'Invite team members as editors' },
-    { key: 'invite_clients',  label: 'Invite Clients',      description: 'Add client accounts to projects' },
-    { key: 'integration_app', label: 'Integration Apps',    description: 'Marketplace integrations' },
-    { key: 'auto_pilot',      label: 'AutoPilot',           description: 'Scheduled content generation' },
-    { key: 'ali_cloud',       label: 'AliCloud Migration',  description: 'Migrate to Alibaba Cloud' },
-    { key: 'ecomgear_cloud',  label: 'eComGear Cloud',      description: 'Managed cloud with custom domain' },
-    { key: 'client_markup',   label: 'Client Markup',       description: 'Charge clients with markup fees' },
-    { key: 'priority_support',label: 'Priority Support',    description: '24/7 priority customer support' },
-    { key: 'sso',             label: 'SSO',                 description: 'Single Sign-On via SAML/OIDC' },
-    { key: 'sla',             label: 'SLA',                 description: '99.9% uptime SLA guarantee' },
-];
-
-const LIMIT_LIST: { key: keyof TierLimits; label: string; description: string; unlimited?: boolean }[] = [
-    { key: 'ai_gens_limit',       label: 'Eco / Month',           description: 'Max AI eco units per month (free=10, pro/agency=100)' },
-    { key: 'publish_lines_limit', label: 'Publish Lines / Month', description: 'Max lines publishable per month' },
-    { key: 'seats_total',         label: 'Seats',                 description: 'Max team members per organization' },
-    { key: 'max_projects',        label: 'Max Projects',          description: 'Max projects per organization (999999 = unlimited)' },
-];
-
-const PLAN_TIERS: { key: 'free' | 'pro' | 'agency'; label: string; color: string }[] = [
-    { key: 'free',   label: 'Free',   color: 'text-gray-300 border-gray-500/30 bg-gray-500/10' },
-    { key: 'pro',    label: 'Pro',    color: 'text-purple-300 border-purple-500/30 bg-purple-500/10' },
-    { key: 'agency', label: 'Agency', color: 'text-amber-300 border-amber-500/30 bg-amber-500/10' },
-];
+interface OrgRoleRow { id: string; org_name: string; user_email: string; role: string; created_at: string }
+const ACTION: Record<string, string> = { grant: 'granted', change: 'changed', revoke: 'revoked', confirm_email: 'confirmed email of', ban: 'banned', unban: 'unbanned' };
 
 export default function AdminRolesPermissions() {
-    const [config, setConfig] = useState<TierConfig | null>(null);
-    const [saving, setSaving] = useState(false);
-    const [configLoading, setConfigLoading] = useState(true);
-    const [roles, setRoles] = useState<OrganizationRole[]>([]);
-    const [rolesLoading, setRolesLoading] = useState(true);
-    const [lastSaved, setLastSaved] = useState<string | null>(null);
+  const [report, setReport] = useState<RoleReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [orgRoles, setOrgRoles] = useState<OrgRoleRow[]>([]);
+  const [target, setTarget] = useState<RoleHolder | null>(null);
+  const [role, setRole] = useState<PlatformRole>('admin');
+  const [grant, setGrant] = useState(false);
+  const [query, setQuery] = useState('');
+  const [matches, setMatches] = useState<Array<{ id: string; email: string }>>([]);
+  const [pick, setPick] = useState<{ id: string; email: string } | null>(null);
+  const [grantRole, setGrantRole] = useState<PlatformRole>('admin');
 
-    useEffect(() => {
-        loadConfig();
-        loadRoles();
-    }, []);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setReport(await adminRolesService.report()); }
+    catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to load'); }
+    finally { setLoading(false); }
+  }, []);
 
-    const loadConfig = async () => {
-        try {
-            setConfigLoading(true);
-            const data = await adminTierConfigService.getConfig();
-            setConfig(data);
-        } catch (error) {
-            console.error('Error loading tier config:', error);
-            toast.error('Failed to load tier configuration');
-        } finally {
-            setConfigLoading(false);
-        }
-    };
+  const loadOrgRoles = useCallback(async () => {
+    const { data, error } = await supabase.from('org_members').select('id, role, created_at, org_id, user_id').order('created_at', { ascending: false });
+    if (error) { toast.error(error.message); return; }
+    const rows = data ?? [];
+    const orgIds = [...new Set(rows.map((r) => r.org_id).filter(Boolean))];
+    const userIds = [...new Set(rows.map((r) => r.user_id).filter(Boolean))];
+    const [orgs, profiles] = await Promise.all([
+      orgIds.length ? supabase.from('organizations').select('id, name').in('id', orgIds) : Promise.resolve({ data: [] }),
+      userIds.length ? supabase.from('profiles').select('id, email').in('id', userIds) : Promise.resolve({ data: [] }),
+    ]);
+    const orgMap = new Map((orgs.data ?? []).map((o) => [o.id, o.name]));
+    const emailMap = new Map((profiles.data ?? []).map((p) => [p.id, p.email]));
+    setOrgRoles(rows.map((r) => ({ id: r.id, role: r.role, created_at: r.created_at, org_name: orgMap.get(r.org_id) ?? '?', user_email: emailMap.get(r.user_id) ?? '?' })));
+  }, []);
 
-    const persistConfig = useCallback(async (next: TierConfig) => {
-        setSaving(true);
-        setConfig(next);
-        try {
-            const saved = await adminTierConfigService.saveConfig(next);
-            setConfig(saved);
-            setLastSaved(new Date().toLocaleTimeString());
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : 'Failed to save');
-            await loadConfig();
-        } finally {
-            setSaving(false);
-        }
-    }, []);
+  useEffect(() => { load(); loadOrgRoles(); }, [load, loadOrgRoles]);
 
-    const toggleFeature = (tier: 'free' | 'pro' | 'agency', feature: keyof TierFeatures, value: boolean) => {
-        if (!config) return;
-        const next: TierConfig = {
-            ...config,
-            features: {
-                ...config.features,
-                [tier]: { ...config.features[tier], [feature]: value },
-            },
-        };
-        persistConfig(next);
-    };
+  useEffect(() => {
+    if (!grant || query.trim().length < 2) { setMatches([]); return; }
+    const t = setTimeout(async () => {
+      const { data } = await supabase.from('profiles').select('id, email').ilike('email', `%${query.trim()}%`).limit(8);
+      setMatches(data ?? []);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [grant, query]);
 
-    const updateLimit = (tier: 'free' | 'pro' | 'agency', key: keyof TierLimits, value: number) => {
-        if (!config) return;
-        const next: TierConfig = {
-            ...config,
-            limits: {
-                ...config.limits,
-                [tier]: { ...config.limits[tier], [key]: value },
-            },
-        };
-        persistConfig(next);
-    };
+  const isSuper = report?.caller.role === 'super_admin';
+  const me = report?.caller.user_id;
 
-    const loadRoles = async () => {
-        try {
-            setRolesLoading(true);
-            const { data, error } = await supabase
-                .from('org_members')
-                .select('id, role, created_at, org_id, user_id')
-                .order('created_at', { ascending: false });
+  const run = async (fn: () => Promise<unknown>, ok: string) => {
+    setBusy(true);
+    try { await fn(); toast.success(ok); await load(); }
+    catch (e) { toast.error(e instanceof Error ? e.message : 'Failed'); }
+    finally { setBusy(false); }
+  };
 
-            if (error) throw error;
+  const holders = report?.holders ?? [];
+  const issues = report?.issues ?? [];
+  const orgIssues = report?.orgIssues ?? [];
 
-            const rows = data || [];
-            const orgIds = Array.from(new Set(rows.map((r: any) => r.org_id).filter(Boolean)));
-            const userIds = Array.from(new Set(rows.map((r: any) => r.user_id).filter(Boolean)));
+  return (
+    <Page
+      title="Roles"
+      actions={<>
+        <button className={btn.ghost} onClick={load} disabled={loading}>Re-verify</button>
+        {isSuper && <button className={btn.primary} onClick={() => setGrant(true)}>Grant</button>}
+      </>}
+    >
+      <Stats items={[
+        { label: 'Super admins', value: holders.filter((h) => h.role === 'super_admin').length },
+        { label: 'Admins', value: holders.filter((h) => h.role === 'admin').length },
+        { label: 'Issues', value: issues.length, tone: issues.length ? 'bad' : 'ok' },
+        { label: 'Orgs without admin', value: orgIssues.length, tone: orgIssues.length ? 'warn' : 'ok' },
+      ]} />
 
-            const [orgRes, profileRes] = await Promise.all([
-                orgIds.length
-                    ? supabase.from('organizations').select('id, name').in('id', orgIds)
-                    : Promise.resolve({ data: [] as any[] }),
-                userIds.length
-                    ? supabase.from('profiles').select('id, email').in('id', userIds)
-                    : Promise.resolve({ data: [] as any[] }),
-            ]);
-
-            const orgMap = new Map((orgRes.data || []).map((org: any) => [org.id, org.name]));
-            const profileMap = new Map((profileRes.data || []).map((profile: any) => [profile.id, profile.email]));
-
-            setRoles(rows.map((r: any) => ({
-                id: r.id,
-                role: r.role,
-                created_at: r.created_at,
-                org_name: orgMap.get(r.org_id) || 'Unknown',
-                user_email: profileMap.get(r.user_id) || 'Unknown',
-            })));
-        } catch (error) {
-            console.error('Error loading roles:', error);
-            toast.error('Failed to load role assignments');
-        } finally {
-            setRolesLoading(false);
-        }
-    };
-
-    return (
-        <div className="space-y-8 animate-in fade-in duration-500 pb-12">
-
-            {/* ─── Save Status Bar ──────────────────────────────────────── */}
-            <div className="rounded-xl border p-3 flex items-center justify-between" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
-                <div className="flex items-center gap-2 text-xs text-gray-300">
-                    {saving
-                        ? <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-400" />
-                        : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
-                    {saving ? 'Saving…' : `Saved${lastSaved ? ` at ${lastSaved}` : ''}`}
+      {(issues.length > 0 || orgIssues.length > 0) && (
+        <Panel title="Needs attention">
+          <div className="divide-y divide-white/[0.06]">
+            {issues.map((i, idx) => {
+              const h = holders.find((x) => x.user_id === i.user_id);
+              return (
+                <div key={idx} className="flex items-center justify-between gap-3 px-3 py-2 text-[13px]">
+                  <span className="text-gray-200">{i.message}</span>
+                  {isSuper && h && (
+                    <span className="flex gap-1 shrink-0">
+                      {i.code === 'unconfirmed' && <button className={btn.ghost} disabled={busy} onClick={() => run(() => adminRolesService.confirmEmail(h.user_id), 'Email confirmed')}>Confirm email</button>}
+                      {i.code === 'banned' && <button className={btn.ghost} disabled={busy} onClick={() => run(() => adminRolesService.ban(h.user_id, true), 'Unbanned')}>Unban</button>}
+                      <button className={btn.danger} disabled={busy || h.user_id === me} onClick={() => run(() => adminRolesService.setRole(h.user_id, 'user'), 'Role revoked')}>Revoke</button>
+                    </span>
+                  )}
                 </div>
-                <Button variant="outline" size="sm" onClick={loadConfig} disabled={configLoading || saving} className="h-8 gap-2 border-white/10 bg-white/5 text-gray-200 hover:bg-white/10 text-xs">
-                    {configLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                    Refresh
-                </Button>
-            </div>
+              );
+            })}
+            {orgIssues.map((o) => <div key={o.org_id} className="px-3 py-2 text-[13px] text-gray-200">{o.name}: no admin member</div>)}
+          </div>
+        </Panel>
+      )}
 
-            {/* ─── Feature Permissions ──────────────────────────────────── */}
-            <div className="grid gap-6">
-                <div className="flex flex-col gap-1">
-                    <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                        <Shield className="h-5 w-5 text-purple-400" />
-                        Feature Permissions
-                    </h2>
-                    <p className="text-sm text-gray-500">Toggle features on/off per subscription tier. Changes take effect immediately.</p>
-                </div>
+      <Panel title="Platform roles">
+        <Table head={['User', 'Role', 'Verified', 'Last sign-in', 'Granted', '']} empty={loading ? 'Loading…' : 'No platform roles'}>
+          {holders.map((h) => (
+            <tr key={h.id}>
+              <td><span className="text-white">{h.email ?? h.user_id}</span>{h.full_name && <span className="text-gray-500 text-[11px]"> {h.full_name}</span>}</td>
+              <td><Tag tone={h.role === 'super_admin' ? 'warn' : 'accent'}>{h.role.replace('_', ' ')}</Tag></td>
+              <td>
+                <span className={cn(h.verified ? 'text-emerald-400' : 'text-red-400')}>{h.verified ? 'Yes' : 'No'}</span>
+                <span className="text-[11px] text-gray-500"> {[
+                  !h.checks.auth_exists && 'no account', !h.checks.email_confirmed && 'email unconfirmed', !h.checks.not_banned && 'banned', !h.checks.profile_active && 'inactive', h.checks.mfa && 'mfa',
+                ].filter(Boolean).join(' · ')}</span>
+              </td>
+              <td className="text-gray-400">{when(h.last_sign_in_at)}</td>
+              <td className="text-gray-400">{when(h.granted_at)}</td>
+              <td className="text-right whitespace-nowrap">
+                {isSuper && <>
+                  <button className={btn.icon + ' w-auto px-2'} disabled={busy} onClick={() => { setRole(h.role); setTarget(h); }}>Change</button>
+                  {h.user_id !== me && h.checks.auth_exists && (
+                    <button className={btn.icon + ' w-auto px-2 hover:text-red-400'} disabled={busy} onClick={() => run(() => adminRolesService.ban(h.user_id, !h.checks.not_banned), h.checks.not_banned ? 'Banned, role revoked' : 'Unbanned')}>{h.checks.not_banned ? 'Ban' : 'Unban'}</button>
+                  )}
+                </>}
+              </td>
+            </tr>
+          ))}
+        </Table>
+      </Panel>
 
-                <Card className="border-white/10 bg-white/[0.02] backdrop-blur-xl overflow-hidden shadow-2xl">
-                    <CardContent className="p-0">
-                        {configLoading ? (
-                            <div className="flex items-center justify-center py-16">
-                                <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
-                            </div>
-                        ) : (
-                            <Table>
-                                <TableHeader>
-                                    <TableRow className="border-white/[0.05] hover:bg-transparent">
-                                        <TableHead className="w-[280px] text-gray-400 text-xs font-semibold py-5 pl-6">Feature</TableHead>
-                                        {PLAN_TIERS.map(tier => (
-                                            <TableHead key={tier.key} className="text-center py-5 text-xs font-semibold">
-                                                <Badge className={cn('text-[11px] px-3 py-0.5 border font-semibold', tier.color)}>
-                                                    {tier.label}
-                                                </Badge>
-                                            </TableHead>
-                                        ))}
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {FEATURE_LIST.map((feat) => (
-                                        <TableRow key={feat.key} className="border-white/[0.05] hover:bg-white/[0.01] transition-colors">
-                                            <TableCell className="py-4 pl-6">
-                                                <div className="space-y-0.5">
-                                                    <div className="text-sm font-medium text-gray-200">{feat.label}</div>
-                                                    <div className="text-xs text-gray-500">{feat.description}</div>
-                                                </div>
-                                            </TableCell>
-                                            {PLAN_TIERS.map(tier => (
-                                                <TableCell key={tier.key} className="text-center">
-                                                    <div className="flex justify-center">
-                                                        <Switch
-                                                            checked={config?.features[tier.key]?.[feat.key] ?? false}
-                                                            onCheckedChange={(v) => toggleFeature(tier.key, feat.key, v)}
-                                                            disabled={saving}
-                                                            className="data-[state=checked]:bg-emerald-500"
-                                                        />
-                                                    </div>
-                                                </TableCell>
-                                            ))}
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        )}
-                    </CardContent>
-                </Card>
-            </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <Panel title="Role changes">
+          <div className="divide-y divide-white/[0.06] max-h-[400px] overflow-y-auto">
+            {(report?.audit ?? []).length === 0 && <div className="px-3 py-6 text-center text-gray-500 text-[13px]">None yet</div>}
+            {(report?.audit ?? []).map((a) => (
+              <div key={a.id} className="px-3 py-2 text-[12px] flex justify-between gap-3">
+                <span className="text-gray-300"><span className="text-white">{a.actor_email ?? 'system'}</span> {ACTION[a.action] ?? a.action} <span className="text-white">{a.target_email ?? a.target_user_id.slice(0, 8)}</span>{a.new_role && <span className="text-gray-500"> {a.old_role ? `${a.old_role} → ` : ''}{a.new_role}</span>}</span>
+                <span className="text-gray-500 shrink-0">{when(a.created_at)}</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+        <Panel title="Organization roles">
+          <div className="max-h-[400px] overflow-y-auto">
+            <Table head={['Organization', 'Member', 'Role', 'Since']} empty="No memberships">
+              {orgRoles.map((r) => (
+                <tr key={r.id}>
+                  <td className="text-white">{r.org_name}</td>
+                  <td>{r.user_email}</td>
+                  <td><Tag>{r.role}</Tag></td>
+                  <td className="text-gray-400">{when(r.created_at)}</td>
+                </tr>
+              ))}
+            </Table>
+          </div>
+        </Panel>
+      </div>
 
-            {/* ─── Usage Limits ─────────────────────────────────────────── */}
-            <div className="grid gap-6">
-                <div className="flex flex-col gap-1">
-                    <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                        <Sliders className="h-5 w-5 text-blue-400" />
-                        Usage Limits
-                    </h2>
-                    <p className="text-sm text-gray-500">Set numeric quotas per tier. For unlimited, enter 999999.</p>
-                </div>
+      <Dialog open={!!target} onOpenChange={(o) => !o && setTarget(null)}>
+        <DialogContent className="bg-[#0f1116] border-white/10 text-white sm:max-w-sm">
+          <DialogHeader><DialogTitle className="text-sm">{target?.email}</DialogTitle></DialogHeader>
+          <Select value={role} onValueChange={(v: PlatformRole) => setRole(v)}>
+            <SelectTrigger className="h-8 text-xs bg-transparent border-white/10"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="user">user (no access)</SelectItem>
+              <SelectItem value="admin">admin</SelectItem>
+              <SelectItem value="super_admin">super admin</SelectItem>
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <button className={btn.ghost} onClick={() => setTarget(null)}>Cancel</button>
+            <button className={btn.primary} disabled={target?.user_id === me && role !== 'super_admin'} onClick={() => { const t = target; setTarget(null); if (t) run(() => adminRolesService.setRole(t.user_id, role), `${t.email ?? 'User'}: ${role}`); }}>Apply</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-                <Card className="border-white/10 bg-white/[0.02] backdrop-blur-xl overflow-hidden shadow-2xl">
-                    <CardContent className="p-0">
-                        {configLoading ? (
-                            <div className="flex items-center justify-center py-16">
-                                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-                            </div>
-                        ) : (
-                            <Table>
-                                <TableHeader>
-                                    <TableRow className="border-white/[0.05] hover:bg-transparent">
-                                        <TableHead className="w-[280px] text-gray-400 text-xs font-semibold py-5 pl-6">Limit</TableHead>
-                                        {PLAN_TIERS.map(tier => (
-                                            <TableHead key={tier.key} className="text-center py-5 text-xs font-semibold">
-                                                <Badge className={cn('text-[11px] px-3 py-0.5 border font-semibold', tier.color)}>
-                                                    {tier.label}
-                                                </Badge>
-                                            </TableHead>
-                                        ))}
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {LIMIT_LIST.map((limit) => (
-                                        <TableRow key={limit.key} className="border-white/[0.05] hover:bg-white/[0.01] transition-colors">
-                                            <TableCell className="py-4 pl-6">
-                                                <div className="space-y-0.5">
-                                                    <div className="text-sm font-medium text-gray-200">{limit.label}</div>
-                                                    <div className="text-xs text-gray-500">{limit.description}</div>
-                                                </div>
-                                            </TableCell>
-                                            {PLAN_TIERS.map(tier => (
-                                                <TableCell key={tier.key} className="text-center px-4">
-                                                    <Input
-                                                        key={`${tier.key}-${limit.key}-${config?.updatedAt || ''}`}
-                                                        type="number"
-                                                        min={0}
-                                                        defaultValue={config?.limits[tier.key]?.[limit.key] ?? 0}
-                                                        onBlur={(e) => updateLimit(tier.key, limit.key, Number(e.target.value))}
-                                                        disabled={saving}
-                                                        className="bg-white/5 border-white/10 text-white h-8 text-xs text-center w-28 mx-auto"
-                                                    />
-                                                </TableCell>
-                                            ))}
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        )}
-                    </CardContent>
-                </Card>
-            </div>
-
-            {/* ─── Active Member Roles ───────────────────────────────────── */}
-            <div className="grid gap-6 pt-4">
-                <div className="flex items-center justify-between">
-                    <div className="flex flex-col gap-1">
-                        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                            <Users className="h-5 w-5 text-blue-400" />
-                            Active Member Roles
-                        </h2>
-                        <p className="text-sm text-gray-500">User roles across all registered organizations.</p>
-                    </div>
-                </div>
-
-                <Card className="border-white/10 bg-white/[0.02] backdrop-blur-xl overflow-hidden shadow-2xl">
-                    <CardHeader className="pb-4 border-b border-white/[0.05] bg-white/[0.01]">
-                        <div className="flex items-center justify-between">
-                            <CardTitle className="text-sm font-semibold text-gray-200 flex items-center gap-2">
-                                <Info className="h-4 w-4 text-blue-400/60" />
-                                Hierarchy Log
-                            </CardTitle>
-                            <Badge variant="outline" className="bg-white/5 border-white/10 text-gray-400 font-normal">
-                                {roles.length} Assignments
-                            </Badge>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="p-0">
-                        {rolesLoading ? (
-                            <div className="flex flex-col items-center justify-center py-24 gap-3">
-                                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-                                <p className="text-xs text-gray-500">Loading assignments...</p>
-                            </div>
-                        ) : (
-                            <div className="overflow-x-auto">
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow className="border-white/[0.05] hover:bg-transparent">
-                                            <TableHead className="text-gray-400 text-xs font-semibold py-4 pl-6">Member</TableHead>
-                                            <TableHead className="text-gray-400 text-xs font-semibold py-4">Organization</TableHead>
-                                            <TableHead className="text-gray-400 text-xs font-semibold py-4">Assigned Role</TableHead>
-                                            <TableHead className="text-gray-400 text-xs font-semibold py-4">Since</TableHead>
-                                            <TableHead className="text-gray-400 text-xs font-semibold py-4 text-right pr-6">Activity</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {roles.map((r) => {
-                                            const isAdmin = r.role === 'admin' || r.role === 'owner';
-                                            return (
-                                                <TableRow key={r.id} className="border-white/[0.05] hover:bg-white/[0.02] transition-colors group">
-                                                    <TableCell className="py-4 pl-6">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="h-8 w-8 rounded-full bg-primary/15 border border-white/10 flex items-center justify-center text-[10px] font-bold text-white">
-                                                                {r.user_email.substring(0, 2).toUpperCase()}
-                                                            </div>
-                                                            <span className="text-sm text-gray-200 font-medium group-hover:text-white transition-colors">
-                                                                {r.user_email}
-                                                            </span>
-                                                        </div>
-                                                    </TableCell>
-                                                    <TableCell className="text-sm text-gray-400">
-                                                        <div className="flex items-center gap-2">
-                                                            <Building2 className="h-3.5 w-3.5 opacity-40" />
-                                                            {r.org_name}
-                                                        </div>
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        <Badge className={cn(
-                                                            "text-[10px] flex items-center gap-1.5 w-fit border px-2 py-0.5 capitalize font-medium",
-                                                            isAdmin
-                                                                ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
-                                                                : "bg-blue-500/10 text-blue-400 border-blue-500/20"
-                                                        )}>
-                                                            {isAdmin ? <Crown className="h-3 w-3" /> : <Shield className="h-3 w-3" />}
-                                                            {r.role}
-                                                        </Badge>
-                                                    </TableCell>
-                                                    <TableCell className="text-xs text-gray-500 font-medium">{new Date(r.created_at).toLocaleDateString()}</TableCell>
-                                                    <TableCell className="text-right pr-6">
-                                                        <Button variant="ghost" size="sm" className="h-8 text-gray-500 hover:text-white group-hover:bg-white/5 opacity-0 group-hover:opacity-100 transition-all">
-                                                            <ArrowRight className="h-3.5 w-3.5" />
-                                                        </Button>
-                                                    </TableCell>
-                                                </TableRow>
-                                            );
-                                        })}
-                                    </TableBody>
-                                </Table>
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-            </div>
-        </div>
-    );
+      <Dialog open={grant} onOpenChange={(o) => { if (!o) { setGrant(false); setQuery(''); setPick(null); } }}>
+        <DialogContent className="bg-[#0f1116] border-white/10 text-white sm:max-w-sm">
+          <DialogHeader><DialogTitle className="text-sm">Grant role</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <input className={input} placeholder="Email" value={query} onChange={(e) => { setQuery(e.target.value); setPick(null); }} />
+            {matches.length > 0 && !pick && (
+              <div className="border border-white/10 rounded-md divide-y divide-white/[0.06] max-h-40 overflow-y-auto">
+                {matches.map((m) => <button key={m.id} type="button" className="block w-full text-left px-2 py-1.5 text-xs hover:bg-white/5" onClick={() => { setPick(m); setQuery(m.email); }}>{m.email}</button>)}
+              </div>
+            )}
+            <Select value={grantRole} onValueChange={(v: PlatformRole) => setGrantRole(v)}>
+              <SelectTrigger className="h-8 text-xs bg-transparent border-white/10"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="admin">admin</SelectItem><SelectItem value="super_admin">super admin</SelectItem></SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <button className={btn.ghost} onClick={() => setGrant(false)}>Cancel</button>
+            <button className={btn.primary} disabled={!pick} onClick={() => { const p = pick; setGrant(false); setQuery(''); setPick(null); if (p) run(() => adminRolesService.setRole(p.id, grantRole), `${p.email}: ${grantRole}`); }}>Grant</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Page>
+  );
 }

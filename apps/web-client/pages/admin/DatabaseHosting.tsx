@@ -1,19 +1,9 @@
-import { useEffect, useState } from 'react';
-import { supabase } from '@/integrations/supabase/adminClient';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
-} from '@/components/ui/alert-dialog';
-import { buttonVariants } from '@/components/ui/button';
-import { Database, Search, Loader2, RefreshCw, Radio, Download, Trash2 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/adminClient';
 import { getApiServerUrl } from '@/config/external-api';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Page, Stats, Panel, Table, Tag, btn, input, when } from '@/components/admin/ui';
 
 interface TenantDbRow {
   id: string;
@@ -27,111 +17,51 @@ interface TenantDbRow {
   org_name: string | null;
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  active: 'bg-green-500/15 text-green-400 border-green-500/30',
-  provisioning: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
-  deprovisioning: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
-  error: 'bg-red-500/15 text-red-400 border-red-500/30',
-  deprovisioned: 'bg-gray-500/15 text-gray-400 border-gray-500/30',
+type Org = { name: string } | { name: string }[] | null;
+const orgName = (o: Org): string | null => (Array.isArray(o) ? o[0]?.name ?? null : o?.name ?? null);
+interface DbRow { id: string; user_id: string; organization_id: string | null; schema_name: string; status: string; error_message: string | null; created_at: string; organizations: Org }
+interface ProfileRow { id: string; email: string }
+
+const STATUS_TONE: Record<string, 'ok' | 'warn' | 'bad' | 'gray'> = {
+  active: 'ok', provisioning: 'warn', deprovisioning: 'warn', error: 'bad', deprovisioned: 'gray',
 };
+
+const authedFetch = async (path: string, options: RequestInit = {}) => {
+  const { data: { session } } = await supabase.auth.getSession();
+  return fetch(getApiServerUrl(path), {
+    ...options,
+    headers: { ...(options.headers ?? {}), Authorization: `Bearer ${session?.access_token ?? ''}` },
+  });
+};
+
+const errMsg = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
 
 export default function DatabaseHosting() {
   const [rows, setRows] = useState<TenantDbRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [actioningId, setActioningId] = useState<string | null>(null);
-  const [deprovisionRow, setDeprovisionRow] = useState<TenantDbRow | null>(null);
+  const [q, setQ] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<TenantDbRow | null>(null);
 
-  const authedFetch = async (path: string, options: RequestInit = {}) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    return fetch(getApiServerUrl(path), {
-      ...options,
-      headers: { ...(options.headers || {}), Authorization: `Bearer ${session?.access_token}` },
-    });
-  };
-
-  const handlePing = async (row: TenantDbRow) => {
-    setActioningId(row.id);
-    try {
-      const res = await authedFetch(`/api/v1/admin/database/${row.id}/ping`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Ping failed');
-      toast.success(data.connected ? `Connected (${data.latencyMs}ms)` : `Not connected: ${data.error || 'unknown'}`);
-    } catch (err: any) {
-      toast.error(err.message || 'Ping failed');
-    } finally {
-      setActioningId(null);
-    }
-  };
-
-  const handleDump = async (row: TenantDbRow) => {
-    setActioningId(row.id);
-    try {
-      const res = await authedFetch(`/api/v1/admin/database/${row.id}/dump`);
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Dump failed');
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${row.schema_name}-dump-${Date.now()}.sql`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success('Dump downloaded');
-    } catch (err: any) {
-      toast.error(err.message || 'Dump failed');
-    } finally {
-      setActioningId(null);
-    }
-  };
-
-  const handleRequestDeprovision = (row: TenantDbRow) => {
-    if (row.status === 'deprovisioned') return;
-    setDeprovisionRow(row);
-  };
-
-  const handleDeprovision = async (row: TenantDbRow) => {
-    setActioningId(row.id);
-    try {
-      const res = await authedFetch(`/api/v1/admin/database/${row.id}/deprovision`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Deprovision failed');
-      toast.success('Database deprovisioned');
-      load();
-    } catch (err: any) {
-      toast.error(err.message || 'Deprovision failed');
-    } finally {
-      setActioningId(null);
-      setDeprovisionRow(null);
-    }
-  };
-
-  const load = async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true); else setLoading(true);
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
       const { data, error } = await supabase
         .from('tenant_databases')
         .select('id, user_id, organization_id, schema_name, status, error_message, created_at, organizations(name)')
         .order('created_at', { ascending: false });
       if (error) throw error;
+      const dbRows: DbRow[] = data ?? [];
 
-      const userIds = [...new Set((data || []).map((r: any) => r.user_id))];
-      let profileMap: Record<string, string> = {};
+      const userIds = [...new Set(dbRows.map((r) => r.user_id))];
+      const emailById: Record<string, string> = {};
       if (userIds.length > 0) {
-        const { data: profiles } = await supabase
-          .from('profiles')
-          .select('id, email')
-          .in('id', userIds);
-        profileMap = (profiles || []).reduce((acc: Record<string, string>, p: any) => {
-          acc[p.id] = p.email;
-          return acc;
-        }, {});
+        const { data: profiles } = await supabase.from('profiles').select('id, email').in('id', userIds);
+        const profileRows: ProfileRow[] = profiles ?? [];
+        for (const p of profileRows) emailById[p.id] = p.email;
       }
 
-      setRows((data || []).map((r: any) => ({
+      setRows(dbRows.map((r) => ({
         id: r.id,
         user_id: r.user_id,
         organization_id: r.organization_id,
@@ -139,157 +69,125 @@ export default function DatabaseHosting() {
         status: r.status,
         error_message: r.error_message,
         created_at: r.created_at,
-        owner_email: profileMap[r.user_id] || null,
-        org_name: r.organizations?.name || null,
+        owner_email: emailById[r.user_id] ?? null,
+        org_name: orgName(r.organizations),
       })));
-    } catch (err) {
-      console.error('Failed to load tenant databases:', err);
+    } catch (e) {
+      console.error('Failed to load tenant databases:', e);
       toast.error('Failed to load hosted databases');
     } finally {
       setLoading(false);
-      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const ping = async (row: TenantDbRow) => {
+    setBusyId(row.id);
+    try {
+      const res = await authedFetch(`/api/v1/admin/database/${row.id}/ping`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ping failed');
+      toast.success(data.connected ? `Connected (${data.latencyMs}ms)` : `Not connected: ${data.error || 'unknown'}`);
+    } catch (e) {
+      toast.error(errMsg(e, 'Ping failed'));
+    } finally {
+      setBusyId(null);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  const dump = async (row: TenantDbRow) => {
+    setBusyId(row.id);
+    try {
+      const res = await authedFetch(`/api/v1/admin/database/${row.id}/dump`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Dump failed');
+      }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${row.schema_name}-dump-${Date.now()}.sql`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Dump downloaded');
+    } catch (e) {
+      toast.error(errMsg(e, 'Dump failed'));
+    } finally {
+      setBusyId(null);
+    }
+  };
 
-  const filtered = rows.filter((r) => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return r.schema_name.toLowerCase().includes(q) ||
-      (r.owner_email || '').toLowerCase().includes(q) ||
-      (r.org_name || '').toLowerCase().includes(q);
-  });
+  const deprovision = async (row: TenantDbRow) => {
+    setBusyId(row.id);
+    try {
+      const res = await authedFetch(`/api/v1/admin/database/${row.id}/deprovision`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Deprovision failed');
+      toast.success('Database deprovisioned');
+      load();
+    } catch (e) {
+      toast.error(errMsg(e, 'Deprovision failed'));
+    } finally {
+      setBusyId(null);
+      setConfirm(null);
+    }
+  };
 
-  const counts = rows.reduce((acc, r) => {
-    acc[r.status] = (acc[r.status] || 0) + 1;
-    acc.total = (acc.total || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
+  const needle = q.trim().toLowerCase();
+  const filtered = needle
+    ? rows.filter((r) =>
+      r.schema_name.toLowerCase().includes(needle) ||
+      (r.owner_email ?? '').toLowerCase().includes(needle) ||
+      (r.org_name ?? '').toLowerCase().includes(needle))
+    : rows;
 
-  if (loading) {
-    return <div className="flex items-center justify-center h-96"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
-  }
+  const count = (status: string) => rows.filter((r) => r.status === status).length;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Database className="h-6 w-6" />ECG CLOUD DBs</h1>
-          <p className="text-sm text-muted-foreground">Tenant databases provisioned on VPS5, across all projects and organizations.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="relative w-64">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search schema, owner, org…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-8" />
-          </div>
-          <Button variant="outline" size="sm" onClick={() => load(true)} disabled={refreshing}>
-            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", refreshing && "animate-spin")} />
-            Refresh
-          </Button>
-        </div>
-      </div>
+    <Page title="Cloud databases" actions={<button className={btn.ghost} onClick={load} disabled={loading}>Refresh</button>}>
+      <Stats items={[
+        { label: 'Total', value: rows.length },
+        { label: 'Active', value: count('active'), tone: 'ok' },
+        { label: 'Provisioning', value: count('provisioning'), tone: count('provisioning') > 0 ? 'warn' : undefined },
+        { label: 'Error', value: count('error'), tone: count('error') > 0 ? 'bad' : undefined },
+      ]} />
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {[
-          { label: 'Total', value: counts.total || 0 },
-          { label: 'Active', value: counts.active || 0 },
-          { label: 'Provisioning', value: counts.provisioning || 0 },
-          { label: 'Error', value: counts.error || 0 },
-          { label: 'Deprovisioned', value: counts.deprovisioned || 0 },
-        ].map((c) => (
-          <Card key={c.label}>
-            <CardHeader className="pb-1"><CardTitle className="text-xs font-medium text-muted-foreground">{c.label}</CardTitle></CardHeader>
-            <CardContent><p className="text-2xl font-bold">{c.value}</p></CardContent>
-          </Card>
-        ))}
-      </div>
+      <Panel title={`Databases (${filtered.length})`} actions={<input className={input + ' w-56'} placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} />}>
+        <Table head={['Schema', 'Owner', 'Organization', 'Status', 'Created', '']} empty={loading ? 'Loading' : needle ? 'No matches' : 'No hosted databases'}>
+          {filtered.map((r) => {
+            const off = busyId === r.id || r.status === 'deprovisioned';
+            return (
+              <tr key={r.id}>
+                <td className="font-mono">{r.schema_name}</td>
+                <td>{r.owner_email ?? r.user_id}</td>
+                <td className="text-gray-400">{r.org_name ?? '—'}</td>
+                <td><span title={r.error_message ?? undefined}><Tag tone={STATUS_TONE[r.status] ?? 'gray'}>{r.status}</Tag></span></td>
+                <td className="text-gray-400">{when(r.created_at)}</td>
+                <td className="text-right whitespace-nowrap">
+                  <button className={btn.ghost + ' mr-1'} disabled={off} onClick={() => ping(r)}>Ping</button>
+                  <button className={btn.ghost + ' mr-1'} disabled={off} onClick={() => dump(r)}>Dump</button>
+                  <button className={btn.danger} disabled={off} onClick={() => setConfirm(r)}>Deprovision</button>
+                </td>
+              </tr>
+            );
+          })}
+        </Table>
+      </Panel>
 
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Schema</TableHead>
-                <TableHead>Owner</TableHead>
-                <TableHead>Organization</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">No hosted databases yet.</TableCell></TableRow>
-              ) : filtered.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-mono text-xs">{r.schema_name}</TableCell>
-                  <TableCell className="text-sm">{r.owner_email || r.user_id}</TableCell>
-                  <TableCell className="text-sm">{r.org_name || ' '}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={cn(STATUS_STYLES[r.status] || '')} title={r.error_message || undefined}>
-                      {r.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{new Date(r.created_at).toLocaleString()}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button
-                        variant="ghost" size="sm" className="h-7 w-7 p-0"
-                        title="Ping"
-                        disabled={actioningId === r.id || r.status === 'deprovisioned'}
-                        onClick={() => handlePing(r)}
-                      >
-                        {actioningId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Radio className="h-3.5 w-3.5" />}
-                      </Button>
-                      <Button
-                        variant="ghost" size="sm" className="h-7 w-7 p-0"
-                        title="Download dump"
-                        disabled={actioningId === r.id || r.status === 'deprovisioned'}
-                        onClick={() => handleDump(r)}
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400 hover:text-red-300"
-                        title="Deprovision"
-                        disabled={actioningId === r.id || r.status === 'deprovisioned'}
-                        onClick={() => handleRequestDeprovision(r)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      {/* Deprovision Confirmation */}
-      <AlertDialog open={!!deprovisionRow} onOpenChange={(open) => { if (!open) setDeprovisionRow(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Deprovision database?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Deprovision database "{deprovisionRow?.schema_name}" (owned by {deprovisionRow?.owner_email || deprovisionRow?.user_id})? This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={actioningId === deprovisionRow?.id}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              disabled={actioningId === deprovisionRow?.id}
-              onClick={(e) => { e.preventDefault(); if (deprovisionRow) handleDeprovision(deprovisionRow); }}
-              className={buttonVariants({ variant: 'destructive' })}
-            >
-              {actioningId === deprovisionRow?.id ? 'Deprovisioning…' : 'Deprovision'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+      <Dialog open={confirm !== null} onOpenChange={(o) => !o && setConfirm(null)}>
+        <DialogContent className="bg-[#0d0f14] border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle>Deprovision {confirm?.schema_name} ({confirm?.owner_email ?? confirm?.user_id})? This cannot be undone.</DialogTitle>
+          </DialogHeader>
+          <DialogFooter>
+            <button className={btn.ghost} disabled={busyId !== null} onClick={() => setConfirm(null)}>Cancel</button>
+            <button className={btn.danger} disabled={busyId !== null} onClick={() => confirm && deprovision(confirm)}>
+              {busyId !== null && busyId === confirm?.id ? 'Deprovisioning' : 'Deprovision'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Page>
   );
 }

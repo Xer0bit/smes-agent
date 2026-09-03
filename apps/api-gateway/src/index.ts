@@ -9,6 +9,7 @@ import { logger } from './utils/logger.js';
 import { ensureBaseTemplate } from './services/baseTemplateService.js';
 import { testAndAutoDisableProviders, startLlmHealthLoop } from './services/llm-health.service.js';
 import { startAgentRunWatchdog } from './services/agentRunWatchdog.service.js';
+import { startServerStatusMonitor } from './services/serverStatus.service.js';
 import { getLlmControlState } from './services/llm-control.service.js';
 import { probeEmbeddingProvider } from './knowledgebase/index.js';
 import { releaseAllLocksForThisProcess, interruptRunsForThisProcess } from './routes/ai.routes.js';
@@ -75,6 +76,10 @@ const server: Server = app.listen(PORT, () => {
     // never reaches any of its own completion/failure update sites) so the
     // column stays trustworthy instead of lying forever.
     startAgentRunWatchdog();
+
+    // Probe registered application servers so the admin Servers page has
+    // status history even when nobody opens it. API role only.
+    if ((process.env.SERVICE_ROLE || 'all') !== 'gen') startServerStatusMonitor();
 
     // Warm up the golden template in the background with retry.
     retryAsync(() => ensureBaseTemplate(), 3, 2000).catch((err) =>

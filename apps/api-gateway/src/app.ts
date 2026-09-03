@@ -14,6 +14,7 @@ import systemRoutes from './routes/system.routes.js';
 import runtimeRoutes from './routes/runtime.routes.js';
 import databaseRoutes from './routes/database.routes.js';
 import adminDatabaseRoutes from './routes/admin-database.routes.js';
+import adminRoutes from './routes/admin.routes.js';
 import hostingRoutes from './routes/hosting.routes.js';
 import seoRoutes from './routes/seo.routes.js';
 import headerIntegrationsRoutes from './routes/header-integrations.routes.js';
@@ -216,6 +217,7 @@ if (servesApi) {
     mount('/api/v1/runtime', runtimeRoutes);
     mount('/api/v1/database', databaseRoutes);
     mount('/api/v1/admin/database', adminDatabaseRoutes);
+    mount('/api/v1/admin', adminRoutes);
     mount('/api/v1/hosting', hostingRoutes);
     mount('/api/v1/seo', seoRoutes);
     mount('/api/v1/header-integrations', headerIntegrationsRoutes);

@@ -1,28 +1,13 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/adminClient';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
-import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
-} from '@/components/ui/alert-dialog';
-import { buttonVariants } from '@/components/ui/button';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import {
-  Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext,
-} from '@/components/ui/pagination';
-import { Search, Pencil, Trash2, Shield, UserPlus } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { confirmRowDeleted } from '@/services/confirmDeletion';
+import { Page, Panel, Table, Tag, btn, input, when } from '@/components/admin/ui';
 
 const PAGE_SIZE = 20;
+const dialogCls = 'bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white';
 
 interface UserWithRole {
   id: string;
@@ -31,6 +16,8 @@ interface UserWithRole {
   created_at: string;
   role: string | null;
 }
+
+const errorMessage = (e: unknown, fallback: string) => (e instanceof Error && e.message) || fallback;
 
 export default function Users() {
   const [users, setUsers] = useState<UserWithRole[]>([]);
@@ -41,25 +28,16 @@ export default function Users() {
   const [totalCount, setTotalCount] = useState(0);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
-
-  // Edit user
   const [editUser, setEditUser] = useState<UserWithRole | null>(null);
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
-
-  // Role management
   const [roleUser, setRoleUser] = useState<UserWithRole | null>(null);
   const [selectedRole, setSelectedRole] = useState('');
-
-  // Delete user
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState(false);
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      setDebouncedSearch(searchQuery.trim());
-      setPage(0);
-    }, 300);
+    const t = setTimeout(() => { setDebouncedSearch(searchQuery.trim()); setPage(0); }, 300);
     return () => clearTimeout(t);
   }, [searchQuery]);
 
@@ -71,125 +49,77 @@ export default function Users() {
       const { data: { session } } = await supabase.auth.getSession();
       setCurrentUserId(session?.user?.id || null);
 
-      let query = supabase
-        .from('profiles')
-        .select('id, email, full_name, created_at', { count: 'exact' })
-        .order('created_at', { ascending: false });
-
+      let query = supabase.from('profiles').select('id, email, full_name, created_at', { count: 'exact' }).order('created_at', { ascending: false });
       if (debouncedSearch) {
         const q = debouncedSearch.replace(/[%,]/g, '');
         query = query.or(`email.ilike.%${q}%,full_name.ilike.%${q}%`);
       }
-
-      const { data: profiles, error, count } = await query
-        .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
+      const { data: profiles, error, count } = await query.range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
       if (error) throw error;
 
-      const ids = (profiles || []).map(p => p.id);
-      const { data: roles } = await supabase
-        .from('user_roles')
-        .select('user_id, role')
-        .in('user_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
-      const roleMap = new Map((roles || []).map(r => [r.user_id, r.role]));
+      const ids = (profiles || []).map((p) => p.id);
+      const { data: roles } = await supabase.from('user_roles').select('user_id, role').in('user_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+      const roleMap = new Map((roles || []).map((r) => [r.user_id, r.role]));
 
       if (session?.user?.id) {
-        const { data: myRole } = await supabase
-          .from('user_roles').select('role').eq('user_id', session.user.id).maybeSingle();
+        const { data: myRole } = await supabase.from('user_roles').select('role').eq('user_id', session.user.id).maybeSingle();
         setCurrentUserRole(myRole?.role || 'user');
       }
 
-      const merged = (profiles || []).map(p => ({
-        ...p,
-        role: roleMap.get(p.id) || null,
-      }));
+      const merged = (profiles || []).map((p) => ({ ...p, role: roleMap.get(p.id) || null }));
       setUsers(merged);
       setTotalCount(count ?? merged.length);
     } catch (error) {
       console.error('Failed to load users:', error);
       toast.error('Failed to load users');
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-  const formatDate = (d: string) =>
-    new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-
-  const handleEditUser = (user: UserWithRole) => {
-    setEditUser(user);
-    setEditName(user.full_name || '');
-    setEditEmail(user.email);
-  };
+  const handleEditUser = (user: UserWithRole) => { setEditUser(user); setEditName(user.full_name || ''); setEditEmail(user.email); };
 
   const handleUpdateUser = async () => {
     if (!editUser) return;
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({ full_name: editName, email: editEmail })
-        .eq('id', editUser.id);
+      const { error } = await supabase.from('profiles').update({ full_name: editName, email: editEmail }).eq('id', editUser.id);
       if (error) throw error;
       toast.success('User updated');
       setEditUser(null);
       loadUsers();
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to update user');
+    } catch (error) {
+      toast.error(errorMessage(error, 'Failed to update user'));
     }
   };
 
   const handleManageRole = (user: UserWithRole) => {
-    if (user.role === 'super_admin' && currentUserRole !== 'super_admin') {
-      toast.error('Only super admins can manage super admin users');
-      return;
-    }
-
+    if (user.role === 'super_admin' && currentUserRole !== 'super_admin') return void toast.error('Only super admins can manage super admin users');
     setRoleUser(user);
     setSelectedRole(user.role || 'user');
   };
 
   const handleUpdateRole = async () => {
     if (!roleUser) return;
-
-    if (selectedRole === 'super_admin' && currentUserRole !== 'super_admin') {
-      toast.error('Only super admins can assign the super admin role');
-      return;
-    }
-
-    if (roleUser.id === currentUserId && selectedRole === 'user') {
-      toast.error('You cannot remove your own admin access');
-      return;
-    }
-
+    if (selectedRole === 'super_admin' && currentUserRole !== 'super_admin') return void toast.error('Only super admins can assign the super admin role');
+    if (roleUser.id === currentUserId && selectedRole === 'user') return void toast.error('You cannot remove your own admin access');
     try {
       if (selectedRole === 'user') {
         await supabase.from('user_roles').delete().eq('user_id', roleUser.id);
       } else {
-        const { data: existing } = await supabase
-          .from('user_roles').select('id').eq('user_id', roleUser.id).maybeSingle();
-        if (existing) {
-          await supabase.from('user_roles').update({ role: selectedRole }).eq('user_id', roleUser.id);
-        } else {
-          await supabase.from('user_roles').insert({ user_id: roleUser.id, role: selectedRole });
-        }
+        const { data: existing } = await supabase.from('user_roles').select('id').eq('user_id', roleUser.id).maybeSingle();
+        if (existing) await supabase.from('user_roles').update({ role: selectedRole }).eq('user_id', roleUser.id);
+        else await supabase.from('user_roles').insert({ user_id: roleUser.id, role: selectedRole });
       }
       toast.success('Role updated');
       setRoleUser(null);
       loadUsers();
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to update role');
+    } catch (error) {
+      toast.error(errorMessage(error, 'Failed to update role'));
     }
   };
 
   const handleRequestDeleteUser = (id: string) => {
     const target = users.find((u) => u.id === id);
-    if (id === currentUserId) {
-      toast.error('You cannot delete your own account from admin panel');
-      return;
-    }
-    if (target?.role === 'super_admin' && currentUserRole !== 'super_admin') {
-      toast.error('Only super admins can delete super admin users');
-      return;
-    }
+    if (id === currentUserId) return void toast.error('You cannot delete your own account from admin panel');
+    if (target?.role === 'super_admin' && currentUserRole !== 'super_admin') return void toast.error('Only super admins can delete super admin users');
     setDeleteUserId(id);
   };
 
@@ -203,224 +133,84 @@ export default function Users() {
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      // The function returning { success: true } is a claim, not proof. An
-      // account reported deleted was still signing in days later because
-      // nothing ever re-checked. The profile row is what this list renders,
-      // so its absence is the honest confirmation.
       const outcome = await confirmRowDeleted('profiles', id);
-      toast.success(outcome === 'gone'
-        ? 'User deleted   email is now free to re-register'
-        : 'Delete sent, but it could not be confirmed. Refresh to check.');
+      toast.success(outcome === 'gone' ? 'User deleted' : 'Delete sent, but it could not be confirmed. Refresh to check.');
       loadUsers();
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete user');
-    } finally {
-      setDeletingUser(false);
-      setDeleteUserId(null);
-    }
+    } catch (error) {
+      toast.error(errorMessage(error, 'Failed to delete user'));
+    } finally { setDeletingUser(false); setDeleteUserId(null); }
   };
 
-  const roleBadge = (role: string | null) => {
-    const styles: Record<string, { bg: string; text: string; border: string }> = {
-      super_admin: { bg: 'rgba(239,68,68,0.1)', text: '#f87171', border: 'rgba(239,68,68,0.2)' },
-      admin: { bg: 'rgba(139,92,246,0.1)', text: '#a78bfa', border: 'rgba(139,92,246,0.2)' },
-    };
-    if (!role) return <span className="text-xs text-gray-500">User</span>;
-    const s = styles[role] || { bg: 'rgba(107,114,128,0.1)', text: '#9ca3af', border: 'rgba(107,114,128,0.2)' };
-    return (
-      <span
-        className="text-[11px] font-medium px-2 py-0.5 rounded-full capitalize"
-        style={{ background: s.bg, color: s.text, border: `1px solid ${s.border}` }}
-      >
-        {role.replace('_', ' ')}
-      </span>
-    );
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="h-8 w-8 rounded-full border-2 border-purple-500 border-t-transparent animate-spin" />
-      </div>
-    );
-  }
+  const pages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
-    <div className="space-y-5">
-      {/* Search + count */}
-      <div className="flex items-center justify-between">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-500" />
-          <Input
-            placeholder="Search users..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-9 w-72 pl-9 text-xs bg-white/5 border-white/10 text-white placeholder:text-gray-500 focus:border-purple-500/50"
-          />
-        </div>
-        <span className="text-xs text-gray-500">{totalCount} users</span>
-      </div>
-
-      {/* Table */}
-      <div
-        className="rounded-xl border overflow-hidden"
-        style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}
-      >
-        <table className="w-full">
-          <thead>
-            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-              <th className="text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider px-5 py-3">User</th>
-              <th className="text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider px-5 py-3">Role</th>
-              <th className="text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider px-5 py-3">Joined</th>
-              <th className="text-right text-[11px] font-medium text-gray-400 uppercase tracking-wider px-5 py-3">Actions</th>
+    <Page title="Users" actions={<span className="text-xs text-gray-500">{totalCount} users</span>}>
+      <input className={`${input} max-w-xs`} placeholder="Search users" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+      <Panel>
+        <Table head={['User', 'Role', 'Joined', '']} empty={loading ? 'Loading' : 'No users found'}>
+          {users.map((user) => (
+            <tr key={user.id}>
+              <td>
+                <div className="text-white">{user.full_name || user.email}</div>
+                {user.full_name && <div className="text-[11px] text-gray-500">{user.email}</div>}
+              </td>
+              <td><Tag tone={user.role === 'super_admin' ? 'bad' : user.role === 'admin' ? 'accent' : 'gray'}>{(user.role || 'user').replace('_', ' ')}</Tag></td>
+              <td className="text-gray-500 whitespace-nowrap">{when(user.created_at)}</td>
+              <td className="text-right whitespace-nowrap space-x-1">
+                <button type="button" className={btn.ghost} onClick={() => handleEditUser(user)}>Edit</button>
+                <button type="button" className={btn.ghost} onClick={() => handleManageRole(user)}>Role</button>
+                <button type="button" className={btn.danger} onClick={() => handleRequestDeleteUser(user.id)}>Delete</button>
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {users.map((user) => (
-              <tr
-                key={user.id}
-                className="group hover:bg-white/[0.03] transition-colors"
-                style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
-              >
-                <td className="px-5 py-3">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
-                      style={{ background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)' }}
-                    >
-                      {(user.email?.[0] || '?').toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="text-sm text-white font-medium">{user.full_name || ' '}</p>
-                      <p className="text-xs text-gray-500">{user.email}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-5 py-3">{roleBadge(user.role)}</td>
-                <td className="px-5 py-3 text-xs text-gray-400">{formatDate(user.created_at)}</td>
-                <td className="px-5 py-3 text-right">
-                  <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-gray-400 hover:text-white hover:bg-white/10" onClick={() => handleEditUser(user)}>
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-gray-400 hover:text-purple-400 hover:bg-purple-500/10" onClick={() => handleManageRole(user)}>
-                      <Shield className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-gray-400 hover:text-red-400 hover:bg-red-500/10" onClick={() => handleRequestDeleteUser(user.id)}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {users.length === 0 && (
-              <tr>
-                <td colSpan={4} className="text-center py-12 text-sm text-gray-500">No users found</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pagination */}
+          ))}
+        </Table>
+      </Panel>
       {totalCount > PAGE_SIZE && (
-        <Pagination>
-          <PaginationContent>
-            <PaginationItem>
-              <PaginationPrevious
-                href="#"
-                onClick={(e) => { e.preventDefault(); if (page > 0) setPage(page - 1); }}
-                className={page === 0 ? 'pointer-events-none opacity-50' : ''}
-              />
-            </PaginationItem>
-            <PaginationItem>
-              <span className="text-xs text-gray-500 px-3">
-                Page {page + 1} of {Math.max(1, Math.ceil(totalCount / PAGE_SIZE))}
-              </span>
-            </PaginationItem>
-            <PaginationItem>
-              <PaginationNext
-                href="#"
-                onClick={(e) => { e.preventDefault(); if ((page + 1) * PAGE_SIZE < totalCount) setPage(page + 1); }}
-                className={(page + 1) * PAGE_SIZE >= totalCount ? 'pointer-events-none opacity-50' : ''}
-              />
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
+        <div className="flex items-center justify-end gap-2 text-xs text-gray-500">
+          <button type="button" className={btn.ghost} disabled={page === 0} onClick={() => setPage(page - 1)}>Prev</button>
+          <span>Page {page + 1} of {pages}</span>
+          <button type="button" className={btn.ghost} disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>Next</button>
+        </div>
       )}
 
-      {/* Edit User Dialog */}
       <Dialog open={!!editUser} onOpenChange={() => setEditUser(null)}>
-        <DialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
-          <DialogHeader>
-            <DialogTitle className="text-white">Edit User</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label className="text-gray-300">Full Name</Label>
-              <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="bg-white/5 border-white/10 text-white" />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-gray-300">Email</Label>
-              <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="bg-white/5 border-white/10 text-white" />
-            </div>
-          </div>
+        <DialogContent className={dialogCls}>
+          <DialogHeader><DialogTitle>Edit user</DialogTitle></DialogHeader>
+          <label className="text-xs text-gray-400">Full name<input className={`${input} mt-1`} value={editName} onChange={(e) => setEditName(e.target.value)} /></label>
+          <label className="text-xs text-gray-400">Email<input className={`${input} mt-1`} value={editEmail} onChange={(e) => setEditEmail(e.target.value)} /></label>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setEditUser(null)} className="text-gray-400">Cancel</Button>
-            <Button onClick={handleUpdateUser} className="bg-purple-600 hover:bg-purple-700 text-white">Save</Button>
+            <button type="button" className={btn.ghost} onClick={() => setEditUser(null)}>Cancel</button>
+            <button type="button" className={btn.primary} onClick={handleUpdateUser}>Save</button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Manage Role Dialog */}
       <Dialog open={!!roleUser} onOpenChange={() => setRoleUser(null)}>
-        <DialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
-          <DialogHeader>
-            <DialogTitle className="text-white">Manage Role   {roleUser?.email}</DialogTitle>
-          </DialogHeader>
-          <div className="py-2">
-            <Label className="text-gray-300 mb-2 block">Role</Label>
-            <Select value={selectedRole} onValueChange={setSelectedRole}>
-              <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-[#1a1d24] border-white/10">
-                <SelectItem value="user">User</SelectItem>
-                <SelectItem value="admin">Admin</SelectItem>
-                {currentUserRole === 'super_admin' && <SelectItem value="super_admin">Super Admin</SelectItem>}
-              </SelectContent>
-            </Select>
-          </div>
+        <DialogContent className={dialogCls}>
+          <DialogHeader><DialogTitle>Role for {roleUser?.email}</DialogTitle></DialogHeader>
+          <Select value={selectedRole} onValueChange={setSelectedRole}>
+            <SelectTrigger className="h-8 text-xs bg-transparent border-white/10 text-white"><SelectValue /></SelectTrigger>
+            <SelectContent className="bg-[#1a1d24] border-white/10">
+              <SelectItem value="user">User</SelectItem>
+              <SelectItem value="admin">Admin</SelectItem>
+              {currentUserRole === 'super_admin' && <SelectItem value="super_admin">Super Admin</SelectItem>}
+            </SelectContent>
+          </Select>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setRoleUser(null)} className="text-gray-400">Cancel</Button>
-            <Button onClick={handleUpdateRole} className="bg-purple-600 hover:bg-purple-700 text-white">Update Role</Button>
+            <button type="button" className={btn.ghost} onClick={() => setRoleUser(null)}>Cancel</button>
+            <button type="button" className={btn.primary} onClick={handleUpdateRole}>Update role</button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Delete User Confirmation */}
-      <AlertDialog open={!!deleteUserId} onOpenChange={(open) => { if (!open) setDeleteUserId(null); }}>
-        <AlertDialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-white">Delete user?</AlertDialogTitle>
-            <AlertDialogDescription className="text-gray-400">
-              This will permanently remove them from auth and they can re-register with the same email.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deletingUser} className="bg-transparent border-white/10 text-gray-300 hover:bg-white/10 hover:text-white">
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              disabled={deletingUser}
-              onClick={(e) => { e.preventDefault(); if (deleteUserId) handleDeleteUser(deleteUserId); }}
-              className={buttonVariants({ variant: 'destructive' })}
-            >
-              {deletingUser ? 'Deleting…' : 'Delete'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+      <Dialog open={!!deleteUserId} onOpenChange={(open) => { if (!open) setDeleteUserId(null); }}>
+        <DialogContent className={dialogCls}>
+          <DialogHeader><DialogTitle>Delete user?</DialogTitle></DialogHeader>
+          <p className="text-xs text-gray-400">Removes the account from auth. The email can re-register.</p>
+          <DialogFooter>
+            <button type="button" className={btn.ghost} disabled={deletingUser} onClick={() => setDeleteUserId(null)}>Cancel</button>
+            <button type="button" className={btn.danger} disabled={deletingUser} onClick={() => { if (deleteUserId) handleDeleteUser(deleteUserId); }}>{deletingUser ? 'Deleting' : 'Delete'}</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Page>
   );
 }

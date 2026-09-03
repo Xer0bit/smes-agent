@@ -3,7 +3,7 @@
  * Server: apps/api-gateway/src/routes/plan.routes.ts
  */
 import { getApiServerUrl } from '@/config/external-api';
-import { lovableCloud } from '@/integrations/supabase/client';
+import { anySessionToken } from '@/integrations/supabase/sessionToken';
 
 export type Unit = 'apps' | 'users' | 'agents' | 'databases';
 export const UNITS: readonly Unit[] = ['apps', 'users', 'agents', 'databases'];
@@ -80,10 +80,10 @@ export function formatDollars(cents: number): string {
 }
 
 async function authHeaders(): Promise<Record<string, string>> {
-  const { data: { session } } = await lovableCloud.auth.getSession();
+  const token = await anySessionToken();
   return {
     'Content-Type': 'application/json',
-    ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 }
 

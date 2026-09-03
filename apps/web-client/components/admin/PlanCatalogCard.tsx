@@ -3,10 +3,7 @@
  * Edits apply to every org on the next estimate; nothing is billed here.
  */
 import { useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Panel, btn, input } from '@/components/admin/ui';
 import { toast } from 'sonner';
 import { fetchCatalog, updateCatalog, type Catalog } from '@/services/planService';
 
@@ -46,53 +43,41 @@ export function PlanCatalogCard() {
     }
   };
 
+  const field = (label: string, control: React.ReactNode) => (
+    <label className="block space-y-1">
+      <span className="text-[11px] text-gray-500">{label}</span>
+      {control}
+    </label>
+  );
+
   return (
-    <Card className="bg-white/[0.03] border-white/10">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-white text-base">Price list · {draft.name}</CardTitle>
-        <p className="text-xs text-gray-400">Base plan plus per-unit price. Included quantities come free with the base.</p>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {MONEY.map(([key, label]) => (
-            <div key={key} className="space-y-1">
-              <Label className="text-[10px] uppercase tracking-wider text-gray-500">{label} $/mo</Label>
-              <Input type="number" min={0} step={1} value={draft[key] / 100}
-                onChange={(e) => setDraft({ ...draft, [key]: Math.max(0, Math.round((parseFloat(e.target.value) || 0) * 100)) })}
-                className="h-9 bg-white/5 border-white/10 text-white" />
-            </div>
+    <Panel title={`Price list · ${draft.name}`} actions={<button className={btn.primary} disabled={!dirty || saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>}>
+      <div className="p-3 space-y-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          {MONEY.map(([key, label]) => field(`${label} $/mo`,
+            <input type="number" min={0} step={1} value={draft[key] / 100} className={input}
+              onChange={(e) => setDraft({ ...draft, [key]: Math.max(0, Math.round((parseFloat(e.target.value) || 0) * 100)) })} />,
           ))}
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {COUNTS.map(([key, label]) => (
-            <div key={key} className="space-y-1">
-              <Label className="text-[10px] uppercase tracking-wider text-gray-500">Included {label}</Label>
-              <Input type="number" min={0} step={1} value={draft[key]}
-                onChange={(e) => setDraft({ ...draft, [key]: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-                className="h-9 bg-white/5 border-white/10 text-white" />
-            </div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          {COUNTS.map(([key, label]) => field(`Included ${label}`,
+            <input type="number" min={0} step={1} value={draft[key]} className={input}
+              onChange={(e) => setDraft({ ...draft, [key]: Math.max(0, parseInt(e.target.value, 10) || 0) })} />,
           ))}
         </div>
-        <div className="flex items-center justify-between gap-3">
-          <div className="space-y-1 flex-1">
-            <Label className="text-[10px] uppercase tracking-wider text-gray-500">Includes (comma separated)</Label>
-            <Input value={draft.includes.join(', ')}
-              onChange={(e) => setDraft({ ...draft, includes: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
-              className="h-9 bg-white/5 border-white/10 text-white" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[10px] uppercase tracking-wider text-gray-500">Over fair use</Label>
-            <select value={draft.overage_policy} onChange={(e) => setDraft({ ...draft, overage_policy: e.target.value === 'allow' ? 'allow' : 'stop' })}
-              className="h-9 rounded-md bg-white/5 border border-white/10 text-white text-sm px-2">
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-2">
+          {field('Includes (comma separated)',
+            <input value={draft.includes.join(', ')} className={input}
+              onChange={(e) => setDraft({ ...draft, includes: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} />,
+          )}
+          {field('Over fair use',
+            <select value={draft.overage_policy} onChange={(e) => setDraft({ ...draft, overage_policy: e.target.value === 'allow' ? 'allow' : 'stop' })} className={input + ' bg-[#0b0c10]'}>
               <option value="stop">Stop the agent</option>
               <option value="allow">Allow and record</option>
-            </select>
-          </div>
-          <div className="pt-4">
-            <Button size="sm" disabled={!dirty || saving} onClick={save}>{saving ? 'Saving' : 'Save price list'}</Button>
-          </div>
+            </select>,
+          )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   );
 }
