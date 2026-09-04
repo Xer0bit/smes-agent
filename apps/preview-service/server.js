@@ -485,6 +485,57 @@ async function checkAgentLock(projectId, providedToken) {
     }
 }
 
+// Self-heal a project's env: keep its .env.local in sync with the project's
+// CURRENT secrets in the platform DB, read directly (service key, same as
+// checkAgentLock). The gen runner also syncs env (at run start and before its
+// end-of-run push), but that only covers runs and authenticated callers; a key
+// saved through the Settings UI (RLS direct write) or between runs would sit
+// only in the DB until the next run happened to sync it. Making the preview
+// authoritative on the two moments that matter -- a file push (/update) and a
+// production build (/export) -- means the live preview AND any published site
+// always see the project's current secrets regardless of which writer saved
+// them or when. Platform-managed VITE_DB_* rows are upserted into
+// project_secrets by getCredentials() on every provisioning/run path, so a
+// direct read is complete for any project that has had agent activity.
+// Fail-open: no service key, DB error, or no rows leaves the existing
+// .env.local untouched (never blocks or fails the caller).
+async function refreshProjectEnvFromDb(projectId, { restartRunning = true } = {}) {
+    if (!SUPABASE_SERVICE_KEY) return;
+    try {
+        const url = `${SUPABASE_REST_URL}/rest/v1/project_secrets?project_id=eq.${encodeURIComponent(projectId)}&select=key_name,key_value`;
+        const res = await fetch(url, {
+            headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
+        });
+        if (!res.ok) return;
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) return;
+        const envLines = rows
+            .filter((s) => s && typeof s.key_name === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(s.key_name))
+            .map((s) => `${s.key_name}=${JSON.stringify(String(s.key_value ?? ''))}`);
+        if (envLines.length === 0) return;
+        const envContent = envLines.join('\n') + '\n';
+        const projectRoot = path.join(PROJECTS_ROOT, projectId);
+        fs.mkdirSync(projectRoot, { recursive: true });
+        const envPath = path.join(projectRoot, '.env.local');
+        let changed = true;
+        try {
+            changed = fs.readFileSync(envPath, 'utf-8') !== envContent;
+        } catch {
+            // No existing file   this is a real change
+        }
+        if (!changed) return;
+        fs.writeFileSync(envPath, envContent);
+        console.log(`[${projectId}] Refreshed ${envLines.length} secret(s) to .env.local from DB`);
+        if (restartRunning) {
+            // No-op when no server is running (a fresh start reads the file);
+            // otherwise the running Vite process must restart to load it.
+            await restartProjectServer(projectId, 'secrets refreshed from DB').catch(() => {});
+        }
+    } catch (err) {
+        console.error(`[${projectId}] Env refresh failed (non-fatal):`, err.message);
+    }
+}
+
 // Helper to initialize a project folder with MINIMAL structure (no pre-built templates)
 function initProject(projectId) {
     const projectRoot = path.join(PROJECTS_ROOT, projectId);
@@ -1655,6 +1706,13 @@ async function startMainServer() {
         if (!fs.existsSync(projectRoot) || !fs.existsSync(path.join(projectRoot, 'src', 'main.tsx'))) {
             return res.status(404).json({ error: 'Project not found or not initialized' });
         }
+        // Hosting fix: vite build below bakes import.meta.env.VITE_* from this
+        // project's .env.local. Without a refresh here the published bundle
+        // carried whatever env was on disk from the LAST run -- so a secret
+        // saved after that run shipped a hosted site with missing/stale values
+        // until a manual republish. Self-heal from the DB first (restart of the
+        // dev server is not needed for a build; the file is read from disk).
+        await refreshProjectEnvFromDb(projectId, { restartRunning: false });
         const buildDir = path.join(projectRoot, '.export-dist');
         try {
             // Rewrite index.html to use root-relative script path for production build
@@ -1914,6 +1972,11 @@ async function startMainServer() {
 
         console.log(`[${projectId}] Updating ${files.length} files...`);
         const projectRoot = initProject(projectId);
+        // Keep .env.local current BEFORE the Vite server is (re)started and
+        // warmed below, so this push's app boots with the project's real
+        // secrets -- self-heal from the DB, not a dependency on the runner
+        // having synced first. Never blocks or fails the push.
+        await refreshProjectEnvFromDb(projectId, { restartRunning: true });
         let requiresServerRestart = shouldRestartViteForUpdate(files, projectRoot);
         let depsResult = null;
 
