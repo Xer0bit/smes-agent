@@ -100,7 +100,7 @@ export const deleteFileTool: ToolDefinition<z.infer<typeof schema>> = {
       return `Error: Failed to delete ${args.path}: ${msg}`;
     }
 
-    const xml = `<ecomgear-delete path="${escapeXmlAttr(args.path)}"></ecomgear-delete>`;
+    const xml = `<SMEsAgent-delete path="${escapeXmlAttr(args.path)}"></SMEsAgent-delete>`;
     ctx.onXmlComplete(xml);
 
     const detail = deletedCount > 1 ? ` (removed ${deletedCount} files)` : '';

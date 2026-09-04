@@ -53,7 +53,7 @@ function getProjectId(req: AuthenticatedRequest): string | undefined {
 // service key (VITE_DB_ANON_KEY / VITE_DB_SERVICE_KEY) ──────────────────────
 // Management routes (list/create/update/delete/logs) stay owner-only via
 // authMiddleware. Invocation is the one path a generated app's own end users
-// must be able to reach   they never have an EcomGear platform session, so
+// must be able to reach   they never have an SMEsAgent platform session, so
 // they authenticate with the same public anon key already used for PostgREST
 // calls, exactly like the hosted-database REST access pattern.
 async function resolveInvokeAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
@@ -76,7 +76,7 @@ async function resolveInvokeAuth(req: AuthenticatedRequest, res: Response, next:
     }
   }
 
-  // 2. Fall back to an owner's EcomGear platform session (lets the project
+  // 2. Fall back to an owner's SMEsAgent platform session (lets the project
   // owner test invocation from Settings without needing the anon key).
   try {
     const authResult = await Promise.race([
@@ -257,7 +257,7 @@ async function resolveFunctionBundle(
     if (ecgMap['ECG_PORTAL_TOKEN']) {
       ecgCtx = {
         portalToken:  ecgMap['ECG_PORTAL_TOKEN'],
-        portalApiUrl: process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai',
+        portalApiUrl: process.env.ECG_PORTAL_URL || 'https://api.SMEsAgent.ai',
         llmApiKey:    ecgMap['ECG_LLM_API_KEY'],
         llmModel:     ecgMap['ECG_LLM_MODEL'],
         llmProvider:  ecgMap['ECG_LLM_PROVIDER'],
@@ -361,14 +361,14 @@ router.post('/:name/invoke', invokeKillSwitch, invokeLimiter, resolveInvokeAuth,
 });
 
 // Note: this comment previously claimed edge-function EXECUTION happens
-// entirely on VPS5 and that api.ecomgear.dev never serves tenant/end-user
+// entirely on VPS5 and that api.SMEsAgent.dev never serves tenant/end-user
 // traffic. That is NOT what the code above does -- runEdgeFunction() at
 // line 278 executes in-process, on this server, right now. Unresolved
 // doc/behavior mismatch flagged by the 2026-08 security audit; needs a
 // product decision on which side is correct (dispatch to VPS5 for real, or
 // update this doc) before being closed. Not decided here.
 // write_edge_function.ts and set_secret.ts push code/secrets directly to
-// VPS5 (POST https://cloud.ecomgear.app/<schema>/functions/_sync and
+// VPS5 (POST https://cloud.SMEsAgent.app/<schema>/functions/_sync and
 // /secrets/_sync) after saving here, so this file's DB rows stay the source
 // of truth for the editor/UI while VPS5 holds its own local, invoke-ready copy.
 

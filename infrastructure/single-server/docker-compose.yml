@@ -1,0 +1,38 @@
+version: '3.8'
+# =============================================================================
+# Single-server: tenant-schema PostgREST only.
+#
+# Unlike VPS5 (its own dedicated Postgres box), a single server already runs
+# Postgres for self-hosted Supabase — scripts/local-tenant-db.sh already
+# proves the pattern for local dev: `ecg_tenants` is just another database on
+# that same Postgres instance, not a second Postgres server. Provisioning the
+# ecg_tenants database/roles happens in scripts/setup-single-server.sh, which
+# runs the same SQL local-tenant-db.sh uses, against the box's own Postgres.
+# =============================================================================
+services:
+  tenant-postgrest:
+    image: postgrest/postgrest:v12.2.3
+    container_name: ecg-tenant-postgrest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - PGRST_DB_URI=${TENANT_DB_URI:?set TENANT_DB_URI, e.g. postgres://ecg_provisioner:PASSWORD@host.docker.internal:5432/ecg_tenants}
+      - PGRST_DB_SCHEMAS=public
+      - PGRST_DB_ANON_ROLE=ecg_nobody
+      - PGRST_DB_CONFIG=true
+      - PGRST_JWT_SECRET=${TENANT_DB_JWT_SECRET:?set TENANT_DB_JWT_SECRET}
+      - PGRST_SERVER_PORT=3000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach the host's own Postgres from inside the container
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"

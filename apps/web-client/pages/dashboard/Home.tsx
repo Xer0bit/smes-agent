@@ -359,7 +359,7 @@ export default function DashboardHome() {
 
       {/* ── Hero: greeting + prompt bar ── */}
       <div
-        className="animate-msg-appear relative overflow-hidden rounded-2xl border border-border/60 bg-card px-6 py-16 sm:px-10 lg:py-24"
+        className="animate-msg-appear relative overflow-hidden rounded-none border border-border/60 bg-card px-6 py-16 sm:px-10 lg:py-24"
       >
         <div className="relative mx-auto max-w-2xl text-center">
           {invitationCount > 0 && (
@@ -374,7 +374,7 @@ export default function DashboardHome() {
             Describe what you want and I&apos;ll start a new project around it.
           </p>
 
-          <div className="mt-9 rounded-2xl border border-border/60 bg-background/70 p-3 text-left transition-colors duration-150 focus-within:border-primary/50">
+          <div className="mt-9 rounded-none border border-border/60 bg-background/70 p-3 text-left transition-colors duration-150 focus-within:border-primary/50">
             {attachedFiles.length > 0 && (
               <div className="mb-2.5 flex flex-wrap gap-1.5">
                 {attachedFiles.map((file, i) => (
@@ -443,11 +443,11 @@ export default function DashboardHome() {
         {loadingRecent ? (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="h-48 animate-pulse rounded-xl border border-border/60 bg-card/40" />
+              <div key={i} className="h-48 animate-pulse rounded-none border border-border/60 bg-card/40" />
             ))}
           </div>
         ) : recentProjects.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-border/60 bg-card/40 p-10 text-center">
+          <div className="rounded-none border border-dashed border-border/60 bg-card/40 p-10 text-center">
             <p className="text-sm text-muted-foreground">No projects yet — describe what you want to build above to start your first one.</p>
           </div>
         ) : (
@@ -457,7 +457,7 @@ export default function DashboardHome() {
                 key={project.id}
                 type="button"
                 onClick={() => navigate(`/project/${project.id}`)}
-                className="animate-msg-appear group overflow-hidden rounded-xl border border-border/60 bg-card text-left transition-colors duration-150 hover:border-border"
+                className="animate-msg-appear group overflow-hidden rounded-none border border-border/60 bg-card text-left transition-colors duration-150 hover:border-border"
               >
                 <ProjectThumbnail projectName={project.name} thumbnailUrl={project.thumbnail_url} previewUrl={null} />
                 <div className="p-4">
@@ -480,7 +480,7 @@ export default function DashboardHome() {
 
           {/* Invitations */}
           {!loadingInvitations && invitationCount > 0 ? (
-            <div className="rounded-xl border border-border/60 bg-card p-6">
+            <div className="rounded-none border border-border/60 bg-card p-6">
               <div className="mb-5 flex items-center justify-between">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Collaboration</p>
@@ -495,7 +495,7 @@ export default function DashboardHome() {
               </div>
               <div className="space-y-3">
                 {pendingProjectInvitations.map((inv) => (
-                  <div key={`project-${inv.id}`} className="rounded-lg border border-border/60 bg-background/60 p-4">
+                  <div key={`project-${inv.id}`} className="rounded-none border border-border/60 bg-background/60 p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <p className="text-sm font-medium text-foreground">Project invite: {inv.project_name}</p>
@@ -520,7 +520,7 @@ export default function DashboardHome() {
                   </div>
                 ))}
                 {pendingOrgInvitations.map((inv) => (
-                  <div key={`org-${inv.id}`} className="rounded-lg border border-border/60 bg-background/60 p-4">
+                  <div key={`org-${inv.id}`} className="rounded-none border border-border/60 bg-background/60 p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <p className="text-sm font-medium text-foreground">Organization invite: {inv.org_name}</p>
@@ -547,7 +547,7 @@ export default function DashboardHome() {
               </div>
             </div>
           ) : (
-            <div className="rounded-xl border border-border/60 bg-card p-6">
+            <div className="rounded-none border border-border/60 bg-card p-6">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Collaboration</p>
@@ -567,7 +567,7 @@ export default function DashboardHome() {
         <div className="space-y-4">
 
           {/* Quick access */}
-          <div className="rounded-xl border border-border/60 bg-card p-5">
+          <div className="rounded-none border border-border/60 bg-card p-5">
             <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Actions</p>
             <p className="mt-1.5 text-sm font-medium text-foreground">Quick access</p>
             <div className="mt-4 space-y-1">
@@ -577,7 +577,7 @@ export default function DashboardHome() {
                   <button
                     key={action.href}
                     type="button"
-                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors duration-150 hover:bg-background/60"
+                    className="flex w-full items-center gap-3 rounded-none px-3 py-2.5 text-left transition-colors duration-150 hover:bg-background/60"
                     onClick={() => navigate(action.href)}
                   >
                     <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -590,9 +590,9 @@ export default function DashboardHome() {
           </div>
 
           {/* AI Agents promo */}
-          <div className="relative overflow-hidden rounded-xl border border-primary/20 bg-card p-5">
+          <div className="relative overflow-hidden rounded-none border border-primary/20 bg-card p-5">
             <div className="relative">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+              <div className="flex h-10 w-10 items-center justify-center rounded-none bg-primary/10">
                 <Bot className="h-5 w-5 text-primary" />
               </div>
               <div className="mt-4">

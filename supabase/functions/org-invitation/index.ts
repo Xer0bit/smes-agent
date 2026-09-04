@@ -21,30 +21,30 @@ serve(async (req) => {
     const resendKey = Deno.env.get('RESEND_API_KEY');
     if (!resendKey) return json({ error: 'Email service not configured' }, 500);
 
-    const frontendUrl = (Deno.env.get('FRONTEND_URL') || 'https://ecomgear.dev').replace(/\/$/, '');
+    const frontendUrl = (Deno.env.get('FRONTEND_URL') || 'https://SMEsAgent.dev').replace(/\/$/, '');
     const acceptUrl = `${frontendUrl}/invite/${token}`;
     const safeOrg = safe(org_name, 'an organization');
     const safeInviter = safe(inviter_name, 'Someone');
     const safeRole = safe(role, 'member');
 
     const html = baseTemplate({
-      title: "You're invited to join a team on EcomGear",
-      preheader: `${safeInviter} invited you to join ${safeOrg} on EcomGear.`,
+      title: "You're invited to join a team on SMEsAgent",
+      preheader: `${safeInviter} invited you to join ${safeOrg} on SMEsAgent.`,
       body: `
         <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#18181b;">You're invited to join a team</h1>
         <p style="margin:0 0 28px;font-size:15px;color:#52525b;line-height:1.6;">
           <strong>${safeInviter}</strong> invited you to join
-          <strong>${safeOrg}</strong> on EcomGear as <strong>${safeRole}</strong>.
+          <strong>${safeOrg}</strong> on SMEsAgent as <strong>${safeRole}</strong>.
         </p>
       `,
       button: { label: 'Accept Invitation', url: acceptUrl },
-      footer: 'This invitation expires in 7 days. If you don\'t have an EcomGear account yet, you\'ll be asked to create one after clicking the button above.<br><br>If you weren\'t expecting this invitation, you can safely ignore this email.',
+      footer: 'This invitation expires in 7 days. If you don\'t have an SMEsAgent account yet, you\'ll be asked to create one after clicking the button above.<br><br>If you weren\'t expecting this invitation, you can safely ignore this email.',
       frontendUrl,
     });
 
     await sendEmail({
       to: email,
-      subject: `${safeInviter} invited you to join ${safeOrg} on EcomGear`,
+      subject: `${safeInviter} invited you to join ${safeOrg} on SMEsAgent`,
       html,
     }, resendKey);
 

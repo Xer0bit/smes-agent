@@ -1,0 +1,68 @@
+<svg width="900" height="900" viewBox="0 0 900 900" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>SMEs Agent logo layouts</title>
+  <desc>Four logo layout variants using the terminal prompt mark: standalone icon, horizontal lockup, stacked lockup, and minimum clear space guide, in near-black and signal green on a soft off-white background.</desc>
+
+  <rect x="0" y="0" width="900" height="900" fill="#F6F8F6"/>
+
+  <!-- ===== 1. Standalone icon ===== -->
+  <text x="40" y="50" font-family="Helvetica Neue, Arial, sans-serif" font-weight="500" font-size="16" fill="#14161A">1. Standalone icon</text>
+  <text x="40" y="72" font-family="Helvetica Neue, Arial, sans-serif" font-weight="400" font-size="13" fill="#9CA3A0">App icon, favicon, social avatar, small UI spaces</text>
+  <rect x="40" y="100" width="180" height="180" rx="12" fill="#FFFFFF" stroke="#E4E7E4" stroke-width="1"/>
+  <g transform="translate(130,190) scale(1.5)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#14161A" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#34D399"/>
+  </g>
+
+  <!-- ===== 2. Horizontal lockup ===== -->
+  <text x="280" y="50" font-family="Helvetica Neue, Arial, sans-serif" font-weight="500" font-size="16" fill="#14161A">2. Horizontal lockup</text>
+  <text x="280" y="72" font-family="Helvetica Neue, Arial, sans-serif" font-weight="400" font-size="13" fill="#9CA3A0">Website header, email signature, wide banners</text>
+  <rect x="280" y="100" width="580" height="180" rx="12" fill="#FFFFFF" stroke="#E4E7E4" stroke-width="1"/>
+  <g transform="translate(360,190) scale(1.3)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#14161A" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#34D399"/>
+  </g>
+  <text x="440" y="204" font-family="Helvetica Neue, Arial, sans-serif" font-weight="500" font-size="34" letter-spacing="1" fill="#14161A">SMEs Agent</text>
+
+  <!-- ===== 3. Stacked lockup ===== -->
+  <text x="40" y="330" font-family="Helvetica Neue, Arial, sans-serif" font-weight="500" font-size="16" fill="#14161A">3. Stacked lockup</text>
+  <text x="40" y="352" font-family="Helvetica Neue, Arial, sans-serif" font-weight="400" font-size="13" fill="#9CA3A0">App splash screen, presentation cover, square social posts</text>
+  <rect x="40" y="380" width="280" height="260" rx="12" fill="#FFFFFF" stroke="#E4E7E4" stroke-width="1"/>
+  <g transform="translate(180,470) scale(1.5)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#14161A" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#34D399"/>
+  </g>
+  <text x="180" y="590" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-weight="500" font-size="26" letter-spacing="0.5" fill="#14161A">SMEs Agent</text>
+
+  <!-- ===== 4. Clear space guide ===== -->
+  <text x="360" y="330" font-family="Helvetica Neue, Arial, sans-serif" font-weight="500" font-size="16" fill="#14161A">4. Minimum clear space</text>
+  <text x="360" y="352" font-family="Helvetica Neue, Arial, sans-serif" font-weight="400" font-size="13" fill="#9CA3A0">Keep this margin free of text, edges, or other logos</text>
+  <rect x="360" y="380" width="280" height="260" rx="12" fill="#FFFFFF" stroke="#E4E7E4" stroke-width="1"/>
+  <rect x="415" y="430" width="170" height="160" fill="none" stroke="#34D399" stroke-width="1.5" stroke-dasharray="6,5"/>
+  <g transform="translate(500,510) scale(1.5)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#14161A" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#34D399"/>
+  </g>
+  <text x="500" y="620" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-weight="400" font-size="12" fill="#9CA3A0">margin = icon height, all sides</text>
+
+  <!-- ===== 5. Minimum sizes ===== -->
+  <text x="40" y="700" font-family="Helvetica Neue, Arial, sans-serif" font-weight="500" font-size="16" fill="#14161A">5. Minimum sizes</text>
+  <text x="40" y="722" font-family="Helvetica Neue, Arial, sans-serif" font-weight="400" font-size="13" fill="#9CA3A0">Below 24px, drop the wordmark and use icon only</text>
+
+  <g transform="translate(90,790) scale(1.1)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#14161A" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#34D399"/>
+  </g>
+  <text x="90" y="840" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-size="11" fill="#9CA3A0">48px</text>
+
+  <g transform="translate(210,790) scale(0.55)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#14161A" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#34D399"/>
+  </g>
+  <text x="210" y="840" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-size="11" fill="#9CA3A0">24px</text>
+
+  <g transform="translate(290,790) scale(0.3)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#14161A" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#34D399"/>
+  </g>
+  <text x="290" y="840" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-size="11" fill="#9CA3A0">16px</text>
+</svg>

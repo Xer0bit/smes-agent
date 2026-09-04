@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import BrandLoader from "@/components/BrandLoader";
 import type { Session } from "@supabase/supabase-js";
 
 export default function AuthCallback() {
@@ -222,7 +223,7 @@ export default function AuthCallback() {
       errorMsg.toLowerCase().includes("unexpected_failure");
 
     return (
-      <div className="min-h-screen bg-[#101622] flex items-center justify-center px-6">
+      <div className="min-h-screen bg-background flex items-center justify-center px-6">
         <div className="text-center max-w-sm">
           <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
             <svg className="w-6 h-6 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -237,7 +238,7 @@ export default function AuthCallback() {
           </p>
           <button
             onClick={() => navigate("/auth")}
-            className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors mb-3"
+            className="w-full py-2.5 px-4 bg-primary hover:bg-primary/90 text-primary-foreground text-white text-sm font-medium rounded-none transition-colors mb-3"
           >
             Try again
           </button>
@@ -253,15 +254,8 @@ export default function AuthCallback() {
   }
 
   return (
-    <div className="min-h-screen bg-[#101622] flex items-center justify-center px-6">
-      <div className="text-center">
-        <div className="w-8 h-8 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-sm text-slate-400">
-          {status === "setting-up"
-            ? "Setting up your workspace…"
-            : "Completing sign-in…"}
-        </p>
-      </div>
+    <div className="min-h-screen bg-background flex items-center justify-center px-6">
+      <BrandLoader variant="assemble" size={120} label={status === "setting-up" ? "Setting up workspace" : "Completing sign-in"} />
     </div>
   );
 }

@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 process.env.TENANT_DB_HOST = 'db.internal';
 process.env.TENANT_DB_SUPERUSER_PASSWORD = 'test-pass';
 process.env.TENANT_DB_JWT_SECRET = 'test-secret';
-process.env.SUPABASE_URL = 'https://api.ecomgear.dev';
+process.env.SUPABASE_URL = 'https://api.SMEsAgent.dev';
 process.env.SUPABASE_ANON_KEY = 'platform-anon-key';
 
 const tenantDbRows = [

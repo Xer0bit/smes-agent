@@ -116,7 +116,7 @@ export async function exportToGithub(
   if (!existingPaths.has('README.md')) {
     parsedFiles.push({
       path: 'README.md',
-      content: `# ${repoName}\n\nExported from [eComGear AI IDE](https://ecomgear.dev).\n`,
+      content: `# ${repoName}\n\nExported from [SMEsAgent AI IDE](https://SMEsAgent.dev).\n`,
     });
   }
 
@@ -130,7 +130,7 @@ export async function exportToGithub(
       name: sanitizedRepoName,
       private: isPrivate,
       auto_init: true,
-      description: 'Generated with eComGear AI IDE',
+      description: 'Generated with SMEsAgent AI IDE',
     });
     repo = response.data;
   } catch (err: any) {
@@ -170,7 +170,7 @@ export async function exportToGithub(
         owner: repo.owner.login,
         repo: repo.name,
         path: cleanPath,
-        message: `Add ${cleanPath} via eComGear AI IDE`,
+        message: `Add ${cleanPath} via SMEsAgent AI IDE`,
         content: Buffer.from(file.content).toString('base64'),
         sha: existingSha,
       });
@@ -197,7 +197,7 @@ export async function pushFilesToGithub(
     if (!githubToken) {
       return { success: false, error: 'GITHUB_TOKEN environment variable not set' };
     }
-    const repoName = `ecomgear-export-${projectId.slice(0, 8)}`;
+    const repoName = `SMEsAgent-export-${projectId.slice(0, 8)}`;
     const result = await exportToGithub(projectId, userId, githubToken, repoName, true);
     return {
       success: true,

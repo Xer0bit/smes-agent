@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useOrganization } from '@/contexts/OrganizationContext';
 import { Button } from '@/components/ui/button';
+import BrandLoader from '@/components/BrandLoader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { CheckCircle, XCircle, Clock, Loader2, FolderOpen } from 'lucide-react';
@@ -180,7 +181,7 @@ export default function AcceptProjectInvite() {
     if (loading) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-background">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                <BrandLoader variant="drop" size={100} label="Loading invitation" />
             </div>
         );
     }
@@ -241,7 +242,7 @@ export default function AcceptProjectInvite() {
         <div className="min-h-screen flex items-center justify-center bg-background p-4">
             <Card className="max-w-md w-full">
                 <CardHeader className="text-center pb-2">
-                    <FolderOpen className="h-10 w-10 text-indigo-500 mx-auto mb-2" />
+                    <FolderOpen className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
                     <CardTitle className="text-lg">Project Invitation</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-5">

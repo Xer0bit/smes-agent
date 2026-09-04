@@ -2,7 +2,7 @@
 # =============================================================================
 # VPS1 Setup   156.67.218.75 (Singapore)
 # Roles: Main Frontend + Supabase self-hosted (Docker stack)
-# Domains: ecomgear.dev  www.ecomgear.dev  api.ecomgear.dev
+# Domains: SMEsAgent.dev  www.SMEsAgent.dev  api.SMEsAgent.dev
 # Run as root: bash setup-vps1.sh
 # =============================================================================
 set -euo pipefail
@@ -14,7 +14,7 @@ err()     { echo -e "${RED}[ERR]${NC} $1"; exit 1; }
 
 [[ $EUID -ne 0 ]] && err "Run as root"
 
-DEPLOY_PATH="/var/www/ecomgear"
+DEPLOY_PATH="/var/www/SMEsAgent"
 
 step "Updating system..."
 apt-get update -qq && apt-get upgrade -y -qq
@@ -68,16 +68,16 @@ apt-get install -y -qq git curl wget htop rsync unzip jq
 success "Tools ready"
 
 step "Nginx site config placeholder..."
-cat > /etc/nginx/sites-available/ecomgear << 'NGINX_PLACEHOLDER'
+cat > /etc/nginx/sites-available/SMEsAgent << 'NGINX_PLACEHOLDER'
 # Temporary plain-HTTP server while certbot is not yet run
 server {
     listen 80;
-    server_name ecomgear.dev www.ecomgear.dev api.ecomgear.dev;
-    root /var/www/ecomgear/dist;
+    server_name SMEsAgent.dev www.SMEsAgent.dev api.SMEsAgent.dev;
+    root /var/www/SMEsAgent/dist;
     location / { try_files $uri $uri/ /index.html; }
 }
 NGINX_PLACEHOLDER
-ln -sf /etc/nginx/sites-available/ecomgear /etc/nginx/sites-enabled/ecomgear
+ln -sf /etc/nginx/sites-available/SMEsAgent /etc/nginx/sites-enabled/SMEsAgent
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 success "Nginx placeholder active"
@@ -90,16 +90,16 @@ echo ""
 echo "NEXT STEPS:"
 echo ""
 echo "1. Point DNS A records to this server (156.67.218.75):"
-echo "     ecomgear.dev        → 156.67.218.75"
-echo "     www.ecomgear.dev    → 156.67.218.75"
-echo "     api.ecomgear.dev    → 156.67.218.75"
+echo "     SMEsAgent.dev        → 156.67.218.75"
+echo "     www.SMEsAgent.dev    → 156.67.218.75"
+echo "     api.SMEsAgent.dev    → 156.67.218.75"
 echo ""
 echo "2. Obtain SSL certificates:"
-echo "     certbot --nginx -d ecomgear.dev -d www.ecomgear.dev"
-echo "     certbot --nginx -d api.ecomgear.dev"
+echo "     certbot --nginx -d SMEsAgent.dev -d www.SMEsAgent.dev"
+echo "     certbot --nginx -d api.SMEsAgent.dev"
 echo ""
 echo "3. Upload the production nginx config and reload:"
-echo "     scp infrastructure/nginx/vps1-ecomgear.dev.conf root@156.67.218.75:/etc/nginx/sites-available/ecomgear"
+echo "     scp infrastructure/nginx/vps1-SMEsAgent.dev.conf root@156.67.218.75:/etc/nginx/sites-available/SMEsAgent"
 echo "     ssh root@156.67.218.75 'nginx -t && systemctl reload nginx'"
 echo ""
 echo "4. Start Supabase stack:"

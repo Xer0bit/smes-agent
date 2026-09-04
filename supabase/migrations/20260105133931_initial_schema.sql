@@ -543,7 +543,7 @@ CREATE TABLE public.project_subdomains (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   project_id uuid NOT NULL UNIQUE,
   subdomain character varying NOT NULL UNIQUE,
-  full_domain text GENERATED ALWAYS AS ((subdomain)::text || '.ecomgear.app'::text) STORED,
+  full_domain text GENERATED ALWAYS AS ((subdomain)::text || '.SMEsAgent.app'::text) STORED,
   is_primary boolean DEFAULT true,
   status public.domain_status DEFAULT 'pending_dns'::public.domain_status,
   created_at timestamp with time zone DEFAULT now(),

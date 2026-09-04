@@ -5,7 +5,7 @@ import os from 'node:os';
 import { placeAssetTool } from '../place_asset.js';
 import type { AgentContext } from '../types.js';
 
-const UPLOAD_BASE = path.join(os.tmpdir(), 'ecomgear-chat-uploads');
+const UPLOAD_BASE = path.join(os.tmpdir(), 'SMEsAgent-chat-uploads');
 
 // Minimal valid PNG (1x1 transparent pixel) -- enough to pass validateImage's
 // magic-byte check.

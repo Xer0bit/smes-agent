@@ -2,14 +2,14 @@
 # Local eCG Cloud: a tenant database next to the local Supabase stack.
 #
 # Production keeps tenant schemas on VPS5 (ecg_tenants, PostgREST behind
-# cloud.ecomgear.app/<schema>, a reload hook on :9999). A dev machine cannot
+# cloud-smes.xer0bit.com/<schema>, a reload hook on :9999). A dev machine cannot
 # use that host (pg_hba rejects it, and it should), so this script gives the
 # local backend the same shape on the local Docker Postgres:
 #
 #   - database  ecg_tenants  on the local Supabase Postgres (:54322)
 #   - role      ecg_provisioner (superuser, LOGIN) used by provisioning AND PostgREST
 #   - PostgREST container  ecg_tenant_postgrest  on host :3010, in-database config
-#   - scripts/local-tenant-api.mjs  on :54330  = cloud.ecomgear.app/<schema> + /reload
+#   - scripts/local-tenant-api.mjs  on :54330  = cloud-smes.xer0bit.com/<schema> + /reload
 #
 # Then it rewrites the TENANT_DB_* lines in apps/api-gateway/.env to point at
 # all of that, keeping the previous values as "# prod:" comments and a backup.
@@ -120,7 +120,10 @@ PY
 echo "▶ tenant API proxy on :54330"
 P="$(fuser 54330/tcp 2>/dev/null | tr -d ' ' || true)"; [ -n "$P" ] && kill "$P" 2>/dev/null || true
 mkdir -p "$ROOT/logs"
-(cd "$ROOT" && TENANT_DB_RELOAD_SECRET="$RELOAD_SECRET" TENANT_DB_CONTAINER="$DB_CONTAINER" nohup node scripts/local-tenant-api.mjs > "$ROOT/logs/tenant-api.log" 2>&1 &)
+# Must match start-dev.sh's BACKEND_PORT: the proxy's own default is :5001, which
+# on this machine is the sibling ecomgear-main backend, not ours.
+BACKEND_PORT="${BACKEND_PORT:-5002}"
+(cd "$ROOT" && TENANT_DB_RELOAD_SECRET="$RELOAD_SECRET" TENANT_DB_CONTAINER="$DB_CONTAINER" TENANT_FUNCTIONS_URL="http://localhost:$BACKEND_PORT/api/v1/functions" setsid nohup node scripts/local-tenant-api.mjs > "$ROOT/logs/tenant-api.log" 2>&1 &)
 sleep 1
 curl -s -o /dev/null -w "   proxy health: %{http_code}\n" http://127.0.0.1:54330/health || true
 curl -s -o /dev/null -w "   postgrest:    %{http_code}\n" http://127.0.0.1:3010/ || true

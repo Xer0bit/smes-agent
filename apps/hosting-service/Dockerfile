@@ -12,7 +12,7 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create directories
-RUN mkdir -p /var/www/ecomgear/sites /etc/caddy/sites
+RUN mkdir -p /var/www/SMEsAgent/sites /etc/caddy/sites
 
 # Copy Caddyfile
 COPY Caddyfile /etc/caddy/Caddyfile

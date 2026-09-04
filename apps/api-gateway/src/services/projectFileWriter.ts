@@ -9,7 +9,7 @@
  *   "a file lies inside when only the system can reach it under a private path,
  *    and outside when it is a path other programs read or write."
  *
- * That sentence is the whole reason this module exists. EcomGear's project
+ * That sentence is the whole reason this module exists. SMEsAgent's project
  * files were outside the boundary not because they are files, but because
  * fourteen-plus call sites in api-gateway alone wrote them directly via
  * fs.writeFileSync, with nothing reconciling them. A location with many writers

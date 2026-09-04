@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { exec } from 'child_process';
 import os from 'os';
 import { logger } from '../utils/logger.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware.js';
@@ -10,10 +11,22 @@ import {
     updateLlmControlState,
 } from '../services/llm-control.service.js';
 import { getEmbeddingStatus, resetProviderCache, probeEmbeddingProvider } from '../knowledgebase/index.js';
+import { getTierConfig, saveTierConfig } from '../services/tier-config.service.js';
 import { safeErrorMessage } from '../utils/sendError.js';
 
 const router = Router();
 const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
+
+// Whitelist of allowed commands for security
+// We allow npm install and basic safe commands
+const ALLOWED_COMMAND_PREFIXES = [
+    'npm install',
+    'npm i',
+    'npm uninstall',
+    'npm run',
+    'echo',
+    'ls'
+];
 
 export const requireAdmin = async (req: AuthenticatedRequest, res: Response): Promise<boolean> => {
     if (!req.user?.id) {
@@ -94,6 +107,85 @@ router.delete('/llm/models/:id', authMiddleware, async (req: AuthenticatedReques
     } catch (error) {
         logger.error('Failed to remove LLM model', error);
         res.status(500).json({ success: false, error: 'Failed to remove LLM model' });
+    }
+});
+
+// ── Tier Config ──────────────────────────────────────────────────────────────
+
+router.get('/tier-config', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+        if (!await requireAdmin(req, res)) return;
+        const config = await getTierConfig();
+        res.json({ success: true, data: config });
+    } catch (error) {
+        logger.error('Failed to read tier config', error);
+        res.status(500).json({ success: false, error: 'Failed to read tier config' });
+    }
+});
+
+router.put('/tier-config', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+        if (!await requireAdmin(req, res)) return;
+        const config = await saveTierConfig(req.body || {});
+        res.json({ success: true, data: config });
+    } catch (error) {
+        logger.error('Failed to save tier config', error);
+        res.status(500).json({ success: false, error: 'Failed to save tier config' });
+    }
+});
+
+router.post('/exec', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+        if (!await requireAdmin(req, res)) return;
+
+        if (process.env.SYSTEM_EXEC_ENABLED !== 'true') {
+            res.status(403).json({ error: 'System command execution is disabled' });
+            return;
+        }
+
+        const { command, cwd } = req.body;
+
+        if (!command) {
+            return res.status(400).json({ error: 'Command is required' });
+        }
+
+        // Block shell metacharacters that enable command chaining / injection
+        if (/[;&|`$(){}]/.test(command) || /rm\s+-(r|f|rf|fr)/.test(command)) {
+            logger.warn(`Blocked dangerous command: ${command}`);
+            return res.status(403).json({ error: 'Command contains disallowed shell metacharacters' });
+        }
+
+        // Whitelist enforcement
+        const isAllowed = ALLOWED_COMMAND_PREFIXES.some(prefix => command.trim().startsWith(prefix));
+
+        if (!isAllowed) {
+            logger.warn(`Blocked command execution attempt: ${command}`);
+            return res.status(403).json({ error: 'Command not allowed via auto-exec' });
+        }
+
+        logger.info(`Executing system command: ${command}`);
+
+        exec(command, { cwd: cwd || process.cwd() }, (error, stdout, stderr) => {
+            if (error) {
+                logger.error(`Command failed: ${error.message}`);
+                return res.status(500).json({
+                    success: false,
+                    error: error.message,
+                    stderr,
+                    stdout
+                });
+            }
+
+            res.json({
+                success: true,
+                stdout,
+                stderr
+            });
+        });
+
+    } catch (error) {
+        logger.error('System execution error:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 

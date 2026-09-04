@@ -13,7 +13,7 @@
  *     `import * as React from "react"` is present.
  *  4. Tailwind config   inject shadcn color extensions if missing.
  *  5. Leaked agent narrative   strip chat/explanation text appended after code
- *     (e.g. "</Perfect! I've..." or "<ecomgear-chat-summary>..." in the file body).
+ *     (e.g. "</Perfect! I've..." or "<SMEsAgent-chat-summary>..." in the file body).
  */
 
 import { createRequire } from 'node:module';
@@ -387,7 +387,7 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
   // ── Rule 5: Strip leaked agent narrative ─────────────────────────────────────
   // The LLM sometimes appends its prose response to the file content, producing
   // patterns like:
-  //   • `<ecomgear-chat-summary>…</ecomgear-chat-summary>` mid-file
+  //   • `<SMEsAgent-chat-summary>…</SMEsAgent-chat-summary>` mid-file
   //   • `</Perfect! I've completely rewritten…`  (agent starts reply with `</`)
   //   • `</I'll make sure…`
   // These cause JSX parse errors. Truncate the file at the first such line.
@@ -398,8 +398,8 @@ export function sanitizeFileContent(filePath: string, raw: string): SanitizeResu
     for (let i = 0; i < lines.length; i++) {
       const trimmed = lines[i].trimStart();
 
-      // Any ecomgear tag inside a source file is agent prose, never valid code.
-      if (trimmed.includes('<ecomgear-')) {
+      // Any SMEsAgent tag inside a source file is agent prose, never valid code.
+      if (trimmed.includes('<SMEsAgent-')) {
         cutAt = i;
         break;
       }

@@ -41,7 +41,6 @@ import { listSecretsTool } from '../agent-tools/list_secrets.js';
 import { searchOrgKnowledgeTool } from '../agent-tools/search_org_knowledge.js';
 import { pushToGithubTool } from '../agent-tools/push_to_github.js';
 import { publishSiteTool } from '../agent-tools/publish_site.js';
-import { shadcnComponentTool } from '../agent-tools/shadcn_component.js';
 import { checkTsSyntaxInLoop } from './agentContextCompaction.js';
 import { validateCodeAst } from './agentAstValidation.js';
 import { applySearchReplace } from '../agent-tools/edit_file.js';
@@ -58,7 +57,7 @@ const MICRO_EXCLUDED_TOOLS = new Set([
   'run_command', 'get_database_schema', 'query_database', 'confirm_database_change', 'test_database_function', 'provision_database',
   'write_edge_function', 'confirm_edge_function_deploy', 'delete_edge_function', 'list_edge_functions', 'test_edge_function', 'set_secret', 'list_secrets',
   'push_to_github', 'publish_site',
-  'save_knowledge', 'declare_architecture', 'shadcn_component',
+  'save_knowledge', 'declare_architecture',
 ]);
 
 // Direct database tools. These were briefly gated on AgentContext.chatMode
@@ -123,7 +122,6 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
     editFileTool,
     replaceInFilesTool,
     runCommandTool, // npm install/uninstall only   whitelist enforced inside the tool
-    shadcnComponentTool, // exact source for non-pre-built shadcn/ui components, on demand
     getDatabaseSchemaTool,
     queryDatabaseTool,
     confirmDatabaseChangeTool,
@@ -163,14 +161,6 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
   // guard incident above for why bounced-paid-work blocks are a last resort).
   let consecutiveSingleReads = 0;
   let readBatchTipShown = false;
-  // Grep → semantic-search routing: a grep that finds nothing, or a string of
-  // greps with no intervening read/write, means the model is locating code by
-  // exact text when a meaning-based search would find it in one call. Measured
-  // over 477 runs: 276 grep calls vs 9 search_codebase calls -- the tool the
-  // model needs is the one it never reaches for. Advisory only, at most once
-  // per run (a nudge that repeats is noise the model learns to ignore).
-  let consecutiveGreps = 0;
-  let semanticSearchAdvised = false;
   // Redundant-re-read block: a FULL read of a file that is still un-compacted
   // in context (read within the last 4 steps = compaction's KEEP_RECENT
   // window) and unmodified since is pure duplicate context. Truncated-view
@@ -701,21 +691,21 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
           }
         }
         // ── Platform-URL guard ─────────────────────────────────────────────────
-        // EcomGear infrastructure URLs (api/gen.ecomgear.dev, db/cloud/preview/
-        // apps.ecomgear.app) must never be hardcoded into generated project code  
+        // SMEsAgent infrastructure URLs (api/gen.SMEsAgent.dev, db/cloud/preview/
+        // apps.SMEsAgent.app) must never be hardcoded into generated project code  
         // they belong in env vars (VITE_SUPABASE_URL, VITE_DB_API_URL,
         // VITE_FUNCTIONS_API_URL). The prompt says so, but models still write
-        // fallbacks like `import.meta.env.X || 'https://api.ecomgear.dev'`; this
+        // fallbacks like `import.meta.env.X || 'https://api.SMEsAgent.dev'`; this
         // blocks them at the tool layer. edit_file only scans REPLACE sides so
         // removing an already-hardcoded URL stays possible.
         if ((def.name === 'write_file' || def.name === 'edit_file') && typeof args.path === 'string' && /\.(tsx?|jsx?)$/.test(args.path)) {
           const newContent = def.name === 'write_file'
             ? (typeof args.content === 'string' ? args.content : '')
             : (typeof args.diff === 'string' ? args.diff.replace(/<<<<<<< SEARCH[\s\S]*?=======/g, '') : '');
-          const urlMatch = newContent.match(/https?:\/\/(?:[a-z0-9-]+\.)*ecomgear\.(?:dev|app|ai)\b/i);
+          const urlMatch = newContent.match(/https?:\/\/(?:[a-z0-9-]+\.)*SMEsAgent\.(?:dev|app|ai)\b/i);
           if (urlMatch) {
             return (
-              `BLOCKED: "${args.path}" contains a hardcoded EcomGear platform URL (${urlMatch[0]}). ` +
+              `BLOCKED: "${args.path}" contains a hardcoded SMEsAgent platform URL (${urlMatch[0]}). ` +
               `Platform/system URLs must NEVER be written into project code   not even as env-var fallbacks. ` +
               `Use the env var directly with NO fallback: import.meta.env.VITE_DB_API_URL for the hosted database, ` +
               `import.meta.env.VITE_FUNCTIONS_API_URL for edge functions (auth is your own edge functions, not a platform server). ` +
@@ -724,7 +714,7 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
             );
           }
           // ANY fallback chained to these three critical connection URLs is wrong,
-          // not just a literal EcomGear domain   `window.location.origin`,
+          // not just a literal SMEsAgent domain   `window.location.origin`,
           // `location.origin`, `'localhost'`, empty-string, etc. are all just as
           // broken (createClient(window.location.origin, ...) silently points auth
           // at the wrong host instead of failing loudly). Seen in the wild: an
@@ -875,28 +865,6 @@ export function buildToolSet(ctx: AgentContext, brainMemory: string[], tier?: st
           // be set, instead of duplicating the check in each of the three tool files.
           if (def.name === 'search_codebase' || def.name === 'grep' || def.name === 'glob_files') {
             ctx.retrievalConsulted = true;
-          }
-          // ── Grep → semantic-search routing (advisory, once per run) ────────
-          // A grep is exact-text; search_codebase is meaning-based. When greps
-          // keep coming back empty (the code words it differently than the
-          // model's search text) or the model greps 3+ times without reading
-          // anything it found, one pointer saves the next several round-trips.
-          if (def.name === 'grep') {
-            consecutiveGreps++;
-            const emptyResult = typeof result === 'string' && /no matches|no results|0 match|nothing found/i.test(result);
-            if (!semanticSearchAdvised && !pendingRoutingAdvisory && (emptyResult || consecutiveGreps >= 3)) {
-              semanticSearchAdvised = true;
-              pendingRoutingAdvisory =
-                (emptyResult
-                  ? `grep found no matches for that pattern. `
-                  : `You have run ${consecutiveGreps} greps in a row while locating code. `) +
-                `If the code words it differently than your search text, call search_codebase("<what you are looking for in plain words>") ` +
-                `-- it matches by MEANING across the whole project and returns the right file with the matching lines, in ONE call instead of more greps.`;
-            }
-          } else {
-            // Any non-grep call breaks the streak: grep → read → edit is the
-            // healthy pattern and must not be nagged.
-            consecutiveGreps = 0;
           }
           // ── Track successful reads ─────────────────────────────────────────
           // Mark file as read so subsequent write_file/edit_file calls are allowed.

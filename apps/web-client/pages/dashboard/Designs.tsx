@@ -147,7 +147,7 @@ export default function DashboardDesigns() {
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {visibleBlueprints.map((b) => (
-              <article key={b.id} className="group flex flex-col overflow-hidden rounded-xl border border-border/60 bg-card transition-colors hover:border-border">
+              <article key={b.id} className="group flex flex-col overflow-hidden rounded-none border border-border/60 bg-card transition-colors hover:border-border">
                 <div className={cn('relative aspect-[16/9] bg-gradient-to-br overflow-hidden', ACCENTS[b.id] ?? 'from-slate-800 via-slate-700 to-slate-500')}>
                   <BlueprintPreview id={b.id} />
                   <span className="absolute left-3 top-3 rounded-full bg-black/35 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-white/90 backdrop-blur-sm">{b.category}</span>
@@ -180,12 +180,12 @@ export default function DashboardDesigns() {
 
       {!templates && !error && (
         <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {[0, 1, 2].map((i) => <div key={i} className="skeleton h-64 rounded-xl" />)}
+          {[0, 1, 2].map((i) => <div key={i} className="skeleton h-64 rounded-none" />)}
         </div>
       )}
 
       {templates && visible.length === 0 && visibleBlueprints.length === 0 && (
-        <div className="mt-6 rounded-xl border border-dashed border-border/60 bg-card/40 p-10 text-center">
+        <div className="mt-6 rounded-none border border-dashed border-border/60 bg-card/40 p-10 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
             <LayoutTemplate className="h-5 w-5 text-primary" />
           </div>
@@ -201,7 +201,7 @@ export default function DashboardDesigns() {
       {templates && visible.length > 0 && (
         <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {visible.map((t) => (
-            <article key={t.id} className="group flex flex-col overflow-hidden rounded-xl border border-border/60 bg-card transition-colors hover:border-border">
+            <article key={t.id} className="group flex flex-col overflow-hidden rounded-none border border-border/60 bg-card transition-colors hover:border-border">
               <div className="relative h-44">
                 <ProjectThumbnail projectName={t.name} thumbnailUrl={t.thumbnail_url} previewUrl={t.preview_url} />
                 {t.template_category && <Badge variant="secondary" className="absolute left-3 top-3 rounded-full text-[10px]">{t.template_category}</Badge>}

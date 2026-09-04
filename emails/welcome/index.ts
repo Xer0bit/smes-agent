@@ -20,20 +20,20 @@ serve(async (req) => {
     const resendKey = Deno.env.get('RESEND_API_KEY');
     if (!resendKey) return json({ error: 'Email service not configured' }, 500);
 
-    const frontendUrl = (Deno.env.get('FRONTEND_URL') || 'https://ecomgear.dev').replace(/\/$/, '');
+    const frontendUrl = (Deno.env.get('FRONTEND_URL') || 'https://SMEsAgent.dev').replace(/\/$/, '');
     const safeName = safe(user_name, 'there');
     const safeOrg = safe(org_name);
 
     const html = baseTemplate({
-      title: 'Welcome to EcomGear',
+      title: 'Welcome to SMEsAgent',
       preheader: 'Your account is ready   start building your first app.',
       body: `
-        <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#18181b;">Welcome to EcomGear${safeOrg ? `, ${safeOrg}` : ''}!</h1>
+        <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#18181b;">Welcome to SMEsAgent${safeOrg ? `, ${safeOrg}` : ''}!</h1>
         <p style="margin:0 0 8px;font-size:15px;color:#52525b;line-height:1.6;">
           Hi ${safeName},
         </p>
         <p style="margin:0 0 16px;font-size:15px;color:#52525b;line-height:1.6;">
-          Your account is all set. EcomGear lets you build full-stack web apps by simply
+          Your account is all set. SMEsAgent lets you build full-stack web apps by simply
           describing what you want   no boilerplate, no setup.
         </p>
         <p style="margin:0 0 28px;font-size:15px;color:#52525b;line-height:1.6;">
@@ -64,7 +64,7 @@ serve(async (req) => {
 
     await sendEmail({
       to: email,
-      subject: 'Welcome to EcomGear   your account is ready',
+      subject: 'Welcome to SMEsAgent   your account is ready',
       html,
     }, resendKey);
 

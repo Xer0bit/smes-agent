@@ -10,7 +10,7 @@ import { logger } from '../utils/logger.js';
 const router = Router();
 router.use(authMiddleware);
 
-const ECOMGEAR_SERVER_URL = process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.ai';
+const SMEsAgent_SERVER_URL = process.env.SMEsAgent_SERVER_URL || 'https://api.SMEsAgent.ai';
 
 interface EcgCustomizerRow {
   orgName: string;
@@ -85,7 +85,7 @@ router.post('/:projectId/customize', async (req: AuthenticatedRequest, res: Resp
       agentIds: row.agentIds,
       config: mergedConfig,
       projectId,
-      proxyUrl: ECOMGEAR_SERVER_URL,
+      proxyUrl: SMEsAgent_SERVER_URL,
     });
     const filesArray = Object.entries(files).map(([path, content]) => ({ path, content }));
 

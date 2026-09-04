@@ -293,12 +293,12 @@ export async function ecgAdminFindUserByEmail(email: string): Promise<{ id: stri
 
 // ─── Branded email templates ─────────────────────────────────────────────────
 //
-//  These replicate the eComGear visual branding (dark header, indigo accent
+//  These replicate the SMEsAgent visual branding (dark header, indigo accent
 //  bar, CTA button) so eCG Auth sends emails that look identical to the
 //  existing Supabase-powered ones.  Placeholders {{resetUrl}}, {{token}},
 //  and {{code}} are replaced by eCG Auth before sending.
 
-const LOGO_URL = 'https://www.ecomgear.dev/assets/ecomgear-auth-logo-sfGodRbL.png';
+const LOGO_URL = 'https://www.SMEsAgent.dev/assets/SMEsAgent-auth-logo-sfGodRbL.png';
 
 const FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
@@ -320,7 +320,7 @@ function brandedEmailShell(title: string, preheader: string, body: string, front
         <tr>
           <td align="center" style="padding:0 0 28px;">
             <a href="${frontendUrl}" style="text-decoration:none;display:inline-block;line-height:1;">
-              <img src="${LOGO_URL}" alt="EcomGear" width="132" style="display:block;height:auto;border:0;outline:0;margin:0 auto;" />
+              <img src="${LOGO_URL}" alt="SMEsAgent" width="132" style="display:block;height:auto;border:0;outline:0;margin:0 auto;" />
             </a>
           </td>
         </tr>
@@ -332,8 +332,8 @@ function brandedEmailShell(title: string, preheader: string, body: string, front
         <tr>
           <td align="center" style="padding:28px 12px 0;">
             <p style="margin:0;font-size:12px;color:#5C6570;line-height:1.7;font-family:${FONT_STACK};">
-              &copy; ${year} EcomGear &middot;
-              <a href="${frontendUrl}" style="color:#5C6570;text-decoration:underline;">ecomgear.dev</a>
+              &copy; ${year} SMEsAgent &middot;
+              <a href="${frontendUrl}" style="color:#5C6570;text-decoration:underline;">SMEsAgent.dev</a>
               &middot;
               <a href="${frontendUrl}/dashboard/settings" style="color:#5C6570;text-decoration:underline;">Manage preferences</a>
             </p>
@@ -351,11 +351,11 @@ function brandedEmailShell(title: string, preheader: string, body: string, front
  * placeholders that eCG Auth will replace before sending.
  */
 export function buildBrandedResetEmailHtml(resetUrl: string): string {
-  const frontendUrl = process.env.FRONTEND_URL || 'https://ecomgear.dev';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://SMEsAgent.dev';
   const body = `
     <h1 style="margin:0 0 14px;font-size:20px;font-weight:600;color:#F3F5F7;font-family:${FONT_STACK};">Reset your password</h1>
     <p style="margin:0 0 28px;font-size:14px;color:#949EA8;line-height:1.65;font-family:${FONT_STACK};">
-      We received a request to reset the password on your EcomGear account.
+      We received a request to reset the password on your SMEsAgent account.
       Click below to choose a new one -- this link expires in 1 hour.
     </p>
     <table cellpadding="0" cellspacing="0" style="width:100%;">
@@ -373,7 +373,7 @@ export function buildBrandedResetEmailHtml(resetUrl: string): string {
     <p style="margin:28px 0 0;padding-top:24px;border-top:1px solid #2C333A;font-size:12px;color:#5C6570;line-height:1.7;font-family:${FONT_STACK};">
       If you didn't request this, you can safely ignore this email -- your password won't change.
     </p>`;
-  return brandedEmailShell('Reset your EcomGear password', 'Reset the password on your EcomGear account.', body, frontendUrl);
+  return brandedEmailShell('Reset your SMEsAgent password', 'Reset the password on your SMEsAgent account.', body, frontendUrl);
 }
 
 /**
@@ -381,7 +381,7 @@ export function buildBrandedResetEmailHtml(resetUrl: string): string {
  * will replace before sending.
  */
 export function buildBrandedOtpEmailHtml(): string {
-  const frontendUrl = process.env.FRONTEND_URL || 'https://ecomgear.dev';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://SMEsAgent.dev';
   const body = `
     <h1 style="margin:0 0 14px;font-size:20px;font-weight:600;color:#F3F5F7;font-family:${FONT_STACK};">Your verification code</h1>
     <p style="margin:0 0 28px;font-size:14px;color:#949EA8;line-height:1.65;font-family:${FONT_STACK};">
@@ -397,5 +397,5 @@ export function buildBrandedOtpEmailHtml(): string {
     <p style="margin:28px 0 0;padding-top:24px;border-top:1px solid #2C333A;font-size:12px;color:#5C6570;line-height:1.7;font-family:${FONT_STACK};">
       If you didn't request this code, you can safely ignore this email.
     </p>`;
-  return brandedEmailShell('EcomGear verification code', 'Your verification code for EcomGear.', body, frontendUrl);
+  return brandedEmailShell('SMEsAgent verification code', 'Your verification code for SMEsAgent.', body, frontendUrl);
 }

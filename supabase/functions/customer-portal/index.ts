@@ -3,8 +3,8 @@ import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 
 const ALLOWED_ORIGINS = [
-  'https://ecomgear.app', 'https://www.ecomgear.app',
-  'https://ecomgear.dev', 'https://www.ecomgear.dev', 'https://1000.ecomgear.dev',
+  'https://SMEsAgent.app', 'https://www.SMEsAgent.app',
+  'https://SMEsAgent.dev', 'https://www.SMEsAgent.dev', 'https://1000.SMEsAgent.dev',
   'http://localhost:8080', 'http://localhost:3000',
 ];
 const getCorsHeaders = (origin: string | null) => ({

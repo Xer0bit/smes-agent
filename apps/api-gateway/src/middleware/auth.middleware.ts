@@ -96,7 +96,7 @@ export async function optionalAuthMiddleware(
     }
 }
 
-// Lets a deployed eCG dashboard call ecg-proxy/ecg-chat without an eComGear
+// Lets a deployed eCG dashboard call ecg-proxy/ecg-chat without an SMEsAgent
 // account, via the token issued by POST /api/v1/ecg-access. Never rejects  
 // route handlers decide what to do when dashboardAccessProjectId is unset.
 export function dashboardAccessMiddleware(

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Local stand-in for cloud.ecomgear.app: the tenant API in front of the local
+ * Local stand-in for cloud.SMEsAgent.app: the tenant API in front of the local
  * PostgREST, plus the reload hook provisioning calls after it creates a schema.
  *
  *   /<schema>/rest/v1/*    -> http://127.0.0.1:3010/*   with Accept-/Content-Profile: <schema>

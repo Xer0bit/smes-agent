@@ -13,7 +13,7 @@ export async function sendEmail(opts: SendEmailOptions, resendKey: string): Prom
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: opts.from ?? 'EcomGear <noreply@ecomgear.dev>',
+      from: opts.from ?? 'SMEsAgent <noreply@SMEsAgent.dev>',
       to: [opts.to],
       subject: opts.subject,
       html: opts.html,

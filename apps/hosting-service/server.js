@@ -1,5 +1,5 @@
 /**
- * eComGear Hosting Service
+ * SMEsAgent Hosting Service
  *
  * Serves published applications as static sites.
  * Manages Caddy configuration for custom domains with automatic HTTPS.
@@ -16,7 +16,7 @@
  *   GET    /domains/list              List all active custom domain mappings
  *
  * Static serving:
- *   Caddy serves sites directly from /var/www/ecomgear/sites/<projectId>/
+ *   Caddy serves sites directly from /var/www/SMEsAgent/sites/<projectId>/
  *   This service manages the Caddy config and file deployments.
  */
 
@@ -36,15 +36,15 @@ const tenantCaddy = require('./lib/tenant-caddy');
 // ── Configuration ─────────────────────────────────────────────────────────────
 const LOCAL_DEV = process.env.LOCAL_DEV === '1' || process.env.NODE_ENV === 'development';
 const PORT = process.env.HOSTING_PORT || 4000;
-const SITES_ROOT = process.env.SITES_ROOT || (LOCAL_DEV ? path.join(__dirname, '.local-sites') : '/var/www/ecomgear/sites');
+const SITES_ROOT = process.env.SITES_ROOT || (LOCAL_DEV ? path.join(__dirname, '.local-sites') : '/var/www/SMEsAgent/sites');
 const CADDY_CONFIG_DIR = process.env.CADDY_CONFIG_DIR || (LOCAL_DEV ? path.join(__dirname, '.local-caddy') : '/etc/caddy/sites');
 const CADDY_MAIN_CONFIG = process.env.CADDY_MAIN_CONFIG || '/etc/caddy/Caddyfile';
 const DEPLOY_SECRET = process.env.HOSTING_DEPLOY_SECRET || '';
 const HOSTING_PUBLIC_IP = process.env.HOSTING_PUBLIC_IP || (LOCAL_DEV ? '127.0.0.1' : '');
-const DEFAULT_DOMAIN = process.env.DEFAULT_DOMAIN || (LOCAL_DEV ? 'localhost.test' : 'apps.ecomgear.app');
+const DEFAULT_DOMAIN = process.env.DEFAULT_DOMAIN || (LOCAL_DEV ? 'localhost.test' : 'apps.SMEsAgent.app');
 const LETSENCRYPT_EMAIL = process.env.LETSENCRYPT_EMAIL || '';
 const NODE_NAME = process.env.HOSTING_NODE_NAME || (LOCAL_DEV ? 'local-dev' : 'hosting-1');
-const DNS_TXT_PREFIX = '_ecomgear-verify';
+const DNS_TXT_PREFIX = '_SMEsAgent-verify';
 
 if (LOCAL_DEV) {
   console.log('\n  ⚡ LOCAL DEV MODE   Caddy reload skipped, DNS verification mocked\n');
@@ -170,7 +170,7 @@ async function verifyDomainOwnership(domain) {
 
   const expectedToken = generateVerifyToken(domain);
 
-  // TXT host differs for subdomains: _ecomgear-verify.<subdomain-part>.<root>
+  // TXT host differs for subdomains: _SMEsAgent-verify.<subdomain-part>.<root>
   const txtHost = isApex
     ? `${DNS_TXT_PREFIX}.${domain}`
     : `${DNS_TXT_PREFIX}.${hostPart}.${parts.slice(parts.length - 2).join('.')}`;
@@ -192,7 +192,7 @@ async function verifyDomainOwnership(domain) {
     };
   } else {
     // Subdomain: A record to our IP is the primary method.
-    // Also accept CNAME to hosting.ecomgear.app for backward compat.
+    // Also accept CNAME to hosting.SMEsAgent.app for backward compat.
     const aRecords = await lookupDNS(domain, 'A');
     const cfProxied = aRecords.length > 0 && aRecords.every(ip => isCloudflareIP(ip));
     pointingOk = aRecords.includes(HOSTING_PUBLIC_IP);
@@ -204,11 +204,11 @@ async function verifyDomainOwnership(domain) {
         ok: true,
       };
     } else {
-      // Fallback: check CNAME (legacy users may still have CNAME to hosting.ecomgear.app)
+      // Fallback: check CNAME (legacy users may still have CNAME to hosting.SMEsAgent.app)
       const cnameRecords = await lookupDNS(domain, 'CNAME');
       const cnameOk = cnameRecords.some(r => {
         const normalized = r.replace(/\.$/, '').toLowerCase();
-        return normalized === 'hosting.ecomgear.app' || normalized === DEFAULT_DOMAIN.toLowerCase();
+        return normalized === 'hosting.SMEsAgent.app' || normalized === DEFAULT_DOMAIN.toLowerCase();
       });
       if (cnameOk) {
         pointingOk = true;
@@ -297,8 +297,8 @@ function reloadCaddy() {
 // ── Express app ──────────────────────────────────────────────────────────────
 const app = express();
 const ALLOWED_ORIGINS = [
-  'https://www.ecomgear.dev',
-  'https://ecomgear.dev',
+  'https://www.SMEsAgent.dev',
+  'https://SMEsAgent.dev',
   'http://localhost:8080',
   'http://localhost:5173',
 ];
@@ -316,7 +316,7 @@ app.use(bodyParser.json({ limit: '50mb' }));
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
-    service: 'ecomgear-hosting',
+    service: 'SMEsAgent-hosting',
     node: NODE_NAME,
     publicIp: HOSTING_PUBLIC_IP || null,
     sites: fs.readdirSync(SITES_ROOT).filter(f => !f.startsWith('.')).length,
@@ -640,7 +640,7 @@ app.post('/tenants/:projectId/deploy', (req, res) => {
   }
 
   // Write edge functions if provided
-  const TENANT_DATA_ROOT = process.env.TENANT_DATA_ROOT || '/var/lib/ecomgear/tenants';
+  const TENANT_DATA_ROOT = process.env.TENANT_DATA_ROOT || '/var/lib/SMEsAgent/tenants';
   if (Array.isArray(edgeFunctions) && edgeFunctions.length > 0) {
     const fnDir = path.join(TENANT_DATA_ROOT, projectId, 'functions');
     if (!fs.existsSync(fnDir)) fs.mkdirSync(fnDir, { recursive: true });

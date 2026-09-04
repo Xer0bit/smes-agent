@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-process.env.AI_ANTHROPIC_API_KEY = process.env.AI_ANTHROPIC_API_KEY || 'test-anthropic-key';
+process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || 'test-openrouter-key';
 
 // agentLoopService.ts -> agentToolSet.ts -> propose_plan.ts -> config/database.js
 // throws at module load if SUPABASE_URL/SUPABASE_SERVICE_KEY/SUPABASE_ANON_KEY
@@ -74,24 +74,16 @@ import { runAgentLoop, type AgentEventSink } from '../agentLoopService.js';
 describe('agentLoopService diagnose-before-fix scope seeding (fix tier, build mode)', () => {
   let tmpDir: string;
   const originalKeys = {
-    AI_ANTHROPIC_API_KEY: process.env.AI_ANTHROPIC_API_KEY,
-    ZAI_API_KEY: process.env.ZAI_API_KEY,
-    DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
-    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   };
 
   beforeEach(() => {
     diagnosisCallCount = 0;
     seededDeleteAttempted = false;
     scopeGateResultPromise = null;
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecomgear-scope-seed-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'SMEsAgent-scope-seed-'));
     fs.mkdirSync(path.join(tmpDir, 'src/components'), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, 'src/components/Logo.tsx'), 'export default function Logo() { return null; }\n', 'utf8');
-    // No competing provider keys -- keeps fallback candidates to anthropic-only,
-    // which all route through the same mocked streamText above.
-    delete process.env.ZAI_API_KEY;
-    delete process.env.DEEPSEEK_API_KEY;
-    delete process.env.GEMINI_API_KEY;
   });
 
   afterEach(() => {

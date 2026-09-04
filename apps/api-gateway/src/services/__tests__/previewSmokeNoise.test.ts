@@ -11,7 +11,7 @@ describe('isExternalNoise', () => {
     for (const t of [
       'Failed to load resource: the server responded with a status of 404 ()',
       'GET https://cdn.example.com/a.js net::ERR_BLOCKED_BY_CLIENT',
-      "Access to fetch at 'https://api.other.com/x' from origin 'https://preview.ecomgear.app' has been blocked by CORS policy",
+      "Access to fetch at 'https://api.other.com/x' from origin 'https://preview.SMEsAgent.app' has been blocked by CORS policy",
       'Failed to load resource: favicon.ico',
       'chrome-extension://abcdef/inject.js error',
       "Refused to load because it violates the following Content Security Policy directive",

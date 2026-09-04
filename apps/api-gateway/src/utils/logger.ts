@@ -43,7 +43,7 @@ if (config.nodeEnv === 'production') {
 export const logger = winston.createLogger({
     level: config.logLevel,
     format: logFormat,
-    defaultMeta: { service: 'ecomgear-api' },
+    defaultMeta: { service: 'SMEsAgent-api' },
     transports
 });
 

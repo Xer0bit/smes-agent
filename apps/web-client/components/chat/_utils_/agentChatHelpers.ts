@@ -77,9 +77,9 @@ export interface Message {
 
 // ─── Tag helpers ──────────────────────────────────────────────────────────────
 
-// Extract and strip <ecomgear-chat-summary> from content
+// Extract and strip <SMEsAgent-chat-summary> from content
 export function extractSummary(content: string): { body: string; summary?: string } {
-  const match = content.match(/<ecomgear-chat-summary>([\s\S]*?)<\/ecomgear-chat-summary>/i);
+  const match = content.match(/<SMEsAgent-chat-summary>([\s\S]*?)<\/SMEsAgent-chat-summary>/i);
   if (!match) return { body: content };
   return {
     body: content.replace(match[0], '').trim(),
@@ -94,24 +94,24 @@ export function parseToolActivities(raw: string): ToolActivity[] {
   // Use a Map keyed by label so later operations for the same file overwrite earlier ones.
   const seen = new Map<string, ToolActivity>();
 
-  for (const m of raw.matchAll(/<ecomgear-write[^>]*\bpath="([^"]+)"/gi))
+  for (const m of raw.matchAll(/<SMEsAgent-write[^>]*\bpath="([^"]+)"/gi))
     seen.set(m[1], { type: 'write', label: m[1] });
 
-  for (const m of raw.matchAll(/<ecomgear-edit[^>]*\bpath="([^"]+)"/gi))
+  for (const m of raw.matchAll(/<SMEsAgent-edit[^>]*\bpath="([^"]+)"/gi))
     seen.set(m[1], { type: 'edit', label: m[1] });
 
-  for (const m of raw.matchAll(/<ecomgear-delete[^>]*\bpath="([^"]+)"/gi))
+  for (const m of raw.matchAll(/<SMEsAgent-delete[^>]*\bpath="([^"]+)"/gi))
     seen.set(m[1], { type: 'delete', label: m[1] });
 
-  for (const m of raw.matchAll(/<ecomgear-rename[^>]*\bfrom="([^"]+)"[^>]*\bto="([^"]+)"/gi)) {
+  for (const m of raw.matchAll(/<SMEsAgent-rename[^>]*\bfrom="([^"]+)"[^>]*\bto="([^"]+)"/gi)) {
     const label = `${m[1]} → ${m[2]}`;
     seen.set(label, { type: 'rename', label });
   }
 
-  for (const m of raw.matchAll(/<ecomgear-add-dependency[^>]*\bpackages="([^"]+)"/gi))
+  for (const m of raw.matchAll(/<SMEsAgent-add-dependency[^>]*\bpackages="([^"]+)"/gi))
     seen.set(`dep:${m[1]}`, { type: 'dependency', label: m[1] });
 
-  for (const m of raw.matchAll(/<ecomgear-command[^>]*\btype="([^"]+)"/gi))
+  for (const m of raw.matchAll(/<SMEsAgent-command[^>]*\btype="([^"]+)"/gi))
     seen.set(`cmd:${m[1]}`, { type: 'command', label: m[1] });
 
   return Array.from(seen.values());
@@ -149,32 +149,32 @@ export function buildFallbackSummary(activities: ToolActivity[]): string {
 // Return a human-readable live status for the tool currently being streamed.
 // Returns null when no tool is mid-flight.
 export function detectLiveTool(raw: string): string | null {
-  // An open <ecomgear-write> that hasn't been closed yet means we're streaming file content.
-  const open = raw.match(/<ecomgear-write[^>]*\bpath="([^"]+)"[^>]*>(?![\s\S]*?<\/ecomgear-write>)/i);
+  // An open <SMEsAgent-write> that hasn't been closed yet means we're streaming file content.
+  const open = raw.match(/<SMEsAgent-write[^>]*\bpath="([^"]+)"[^>]*>(?![\s\S]*?<\/SMEsAgent-write>)/i);
   if (open) return `Writing ${open[1]}…`;
 
   // Partial tag (agent is still typing the opening tag itself)
-  if (/<ecomgear-/i.test(raw.replace(/<ecomgear-[\s\S]*?<\/ecomgear-\w+>/gi, '')
-                              .replace(/<ecomgear-(?:rename|delete|add-dependency|command|file)[^>]*>/gi, ''))) {
+  if (/<SMEsAgent-/i.test(raw.replace(/<SMEsAgent-[\s\S]*?<\/SMEsAgent-\w+>/gi, '')
+                              .replace(/<SMEsAgent-(?:rename|delete|add-dependency|command|file)[^>]*>/gi, ''))) {
     return 'Working…';
   }
   return null;
 }
 
 // Extract command types the agent suggested (e.g. restart, refresh, rebuild)
-// Handles both <ecomgear-command> and abbreviated <egear-command> variants.
+// Handles both <SMEsAgent-command> and abbreviated <egear-command> variants.
 export function parseCommandSuggestions(raw: string): string[] {
   const cmds: string[] = [];
-  for (const m of raw.matchAll(/<(?:ecomgear|egear)-command[^>]*\btype="([^"]+)"/gi))
+  for (const m of raw.matchAll(/<(?:SMEsAgent|egear)-command[^>]*\btype="([^"]+)"/gi))
     if (!cmds.includes(m[1])) cmds.push(m[1]);
   return cmds;
 }
 
 
-// Strip ALL <ecomgear-*> / <egear-*> tags from the visible chat text.
+// Strip ALL <SMEsAgent-*> / <egear-*> tags from the visible chat text.
 // During streaming, any open (unclosed) block tag hides everything after it
 // so the user never sees raw XML or partial code.
-export function stripEcomgearTags(raw: string): string {
+export function stripSMEsAgentTags(raw: string): string {
   let s = raw;
 
   // Strip model-internal reasoning/tool-call markup (thinking blocks, function calls)
@@ -191,19 +191,19 @@ export function stripEcomgearTags(raw: string): string {
     if (idx !== -1) { s = s.slice(0, idx); break; }
   }
 
-  // Remove complete ecomgear/egear block tags + their content
-  s = s.replace(/<ecomgear-write[\s\S]*?<\/ecomgear-write>/gi, '\n\n');
-  s = s.replace(/<ecomgear-edit[\s\S]*?<\/ecomgear-edit>/gi, '\n\n');
-  s = s.replace(/<ecomgear-chat-summary>[\s\S]*?<\/ecomgear-chat-summary>/gi, '');
+  // Remove complete SMEsAgent/egear block tags + their content
+  s = s.replace(/<SMEsAgent-write[\s\S]*?<\/SMEsAgent-write>/gi, '\n\n');
+  s = s.replace(/<SMEsAgent-edit[\s\S]*?<\/SMEsAgent-edit>/gi, '\n\n');
+  s = s.replace(/<SMEsAgent-chat-summary>[\s\S]*?<\/SMEsAgent-chat-summary>/gi, '');
 
-  // Remove complete self-closing / void tags (both ecomgear- and egear- prefixes)
-  s = s.replace(/<(?:ecomgear|egear)-(rename|delete|add-dependency|command|file)[^>]*\/?>/gi, '');
+  // Remove complete self-closing / void tags (both SMEsAgent- and egear- prefixes)
+  s = s.replace(/<(?:SMEsAgent|egear)-(rename|delete|add-dependency|command|file)[^>]*\/?>/gi, '');
 
   // Remove any explicit closing tags (both prefix forms)
-  s = s.replace(/<\/(?:ecomgear|egear)-[a-z-]+>/gi, '');
+  s = s.replace(/<\/(?:SMEsAgent|egear)-[a-z-]+>/gi, '');
 
-  // Hide everything from any still-open ecomgear/egear tag to end of buffer
-  const partialIdx = s.search(/<(?:ecomgear|egear)-/i);
+  // Hide everything from any still-open SMEsAgent/egear tag to end of buffer
+  const partialIdx = s.search(/<(?:SMEsAgent|egear)-/i);
   if (partialIdx !== -1) s = s.slice(0, partialIdx);
 
   // Normalize whitespace

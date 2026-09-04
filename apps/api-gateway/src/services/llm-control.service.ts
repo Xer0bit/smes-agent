@@ -1,13 +1,14 @@
 import { supabase } from '../config/database.js';
-import { resetProviderCache } from '../knowledgebase/index.js';
 import {
   canonicalizeModelId,
+  CODE_MODEL,
+  CHEAP_MODEL,
   DEFAULT_PRIMARY_MODEL,
   DEFAULT_FALLBACK_MODEL,
   DEFAULT_FREE_MODEL,
 } from '../config/models.js';
 
-export type LlmProvider = 'anthropic' | 'deepseek' | 'gemini' | 'zai';
+export type LlmProvider = 'openrouter';
 
 export type LlmModelEntry = {
   id: string;
@@ -17,23 +18,19 @@ export type LlmModelEntry = {
 
 export type LlmControlState = {
   providers: {
-    anthropic: { enabled: boolean; };
-    deepseek: { enabled: boolean; fallbackEnabled: boolean; };
-    gemini: { enabled: boolean; fallbackEnabled: boolean; };
-    zai: { enabled: boolean; };
+    openrouter: { enabled: boolean };
   };
   models: {
+    /** Code-generation model (edits/fixes/builds). */
     primary: string;
+    /** Kept for API-shape compatibility with the picker/admin UI; same as freeModel. */
     fallback: string;
-    /** Model served to free-tier users. Defaults to fallback model. */
+    /** Small-task model (chit-chat, suggestions, reranking, narration). */
     freeModel: string;
     allowed: LlmModelEntry[];
   };
   apiKeys: {
-    anthropic: string;
-    deepseek: string;
-    gemini: string;
-    zai: string;
+    openrouter: string;
   };
   updatedAt: string;
 };
@@ -43,17 +40,8 @@ type PersistedLlmControl = Partial<Omit<LlmControlState, 'updatedAt'>> & {
 };
 
 const DEFAULT_MODELS: LlmModelEntry[] = [
-  { id: 'gemini-3.1-pro-preview', provider: 'gemini', label: 'Gemini 3.1 Pro (Advanced)' },
-  { id: 'gemini-2.5-pro',   provider: 'gemini',   label: 'Gemini 2.5 Pro' },
-  { id: 'gemini-flash-latest', provider: 'gemini', label: 'Gemini Flash (Fast, latest)' },
-  { id: 'claude-sonnet-5', provider: 'anthropic', label: 'Claude Sonnet 5' },
-  { id: 'glm-4.5-flash',    provider: 'zai',      label: 'GLM-4.5 Flash (Free tier)' },
-  { id: 'glm-5.2',          provider: 'zai',      label: 'GLM-5.2' },
-  { id: 'glm-5',            provider: 'zai',      label: 'GLM-5' },
-  { id: 'glm-5-turbo',      provider: 'zai',      label: 'GLM-5 Turbo' },
-  { id: 'glm-4.7',          provider: 'zai',      label: 'GLM-4.7' },
-  { id: 'glm-4.7-flash',    provider: 'zai',      label: 'GLM-4.7 Flash' },
-  { id: 'deepseek-chat',    provider: 'deepseek', label: 'DeepSeek (Everyday)' },
+  { id: CODE_MODEL, provider: 'openrouter', label: 'Qwen3.7 Flash (code)' },
+  { id: CHEAP_MODEL, provider: 'openrouter', label: 'Gemini 2.5 Flash Lite (small tasks)' },
 ];
 
 const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
@@ -71,24 +59,13 @@ function isValidModelId(id: string): boolean {
   return MODEL_ID_RE.test(id);
 }
 
-
-const isDeepSeekModel = (model: string): boolean => model.toLowerCase().includes('deepseek');
-const isGeminiModel = (model: string): boolean => model.toLowerCase().includes('gemini');
-const isZaiModel = (model: string): boolean => model.toLowerCase().startsWith('glm');
-
-const inferProvider = (model: string): LlmProvider => {
-  if (isZaiModel(model)) return 'zai';
-  if (isDeepSeekModel(model)) return 'deepseek';
-  if (isGeminiModel(model)) return 'gemini';
-  return 'anthropic';
-};
+const inferProvider = (_model: string): LlmProvider => 'openrouter';
 
 const dedupeModels = (models: LlmModelEntry[]): LlmModelEntry[] => {
   const deduped = new Map<string, LlmModelEntry>();
   for (const entry of models) {
     const raw = normalizeModelId(entry.id);
     if (!raw || !isValidModelId(raw)) continue;
-    // Map any stale/invalid ID to its canonical replacement.
     const id = canonicalizeModelId(raw);
     deduped.set(id, { id, provider: inferProvider(id) });
   }
@@ -103,10 +80,7 @@ const getDefaults = (): LlmControlState => {
 
   return {
     providers: {
-      anthropic: { enabled: true },
-      deepseek: { enabled: true, fallbackEnabled: true },
-      gemini: { enabled: true, fallbackEnabled: true },
-      zai: { enabled: true },
+      openrouter: { enabled: true },
     },
     models: {
       primary,
@@ -115,10 +89,7 @@ const getDefaults = (): LlmControlState => {
       allowed: dedupeModels(baseModels),
     },
     apiKeys: {
-      anthropic: process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '',
-      deepseek: process.env.DEEPSEEK_API_KEY || '',
-      gemini: process.env.GEMINI_API_KEY || '',
-      zai: process.env.ZAI_API_KEY || '',
+      openrouter: process.env.OPENROUTER_API_KEY || '',
     },
     updatedAt: new Date().toISOString(),
   };
@@ -129,26 +100,15 @@ const mergeWithDefaults = (persisted?: PersistedLlmControl | null): LlmControlSt
   if (!persisted) return defaults;
 
   // Canonicalize persisted values so stale IDs persisted in the DB
-  // (e.g. claude-3-7-sonnet-latest, gemini-3-flash-preview) are corrected at load.
+  // (from before the OpenRouter migration) are corrected at load.
   const primary = canonicalizeModelId(persisted.models?.primary, defaults.models.primary);
   const fallback = canonicalizeModelId(persisted.models?.fallback, defaults.models.fallback);
   const freeModel = canonicalizeModelId(persisted.models?.freeModel, defaults.models.freeModel || fallback);
 
   const merged: LlmControlState = {
     providers: {
-      anthropic: {
-        enabled: persisted.providers?.anthropic?.enabled ?? defaults.providers.anthropic.enabled,
-      },
-      deepseek: {
-        enabled: persisted.providers?.deepseek?.enabled ?? defaults.providers.deepseek.enabled,
-        fallbackEnabled: persisted.providers?.deepseek?.fallbackEnabled ?? defaults.providers.deepseek.fallbackEnabled,
-      },
-      gemini: {
-        enabled: persisted.providers?.gemini?.enabled ?? defaults.providers.gemini.enabled,
-        fallbackEnabled: persisted.providers?.gemini?.fallbackEnabled ?? defaults.providers.gemini.fallbackEnabled,
-      },
-      zai: {
-        enabled: (persisted.providers as any)?.zai?.enabled ?? defaults.providers.zai.enabled,
+      openrouter: {
+        enabled: persisted.providers?.openrouter?.enabled ?? defaults.providers.openrouter.enabled,
       },
     },
     models: {
@@ -158,10 +118,7 @@ const mergeWithDefaults = (persisted?: PersistedLlmControl | null): LlmControlSt
       allowed: dedupeModels([...(persisted.models?.allowed || []), ...defaults.models.allowed]),
     },
     apiKeys: {
-      anthropic: persisted.apiKeys?.anthropic || defaults.apiKeys.anthropic || '',
-      deepseek: persisted.apiKeys?.deepseek || defaults.apiKeys.deepseek || '',
-      gemini: persisted.apiKeys?.gemini || defaults.apiKeys.gemini || '',
-      zai: (persisted.apiKeys as any)?.zai || defaults.apiKeys.zai || '',
+      openrouter: persisted.apiKeys?.openrouter || defaults.apiKeys.openrouter || '',
     },
     updatedAt: persisted.updatedAt || defaults.updatedAt,
   };
@@ -180,17 +137,11 @@ const mergeWithDefaults = (persisted?: PersistedLlmControl | null): LlmControlSt
 const applyRuntimeEnv = (state: LlmControlState): void => {
   process.env.AI_MODEL = state.models.primary;
   process.env.AI_FALLBACK_MODEL = state.models.fallback;
-  
-  if (state.apiKeys.anthropic) process.env.AI_ANTHROPIC_API_KEY = state.apiKeys.anthropic;
-  if (state.apiKeys.deepseek) process.env.DEEPSEEK_API_KEY = state.apiKeys.deepseek;
-  if (state.apiKeys.zai) process.env.ZAI_API_KEY = state.apiKeys.zai;
-  if (state.apiKeys.gemini) {
-    process.env.GEMINI_API_KEY = state.apiKeys.gemini;
-    // KB vector store uses GOOGLE_GENERATIVE_AI_API_KEY for 768-dim text-embedding-004
-    process.env.GOOGLE_GENERATIVE_AI_API_KEY = state.apiKeys.gemini;
-    // Reset cached provider so embedder re-detects 'google' instead of staying on 'bm25'
-    resetProviderCache();
-  }
+  if (state.apiKeys.openrouter) process.env.OPENROUTER_API_KEY = state.apiKeys.openrouter;
+  // Embeddings (knowledgebase/embedder.ts) still read GEMINI_API_KEY directly
+  // for Google's text-embedding-004 -- that's a retrieval concern, not a chat
+  // LLM one, and is no longer piped through this admin panel. Set it directly
+  // in the environment if embeddings should use Google.
 };
 
 async function loadPersisted(): Promise<PersistedLlmControl | null> {
@@ -249,19 +200,8 @@ export async function updateLlmControlState(input: Partial<LlmControlState>): Pr
 
   const next: LlmControlState = {
     providers: {
-      anthropic: {
-        enabled: input.providers?.anthropic?.enabled ?? current.providers.anthropic.enabled,
-      },
-      deepseek: {
-        enabled: input.providers?.deepseek?.enabled ?? current.providers.deepseek.enabled,
-        fallbackEnabled: input.providers?.deepseek?.fallbackEnabled ?? current.providers.deepseek.fallbackEnabled,
-      },
-      gemini: {
-        enabled: input.providers?.gemini?.enabled ?? current.providers.gemini.enabled,
-        fallbackEnabled: input.providers?.gemini?.fallbackEnabled ?? current.providers.gemini.fallbackEnabled,
-      },
-      zai: {
-        enabled: (input.providers as any)?.zai?.enabled ?? current.providers.zai.enabled,
+      openrouter: {
+        enabled: input.providers?.openrouter?.enabled ?? current.providers.openrouter.enabled,
       },
     },
     models: {
@@ -271,10 +211,7 @@ export async function updateLlmControlState(input: Partial<LlmControlState>): Pr
       allowed: dedupeModels(input.models?.allowed || current.models.allowed),
     },
     apiKeys: {
-      anthropic: input.apiKeys?.anthropic ?? current.apiKeys.anthropic,
-      deepseek: input.apiKeys?.deepseek ?? current.apiKeys.deepseek,
-      gemini: input.apiKeys?.gemini ?? current.apiKeys.gemini,
-      zai: (input.apiKeys as any)?.zai ?? current.apiKeys.zai,
+      openrouter: input.apiKeys?.openrouter ?? current.apiKeys.openrouter,
     },
     updatedAt: new Date().toISOString(),
   };
@@ -312,61 +249,17 @@ export async function removeLlmModel(id: string): Promise<LlmControlState> {
 
 export async function getLlmStatusPayload(): Promise<Record<string, unknown>> {
   const state = await getLlmControlState();
-  
-  // Create safe payload omitting raw API keys
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { apiKeys, ...safeState } = state;
 
   return {
     ...safeState,
     providers: {
-      anthropic: {
-        ...state.providers.anthropic,
-        keyConfigured: Boolean(state.apiKeys.anthropic),
-      },
-      deepseek: {
-        ...state.providers.deepseek,
-        keyConfigured: Boolean(state.apiKeys.deepseek),
-      },
-      gemini: {
-        ...state.providers.gemini,
-        keyConfigured: Boolean(state.apiKeys.gemini),
-      },
-      zai: {
-        ...state.providers.zai,
-        keyConfigured: Boolean(state.apiKeys.zai),
+      openrouter: {
+        ...state.providers.openrouter,
+        keyConfigured: Boolean(state.apiKeys.openrouter),
       },
     },
   };
-}
-
-/**
- * Returns 'paid' if the user belongs to at least one org with a paid plan
- * (pro / agency / professional / enterprise). Otherwise returns 'free'.
- * Defaults to 'free' on any DB error so the restrictive path is always safe.
- */
-export async function getUserPlanTier(userId: string): Promise<'free' | 'paid'> {
-  try {
-    const { data: memberships, error: memberError } = await supabase
-      .from('org_members')
-      .select('org_id')
-      .eq('user_id', userId);
-
-    if (memberError || !memberships || memberships.length === 0) return 'free';
-
-    const orgIds = memberships.map((m: { org_id: string }) => m.org_id);
-
-    const { data: orgs, error: orgError } = await supabase
-      .from('organizations')
-      .select('plan_tier')
-      .in('id', orgIds);
-
-    if (orgError || !orgs) return 'free';
-
-    const PAID_TIERS = ['starter', 'pro', 'agency', 'professional', 'enterprise'];
-    const hasPaid = orgs.some((o: { plan_tier: string }) => PAID_TIERS.includes(o.plan_tier));
-    return hasPaid ? 'paid' : 'free';
-  } catch {
-    return 'free';
-  }
 }

@@ -41,7 +41,7 @@ services:
   hosting-service:
     build:
       context: ../apps/hosting-service
-    container_name: ecomgear-hosting-dev
+    container_name: SMEsAgent-hosting-dev
     ports:
       - "4000:4000"
     volumes:

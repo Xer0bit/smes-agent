@@ -438,7 +438,7 @@ function buildEcgDispatch(ctx: EcgContext) {
   // (ecg-proxy.routes.ts's resolveAuth), not a user session -- this function
   // has already verified the real caller itself before reaching here.
   if (ctx.projectId && process.env.FUNCTIONS_INTERNAL_SECRET) {
-    const gatewayBase = (process.env.ECOMGEAR_SERVER_URL || `http://localhost:${process.env.PORT || 5001}`).replace(/\/$/, '');
+    const gatewayBase = (process.env.SMEsAgent_SERVER_URL || `http://localhost:${process.env.PORT || 5001}`).replace(/\/$/, '');
     const projectId = ctx.projectId;
     dispatch.portal = async (method: string, path: string, body?: unknown) => {
       const res = await fetch(`${gatewayBase}/api/v1/ecg-proxy${path}?projectId=${encodeURIComponent(projectId)}`, {

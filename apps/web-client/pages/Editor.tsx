@@ -12,6 +12,7 @@ import { useWorkspace, WorkspaceProvider } from "@/contexts/WorkspaceContext";
 import { MultiDevicePreview, type MultiDevicePreviewHandle } from "@/components/MultiDevicePreview";
 import type { ActivityType } from "@/components/ProjectActivityIndicator";
 import { AgentChatPanel } from "@/components/chat/_ui_/AgentChatPanel";
+import AlkhidmatBanner from "@/components/AlkhidmatBanner";
 // Dialogs and side panels load on first use (see lazyPanels.tsx); the chat
 // and the preview are the only things a project needs at first paint.
 import { SettingsDialog, CloudRegionDialog, GithubStatusPopover, RevisionPanel, VersionHistoryPanel, CodeEditorPanel } from "@/components/editor/lazyPanels";
@@ -43,7 +44,7 @@ import {
   Database,
   ArrowUpRight,
 } from "lucide-react";
-import ecgLogo from "@/assets/ecg-logo.png";
+import ecgLogo from "@/assets/logo/svg/smes-agent-icon.svg";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -78,6 +79,7 @@ import { domainService } from "@/eCG/Publish";
 import type { DomainConfiguration, DomainStatus } from "@/eCG/Publish/types";
 import { countNonEmptyLines } from "@/utils/ecoCounter";
 import { checkAndIncrementPublishLines, showLimitToast } from "@/services/subscriptionService";
+import BrandLoader from "@/components/BrandLoader";
 import type { BuilderTab } from "./editor/types";
 import { BUILDER_TABS, AUTO_REPAIR_COOLDOWN_MS, MAX_CONSECUTIVE_REPAIRS, NAV_BLANK_GRACE_MS } from "./editor/constants";
 import type { MagicCursorTarget } from "./editor/types";
@@ -278,7 +280,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
       // so the check works even when VITE_PREVIEW_SERVICE_URL is not explicitly set.
       const previewServiceBase =
         (import.meta.env.VITE_PREVIEW_SERVICE_URL as string | undefined) ||
-        (import.meta.env.PROD ? 'https://preview.ecomgear.app' : 'http://localhost:3001');
+        (import.meta.env.PROD ? 'https://preview.SMEsAgent.app' : 'http://localhost:3001');
       const isAllowedOrigin =
         event.origin === window.location.origin ||
         event.origin === new URL(previewServiceBase).origin;
@@ -661,7 +663,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   const showRouteNavigator = showPreviewChrome && !showCodeViewer && hasRenderablePreview;
   const isAlreadyPublished = Boolean(project?.published_url || project?.published_subdomain || publishedUrl || dbCustomDomain);
   const hasCustomDomain = customDomainActivated || Boolean(customDomain) || Boolean(dbCustomDomain) ||
-    Boolean(project?.published_url && !project.published_url.includes('ecomgear.app'));
+    Boolean(project?.published_url && !project.published_url.includes('SMEsAgent.app'));
   const canShowPublishActions = hasLoadedCode || isAlreadyPublished || Boolean(sharePreviewUrl);
   const canRenderProjectActions = Boolean(projectId);
   const canInteractWithPublishActions = canRenderProjectActions && canShowPublishActions;
@@ -1318,13 +1320,19 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
         } else {
           loadWorkspaceFromDb()
             .then(() => setHasInitialLoadCompleted(true))
-            .catch(err => console.warn('[Editor] Legacy storage load failed:', err));
+            .catch(err => {
+              console.warn('[Editor] Legacy storage load failed:', err);
+              setHasInitialLoadCompleted(true);
+            });
         }
       }).catch(err => {
         console.warn('[Editor] Revision load failed, falling back to legacy storage:', err);
         loadWorkspaceFromDb()
           .then(() => setHasInitialLoadCompleted(true))
-          .catch(fallbackErr => console.warn('[Editor] Fallback storage load also failed:', fallbackErr));
+          .catch(fallbackErr => {
+            console.warn('[Editor] Fallback storage load also failed:', fallbackErr);
+            setHasInitialLoadCompleted(true);
+          });
       });
     }
   }, [projectId, loadWorkspaceFromDb]);
@@ -1807,8 +1815,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
   const handleUpdateCustomDomainSite = async () => {
     // Prefer explicitly set customDomain, then DB-loaded custom domain,
-    // then published_url only if it's a custom domain (not ecomgear subdomain)
-    const customPublishedUrl = (project?.published_url && !project.published_url.includes('ecomgear.app'))
+    // then published_url only if it's a custom domain (not SMEsAgent subdomain)
+    const customPublishedUrl = (project?.published_url && !project.published_url.includes('SMEsAgent.app'))
       ? project.published_url : null;
     const normalizedDomain = normalizeDomain(
       customDomain || dbCustomDomain || customPublishedUrl || ''
@@ -1981,7 +1989,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   };
 
   const handlePublish = async () => {    try {
-      const publishedUrl = `https://${project?.name}.ecomgear.app`;
+      const publishedUrl = `https://${project?.name}.SMEsAgent.app`;
 
       await supabase
         .from("projects")
@@ -2178,7 +2186,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
   const viewportClasses = {
     desktop: "w-full h-full",
-    tablet: "w-[768px] h-[1024px] mx-auto border-8 border-gray-800 rounded-xl",
+    tablet: "w-[768px] h-[1024px] mx-auto border-8 border-gray-800 rounded-none",
     mobile: "w-[375px] h-[667px] mx-auto border-8 border-gray-800 rounded-[2.5rem]",
   };
 
@@ -2265,7 +2273,9 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
   }, [activeBuilderTab, canShowPublishActions, currentOrganizationId, isGuest, setActiveBuilderTab]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#09090b]">
+    <div className="flex flex-col h-screen w-screen overflow-hidden">
+      <AlkhidmatBanner />
+      <div className="flex flex-1 min-h-0 overflow-hidden bg-card">
       {!isMobileViewport && !isMinimized && (
         <button
           type="button"
@@ -2280,17 +2290,17 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
           <Sheet open={!isMinimized} onOpenChange={(open) => setIsMinimized(!open)}>
             <SheetContent
               side="bottom"
-              className="h-[100dvh] border-white/[0.06] bg-[#0e0e10] p-0 sm:max-w-none"
+              className="h-[100dvh] border-white/[0.06] bg-card p-0 sm:max-w-none"
               aria-describedby={undefined}
             >
               <SheetTitle className="sr-only">Assistant</SheetTitle>
               <div className="h-full flex flex-col">
-                <div className="h-14 flex items-center justify-between px-4 bg-[#131315]/60 backdrop-blur-xl">
+                <div className="h-14 flex items-center justify-between px-4 bg-accent/60 backdrop-blur-xl">
                   <div className="flex items-center gap-3 min-w-0">
                     <button onClick={() => navigate('/dashboard/projects')} className="flex items-center">
                       <img
                         src={ecgLogo}
-                        alt="eCG"
+                        alt="SMEs Agent"
                         className="h-5 w-auto object-contain"
                       />
                     </button>
@@ -2311,7 +2321,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       variant="ghost"
                       size="icon"
                       onClick={() => openSettings()}
-                      className="h-8 w-8 text-white/30 hover:text-white/80 hover:bg-white/[0.06] rounded-lg"
+                      className="h-8 w-8 text-white/30 hover:text-white/80 hover:bg-white/[0.06] rounded-none"
                     >
                       <Settings className="h-4 w-4" />
                     </Button>
@@ -2431,8 +2441,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               aria-label="Open assistant"
               onClick={() => setIsMinimized(false)}
               className="fixed bottom-5 right-5 z-50 flex h-12 w-12 items-center justify-center
-                rounded-full bg-indigo-600 text-white shadow-lg shadow-black/40
-                hover:bg-indigo-500 transition-colors"
+                rounded-full bg-primary text-white shadow-lg shadow-black/40
+                hover:bg-primary/90 transition-colors"
             >
               <Bot className="h-5 w-5" />
             </button>
@@ -2444,7 +2454,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
       {!isMobileViewport && <div
         ref={chatPanelRef}
         className={cn(
-          'order-1 flex-shrink-0 flex flex-col relative bg-[#0c0c0e]',
+          'order-1 flex-shrink-0 flex flex-col relative bg-muted',
           'fixed lg:relative inset-y-0 left-0 lg:inset-auto lg:left-auto z-40 lg:z-auto',
           isMinimized ? 'w-14' : ''
         )}
@@ -2458,7 +2468,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             className="group"
           >
             <div style={{ position: 'absolute', left: 2, top: 0, bottom: 0, width: 2 }}
-              className="bg-white/[0.06] group-hover:bg-indigo-500/60 transition-colors duration-150" />
+              className="bg-white/[0.06] group-hover:bg-primary/90/60 transition-colors duration-150" />
           </div>
         )}
         {/* Header */}
@@ -2481,7 +2491,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                     }}
                   />
                   <Button size="sm" onClick={handleUpdateProjectName} disabled={updatingProjectName}
-                    className="h-6 text-[11px] px-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md">
+                    className="h-6 text-[11px] px-2 bg-primary hover:bg-primary/90 text-white rounded-md">
                     {updatingProjectName ? '…' : 'Save'}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => { setIsEditingProjectName(false); setEditProjectName(project?.name || ''); }}
@@ -2492,7 +2502,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               ) : (
                 <div className="flex items-center gap-2 min-w-0">
                   <button onClick={() => navigate('/dashboard/projects')} className="flex items-center group">
-                    <img src={ecgLogo} alt="eCG" className="h-4 w-auto object-contain group-hover:opacity-60 transition-opacity" />
+                    <img src={ecgLogo} alt="SMEs Agent" className="h-4 w-auto object-contain group-hover:opacity-60 transition-opacity" />
                   </button>
                   <button
                     type="button"
@@ -2521,7 +2531,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
             </>
           )}
           {isMinimized && (
-            <Button variant="ghost" size="icon" onClick={() => setIsMinimized(false)} className="mx-auto h-9 w-9 text-white/40 hover:text-white/80 hover:bg-white/[0.06] rounded-lg">
+            <Button variant="ghost" size="icon" onClick={() => setIsMinimized(false)} className="mx-auto h-9 w-9 text-white/40 hover:text-white/80 hover:bg-white/[0.06] rounded-none">
               <Bot className="h-4.5 w-4.5" />
             </Button>
           )}
@@ -2531,12 +2541,12 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
         {!isMinimized && projectId && (currentUser || isGuest) && activeBuilderTab !== 'revisions' && (
           <div className="flex-1 overflow-hidden">
             {isGuest && (
-              <div className="mx-3 mt-3 mb-1 rounded-lg bg-cyan-500/[0.06] px-3 py-2.5 text-xs text-cyan-200/80">
-                <span className="font-medium text-cyan-200">Guest</span>   Gemini &middot; {(() => {
+              <div className="mx-3 mt-3 mb-1 rounded-none bg-muted px-3 py-2.5 text-xs text-muted-foreground">
+                <span className="font-medium text-muted-foreground">Guest</span>   Gemini &middot; {(() => {
                   const used = parseInt(localStorage.getItem('ecg_guest_requests') || '0', 10);
                   return Math.max(0, 3 - used);
                 })()} of 3 left &middot;{' '}
-                <button onClick={() => navigate('/auth')} className="underline text-cyan-300/80 hover:text-white transition-colors">
+                <button onClick={() => navigate('/auth')} className="underline text-muted-foreground hover:text-white transition-colors">
                   Sign up
                 </button>
               </div>
@@ -2771,9 +2781,9 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
       />
 
       {/* Main Workspace - Preview / Code */}
-      <div className="order-2 flex-1 min-w-0 flex flex-col bg-[#09090b]">
+      <div className="order-2 flex-1 min-w-0 flex flex-col bg-card">
         {/* Preview Header */}
-        <div className="h-10 flex items-center justify-between px-3 bg-[#131315]/60 backdrop-blur-xl border-b border-white/[0.04] relative z-10">
+        <div className="h-10 flex items-center justify-between px-3 bg-accent/60 backdrop-blur-xl border-b border-white/[0.04] relative z-10">
           <div className="flex gap-2 items-center min-w-0">
             <div className="flex items-center gap-0.5 min-w-0 overflow-x-auto">
               {visibleBuilderTabs.map((tab) => (
@@ -2822,7 +2832,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                 <Button
                   onClick={handleExpandToComplete}
                   disabled={isLoading}
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-none"
                 >
                   {isLoading ? "Expanding..." : "Expand to Full App"}
                 </Button>
@@ -2908,7 +2918,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
                   align="start"
-                  className="w-64 bg-[#1c1b1d] border-white/[0.06] text-white max-h-80 overflow-y-auto rounded-xl"
+                  className="w-64 bg-secondary border-white/[0.06] text-white max-h-80 overflow-y-auto rounded-none"
                 >
                   <DropdownMenuLabel className="text-white/30 text-[10px] uppercase tracking-widest">
                     Routes ({detectedRoutes.length})
@@ -2921,7 +2931,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                     return (
                       <DropdownMenuItem
                         key={routePath}
-                        className={`cursor-pointer hover:bg-white/[0.06] rounded-lg ${currentRoutePath === routePath ? 'bg-indigo-500/10 text-indigo-300' : ''}`}
+                        className={`cursor-pointer hover:bg-white/[0.06] rounded-none ${currentRoutePath === routePath ? 'bg-primary/10 text-primary' : ''}`}
                         onClick={() => {
                           setCurrentRoutePath(routePath);
                           if (projectId) {
@@ -2966,7 +2976,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                     }
                   }}
                 />
-                {previewStatus === 'building' && <div className="w-3 h-3 border-2 border-indigo-400/60 border-t-transparent rounded-full animate-spin flex-shrink-0" />}
+                {previewStatus === 'building' && <div className="w-3 h-3 border-2 border-border border-t-transparent rounded-full animate-spin flex-shrink-0" />}
               </div>
 
               {/* Refresh Button */}
@@ -3037,7 +3047,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               {canRenderProjectActions && (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <button onClick={() => openSettings('ecomgear-database')}
+                    <button onClick={() => openSettings('SMEsAgent-database')}
                       className="h-7 w-7 flex items-center justify-center rounded-md text-orange-400/60 hover:text-orange-400 hover:bg-orange-500/10 transition-colors">
                       <Database className="h-3.5 w-3.5" />
                     </button>
@@ -3065,7 +3075,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                   <PopoverTrigger asChild>
                     <button
                       disabled={isPublishing || !isVersionPublishable}
-                      className="flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] font-medium text-white bg-indigo-600 hover:bg-indigo-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] font-medium text-white bg-primary hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {isPublishing ? (
                         <RotateCcw className="h-3 w-3 animate-spin shrink-0" />
@@ -3080,15 +3090,15 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                   <PopoverContent
                     align="end"
                     sideOffset={8}
-                    className="w-80 p-0 bg-[#111116] border border-white/[0.1] rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.6)] overflow-hidden"
+                    className="w-80 p-0 bg-card border border-white/[0.1] rounded-none shadow-[0_8px_32px_rgba(0,0,0,0.6)] overflow-hidden"
                   >
                     {isAlreadyPublished ? (() => {
                       // Resolve all connected domains
                       const subdomainUrl = project?.published_subdomain
-                        ? `https://${project.published_subdomain}.ecomgear.app`
+                        ? `https://${project.published_subdomain}.SMEsAgent.app`
                         : null;
                       const rawCustom = dbCustomDomain || customDomain ||
-                        (project?.published_url && !project.published_url.includes('ecomgear.app')
+                        (project?.published_url && !project.published_url.includes('SMEsAgent.app')
                           ? project.published_url.replace(/^https?:\/\//, '') : null);
                       const customDomainUrl = rawCustom
                         ? (rawCustom.startsWith('http') ? rawCustom : `https://${rawCustom}`)
@@ -3113,7 +3123,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                             <div className="flex items-center justify-between mb-2">
                               <span className="text-xs text-white/40 font-medium">Website URL</span>
                               <button
-                                className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
+                                className="text-xs text-muted-foreground hover:text-primary transition-colors flex items-center gap-1"
                                 onClick={() => openSettings('project-domains')}
                               >
                                 <Link className="h-3 w-3" />
@@ -3123,8 +3133,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                               </button>
                             </div>
                             {/* Primary URL */}
-                            <div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2 border border-white/[0.06]">
-                              <span className="flex-1 text-sm text-white/80 font-mono truncate">{primaryDisplay || 'ecomgear.app'}</span>
+                            <div className="flex items-center gap-2 bg-black/30 rounded-none px-3 py-2 border border-white/[0.06]">
+                              <span className="flex-1 text-sm text-white/80 font-mono truncate">{primaryDisplay || 'SMEsAgent.app'}</span>
                               <button
                                 className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
                                 title="Copy URL"
@@ -3140,9 +3150,9 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                                 <ExternalLink className="h-3.5 w-3.5 text-white/40 hover:text-white/70" />
                               </button>
                             </div>
-                            {/* Secondary URL (ecomgear subdomain when custom domain is primary) */}
+                            {/* Secondary URL (SMEsAgent subdomain when custom domain is primary) */}
                             {customDomainUrl && subdomainUrl && (
-                              <div className="flex items-center gap-2 mt-1.5 bg-black/20 rounded-lg px-3 py-1.5 border border-white/[0.04]">
+                              <div className="flex items-center gap-2 mt-1.5 bg-black/20 rounded-none px-3 py-1.5 border border-white/[0.04]">
                                 <Globe className="h-3 w-3 text-white/20 shrink-0" />
                                 <span className="flex-1 text-xs text-white/35 font-mono truncate">{subdomainUrl.replace(/^https?:\/\//, '')}</span>
                                 <button
@@ -3171,14 +3181,14 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                           {/* Actions row */}
                           <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.06]">
                             <button
-                              className="flex-1 flex items-center justify-center gap-1.5 h-8 rounded-lg bg-white/[0.06] hover:bg-white/[0.10] text-white/70 hover:text-white text-xs font-medium transition-colors border border-white/[0.06]"
+                              className="flex-1 flex items-center justify-center gap-1.5 h-8 rounded-none bg-white/[0.06] hover:bg-white/[0.10] text-white/70 hover:text-white text-xs font-medium transition-colors border border-white/[0.06]"
                               onClick={() => window.open(primaryUrl, '_blank')}
                             >
                               <ExternalLink className="h-3.5 w-3.5" />
                               Open site
                             </button>
                             <button
-                              className="flex-1 flex items-center justify-center gap-1.5 h-8 rounded-lg bg-white/[0.06] hover:bg-white/[0.10] text-white/70 hover:text-white text-xs font-medium transition-colors border border-white/[0.06]"
+                              className="flex-1 flex items-center justify-center gap-1.5 h-8 rounded-none bg-white/[0.06] hover:bg-white/[0.10] text-white/70 hover:text-white text-xs font-medium transition-colors border border-white/[0.06]"
                               onClick={() => {
                                 setPublishMode('subdomain');
                                 setActiveBuilderTab('publish');
@@ -3192,7 +3202,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                           {/* SEO row */}
                           <div className="px-4 py-2 border-b border-white/[0.06]">
                             <button
-                              className="w-full flex items-center gap-2 h-8 rounded-lg px-2 hover:bg-white/[0.06] text-white/50 hover:text-white/80 text-xs font-medium transition-colors"
+                              className="w-full flex items-center gap-2 h-8 rounded-none px-2 hover:bg-white/[0.06] text-white/50 hover:text-white/80 text-xs font-medium transition-colors"
                               onClick={() => openSettings('project-seo')}
                             >
                               <Search className="h-3.5 w-3.5 shrink-0" />
@@ -3202,8 +3212,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                           {/* Database row */}
                           <div className="px-4 py-2 border-b border-white/[0.06]">
                             <button
-                              className="w-full flex items-center gap-2 h-8 rounded-lg px-2 hover:bg-white/[0.06] text-white/50 hover:text-white/80 text-xs font-medium transition-colors"
-                              onClick={() => openSettings('ecomgear-database')}
+                              className="w-full flex items-center gap-2 h-8 rounded-none px-2 hover:bg-white/[0.06] text-white/50 hover:text-white/80 text-xs font-medium transition-colors"
+                              onClick={() => openSettings('SMEsAgent-database')}
                             >
                               <Cloud className="h-3.5 w-3.5 shrink-0 text-orange-400" />
                               <span className="flex-1 text-left">ECG CLOUD DB</span>
@@ -3214,7 +3224,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                           <div className="px-4 py-3">
                             <button
                               disabled={!isVersionPublishable || isPublishing || noChangesSincePublish}
-                              className="w-full h-9 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+                              className="w-full h-9 rounded-none bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
                               onClick={() => {
                                 if (!currentOrganizationId) { toast.error("Join or create an organization to publish your site"); return; }
                                 if (!isVersionPublishable || noChangesSincePublish) return;
@@ -3244,18 +3254,18 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                         </div>
                         {/* Domain option */}
                         <div className="px-4 py-3 border-b border-white/[0.06]">
-                          <div className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.03] border border-white/[0.06]">
-                            <div className="h-8 w-8 rounded-full bg-indigo-500/20 flex items-center justify-center shrink-0">
-                              <Globe className="h-4 w-4 text-indigo-400" />
+                          <div className="flex items-center gap-3 p-2.5 rounded-none bg-white/[0.03] border border-white/[0.06]">
+                            <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+                              <Globe className="h-4 w-4 text-muted-foreground" />
                             </div>
                             <div className="min-w-0">
-                              <p className="text-xs font-medium text-white/70">ecomgear.app domain</p>
-                              <p className="text-xs text-white/30 truncate">yourproject.ecomgear.app</p>
+                              <p className="text-xs font-medium text-white/70">SMEsAgent.app domain</p>
+                              <p className="text-xs text-white/30 truncate">yourproject.SMEsAgent.app</p>
                             </div>
                           </div>
                           {canUseCustomDomain && (
                             <button
-                              className="w-full mt-2 flex items-center gap-2 p-2.5 rounded-lg hover:bg-white/[0.04] text-xs text-white/40 hover:text-white/60 transition-colors"
+                              className="w-full mt-2 flex items-center gap-2 p-2.5 rounded-none hover:bg-white/[0.04] text-xs text-white/40 hover:text-white/60 transition-colors"
                               onClick={() => openSettings('project-domains')}
                             >
                               <Link className="h-3.5 w-3.5 shrink-0" />
@@ -3266,7 +3276,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                         {/* SEO row */}
                         <div className="px-4 py-2 border-b border-white/[0.06]">
                           <button
-                            className="w-full flex items-center gap-2 h-8 rounded-lg px-2 hover:bg-white/[0.06] text-white/50 hover:text-white/80 text-xs font-medium transition-colors"
+                            className="w-full flex items-center gap-2 h-8 rounded-none px-2 hover:bg-white/[0.06] text-white/50 hover:text-white/80 text-xs font-medium transition-colors"
                             onClick={() => openSettings('project-seo')}
                           >
                             <Search className="h-3.5 w-3.5 shrink-0" />
@@ -3276,8 +3286,8 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                         {/* Database row */}
                         <div className="px-4 py-2 border-b border-white/[0.06]">
                           <button
-                            className="w-full flex items-center gap-2 h-8 rounded-lg px-2 hover:bg-white/[0.06] text-white/50 hover:text-white/80 text-xs font-medium transition-colors"
-                            onClick={() => openSettings('ecomgear-database')}
+                            className="w-full flex items-center gap-2 h-8 rounded-none px-2 hover:bg-white/[0.06] text-white/50 hover:text-white/80 text-xs font-medium transition-colors"
+                            onClick={() => openSettings('SMEsAgent-database')}
                           >
                             <Cloud className="h-3.5 w-3.5 shrink-0 text-orange-400" />
                             <span className="flex-1 text-left">ECG CLOUD DB</span>
@@ -3288,7 +3298,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                         <div className="px-4 py-3">
                           <button
                             disabled={!isVersionPublishable || isPublishing || !canPublishToEcomDomain}
-                            className="w-full h-9 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+                            className="w-full h-9 rounded-none bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
                             onClick={() => {
                               if (!currentOrganizationId) { toast.error("Join or create an organization to publish your site"); return; }
                               if (!canPublishToEcomDomain) { toast.error(`Publishing is not available on ${tierLabel}. Upgrade your plan to publish.`); return; }
@@ -3313,12 +3323,12 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
         </div>
 
         {/* Main Content Area - Preview */}
-        <div className="flex-1 min-h-0 bg-[#09090b] overflow-hidden relative flex">
+        <div className="flex-1 min-h-0 bg-card overflow-hidden relative flex">
           <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
             {activeBuilderTab === 'revisions' ? (
               <div className="flex-1 overflow-hidden p-4 sm:p-6">
-                <div className="mb-4 rounded-xl bg-[#1c1b1d] p-4">
-                  <p className="text-[10px] uppercase tracking-widest text-indigo-300/60">Revisions</p>
+                <div className="mb-4 rounded-none bg-secondary p-4">
+                  <p className="text-[10px] uppercase tracking-widest text-primary/60">Revisions</p>
                   <h2 className="mt-1 text-base font-medium text-white/90">Version timeline</h2>
                   <p className="mt-1 text-xs text-white/30">
                     Browse past changes and restore a revision.
@@ -3332,7 +3342,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                     mode="full"
                   />
                 ) : (
-                  <div className="rounded-xl bg-[#1c1b1d] p-6 text-sm text-white/30">
+                  <div className="rounded-none bg-secondary p-6 text-sm text-white/30">
                     Revisions are available after project context is loaded.
                   </div>
                 )}
@@ -3341,25 +3351,18 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               <>
 
             <div className={cn(
-              "flex-1 overflow-hidden bg-[#09090b]",
+              "flex-1 overflow-hidden bg-card",
               showCodeViewer ? "relative flex items-center justify-center" : ""
             )}>
               {!hasLoadedCode && !hasRenderablePreview && !isLoading ? (
-                <div className="relative flex h-full items-center justify-center overflow-hidden bg-[#09090b]">
+                <div className="relative flex h-full items-center justify-center overflow-hidden bg-card">
                   <div className="absolute inset-0 bg-black" />
                   <div className="relative z-10 flex max-w-lg flex-col items-center justify-center px-8 text-center">
-                    <video
-                      src="/assets/loading.mp4"
-                      autoPlay
-                      loop
-                      muted
-                      playsInline
-                      className="mb-6 w-full max-w-xs object-cover "
-                    />
+                    <BrandLoader variant="assemble" size={140} label="Building project" />
                   </div>
                 </div>
               ) : showCodeViewer && canExportCode ? (
-                <div className="w-full h-full bg-[#111113] border border-white/[0.06] rounded-xl overflow-hidden shadow-2xl">
+                <div className="w-full h-full bg-card border border-white/[0.06] rounded-none overflow-hidden shadow-2xl">
                   <CodeEditorPanel
                     files={(() => {
                       const loaded: Array<{ path: string; content: string | null }> =
@@ -3492,9 +3495,9 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
 
                   {/* URL field */}
                   {isEditingSlug ? (
-                    <div className="rounded-lg border border-purple-500/50 bg-white/[0.04] overflow-hidden">
+                    <div className="rounded-none border border-border bg-white/[0.04] overflow-hidden">
                       <div className="px-3 pt-2 text-[11px] text-gray-600 select-none font-mono truncate">
-                        {publishSlug || 'my-awesome-app'}<span className="text-gray-700">.preview.ecomgear.app</span>
+                        {publishSlug || 'my-awesome-app'}<span className="text-gray-700">.preview.SMEsAgent.app</span>
                       </div>
                       <div className="flex items-center gap-2 px-3 pb-2.5">
                         <input
@@ -3526,7 +3529,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                           {slugChecking ? (
                             <span className="text-gray-500">Checking…</span>
                           ) : publishSlug === project?.published_subdomain ? (
-                            <><span className="h-1.5 w-1.5 rounded-full bg-blue-400 inline-block"/><span className="text-blue-400">Current address</span></>
+                            <><span className="h-1.5 w-1.5 rounded-full bg-primary inline-block"/><span className="text-muted-foreground">Current address</span></>
                           ) : slugAvailable === true ? (
                             <><span className="h-1.5 w-1.5 rounded-full bg-emerald-400 inline-block"/><span className="text-emerald-400">Available</span></>
                           ) : slugAvailable === false ? (
@@ -3536,10 +3539,10 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                       )}
                     </div>
                   ) : (
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5 flex items-center gap-2 group">
+                    <div className="rounded-none border border-white/10 bg-white/[0.04] px-3 py-2.5 flex items-center gap-2 group">
                       <span className="flex-1 text-sm text-gray-200 font-mono truncate">
                         {publishSlug
-                          ? <><span className="text-purple-300">{publishSlug}</span><span className="text-gray-500">.preview.ecomgear.app</span></>
+                          ? <><span className="text-muted-foreground">{publishSlug}</span><span className="text-gray-500">.preview.SMEsAgent.app</span></>
                           : <span className="text-gray-600 italic">not set</span>
                         }
                       </span>
@@ -3588,7 +3591,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                     <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg>
                     <span>Add custom domain</span>
                     {!canUseCustomDomain && (
-                      <span className="ml-auto flex items-center gap-1 text-[10px] font-semibold bg-purple-500/20 text-purple-400 border border-purple-500/30 rounded px-1.5 py-0.5">
+                      <span className="ml-auto flex items-center gap-1 text-[10px] font-semibold bg-muted text-muted-foreground border border-border rounded px-1.5 py-0.5">
                         <svg className="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
                         Pro
                       </span>
@@ -3616,7 +3619,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                     <p className="text-xs text-gray-600">Root domain or subdomain, e.g. example.com or app.example.com</p>
 
                     {customDomainConfig && (
-                      <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-3 text-xs">
+                      <div className="rounded-none border border-border bg-muted p-3 space-y-3 text-xs">
                         <p className="text-amber-300 font-semibold flex items-center gap-1.5">
                           <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                           Add BOTH DNS records at your registrar
@@ -3625,10 +3628,10 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                           <div className="space-y-1">
                             <p className="text-gray-400 font-medium">Record 1   A record</p>
                             <div className="grid grid-cols-[auto_1fr_auto] gap-x-2 gap-y-1 items-center bg-black/20 rounded p-2">
-                              <span className="text-purple-300 font-mono">Type</span><span className="text-white font-mono">A</span><span/>
-                              <span className="text-purple-300 font-mono">Host</span><span className="text-white font-mono break-all">{customDomainConfig.a_record.host}</span>
+                              <span className="text-muted-foreground font-mono">Type</span><span className="text-white font-mono">A</span><span/>
+                              <span className="text-muted-foreground font-mono">Host</span><span className="text-white font-mono break-all">{customDomainConfig.a_record.host}</span>
                               <button onClick={() => { navigator.clipboard.writeText(customDomainConfig.a_record!.host); toast.success('Copied'); }} className="text-gray-400 hover:text-white transition-colors"><Copy className="h-3 w-3"/></button>
-                              <span className="text-purple-300 font-mono">Value</span><span className="text-white font-mono break-all">{customDomainConfig.a_record.value}</span>
+                              <span className="text-muted-foreground font-mono">Value</span><span className="text-white font-mono break-all">{customDomainConfig.a_record.value}</span>
                               <button onClick={() => { navigator.clipboard.writeText(customDomainConfig.a_record!.value); toast.success('Copied'); }} className="text-gray-400 hover:text-white transition-colors"><Copy className="h-3 w-3"/></button>
                             </div>
                           </div>
@@ -3637,10 +3640,10 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                           <div className="space-y-1">
                             <p className="text-gray-400 font-medium">Record 1   CNAME record</p>
                             <div className="grid grid-cols-[auto_1fr_auto] gap-x-2 gap-y-1 items-center bg-black/20 rounded p-2">
-                              <span className="text-purple-300 font-mono">Type</span><span className="text-white font-mono">CNAME</span><span/>
-                              <span className="text-purple-300 font-mono">Host</span><span className="text-white font-mono break-all">{customDomainConfig.cname_record.host}</span>
+                              <span className="text-muted-foreground font-mono">Type</span><span className="text-white font-mono">CNAME</span><span/>
+                              <span className="text-muted-foreground font-mono">Host</span><span className="text-white font-mono break-all">{customDomainConfig.cname_record.host}</span>
                               <button onClick={() => { navigator.clipboard.writeText(customDomainConfig.cname_record!.host); toast.success('Copied'); }} className="text-gray-400 hover:text-white transition-colors"><Copy className="h-3 w-3"/></button>
-                              <span className="text-purple-300 font-mono">Value</span><span className="text-white font-mono break-all">{customDomainConfig.cname_record.value}</span>
+                              <span className="text-muted-foreground font-mono">Value</span><span className="text-white font-mono break-all">{customDomainConfig.cname_record.value}</span>
                               <button onClick={() => { navigator.clipboard.writeText(customDomainConfig.cname_record!.value); toast.success('Copied'); }} className="text-gray-400 hover:text-white transition-colors"><Copy className="h-3 w-3"/></button>
                             </div>
                           </div>
@@ -3648,14 +3651,14 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                         <div className="space-y-1">
                           <p className="text-gray-400 font-medium">Record 2   TXT verification</p>
                           <div className="grid grid-cols-[auto_1fr_auto] gap-x-2 gap-y-1 items-center bg-black/20 rounded p-2">
-                            <span className="text-purple-300 font-mono">Type</span><span className="text-white font-mono">TXT</span><span/>
-                            <span className="text-purple-300 font-mono">Host</span>
+                            <span className="text-muted-foreground font-mono">Type</span><span className="text-white font-mono">TXT</span><span/>
+                            <span className="text-muted-foreground font-mono">Host</span>
                             <div className="flex flex-col gap-0.5">
                               <span className="text-white font-mono break-all">{customDomainConfig.txt_record.host}</span>
                               <span className="text-gray-500 text-[10px]">Some registrars need: <span className="font-mono text-gray-400">{customDomainConfig.txt_record.host}.{normalizeDomain(customDomain)}</span></span>
                             </div>
                             <button onClick={() => { navigator.clipboard.writeText(customDomainConfig.txt_record.host); toast.success('Copied'); }} className="text-gray-400 hover:text-white transition-colors"><Copy className="h-3 w-3"/></button>
-                            <span className="text-purple-300 font-mono">Value</span><span className="text-white font-mono break-all">{customDomainConfig.txt_record.value}</span>
+                            <span className="text-muted-foreground font-mono">Value</span><span className="text-white font-mono break-all">{customDomainConfig.txt_record.value}</span>
                             <button onClick={() => { navigator.clipboard.writeText(customDomainConfig.txt_record.value); toast.success('Copied'); }} className="text-gray-400 hover:text-white transition-colors"><Copy className="h-3 w-3"/></button>
                           </div>
                         </div>
@@ -3664,7 +3667,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                     )}
 
                     {dnsCheckResult && (
-                      <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 space-y-2 text-xs">
+                      <div className="rounded-none border border-white/10 bg-white/[0.03] p-3 space-y-2 text-xs">
                         <p className="text-gray-300 font-medium flex items-center justify-between">
                           <span>DNS check</span>
                           <span className="text-gray-500 text-[10px]">{dnsCheckResult.checkedAt}</span>
@@ -3699,30 +3702,30 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                     )}
 
                     {customDomainActivated && publishedUrl && (
-                      <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-2">
+                      <div className="rounded-none border border-border bg-muted p-3 space-y-2">
                         <p className="text-emerald-400 text-sm flex items-center gap-1.5">
                           <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse inline-block"/>Custom domain is live
                         </p>
-                        <a href={publishedUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-purple-300 underline break-all">{publishedUrl}</a>
+                        <a href={publishedUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground underline break-all">{publishedUrl}</a>
                         <div className="flex gap-2">
                           <Button size="sm" variant="outline" className="flex-1 border-white/10 text-gray-300 hover:bg-white/5" onClick={() => { navigator.clipboard.writeText(publishedUrl); toast.success('URL copied'); }}>Copy URL</Button>
-                          <Button size="sm" className="flex-1 bg-purple-600 hover:bg-purple-700 text-white" onClick={() => window.open(publishedUrl, '_blank')}>Open Site</Button>
+                          <Button size="sm" className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground text-white" onClick={() => window.open(publishedUrl, '_blank')}>Open Site</Button>
                         </div>
                       </div>
                     )}
 
                     <div className="grid gap-2">
-                      <Button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-40" disabled={isPublishing || isCheckingDns || !customDomain.trim() || !canUseCustomDomain} onClick={handlePrepareCustomDomain}>
+                      <Button className="w-full bg-primary hover:bg-primary/90 text-white disabled:opacity-40" disabled={isPublishing || isCheckingDns || !customDomain.trim() || !canUseCustomDomain} onClick={handlePrepareCustomDomain}>
                         Prepare DNS Setup
                       </Button>
                       <Button variant="outline" className="w-full border-white/20 text-white hover:bg-white/10 disabled:opacity-40" disabled={isCheckingDns || isPublishing || !customDomainConfig || !customDomain.trim()} onClick={handleCheckDnsOnly}>
                         {isCheckingDns ? <span className="flex items-center gap-2"><svg className="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>Checking DNS…</span> : 'Check DNS'}
                       </Button>
-                      <Button className="w-full bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-40" disabled={isPublishing || isCheckingDns || !customDomainConfig || !customDomain.trim() || !canUseCustomDomain} onClick={handleVerifyAndActivateCustomDomain}>
+                      <Button className="w-full bg-primary hover:bg-primary/90 text-primary-foreground text-white disabled:opacity-40" disabled={isPublishing || isCheckingDns || !customDomainConfig || !customDomain.trim() || !canUseCustomDomain} onClick={handleVerifyAndActivateCustomDomain}>
                         {isPublishing ? 'Deploying and verifying…' : 'Verify DNS and Go Live'}
                       </Button>
                       {customDomainActivated && (
-                        <Button className="w-full bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-40" disabled={isPublishing || isCheckingDns || !isVersionPublishable || noChangesSincePublish} onClick={handleUpdateCustomDomainSite}>
+                        <Button className="w-full bg-primary hover:bg-primary/90 text-primary-foreground text-white disabled:opacity-40" disabled={isPublishing || isCheckingDns || !isVersionPublishable || noChangesSincePublish} onClick={handleUpdateCustomDomainSite}>
                           {isPublishing ? 'Updating production…' : noChangesSincePublish ? 'No changes to publish' : 'Update Production Site'}
                         </Button>
                       )}
@@ -3743,7 +3746,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
                     const isRepublish = Boolean(publishedUrl && publishSlug === project?.published_subdomain);
                     return (
                       <Button
-                        className="w-full bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-40"
+                        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground text-white disabled:opacity-40"
                         disabled={
                           !publishSlug ||
                           (slugAvailable !== true && publishSlug !== project?.published_subdomain) ||
@@ -3801,7 +3804,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
               className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm"
               onClick={() => setShowVersionHistory(false)}
             />
-            <div className="fixed inset-y-0 right-0 z-[201] w-[400px] sm:w-[480px] bg-[#0c0c0e] border-l border-white/[0.08] flex flex-col shadow-2xl">
+            <div className="fixed inset-y-0 right-0 z-[201] w-[400px] sm:w-[480px] bg-muted border-l border-white/[0.08] flex flex-col shadow-2xl">
               <VersionHistoryPanel
                 projectId={projectId ?? ''}
                 onClose={() => setShowVersionHistory(false)}
@@ -3814,6 +3817,7 @@ const EditorInner = ({ projectId: propProjectId }: { projectId?: string }) => {
           </>
         )}
 
+      </div>
       </div>
     </div>
   );

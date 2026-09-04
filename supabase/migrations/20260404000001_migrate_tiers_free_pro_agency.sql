@@ -113,6 +113,6 @@ GRANT EXECUTE ON FUNCTION public.get_org_limits(uuid) TO authenticated;
 -- ── 6. Update seed org (admin org) to agency tier ────────────────────────────
 UPDATE public.organizations
 SET plan_tier = 'agency'::plan_tier
-WHERE slug = 'ecomgear-admin';
+WHERE slug = 'SMEsAgent-admin';
 
 COMMENT ON COLUMN public.organizations.plan_tier IS 'Active plan tiers: free | pro | agency. Legacy values starter/professional/enterprise are preserved in enum for backward compatibility but no longer assigned.';

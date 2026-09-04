@@ -125,7 +125,7 @@ export const setSecretTool: ToolDefinition<z.infer<typeof schema>> = {
       }
 
       ctx.onXmlComplete?.(
-        `<ecomgear-write path="secrets/${keyName}" description="Saved secret ${keyName} (value hidden)" />`
+        `<SMEsAgent-write path="secrets/${keyName}" description="Saved secret ${keyName} (value hidden)" />`
       );
 
       const frontendUsable = keyName.startsWith('VITE_');

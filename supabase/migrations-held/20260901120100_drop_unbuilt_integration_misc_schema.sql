@@ -30,7 +30,7 @@ DROP TABLE IF EXISTS public.integration_apps             CASCADE;
 DROP TABLE IF EXISTS public.github_connections           CASCADE;
 DROP TABLE IF EXISTS public.google_analytics_connections CASCADE;
 DROP TABLE IF EXISTS public.ali_cloud_configs            CASCADE;
-DROP TABLE IF EXISTS public.ecomgear_cloud_configs       CASCADE;
+DROP TABLE IF EXISTS public.SMEsAgent_cloud_configs       CASCADE;
 DROP TABLE IF EXISTS public.auto_pilot_configs           CASCADE;
 DROP TABLE IF EXISTS public.demo_requests                CASCADE;
 

@@ -1,7 +1,5 @@
-import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { DEFAULT_FREE_MODEL, DEFAULT_PRIMARY_MODEL } from '../config/models.js';
+import { CHEAP_MODEL, CODE_MODEL, DEFAULT_FREE_MODEL, DEFAULT_PRIMARY_MODEL } from '../config/models.js';
 
 // Circuit breaker: providers that returned a credit/billing error recently.
 // Avoids hammering a provider that's genuinely out of quota   but MUST expire,
@@ -86,7 +84,7 @@ export async function syncBillingCircuitFromPeers(providers: string[]): Promise<
   }
 }
 
-const CIRCUIT_PROVIDERS = ['anthropic', 'openai', 'gemini', 'deepseek', 'zai'];
+const CIRCUIT_PROVIDERS = ['openrouter'];
 
 // unref() so this never holds the process open (matters for tests and for a
 // clean PM2 shutdown). Skipped under test to keep runs deterministic.
@@ -109,6 +107,14 @@ export function extractCacheUsage(providerMetadata: any): { cacheRead: number; c
   // Detect from the shape of providerMetadata itself, not an external
   // providerName variable   a run can fall back between providers mid-stream,
   // and this must reflect whichever provider actually served THIS step.
+  //
+  // Post-OpenRouter-migration: every call now goes out via @ai-sdk/openai's
+  // createOpenAI pointed at OpenRouter, so providerMetadata never carries an
+  // `anthropic` or `google` key   both branches below are dead until/unless
+  // OpenRouter's own cache-usage shape (if any) gets read explicitly. Falls
+  // through to {cacheRead: 0, cacheWrite: 0}, which just means cost dashboards
+  // report zero cache savings rather than crediting a discount that may not
+  // actually apply the same way through OpenRouter's proxy.
   const anth = providerMetadata?.anthropic;
   if (anth) {
     const rawUsage = anth.usage ?? {};
@@ -195,9 +201,6 @@ export function isAuthOrBillingError(err: any): boolean {
   } else if (err?.responseBody) {
     try { parsedBody = JSON.parse(err.responseBody); bodyMsg = parsedBody?.error?.message?.toLowerCase() ?? ''; } catch {}
   }
-  // z.ai error code 1113 = insufficient balance / no resource package
-  const zaiCode = String(parsedBody?.error?.code ?? err?.data?.error?.code ?? '');
-  if (zaiCode === '1113') return true;
   const combined = `${msg} ${bodyMsg}`;
   return (
     combined.includes('organization') && combined.includes('disabled') ||
@@ -294,109 +297,46 @@ export function isLikelyFixRequest(prompt: string): boolean {
     || text.includes('runtime error');
 }
 
-export function buildFallbackCandidates(primaryProviderName: string, primaryModelId?: string): string[] {
-  // Same fix as resolveProviderWithFallback above: an unset AI_FALLBACK_MODEL
-  // used to resolve straight to DEFAULT_FREE_MODEL (glm-4.5-flash), so this
-  // list tried THREE glm variants before ever reaching the stronger,
-  // typically-healthy claude/deepseek/gemini-2.5-pro candidates. Only use
-  // configuredFallback here if the operator actually set AI_FALLBACK_MODEL  
-  // otherwise let the strong candidates go first and treat glm as the
-  // last-resort options they're meant to be.
-  const configuredFallback = process.env.AI_FALLBACK_MODEL || undefined;
-  const candidates = Array.from(new Set([
-    configuredFallback,
-    'claude-sonnet-5',
-    'deepseek-chat',
-    'gemini-2.5-pro',
-    DEFAULT_FREE_MODEL,
-    'glm-4.5',
-    'glm-4.5-air',
-  ].filter(Boolean) as string[]));
-  return candidates.filter((mid) => {
-    // Never retry the exact same model that just failed
-    if (mid === primaryModelId) return false;
-    if (mid.toLowerCase().startsWith('glm')) {
-      // Allow GLM-to-GLM fallback for transient errors   but not if ZAI is billing-failed
-      return Boolean(process.env.ZAI_API_KEY)
-        && process.env.AI_DISABLE_ZAI !== '1'
-        && !isBillingCircuitOpen('zai');
-    }
-    if (mid.includes('deepseek')) {
-      return Boolean(process.env.DEEPSEEK_API_KEY)
-        && process.env.AI_DISABLE_DEEPSEEK !== '1'
-        && primaryProviderName !== 'deepseek'
-        && !isBillingCircuitOpen('deepseek');
-    }
-    if (mid.includes('gemini')) {
-      // Allow same-provider (gemini) fallback to a different model   e.g. 2.5-pro → 2.0-flash
-      return Boolean(process.env.GEMINI_API_KEY)
-        && process.env.AI_DISABLE_GEMINI !== '1'
-        && !isBillingCircuitOpen('gemini');
-    }
-    const hasAnthropic = Boolean(process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY) && process.env.AI_DISABLE_ANTHROPIC !== '1';
-    return hasAnthropic && primaryProviderName !== 'anthropic' && !isBillingCircuitOpen('anthropic');
-  });
+/**
+ * Single provider (OpenRouter, 2 models: CODE_MODEL + CHEAP_MODEL) means the
+ * only real fallback left is "try the other one" -- there's no more
+ * provider-diversity ladder to climb. Still worth one retry: a transient
+ * failure on the code model shouldn't hard-fail a run when the cheap model
+ * can at least attempt it.
+ */
+export function buildFallbackCandidates(_primaryProviderName: string, primaryModelId?: string): string[] {
+  const other = primaryModelId === CODE_MODEL ? CHEAP_MODEL : CODE_MODEL;
+  if (other === primaryModelId) return [];
+  if (isBillingCircuitOpen('openrouter')) return [];
+  return [other];
 }
 
 /** Create an AI SDK provider from a model ID. Returns null if API key is missing. */
 export function createProviderForModel(mid: string): { provider: any; providerName: string } | null {
-  if (mid.toLowerCase().startsWith('glm')) {
-    if (process.env.AI_DISABLE_ZAI === '1') return null;
-    const key = process.env.ZAI_API_KEY;
-    if (!key) return null;
-    return { provider: createOpenAI({ apiKey: key, baseURL: 'https://api.z.ai/api/paas/v4' }).chat(mid), providerName: 'zai' };
-  } else if (mid.includes('deepseek')) {
-    if (process.env.AI_DISABLE_DEEPSEEK === '1') return null;
-    const key = process.env.DEEPSEEK_API_KEY;
-    if (!key) return null;
-    return { provider: createOpenAI({ apiKey: key, baseURL: 'https://api.deepseek.com/v1' }).chat(mid), providerName: 'deepseek' };
-  } else if (mid.includes('gemini')) {
-    if (process.env.AI_DISABLE_GEMINI === '1') return null;
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) return null;
-    return { provider: createGoogleGenerativeAI({ apiKey: key })(mid), providerName: 'gemini' };
-  } else {
-    if (process.env.AI_DISABLE_ANTHROPIC === '1') return null;
-    const key = process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
-    if (!key) return null;
-    return { provider: createAnthropic({ apiKey: key })(mid), providerName: 'anthropic' };
-  }
+  if (process.env.AI_DISABLE_OPENROUTER === '1') return null;
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) return null;
+  return {
+    provider: createOpenAI({ apiKey: key, baseURL: 'https://openrouter.ai/api/v1' }).chat(mid),
+    providerName: 'openrouter',
+  };
 }
 
 export function resolveProviderWithFallback(requestedModelId: string): { provider: any; providerName: string; modelId: string } {
-  const normalizedRequested = requestedModelId || process.env.AI_MODEL || DEFAULT_FREE_MODEL;
-  // DEFAULT_FREE_MODEL is glm-4.5-flash   a genuinely weaker model, meant for
-  // free-tier requests, not an emergency substitute for a paid request. The
-  // old chain used `env-var || DEFAULT_FREE_MODEL` for BOTH the AI_MODEL and
-  // AI_FALLBACK_MODEL slots, so whenever those env vars were unset (the
-  // normal case), glm became the literal 2nd/3rd candidate   landing there
-  // the instant Gemini's circuit tripped, before ever trying Claude or
-  // DeepSeek, even though both were confirmed healthy at the same moment
-  // (observed in production: "Skipping gemini" x2 → straight to glm-4.5-flash,
-  // with anthropic/deepseek never attempted at all). Try the two strong,
-  // already-configured providers first; glm is the last resort now, not the
-  // second guess.
-  const candidates = [
+  const normalizedRequested = requestedModelId || process.env.AI_MODEL || DEFAULT_PRIMARY_MODEL;
+  const candidates = Array.from(new Set([
     normalizedRequested,
-    process.env.AI_MODEL || undefined,
-    'claude-sonnet-5',
-    'deepseek-chat',
-    process.env.AI_FALLBACK_MODEL || undefined,
     DEFAULT_PRIMARY_MODEL,
     DEFAULT_FREE_MODEL,
-  ].filter((c): c is string => Boolean(c));
+  ]));
 
-  const uniqueCandidates = Array.from(new Set(candidates));
-  const triedProviders: string[] = [];
-  for (const candidate of uniqueCandidates) {
-    const providerGuess = candidate.toLowerCase().startsWith('glm') ? 'zai'
-      : candidate.includes('deepseek') ? 'deepseek'
-      : candidate.includes('gemini') ? 'gemini' : 'anthropic';
-    // Skip providers circuit-broken by a billing/credit error this session
-    if (isBillingCircuitOpen(providerGuess)) {
-      console.warn(`[AgentLoop] Skipping ${providerGuess} (billing circuit open)   trying next candidate`);
-      continue;
-    }
+  if (isBillingCircuitOpen('openrouter')) {
+    throw new Error(
+      `OpenRouter is temporarily circuit-broken after a recent billing/auth error. Tried models: ${candidates.join(', ')}.`
+    );
+  }
+
+  for (const candidate of candidates) {
     const resolved = createProviderForModel(candidate);
     if (resolved) {
       if (candidate !== normalizedRequested) {
@@ -404,23 +344,10 @@ export function resolveProviderWithFallback(requestedModelId: string): { provide
       }
       return { ...resolved, modelId: candidate };
     }
-    // Track why this candidate was skipped
-    const provider = candidate.toLowerCase().startsWith('glm') ? 'zai'
-      : candidate.includes('deepseek') ? 'deepseek'
-      : candidate.includes('gemini') ? 'gemini' : 'anthropic';
-    if (!triedProviders.includes(provider)) triedProviders.push(provider);
   }
 
-  // Build actionable error message listing which keys are missing
-  const missingKeys: string[] = [];
-  if (!process.env.DEEPSEEK_API_KEY) missingKeys.push('DEEPSEEK_API_KEY');
-  if (!process.env.GEMINI_API_KEY) missingKeys.push('GEMINI_API_KEY');
-  if (!(process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY)) missingKeys.push('ANTHROPIC_API_KEY');
-  if (process.env.AI_DISABLE_ANTHROPIC === '1') missingKeys.push('(Anthropic disabled via AI_DISABLE_ANTHROPIC=1)');
-
   throw new Error(
-    `No configured AI provider is available. Tried models: ${uniqueCandidates.join(', ')}. ` +
-    `Missing environment variables: ${missingKeys.join(', ')}. ` +
-    `Add at least one API key in Admin settings.`
+    `No configured AI provider is available. Tried models: ${candidates.join(', ')}. ` +
+    `Missing environment variable: OPENROUTER_API_KEY. Add it in Admin settings.`
   );
 }

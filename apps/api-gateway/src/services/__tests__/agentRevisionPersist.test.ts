@@ -6,8 +6,7 @@
  * and changeset pushes for a whole day, because of one 8.2 MiB JPEG.
  */
 import { describe, expect, it } from 'vitest';
-import { createHash } from 'node:crypto';
-import { exceedsObjectLimit, reconcileManifestAfterFailures, planRevisionUploads } from '../agentRevisionPersist.service.js';
+import { exceedsObjectLimit, reconcileManifestAfterFailures } from '../agentRevisionPersist.service.js';
 
 const entry = (path: string, rev = 'rev-new') => ({ path, hash: `h-${path}`, source_revision: rev });
 
@@ -66,97 +65,5 @@ describe('exceedsObjectLimit', () => {
     const base64OfEightPointTwoMiB = 'A'.repeat(Math.ceil((8.2 * 1024 * 1024) / 3) * 4);
     expect(exceedsObjectLimit(base64OfEightPointTwoMiB, limit)).toBe(true);
     expect(exceedsObjectLimit('small file', limit)).toBe(false);
-  });
-});
-
-describe('planRevisionUploads', () => {
-  const h = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
-  const prev = (path: string, content: string, rev = 'rev-old') =>
-    ({ path, hash: h(content), source_revision: rev }) as const;
-
-  it('carries a file the user edited mid-run instead of reverting it with the stale sandbox copy', () => {
-    // Sandbox holds run-start content for a.ts; the agent never touched it.
-    // The user saved a newer revision (rev-user) WHILE the run was in flight.
-    const base = new Map([['src/App.tsx', h('run-start content')]]);
-    const prevByPath = new Map([['src/App.tsx', { hash: h('user edit mid-run'), source_revision: 'rev-user' }]]);
-    const plan = planRevisionUploads(
-      [{ path: 'src/App.tsx', content: 'run-start content' }],
-      prevByPath,
-      base,
-    );
-
-    // The stale sandbox copy must NOT be uploaded: the entry is carried from
-    // the user's revision (no `content`, so persist never uploads it).
-    expect(plan.collected).toEqual([
-      { path: 'src/App.tsx', hash: h('run-start content'), source_revision: 'rev-user' },
-    ]);
-    expect(plan.carryPrev).toEqual([]);
-  });
-
-  it('uploads a file the run actually changed', () => {
-    const base = new Map([['src/App.tsx', h('old')]]);
-    const prevByPath = new Map([['src/App.tsx', { hash: h('old'), source_revision: 'rev-old' }]]);
-    const plan = planRevisionUploads(
-      [{ path: 'src/App.tsx', content: 'agent new version' }],
-      prevByPath,
-      base,
-    );
-
-    expect(plan.collected).toEqual([
-      { path: 'src/App.tsx', hash: h('agent new version'), content: 'agent new version' },
-    ]);
-  });
-
-  it('dedups a file identical to the previous revision when no base is known (legacy behavior)', () => {
-    // baseByPath null/undefined = scaffold-seeded sandbox / template remix /
-    // rollback: whole tree is the output, dedup only against prev.
-    const prevByPath = new Map([['a.ts', { hash: h('same'), source_revision: 'rev-old' }]]);
-    const plan = planRevisionUploads([{ path: 'a.ts', content: 'same' }], prevByPath, null);
-
-    expect(plan.collected).toEqual([{ path: 'a.ts', hash: h('same'), source_revision: 'rev-old' }]);
-    expect(plan.carryPrev).toEqual([]);
-
-    const noPrev = planRevisionUploads([{ path: 'a.ts', content: 'same' }], new Map(), undefined);
-    expect(noPrev.collected).toEqual([{ path: 'a.ts', hash: h('same'), content: 'same' }]);
-  });
-
-  it('carries a file the USER added mid-run (absent from the sandbox and from the run-start base)', () => {
-    const base = new Map([['src/App.tsx', h('base')]]);
-    const prevByPath = new Map([
-      ['src/App.tsx', { hash: h('base'), source_revision: 'rev-base' }],
-      ['notes.md', { hash: h('user notes'), source_revision: 'rev-user' }], // added mid-run
-    ]);
-    const plan = planRevisionUploads(
-      [{ path: 'src/App.tsx', content: 'base' }],
-      prevByPath,
-      base,
-    );
-
-    expect(plan.carryPrev).toEqual([prev('notes.md', 'user notes', 'rev-user')]);
-    // and the untouched app file is carried, not uploaded
-    expect(plan.collected).toEqual([{ path: 'src/App.tsx', hash: h('base'), source_revision: 'rev-base' }]);
-  });
-
-  it('does NOT carry a file the run deleted (present in base, absent from the tree)', () => {
-    const base = new Map([['gone.ts', h('base'), ], ['keep.ts', h('k')]]);
-    const prevByPath = new Map([
-      ['gone.ts', { hash: h('base'), source_revision: 'rev-base' }],
-      ['keep.ts', { hash: h('k'), source_revision: 'rev-base' }],
-    ]);
-    const plan = planRevisionUploads(
-      [{ path: 'keep.ts', content: 'k' }],
-      prevByPath,
-      base,
-    );
-
-    expect(plan.carryPrev).toEqual([]);
-    expect(plan.collected.map((c) => c.path)).toEqual(['keep.ts']);
-  });
-
-  it('returns no carryPrev when there is no run-start base (legacy whole-tree persist)', () => {
-    const prevByPath = new Map([['notes.md', { hash: h('user notes'), source_revision: 'rev-user' }]]);
-    const plan = planRevisionUploads([], prevByPath, null);
-    expect(plan.carryPrev).toEqual([]);
-    expect(plan.collected).toEqual([]);
   });
 });

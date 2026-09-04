@@ -15,25 +15,13 @@ export interface ModelPrice {
   cacheWrite: number;
 }
 
-/** Price per 1M tokens for the given serving model id. */
+/** Price per 1M tokens for the given serving model id (OpenRouter rates). */
 export function priceFor(mid: string): ModelPrice {
-  return mid.includes('claude')
-    ? { input: 3.00,   output: 15.00,  cacheRead: 0.30,  cacheWrite: 3.75  }  // Claude Sonnet 5
-    : mid.includes('gemini-3.1-pro-preview')
-    ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 3.1 Pro (thinking)
-    : mid.includes('gemini-2.5-pro')
-    ? { input: 1.25,   output: 10.00,  cacheRead: 0.31,  cacheWrite: 0.00  }  // Gemini 2.5 Pro
+  return mid.includes('qwen')
+    ? { input: 0.03,  output: 0.13,   cacheRead: 0.00,  cacheWrite: 0.00 }    // Qwen3.7 Flash (code)
     : mid.includes('gemini')
-    // "gemini-flash-latest" is a Google-managed alias that silently moved
-    // 2.5 Flash -> 3.5 Flash -> 3.6 Flash (2026-07-21) while this price stayed
-    // frozen at the original 2.5 Flash rate, a ~20x undercount on every
-    // narration call and 'micro'-tier run. Verified current rate.
-    ? { input: 1.50,   output: 7.50,   cacheRead: 0.375, cacheWrite: 0.00 }   // Gemini Flash (latest, currently 3.6)
-    : mid.includes('deepseek')
-    ? { input: 0.27,   output: 1.10,   cacheRead: 0.07,  cacheWrite: 0.00  }  // DeepSeek Chat
-    : mid.toLowerCase().startsWith('glm')
-    ? { input: 0.60,   output: 2.20,   cacheRead: 0.11,  cacheWrite: 0.00  }  // z.ai GLM-4.5
-    : { input: 3.00,   output: 15.00,  cacheRead: 0.30,  cacheWrite: 3.75  }; // fallback: Claude
+    ? { input: 0.10,  output: 0.40,   cacheRead: 0.01,  cacheWrite: 0.08333 } // Gemini 2.5 Flash Lite (small tasks)
+    : { input: 0.03,  output: 0.13,   cacheRead: 0.00,  cacheWrite: 0.00 };   // fallback: code-model rate
 }
 
 /** USD cost for a token bundle at the given price. */

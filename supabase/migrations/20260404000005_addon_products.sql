@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Phase 5: Add-on Products
--- Auto Pilot Mode, eComGear Cloud, Integration App Marketplace,
+-- Auto Pilot Mode, SMEsAgent Cloud, Integration App Marketplace,
 -- Ali Cloud Hosting Migration, Add-on Subscriptions
 -- =============================================================================
 
@@ -20,8 +20,8 @@ CREATE TABLE IF NOT EXISTS public.auto_pilot_configs (
 
 ALTER TABLE public.auto_pilot_configs ENABLE ROW LEVEL SECURITY;
 
--- ── 2. eComGear Cloud ─────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.ecomgear_cloud_configs (
+-- ── 2. SMEsAgent Cloud ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.SMEsAgent_cloud_configs (
   id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id           uuid NOT NULL UNIQUE REFERENCES public.projects(id) ON DELETE CASCADE,
   enabled              boolean NOT NULL DEFAULT false,
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS public.ecomgear_cloud_configs (
   updated_at           timestamptz NOT NULL DEFAULT now()
 );
 
-ALTER TABLE public.ecomgear_cloud_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.SMEsAgent_cloud_configs ENABLE ROW LEVEL SECURITY;
 
 -- ── 3. Integration App Catalog ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.integration_apps (
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS public.addon_subscriptions (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id                uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
   project_id            uuid REFERENCES public.projects(id) ON DELETE CASCADE,  -- nullable (org-level add-ons have no project)
-  addon_type            text NOT NULL CHECK (addon_type IN ('auto_pilot','ecomgear_cloud','ali_cloud','integration')),
+  addon_type            text NOT NULL CHECK (addon_type IN ('auto_pilot','SMEsAgent_cloud','ali_cloud','integration')),
   price_usd             numeric(10,2) NOT NULL DEFAULT 0,
   status                text NOT NULL DEFAULT 'active' CHECK (status IN ('active','cancelled','past_due')),
   stripe_subscription_id text,
@@ -127,7 +127,7 @@ DO $$
 DECLARE
   tbl text;
 BEGIN
-  FOREACH tbl IN ARRAY ARRAY['auto_pilot_configs','ecomgear_cloud_configs','project_integrations','ali_cloud_configs']
+  FOREACH tbl IN ARRAY ARRAY['auto_pilot_configs','SMEsAgent_cloud_configs','project_integrations','ali_cloud_configs']
   LOOP
     EXECUTE format(
       'CREATE POLICY "project member access %1$s" ON public.%1$s FOR ALL

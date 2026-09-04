@@ -79,10 +79,10 @@ docker pull postgrest/postgrest:v12.2.3
 docker pull supabase/edge-runtime:v1.62.2
 
 echo "[6/7] Creating directories..."
-mkdir -p /var/www/ecomgear/sites
-mkdir -p /var/lib/ecomgear/tenants
+mkdir -p /var/www/SMEsAgent/sites
+mkdir -p /var/lib/SMEsAgent/tenants
 mkdir -p /etc/caddy/sites
-mkdir -p /opt/ecomgear/hosting-service
+mkdir -p /opt/SMEsAgent/hosting-service
 
 # Docker network for tenants
 docker network create ecg-tenant-net 2>/dev/null || true
@@ -98,9 +98,9 @@ fi
 
 echo ""
 echo "✅ Bootstrap complete. Next steps:"
-echo "   1. Deploy hosting-service code to /opt/ecomgear/hosting-service/"
+echo "   1. Deploy hosting-service code to /opt/SMEsAgent/hosting-service/"
 echo "   2. Set env vars: HOSTING_PUBLIC_IP, HOSTING_DEPLOY_SECRET, HOSTING_PORT"
-echo "   3. Start with: cd /opt/ecomgear/hosting-service && pm2 start server.js --name ecomgear-hosting"
+echo "   3. Start with: cd /opt/SMEsAgent/hosting-service && pm2 start server.js --name SMEsAgent-hosting"
 echo "   4. Set up Caddy main config to import /etc/caddy/sites/*.caddy"
 REMOTE_SCRIPT
 
@@ -111,7 +111,7 @@ echo "════════════════════════�
 
 # Deploy hosting-service code
 echo "Deploying hosting-service code..."
-HOSTING_DIR="/opt/ecomgear/hosting-service"
+HOSTING_DIR="/opt/SMEsAgent/hosting-service"
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 scp -r "${SCRIPT_DIR}/apps/hosting-service/server.js" \
@@ -131,12 +131,12 @@ export HOSTING_DEPLOY_SECRET="${DEPLOY_SECRET}"
 export HOSTING_PORT="${HOSTING_PORT}"
 export HOSTING_NODE_NAME="hosting-$(hostname -s)"
 
-pm2 delete ecomgear-hosting 2>/dev/null || true
+pm2 delete SMEsAgent-hosting 2>/dev/null || true
 HOSTING_PUBLIC_IP="${VPS_IP}" \
 HOSTING_DEPLOY_SECRET="${DEPLOY_SECRET}" \
 HOSTING_PORT="${HOSTING_PORT}" \
 HOSTING_NODE_NAME="hosting-\$(hostname -s)" \
-pm2 start server.js --name ecomgear-hosting
+pm2 start server.js --name SMEsAgent-hosting
 pm2 save
 EOF
 

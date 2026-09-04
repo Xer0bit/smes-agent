@@ -107,11 +107,11 @@ enabled = true
 
 [auth]
 enabled = true
-site_url = "https://www.ecomgear.dev"
-additional_redirect_urls = ["https://www.ecomgear.dev/auth/callback", "https://ecomgear.dev/auth/callback", "http://localhost:8080/auth/callback", "http://localhost:3000/auth/callback"]
+site_url = "https://www.SMEsAgent.dev"
+additional_redirect_urls = ["https://www.SMEsAgent.dev/auth/callback", "https://SMEsAgent.dev/auth/callback", "http://localhost:8080/auth/callback", "http://localhost:3000/auth/callback"]
 
 [auth.external.google]
 enabled = true
 client_id = "env(GOOGLE_CLIENT_ID)"
 secret = "env(GOOGLE_CLIENT_SECRET)"
-redirect_uri = "https://api.ecomgear.dev/auth/v1/callback"
+redirect_uri = "https://api.SMEsAgent.dev/auth/v1/callback"

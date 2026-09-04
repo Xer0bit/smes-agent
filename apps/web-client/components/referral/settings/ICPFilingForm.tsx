@@ -391,7 +391,7 @@ export const ICPFilingForm = () => {
             <Label htmlFor="website-name">Website Name (网站名称) *</Label>
             <Input
               id="website-name"
-              placeholder="e.g., eComGear Technology Platform"
+              placeholder="e.g., SMEsAgent Technology Platform"
               maxLength={50}
               className="bg-input border-white/[0.07]"
             />

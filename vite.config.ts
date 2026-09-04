@@ -3,21 +3,25 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
 // https://vitejs.dev/config/
+
+// Ports avoid the sibling ecomgear-main dev servers, which hold 5001 and 3001 on this machine.
+const devPort = Number(process.env.DEV_PORT) || 8081;
+const previewPort = Number(process.env.PREVIEW_DEV_PORT) || 3002;
+
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
-    port: 8080,
+    port: devPort,
     headers: {
       // Security headers removed to allow blob: URLs for ES modules in local preview
     },
     cors: {
       origin: [
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "https://preview.ecomgear.app",
-        "https://api.ecomgear.dev",
-        "https://gen.ecomgear.dev",
-        "https://agent.ecomgear.dev",
+        `http://localhost:${previewPort}`,
+        `http://127.0.0.1:${previewPort}`,
+        "https://app-smes.xer0bit.com",
+        "https://api-smes.xer0bit.com",
+        "https://gen-smes.xer0bit.com",
       ],
       credentials: true,
     },
@@ -25,7 +29,7 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       protocol: 'ws',
       host: 'localhost',
-      port: 8080,
+      port: devPort,
     },
     // Generated per-project sandboxes (preview-data/, apps/preview-service/projects/,
     // agent-template*/) are runtime data, not part of this app  watching them

@@ -1,0 +1,8 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>SMEs Agent icon</title>
+  <desc>SMEs Agent mark: a terminal-style prompt chevron and cursor bar in signal green, on transparent background, symbolizing prompting into a single unified app.</desc>
+  <g transform="translate(256,256) scale(4.6)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#34D399" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#34D399"/>
+  </g>
+</svg>

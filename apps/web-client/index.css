@@ -3,125 +3,48 @@
 @tailwind utilities;
 
 @layer base {
-  /* Light (white) dashboard palette. Same token names as .dark below; the
-     dashboard is the only surface that renders on it. */
+  /* Light (white) dashboard palette — aligned to WriteMate dark theme
+     with signal green (#34D399) accent matching the logo. */
   :root {
-    --background: 0 0% 98%;
-    --foreground: 220 20% 12%;
-    --card: 0 0% 100%;
-    --card-foreground: 220 20% 12%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 220 20% 12%;
-    --primary: 180 70% 34%;
+    --background: 0 0% 1%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 3%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 3%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 160 67% 51%;
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 180 70% 34%;
-    --secondary: 220 14% 94%;
-    --secondary-foreground: 220 20% 16%;
-    --muted: 220 14% 95%;
-    --muted-foreground: 220 10% 42%;
-    --accent: 220 14% 93%;
-    --accent-foreground: 220 20% 12%;
-    --trigger: 220 14% 94%;
-    --trigger-foreground: 220 20% 16%;
-    --destructive: 0 70% 48%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 220 13% 88%;
-    --input: 220 13% 92%;
-    --ring: 180 70% 34%;
-    --radius: 0.625rem;
-    --gradient-hero: linear-gradient(hsl(0 0% 98%), hsl(0 0% 98%));
-    --gradient-primary: linear-gradient(hsl(180 70% 34%), hsl(180 70% 34%));
-    --gradient-accent: linear-gradient(hsl(220 14% 93%), hsl(220 14% 93%));
-    --gradient-card: linear-gradient(hsl(0 0% 100%), hsl(0 0% 100%));
-    --gradient-orange: linear-gradient(hsl(220 14% 93%), hsl(220 14% 93%));
-    --shadow-glow: 0 1px 2px hsl(220 30% 10% / 0.06);
-    --shadow-glow-accent: 0 1px 2px hsl(220 30% 10% / 0.06);
-    --shadow-elegant: 0 8px 24px hsl(220 30% 10% / 0.08);
-    --transition-smooth: all 0.15s ease-out;
-    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-    --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
-    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-    --spring: cubic-bezier(0.16, 1, 0.3, 1);
-    --text-strong: var(--foreground);
-    --text-muted: var(--muted-foreground);
-    --text-soft: 220 10% 35%;
-    --action-primary: var(--primary);
-    --action-primary-contrast: var(--primary-foreground);
-    --action-secondary: var(--secondary);
-    --action-secondary-contrast: var(--secondary-foreground);
-    --feedback-success: 145 45% 36%;
-    --feedback-warning: 32 70% 42%;
-    --feedback-danger: var(--destructive);
-    --feedback-info: 198 60% 40%;
-    --focus-ring: var(--ring);
-    --interactive-hover: 220 14% 94%;
-    --interactive-active: 220 14% 90%;
-    --elev-1: 0 1px 2px hsl(220 30% 10% / 0.05);
-    --elev-2: 0 4px 12px hsl(220 30% 10% / 0.08);
-    --workspace-surface: 0 0% 100%;
-    --workspace-surface-recessed: 220 14% 96%;
-    --admin-surface: 0 0% 100%;
-    --admin-surface-dialog: 0 0% 100%;
-  }
-
-  /* Dark: the palette every surface was designed on. Applied via html.dark
-     (see lib/theme.ts); non-dashboard routes force it. */
-  .dark {
-    /* ── Minimal design language ───────────────────────────────────────────
-     * One accent (cyan --primary), everything else collapsed to neutral
-     * grayscale. Gradients removed (solid fallbacks kept under the same
-     * variable names so nothing referencing --gradient-* breaks). Glow
-     * shadows replaced with flat, low-opacity elevation. Radius set to a
-     * single moderate scale (not pill-shaped). Spring/bounce easing
-     * replaced with ease-out everywhere by default.
-     */
-    --background: 240 6% 4%;
-    --foreground: 210 20% 96%;
-    --card: 240 7% 7%;
-    --card-foreground: 210 20% 96%;
-    --popover: 240 7% 7%;
-    --popover-foreground: 210 20% 96%;
-    --primary: 180 70% 45%;
-    --primary-foreground: 210 18% 10%;
-    --primary-glow: 180 70% 45%;
-    --secondary: 240 5% 12%;
-    --secondary-foreground: 210 20% 96%;
-    --muted: 240 5% 11%;
-    --muted-foreground: 240 5% 60%;
-    --accent: 240 5% 12%;
-    --accent-foreground: 210 20% 96%;
-    --trigger: 240 5% 12%;
-    --trigger-foreground: 210 20% 96%;
+    --primary-glow: 160 67% 51%;
+    --secondary: 0 0% 8%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 6%;
+    --muted-foreground: 0 0% 60%;
+    --accent: 0 0% 8%;
+    --accent-foreground: 0 0% 98%;
+    --trigger: 0 0% 8%;
+    --trigger-foreground: 0 0% 98%;
     --destructive: 0 70% 55%;
-    --destructive-foreground: 210 20% 96%;
-    --border: 240 5% 14%;
-    --input: 240 6% 9%;
-    --ring: 180 70% 45%;
-    --radius: 0.625rem;
-    /* Flat (non-visible) linear-gradients: kept as gradients, not plain
-       colors, because these feed Tailwind's backgroundImage theme key
-       (background-image: var(...)) -- a bare color is an invalid value
-       there and silently drops, which breaks bg-clip-text usages. */
-    --gradient-hero: linear-gradient(hsl(240 6% 4%), hsl(240 6% 4%));
-    --gradient-primary: linear-gradient(hsl(180 70% 45%), hsl(180 70% 45%));
-    --gradient-accent: linear-gradient(hsl(240 5% 12%), hsl(240 5% 12%));
-    --gradient-card: linear-gradient(hsl(240 7% 7%), hsl(240 7% 7%));
-    --gradient-orange: linear-gradient(hsl(240 5% 12%), hsl(240 5% 12%));
-    --shadow-glow: 0 1px 2px hsl(220 45% 3% / 0.3);
-    --shadow-glow-accent: 0 1px 2px hsl(220 45% 3% / 0.3);
-    --shadow-elegant: 0 8px 24px hsl(220 45% 3% / 0.24);
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 20%;
+    --input: 0 0% 5%;
+    --ring: 160 67% 51%;
+    --radius: 0rem;
+    --gradient-hero: linear-gradient(hsl(0 0% 1%), hsl(0 0% 1%));
+    --gradient-primary: linear-gradient(hsl(160 67% 51%), hsl(160 60% 44%));
+    --gradient-accent: linear-gradient(hsl(0 0% 8%), hsl(0 0% 8%));
+    --gradient-card: linear-gradient(hsl(0 0% 3%), hsl(0 0% 3%));
+    --gradient-orange: linear-gradient(hsl(0 0% 8%), hsl(0 0% 8%));
+    --shadow-glow: 0 1px 2px hsl(0 0% 0% / 0.3);
+    --shadow-glow-accent: 0 1px 8px hsl(160 67% 51% / 0.15);
+    --shadow-elegant: 0 8px 24px hsl(0 0% 0% / 0.24);
     --transition-smooth: all 0.15s ease-out;
     --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
     --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
     --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
     --spring: cubic-bezier(0.16, 1, 0.3, 1);
-    --surface-0: var(--background);
-    --surface-1: 210 16% 13%;
-    --surface-2: 210 14% 16%;
-    --surface-3: 210 14% 19%;
     --text-strong: var(--foreground);
     --text-muted: var(--muted-foreground);
-    --text-soft: 240 5% 68%;
+    --text-soft: 0 0% 60%;
     --action-primary: var(--primary);
     --action-primary-contrast: var(--primary-foreground);
     --action-secondary: var(--secondary);
@@ -131,35 +54,81 @@
     --feedback-danger: var(--destructive);
     --feedback-info: 198 55% 52%;
     --focus-ring: var(--ring);
-    --interactive-hover: 240 5% 9%;
-    --interactive-active: 240 5% 12%;
-    --elev-1: 0 1px 3px hsl(240 10% 2% / 0.4);
-    --elev-2: 0 4px 12px hsl(240 10% 2% / 0.5);
+    --interactive-hover: 0 0% 8%;
+    --interactive-active: 0 0% 12%;
+    --elev-1: 0 1px 3px hsl(0 0% 0% / 0.4);
+    --elev-2: 0 4px 12px hsl(0 0% 0% / 0.5);
+    --workspace-surface: 0 0% 2%;
+    --workspace-surface-recessed: 0 0% 1%;
+    --admin-surface: 0 0% 2%;
+    --admin-surface-dialog: 0 0% 4%;
+  }
 
-    /* ── Workspace tokens (editor, settings, in-app chrome) ──────────────────
-     * Deliberately separate from the --surface and --background tokens above: those serve
-     * the marketing/dashboard zone's lighter blue-dark theme (Auth, CTA,
-     * dashboard pages). The editor/settings zone uses its own darker, neutral
-     * palette   closer to an IDE than a marketing page   which is correct as
-     * a distinct visual zone, but had drifted into 6 near-identical hardcoded
-     * hex shades across ~20 files (#0f0f12, #0a0a0d, #0b0b0d, #111318,
-     * #0d0d0f, #09090b) instead of one formalized pair. These ARE the measured
-     * dominant shades already in use (#0f0f12 = 70 uses, #0a0a0d = 19 uses  
-     * not invented), just consolidated into named colors.
-     *
-     * Text (text-white/85, /60, /30) and borders (border-white/[0.07]) don't
-     * need new tokens   Tailwind's built-in white + opacity already covers
-     * them. Their drift is inconsistent VALUES (60 vs 70 vs 50, 0.07 vs 0.08),
-     * not a missing token   fixed by standardizing on 85/60/30 and 0.07 as the
-     * canonical values during the sweep, not by adding more CSS variables.
-     */
-    --workspace-surface: 240 9% 6%;          /* card/panel bg   was #0f0f12 */
-    --workspace-surface-recessed: 240 13% 4%; /* input/nested bg   was #0a0a0d */
+  /* Dark: WriteMate-aligned palette. Near-black canvas, white ink, hairline
+     borders, zero radius, signal green (#34D399) accent matching the logo. */
+  .dark {
+    --background: 0 0% 1%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 3%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 3%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 160 67% 51%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 160 67% 51%;
+    --secondary: 0 0% 8%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 6%;
+    --muted-foreground: 0 0% 60%;
+    --accent: 0 0% 8%;
+    --accent-foreground: 0 0% 98%;
+    --trigger: 0 0% 8%;
+    --trigger-foreground: 0 0% 98%;
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 20%;
+    --input: 0 0% 5%;
+    --ring: 160 67% 51%;
+    --radius: 0rem;
+    --gradient-hero: linear-gradient(hsl(0 0% 1%), hsl(0 0% 1%));
+    --gradient-primary: linear-gradient(hsl(160 67% 51%), hsl(160 60% 44%));
+    --gradient-accent: linear-gradient(hsl(0 0% 8%), hsl(0 0% 8%));
+    --gradient-card: linear-gradient(hsl(0 0% 3%), hsl(0 0% 3%));
+    --gradient-orange: linear-gradient(hsl(0 0% 8%), hsl(0 0% 8%));
+    --shadow-glow: 0 1px 2px hsl(0 0% 0% / 0.3);
+    --shadow-glow-accent: 0 1px 8px hsl(160 67% 51% / 0.15);
+    --shadow-elegant: 0 8px 24px hsl(0 0% 0% / 0.24);
+    --transition-smooth: all 0.15s ease-out;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+    --spring: cubic-bezier(0.16, 1, 0.3, 1);
+    --surface-0: var(--background);
+    --surface-1: 0 0% 5%;
+    --surface-2: 0 0% 8%;
+    --surface-3: 0 0% 11%;
+    --text-strong: var(--foreground);
+    --text-muted: var(--muted-foreground);
+    --text-soft: 0 0% 60%;
+    --action-primary: var(--primary);
+    --action-primary-contrast: var(--primary-foreground);
+    --action-secondary: var(--secondary);
+    --action-secondary-contrast: var(--secondary-foreground);
+    --feedback-success: 145 45% 42%;
+    --feedback-warning: 32 60% 50%;
+    --feedback-danger: var(--destructive);
+    --feedback-info: 198 55% 52%;
+    --focus-ring: var(--ring);
+    --interactive-hover: 0 0% 8%;
+    --interactive-active: 0 0% 12%;
+    --elev-1: 0 1px 3px hsl(0 0% 0% / 0.4);
+    --elev-2: 0 4px 12px hsl(0 0% 0% / 0.5);
 
-    /* Admin panel surfaces: consolidated from 2 hardcoded hex values duplicated
-     * across AIMetrics.tsx, Usage.tsx, Projects.tsx, Users.tsx (11 uses total). */
-    --admin-surface: 222.9 21.2% 6.5%;        /* admin card bg   was #0d0f14 */
-    --admin-surface-dialog: 222.9 17.1% 8%;   /* admin dialog bg   was #111318 */
+    --workspace-surface: 0 0% 2%;
+    --workspace-surface-recessed: 0 0% 1%;
+
+    --admin-surface: 0 0% 2%;
+    --admin-surface-dialog: 0 0% 4%;
   }
 }
 
@@ -204,7 +173,7 @@
   :focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px hsl(var(--ring) / 0.5);
-    border-radius: 4px;
+    border-radius: 0;
   }
 
   /* Buttons change colour on press, never size: the global scale(0.95) on
@@ -273,8 +242,8 @@
   }
 
   @keyframes pulse-glow {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
-    50%       { box-shadow: 0 0 24px 4px rgba(99, 102, 241, 0.18); }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+    50%       { box-shadow: 0 0 24px 4px rgba(52, 211, 153, 0.15); }
   }
 
   /* ── Chat streaming ─────────────────────────────────────────────────────── */
@@ -286,7 +255,7 @@
 
   @keyframes border-flash {
     0%, 100% { border-color: rgba(255,255,255,0.10); box-shadow: none; }
-    8%        { border-color: rgba(139,92,246,0.70);  box-shadow: 0 0 8px rgba(139,92,246,0.25); }
+    8%        { border-color: rgba(52,211,153,0.70);  box-shadow: 0 0 8px rgba(52,211,153,0.25); }
     16%       { border-color: rgba(255,255,255,0.10); box-shadow: none; }
   }
 
@@ -335,8 +304,8 @@
   }
 
   @keyframes glow-breathe {
-    0%, 100% { box-shadow: 0 0 0 1px rgba(99,102,241,0.15), inset 0 0 0 1px rgba(99,102,241,0.06); }
-    50%       { box-shadow: 0 0 0 1px rgba(99,102,241,0.35), inset 0 0 0 1px rgba(99,102,241,0.12), 0 0 20px rgba(99,102,241,0.10); }
+    0%, 100% { box-shadow: 0 0 0 1px rgba(52,211,153,0.15), inset 0 0 0 1px rgba(52,211,153,0.06); }
+    50%       { box-shadow: 0 0 0 1px rgba(52,211,153,0.35), inset 0 0 0 1px rgba(52,211,153,0.12), 0 0 20px rgba(52,211,153,0.10); }
   }
 
   @keyframes status-in {
@@ -433,7 +402,7 @@
     position: relative;
     overflow: hidden;
     background: hsl(var(--foreground) / 0.06);
-    border-radius: 6px;
+    border-radius: 0;
   }
   .skeleton::after {
     content: '';
@@ -446,6 +415,89 @@
       transparent 100%
     );
     animation: shimmer 1.8s ease-in-out infinite;
+  }
+
+  /* ── SmesLoader ──────────────────────────────────────────────────────────── */
+  .smes-loader {
+    --u: 1.5px;
+    --_accent: hsl(var(--primary));
+    --_fg: hsl(var(--foreground));
+    --_muted: hsl(var(--muted-foreground));
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--u) * 2);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    color: var(--_muted);
+    font-size: calc(var(--u) * 8);
+    line-height: 1;
+    letter-spacing: 0.02em;
+  }
+
+  .smes-loader__track {
+    display: inline-flex;
+    align-items: baseline;
+  }
+
+  .smes-loader__label {
+    color: var(--_fg);
+    font-weight: 500;
+  }
+
+  .smes-loader__dots {
+    color: var(--_accent);
+    min-width: calc(var(--u) * 6);
+    text-align: left;
+  }
+
+  .smes-loader__cursor {
+    display: inline-block;
+    width: calc(var(--u) * 1.2);
+    height: calc(var(--u) * 8);
+    background: var(--_accent);
+    margin-left: calc(var(--u) * 0.5);
+    vertical-align: text-bottom;
+    animation: smes-cursor-blink 1s step-end infinite;
+  }
+
+  .smes-loader--active .smes-loader__cursor {
+    animation: smes-cursor-blink 1s step-end infinite;
+  }
+
+  .smes-loader:not(.smes-loader--active) .smes-loader__cursor {
+    opacity: 1;
+    animation: none;
+  }
+
+  .smes-loader__bar {
+    display: inline-block;
+    width: calc(var(--u) * 2);
+    height: calc(var(--u) * 10);
+    background: var(--_accent);
+    animation: smes-bar-pulse 800ms ease-in-out infinite;
+  }
+
+  .smes-loader__dot {
+    display: inline-block;
+    width: calc(var(--u) * 3);
+    height: calc(var(--u) * 3);
+    border-radius: 50%;
+    background: var(--_accent);
+    animation: smes-dot-pulse 900ms ease-in-out infinite;
+  }
+
+  @keyframes smes-cursor-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  @keyframes smes-bar-pulse {
+    0%, 100% { opacity: 0.2; transform: scaleY(0.6); }
+    50% { opacity: 1; transform: scaleY(1); }
+  }
+
+  @keyframes smes-dot-pulse {
+    0%, 100% { opacity: 0.2; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1); }
   }
 
   /* ── Glass surfaces ─────────────────────────────────────────────────────── */
@@ -473,12 +525,12 @@
     box-shadow: 0 8px 24px rgba(0,0,0,0.3);
   }
 
-  /* ── Indigo glow focus for inputs ───────────────────────────────────────── */
+  /* ── Green glow focus for inputs ────────────────────────────────────────── */
   .input-glow:focus {
     outline: none;
-    box-shadow: 0 0 0 1px rgba(99,102,241,0.4),
-                0 0 16px rgba(99,102,241,0.08);
-    border-color: rgba(99,102,241,0.35) !important;
+    box-shadow: 0 0 0 1px rgba(52,211,153,0.4),
+                0 0 16px rgba(52,211,153,0.10);
+    border-color: rgba(52,211,153,0.35) !important;
   }
 
   /* ── Live dot ───────────────────────────────────────────────────────────── */
@@ -550,4 +602,69 @@
 .eg-pulse  { animation: eg-pulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
   .eg-scene > *, .eg-bar, .eg-card, .eg-cursor, .eg-sweep, .eg-pulse { animation: none !important; opacity: 1 !important; transform: none !important; }
+}
+
+/* ── BrandLoader: branded SVG loaders using the chevron + cursor mark ─────── */
+.brand-loader__mark { width: 100%; height: 100%; overflow: visible; }
+.brand-loader__chev { fill: none; stroke: hsl(var(--foreground)); stroke-width: 11; stroke-linecap: round; stroke-linejoin: round; }
+.brand-loader__cur  { fill: hsl(var(--primary)); }
+.brand-loader__glow { stroke: hsl(var(--primary)); stroke-dasharray: 74; stroke-dashoffset: 74; }
+.brand-loader__echo { fill: none; stroke: hsl(var(--primary)); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
+                      transform-origin: -9px 0; opacity: 0; animation: brand-sonar-ping 2.4s cubic-bezier(.2,.7,.3,1) infinite; }
+.brand-loader__echo:nth-child(2) { animation-delay: .4s; }
+.brand-loader__echo:nth-child(3) { animation-delay: .8s; }
+
+/* 1. ORBIT — cursor circles the prompt */
+.orbit .brand-loader__sat { animation: brand-orbit 2.6s cubic-bezier(.7,0,.2,1) infinite; }
+.orbit .brand-loader__sat rect { transform-box: fill-box; transform-origin: center; animation: brand-orbit-r 2.6s cubic-bezier(.7,0,.2,1) infinite; }
+.orbit .brand-loader__chev { animation: brand-orbit-lean 2.6s cubic-bezier(.7,0,.2,1) infinite; transform-origin: 0 0; }
+@keyframes brand-orbit     { 0%,18%{transform:rotate(0)} 82%,100%{transform:rotate(360deg)} }
+@keyframes brand-orbit-r   { 0%,18%{transform:rotate(0)} 82%,100%{transform:rotate(-360deg)} }
+@keyframes brand-orbit-lean{ 0%,18%{transform:rotate(0)} 40%{transform:rotate(-7deg)} 60%{transform:rotate(7deg)} 82%,100%{transform:rotate(0)} }
+
+/* 2. ASSEMBLE — arms snap together, cursor pops */
+.asm .arm1 { animation: brand-arm1 2.4s cubic-bezier(.34,1.56,.64,1) infinite; }
+.asm .arm2 { animation: brand-arm2 2.4s cubic-bezier(.34,1.56,.64,1) infinite; }
+.asm .brand-loader__cur { transform-box: fill-box; transform-origin: center; animation: brand-asm-cur 2.4s cubic-bezier(.34,1.56,.64,1) infinite; }
+@keyframes brand-arm1 { 0%,10%{transform:translate(-40px,-40px) rotate(-30deg);opacity:0} 40%,70%{transform:none;opacity:1} 85%,100%{transform:translate(-40px,-40px) rotate(-30deg);opacity:0} }
+@keyframes brand-arm2 { 0%,10%{transform:translate(-40px,40px) rotate(30deg);opacity:0} 40%,70%{transform:none;opacity:1} 85%,100%{transform:translate(-40px,40px) rotate(30deg);opacity:0} }
+@keyframes brand-asm-cur { 0%,30%{transform:scale(0)} 50%,70%{transform:scale(1)} 85%,100%{transform:scale(0)} }
+
+/* 4. SONAR — the prompt pings */
+.sonar .brand-loader__cur { animation: brand-sonar-blink 1.06s steps(1,end) infinite; }
+.sonar .brand-loader__chev { transform-origin: -9px 0; animation: brand-sonar-kick 2.4s cubic-bezier(.34,1.56,.64,1) infinite; }
+@keyframes brand-sonar-ping  { 0%{transform:scale(1);opacity:.9} 70%,100%{transform:scale(2.6);opacity:0} }
+@keyframes brand-sonar-kick  { 0%{transform:scale(.88)} 18%,100%{transform:scale(1)} }
+@keyframes brand-sonar-blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+
+/* 5. COMPASS — quarter turns */
+.compass g { transform-origin: 0 0; animation: brand-compass 3.2s cubic-bezier(.34,1.56,.64,1) infinite; }
+@keyframes brand-compass { 0%,12%{transform:rotate(0)} 25%,37%{transform:rotate(90deg)} 50%,62%{transform:rotate(180deg)} 75%,87%{transform:rotate(270deg)} 100%{transform:rotate(360deg)} }
+
+/* 6. DROP — cursor falls in, chevron flinches */
+.drop .brand-loader__cur { transform-box: fill-box; transform-origin: center bottom; animation: brand-drop 2s infinite; }
+.drop .brand-loader__chev { animation: brand-flinch 2s infinite; }
+@keyframes brand-drop {
+  0%   { transform: translateY(-80px); opacity: 0; }
+  5%   { opacity: 1; }
+  30%  { transform: translateY(0) scale(1,1); animation-timing-function: cubic-bezier(.3,0,1,1); }
+  33%  { transform: translateY(0) scale(1.5,.55); animation-timing-function: ease-out; }
+  40%  { transform: translateY(-22px) scale(.9,1.15); animation-timing-function: ease-in; }
+  48%  { transform: translateY(0) scale(1.2,.85); animation-timing-function: ease-out; }
+  53%  { transform: translateY(-6px) scale(1,1); }
+  58%,80% { transform: translateY(0) scale(1,1); opacity: 1; }
+  92%,100% { transform: translateY(0) scale(1,0); opacity: 0; }
+}
+@keyframes brand-flinch { 0%,30%{transform:translateX(0)} 34%{transform:translateX(-7px) rotate(-6deg)} 46%{transform:translateX(2px)} 54%,100%{transform:translateX(0)} }
+
+/* 7. CASCADE — fast-forward wave */
+.cascade .brand-loader__chev { opacity: .14; animation: brand-wave 1.5s ease-in-out infinite; }
+.cascade .brand-loader__chev:nth-child(2) { animation-delay: .15s; }
+.cascade .brand-loader__chev:nth-child(3) { animation-delay: .3s; }
+.cascade .brand-loader__cur { transform-box: fill-box; transform-origin: left center; animation: brand-kick 1.5s ease-out infinite .45s; }
+@keyframes brand-wave { 0%,12%{opacity:.14;transform:translateX(0)} 20%{opacity:1;transform:translateX(3px)} 40%,100%{opacity:.14;transform:translateX(0)} }
+@keyframes brand-kick { 0%{transform:scaleX(1)} 12%{transform:scaleX(1.9)} 30%,100%{transform:scaleX(1)} }
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-loader__mark * { animation: none !important; }
 }

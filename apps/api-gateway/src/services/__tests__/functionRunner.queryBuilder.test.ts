@@ -12,7 +12,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { buildDbHelper, type QuerySpec } from '../functionRunner.service.js';
 
 const baseCtx = {
-  apiUrl: 'https://cloud.ecomgear.dev',
+  apiUrl: 'https://cloud.SMEsAgent.dev',
   schema: 'tenant_test',
   serviceKey: 'test-service-key',
 };
@@ -38,7 +38,7 @@ describe('functionRunner db.query (chainable builder backend)', () => {
 
     expect(result).toEqual([{ id: 1 }]);
     const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/parents?status=eq.active&order=name.asc');
+    expect(url).toBe('https://cloud.SMEsAgent.dev/rest/v1/parents?status=eq.active&order=name.asc');
   });
 
   it('single() requests the PostgREST single-object Accept header', async () => {
@@ -71,7 +71,7 @@ describe('functionRunner db.query (chainable builder backend)', () => {
 
     expect(result).toEqual([{ id: 9 }]);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/projects?select=id');
+    expect(url).toBe('https://cloud.SMEsAgent.dev/rest/v1/projects?select=id');
     expect((init.headers as Record<string, string>).Prefer).toBe('return=representation');
   });
 
@@ -84,7 +84,7 @@ describe('functionRunner db.query (chainable builder backend)', () => {
     await db.query(spec);
 
     const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/renewals?renewal_date=not.is.null');
+    expect(url).toBe('https://cloud.SMEsAgent.dev/rest/v1/renewals?renewal_date=not.is.null');
   });
 
   it('delete() now sets return=representation, fixing the 204-empty-body throw', async () => {
@@ -112,7 +112,7 @@ describe('functionRunner db.query (chainable builder backend)', () => {
     await db.query(spec);
 
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/orders?id=eq.5');
+    expect(url).toBe('https://cloud.SMEsAgent.dev/rest/v1/orders?id=eq.5');
     expect(init.method).toBe('PATCH');
   });
 
@@ -125,7 +125,7 @@ describe('functionRunner db.query (chainable builder backend)', () => {
     await db.query(spec);
 
     const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/orders?id=eq.5');
+    expect(url).toBe('https://cloud.SMEsAgent.dev/rest/v1/orders?id=eq.5');
   });
 
   it('applies legacyColumns/legacyFilter on a select spec', async () => {
@@ -137,7 +137,7 @@ describe('functionRunner db.query (chainable builder backend)', () => {
     await db.query(spec);
 
     const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/orders?select=id,status&id=eq.5');
+    expect(url).toBe('https://cloud.SMEsAgent.dev/rest/v1/orders?select=id,status&id=eq.5');
   });
 
   // range(from, to) must apply both limit AND offset -- offset was silently
@@ -151,7 +151,7 @@ describe('functionRunner db.query (chainable builder backend)', () => {
     await db.query(spec);
 
     const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/posts?order=created_at.asc&limit=10&offset=20');
+    expect(url).toBe('https://cloud.SMEsAgent.dev/rest/v1/posts?order=created_at.asc&limit=10&offset=20');
   });
 
   // in()/contains() array values must be URL-encoded per element -- an
@@ -165,6 +165,6 @@ describe('functionRunner db.query (chainable builder backend)', () => {
     await db.query(spec);
 
     const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://cloud.ecomgear.dev/rest/v1/t?status=in.(a%2Cb%26c,plain)');
+    expect(url).toBe('https://cloud.SMEsAgent.dev/rest/v1/t?status=in.(a%2Cb%26c,plain)');
   });
 });

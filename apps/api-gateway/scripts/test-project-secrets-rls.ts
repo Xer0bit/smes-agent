@@ -22,7 +22,7 @@ if (!SERVICE_KEY) {
   console.error('FAIL: SUPABASE_SERVICE_KEY (or SUPABASE_SERVICE_ROLE_KEY) is required to seed fixtures.');
   process.exit(1);
 }
-if (SUPABASE_URL.includes('supabase.co') || SUPABASE_URL.includes('ecomgear')) {
+if (SUPABASE_URL.includes('supabase.co') || SUPABASE_URL.includes('SMEsAgent')) {
   console.error(`FAIL: refusing to run against a non-local URL (${SUPABASE_URL}). This test creates real rows.`);
   process.exit(1);
 }

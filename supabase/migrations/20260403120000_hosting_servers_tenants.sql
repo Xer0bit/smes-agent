@@ -43,7 +43,7 @@ create table if not exists public.tenant_deployments (
   -- Container IDs for lifecycle management
   container_ids       jsonb not null default '{}',
   -- Domain routing
-  subdomain           text,                        -- e.g. myapp.apps.ecomgear.app
+  subdomain           text,                        -- e.g. myapp.apps.SMEsAgent.app
   custom_domain       text,
   -- Timestamps
   deployed_at         timestamptz,

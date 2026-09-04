@@ -9,8 +9,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(__dirname, 'preview');
 mkdirSync(OUT, { recursive: true });
 
-const FRONTEND_URL = 'https://ecomgear.dev';
-const LOGO_URL = 'https://www.ecomgear.dev/assets/ecomgear-auth-logo-sfGodRbL.png';
+const FRONTEND_URL = 'https://SMEsAgent.dev';
+const LOGO_URL = 'https://www.SMEsAgent.dev/assets/SMEsAgent-auth-logo-sfGodRbL.png';
 const YEAR = new Date().getFullYear();
 
 // ── base template (mirrors _shared/base-template.ts) ─────────────────────────
@@ -57,7 +57,7 @@ function baseTemplate({ title, preheader, body, button, footer, frontendUrl }) {
         <tr>
           <td align="center" style="background:#0f0f11;border-radius:14px 14px 0 0;padding:28px 40px 24px;">
             <a href="${frontendUrl}" style="text-decoration:none;display:inline-block;line-height:1;">
-              <img src="${LOGO_URL}" alt="EcomGear" width="148"
+              <img src="${LOGO_URL}" alt="SMEsAgent" width="148"
                    style="display:block;height:auto;border:0;margin:0 auto;" />
             </a>
           </td>
@@ -85,8 +85,8 @@ function baseTemplate({ title, preheader, body, button, footer, frontendUrl }) {
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
               <tr>
                 <td style="font-size:12px;color:#94a3b8;line-height:1.6;">
-                  &copy; ${YEAR} EcomGear &middot;
-                  <a href="${frontendUrl}" style="color:#94a3b8;text-decoration:underline;">ecomgear.dev</a>
+                  &copy; ${YEAR} SMEsAgent &middot;
+                  <a href="${frontendUrl}" style="color:#94a3b8;text-decoration:underline;">SMEsAgent.dev</a>
                   &middot;
                   <a href="${frontendUrl}/dashboard/settings" style="color:#94a3b8;text-decoration:underline;">Manage preferences</a>
                 </td>
@@ -111,16 +111,16 @@ const pl = `style="margin:0;font-size:15px;color:#475569;line-height:1.75;"`;
 const templates = [
   {
     name: '2-welcome',
-    subject: 'Welcome to EcomGear   your account is ready',
-    from: 'EcomGear <noreply@ecomgear.dev>',
+    subject: 'Welcome to SMEsAgent   your account is ready',
+    from: 'SMEsAgent <noreply@SMEsAgent.dev>',
     html: baseTemplate({
-      title: 'Welcome to EcomGear',
+      title: 'Welcome to SMEsAgent',
       preheader: 'Your account is ready   start building your first app in minutes.',
       body: `
-        <h1 ${h1}>Welcome to EcomGear</h1>
+        <h1 ${h1}>Welcome to SMEsAgent</h1>
         <p ${p}>Hi Jane,</p>
         <p ${p}>
-          Your account is all set. EcomGear lets you build full-stack web apps by
+          Your account is all set. SMEsAgent lets you build full-stack web apps by
           simply describing what you want   the AI writes the code, you see it live.
         </p>
         <table cellpadding="0" cellspacing="0" style="width:100%;margin:8px 0 0;">
@@ -164,10 +164,10 @@ const templates = [
   {
     name: '4-project-invitation',
     subject: 'Jane Smith invited you to collaborate on "My Storefront"',
-    from: 'EcomGear Invites <invite@ecomgear.dev>',
+    from: 'SMEsAgent Invites <invite@SMEsAgent.dev>',
     html: baseTemplate({
       title: 'Project collaboration invitation',
-      preheader: 'Jane Smith invited you to collaborate on "My Storefront" on EcomGear.',
+      preheader: 'Jane Smith invited you to collaborate on "My Storefront" on SMEsAgent.',
       body: `
         <h1 ${h1}>You've been invited to collaborate</h1>
         <p ${p}>Hi there,</p>
@@ -187,7 +187,7 @@ const templates = [
           </tr>
         </table>
         <p ${pl}>
-          Accept the invitation to start collaborating. If you don't have an EcomGear
+          Accept the invitation to start collaborating. If you don't have an SMEsAgent
           account yet, you'll be guided to create one.
         </p>
       `,
@@ -198,11 +198,11 @@ const templates = [
   },
   {
     name: '5-org-invitation',
-    subject: 'Jane Smith invited you to join Acme Co on EcomGear',
-    from: 'EcomGear Invites <invite@ecomgear.dev>',
+    subject: 'Jane Smith invited you to join Acme Co on SMEsAgent',
+    from: 'SMEsAgent Invites <invite@SMEsAgent.dev>',
     html: baseTemplate({
-      title: "You're invited to join a team on EcomGear",
-      preheader: 'Jane Smith invited you to join Acme Co on EcomGear as editor.',
+      title: "You're invited to join a team on SMEsAgent",
+      preheader: 'Jane Smith invited you to join Acme Co on SMEsAgent as editor.',
       body: `
         <h1 ${h1}>You're invited to join a team</h1>
         <p ${p}>Hi there,</p>
@@ -230,7 +230,7 @@ const templates = [
           </tr>
         </table>
         <p ${pl}>
-          Accept the invitation to join the team. If you don't have an EcomGear
+          Accept the invitation to join the team. If you don't have an SMEsAgent
           account yet, you'll be guided to create one.
         </p>
       `,
@@ -241,8 +241,8 @@ const templates = [
   },
   {
     name: '6-quota-alert-80',
-    subject: "You've used 80% of your EcomGear quota",
-    from: 'EcomGear <noreply@ecomgear.dev>',
+    subject: "You've used 80% of your SMEsAgent quota",
+    from: 'SMEsAgent <noreply@SMEsAgent.dev>',
     html: baseTemplate({
       title: "80% of quota used",
       preheader: "You've used 80% of your monthly messages   upgrade to keep building.",
@@ -279,8 +279,8 @@ const templates = [
   },
   {
     name: '7-quota-alert-100',
-    subject: "You've reached your EcomGear usage limit",
-    from: 'EcomGear <noreply@ecomgear.dev>',
+    subject: "You've reached your SMEsAgent usage limit",
+    from: 'SMEsAgent <noreply@SMEsAgent.dev>',
     html: baseTemplate({
       title: "Usage limit reached",
       preheader: "Your monthly quota is exhausted   upgrade to resume AI requests.",
@@ -341,7 +341,7 @@ writeFileSync(resolve(OUT, 'index.html'), `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>EcomGear Email Previews</title>
+  <title>SMEsAgent Email Previews</title>
   <style>
     *{box-sizing:border-box}
     body{margin:0;padding:48px 24px;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}
@@ -358,7 +358,7 @@ writeFileSync(resolve(OUT, 'index.html'), `<!DOCTYPE html>
 <body>
   <div class="card">
     <div class="header">
-      <img src="${LOGO_URL}" alt="EcomGear" width="140">
+      <img src="${LOGO_URL}" alt="SMEsAgent" width="140">
     </div>
     <div class="body">
       <h1>Email Previews</h1>

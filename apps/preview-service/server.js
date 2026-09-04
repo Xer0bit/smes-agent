@@ -73,7 +73,7 @@ const HMR_PROTOCOL = process.env.VITE_HMR_PROTOCOL || undefined;
 
 // ── Auto-restore: Supabase config ────────────────────────────────────────────
 // Used to recover project files that were pruned by the nightly cleanup.
-const SUPABASE_REST_URL = (process.env.SUPABASE_URL || 'https://api.ecomgear.dev').replace(/\/$/, '');
+const SUPABASE_REST_URL = (process.env.SUPABASE_URL || 'https://api.SMEsAgent.dev').replace(/\/$/, '');
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 //
@@ -85,7 +85,7 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 // already be logged in (just not a member of THIS project), so /login is the
 // wrong destination for them too; home is correct either way.
 const FRONTEND_HOME_URL = process.env.FRONTEND_HOME_URL
-    || (IS_PRODUCTION ? 'https://www.ecomgear.dev' : 'http://localhost:8080');
+    || (IS_PRODUCTION ? 'https://www.SMEsAgent.dev' : 'http://localhost:8080');
 
 // jwt → { userId, expiresAt } — avoids re-verifying the same token on every request.
 const jwtCache = new Map();
@@ -184,7 +184,7 @@ async function userCanAccessProject(userId, projectId) {
 
 function setPreviewSessionCookie(res, projectId, sessionId) {
     // SameSite=None;Secure is required for the cookie to survive when preview
-    // is embedded cross-domain (preview.ecomgear.app inside www.ecomgear.dev)
+    // is embedded cross-domain (preview.SMEsAgent.app inside www.SMEsAgent.dev)
     // in production; Lax is fine (and required, since Secure needs https) for
     // local dev where everything is plain http on localhost.
     const sameSite = IS_PRODUCTION ? 'SameSite=None; Secure' : 'SameSite=Lax';
@@ -458,13 +458,7 @@ async function closeProjectServer(projectId, reason = 'cleanup') {
 // is only rejected if a lock is currently held by someone else (no token, or
 // a mismatched one). No lock held at all → always allowed, so direct/manual
 // pushes work exactly as before when nothing is running.
-// Must match AGENT_LOCK_STALE_MS in api-gateway/src/services/agentLockState.ts
-// (3 min) — the api-gateway heartbeats the row every 30s and reclaims stale
-// locks at 3 min, so a longer bound here would keep rejecting manual pushes
-// for up to 15 min after a crashed run that api-gateway already considers
-// free. A live run's row is refreshed every 30s, so 3 min is safely above the
-// heartbeat and never rejects a genuine run's own pushes.
-const AGENT_LOCK_STALE_MS = 3 * 60_000;
+const AGENT_LOCK_STALE_MS = 15 * 60_000;
 async function checkAgentLock(projectId, providedToken) {
     if (!SUPABASE_SERVICE_KEY) return { ok: true }; // fail open   locking unavailable, don't block all pushes
     try {
@@ -482,57 +476,6 @@ async function checkAgentLock(projectId, providedToken) {
         return { ok: false };
     } catch {
         return { ok: true }; // fail open   never let lock-check errors block pushes
-    }
-}
-
-// Self-heal a project's env: keep its .env.local in sync with the project's
-// CURRENT secrets in the platform DB, read directly (service key, same as
-// checkAgentLock). The gen runner also syncs env (at run start and before its
-// end-of-run push), but that only covers runs and authenticated callers; a key
-// saved through the Settings UI (RLS direct write) or between runs would sit
-// only in the DB until the next run happened to sync it. Making the preview
-// authoritative on the two moments that matter -- a file push (/update) and a
-// production build (/export) -- means the live preview AND any published site
-// always see the project's current secrets regardless of which writer saved
-// them or when. Platform-managed VITE_DB_* rows are upserted into
-// project_secrets by getCredentials() on every provisioning/run path, so a
-// direct read is complete for any project that has had agent activity.
-// Fail-open: no service key, DB error, or no rows leaves the existing
-// .env.local untouched (never blocks or fails the caller).
-async function refreshProjectEnvFromDb(projectId, { restartRunning = true } = {}) {
-    if (!SUPABASE_SERVICE_KEY) return;
-    try {
-        const url = `${SUPABASE_REST_URL}/rest/v1/project_secrets?project_id=eq.${encodeURIComponent(projectId)}&select=key_name,key_value`;
-        const res = await fetch(url, {
-            headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
-        });
-        if (!res.ok) return;
-        const rows = await res.json();
-        if (!Array.isArray(rows) || rows.length === 0) return;
-        const envLines = rows
-            .filter((s) => s && typeof s.key_name === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(s.key_name))
-            .map((s) => `${s.key_name}=${JSON.stringify(String(s.key_value ?? ''))}`);
-        if (envLines.length === 0) return;
-        const envContent = envLines.join('\n') + '\n';
-        const projectRoot = path.join(PROJECTS_ROOT, projectId);
-        fs.mkdirSync(projectRoot, { recursive: true });
-        const envPath = path.join(projectRoot, '.env.local');
-        let changed = true;
-        try {
-            changed = fs.readFileSync(envPath, 'utf-8') !== envContent;
-        } catch {
-            // No existing file   this is a real change
-        }
-        if (!changed) return;
-        fs.writeFileSync(envPath, envContent);
-        console.log(`[${projectId}] Refreshed ${envLines.length} secret(s) to .env.local from DB`);
-        if (restartRunning) {
-            // No-op when no server is running (a fresh start reads the file);
-            // otherwise the running Vite process must restart to load it.
-            await restartProjectServer(projectId, 'secrets refreshed from DB').catch(() => {});
-        }
-    } catch (err) {
-        console.error(`[${projectId}] Env refresh failed (non-fatal):`, err.message);
     }
 }
 
@@ -731,7 +674,7 @@ export default {
     const packageJsonPath = path.join(projectRoot, 'package.json');
     if (!fs.existsSync(packageJsonPath)) {
         fs.writeFileSync(packageJsonPath, JSON.stringify({
-            name: 'ecomgear-project',
+            name: 'SMEsAgent-project',
             private: true,
             version: '0.0.0',
             type: 'module',
@@ -985,7 +928,7 @@ async function getOrCreateServer(projectId) {
         // (wss://host:/path) that fails to connect, causing the browser to reload
         // on each retry   an infinite reload loop when opening the preview link.
         if (IS_PRODUCTION) {
-            hmrConfig.host = HMR_HOST || 'preview.ecomgear.app';
+            hmrConfig.host = HMR_HOST || 'preview.SMEsAgent.app';
             hmrConfig.protocol = HMR_PROTOCOL || 'wss';
             hmrConfig.clientPort = HMR_PORT || 443;
             console.log(`[Preview] HMR configured for production: ${hmrConfig.protocol}://${hmrConfig.host}:${hmrConfig.clientPort}`);
@@ -1023,10 +966,10 @@ const ALLOWED_ORIGINS_ENV = process.env.ALLOWED_ORIGINS || '';
 const ALLOWED_ORIGINS = ALLOWED_ORIGINS_ENV
     ? ALLOWED_ORIGINS_ENV.split(',').map(o => o.trim()).filter(Boolean)
     : [
-        'https://ecomgear.dev',
-        'https://www.ecomgear.dev',
-        'https://ecomgear.app',
-        'https://www.ecomgear.app',
+        'https://SMEsAgent.dev',
+        'https://www.SMEsAgent.dev',
+        'https://SMEsAgent.app',
+        'https://www.SMEsAgent.app',
         'http://localhost:5173',
         'http://localhost:3000',
         'http://localhost:8080',
@@ -1190,7 +1133,7 @@ async function startMainServer() {
             await closeProjectServer(projectId, 'project deleted');
             const projectRoot = path.join(PROJECTS_ROOT, projectId);
             await fs.promises.rm(projectRoot, { recursive: true, force: true });
-            const uploadsDir = path.join('/tmp/ecomgear-preview', projectId);
+            const uploadsDir = path.join('/tmp/SMEsAgent-preview', projectId);
             await fs.promises.rm(uploadsDir, { recursive: true, force: true }).catch(() => {});
             res.json({ success: true, projectId });
         } catch (err) {
@@ -1283,7 +1226,7 @@ async function startMainServer() {
         next();
     });
 
-    // ── Path-based published site routing   preview.ecomgear.app/p/{slug} ──
+    // ── Path-based published site routing   preview.SMEsAgent.app/p/{slug} ──
     // Works with existing SSL cert (no wildcard needed).
     // Must be BEFORE /preview/:projectId.
     app.use('/p/:slug', async (req, res, next) => {
@@ -1298,7 +1241,7 @@ async function startMainServer() {
 </head><body><div class="box">
 <h1 style="font-size:2rem">404</h1>
 <p><strong>${safeSlug}</strong> is not published yet.</p>
-<p class="sub"><a href="https://www.ecomgear.dev">Build with ecomgear →</a></p>
+<p class="sub"><a href="https://www.SMEsAgent.dev">Build with SMEsAgent →</a></p>
 </div></body></html>`);
         }
         // Always serve index.html for all sub-paths (HashRouter SPA)
@@ -1313,12 +1256,12 @@ async function startMainServer() {
         }
     });
 
-    // ── Published subdomain routing   {slug}.ecomgear.app (legacy/HTTP fallback) ──
+    // ── Published subdomain routing   {slug}.SMEsAgent.app (legacy/HTTP fallback) ──
     // Only reached when browser allows HTTP (no HSTS). Path-based /p/:slug is preferred.
     const SUBDOMAIN_RESERVED = new Set(['preview', 'api', 'www', 'gen', 'agent', 'app', 'mail', 'admin', 'help']);
     app.use(async (req, res, next) => {
         const host = (req.headers.host || '').toLowerCase().split(':')[0];
-        const slugMatch = host.match(/^([a-z0-9][a-z0-9-]*[a-z0-9])\.ecomgear\.app$/);
+        const slugMatch = host.match(/^([a-z0-9][a-z0-9-]*[a-z0-9])\.SMEsAgent\.app$/);
         if (!slugMatch || SUBDOMAIN_RESERVED.has(slugMatch[1])) return next();
 
         const slug = slugMatch[1];
@@ -1326,13 +1269,13 @@ async function startMainServer() {
         const projectId = slugRegistry.get(slug);
         if (!projectId) {
             return res.status(404).type('html').send(`<!doctype html><html><head><meta charset="utf-8">
-<title>404 – ${safeSlug}.ecomgear.app</title>
+<title>404 – ${safeSlug}.SMEsAgent.app</title>
 <style>*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#07080a;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh}
 .box{text-align:center;padding:40px}.sub{color:#555;margin-top:8px}a{color:#a78bfa}</style>
 </head><body><div class="box">
 <h1 style="font-size:2rem">404</h1>
-<p><strong>${safeSlug}.ecomgear.app</strong> is not published yet.</p>
-<p class="sub"><a href="https://www.ecomgear.dev">Build with ecomgear →</a></p>
+<p><strong>${safeSlug}.SMEsAgent.app</strong> is not published yet.</p>
+<p class="sub"><a href="https://www.SMEsAgent.dev">Build with SMEsAgent →</a></p>
 </div></body></html>`);
         }
 
@@ -1382,7 +1325,7 @@ async function startMainServer() {
         if (existing && existing !== projectId) {
             return res.status(409).json({ error: `"${normalizedSlug}" is already taken by another project` });
         }
-        console.log(`[Publish] ${projectId} → ${normalizedSlug}.ecomgear.app (${files.length} files)`);
+        console.log(`[Publish] ${projectId} → ${normalizedSlug}.SMEsAgent.app (${files.length} files)`);
         // Write files to disk (same paths the preview Vite server uses)
         const projectRoot = initProject(projectId);
         const materialized = await materializeProjectFiles(projectId, projectRoot, files);
@@ -1405,7 +1348,7 @@ async function startMainServer() {
         res.json({
             success: true,
             slug: normalizedSlug,
-            publishedUrl: `https://preview.ecomgear.app/p/${normalizedSlug}`,
+            publishedUrl: `https://preview.SMEsAgent.app/p/${normalizedSlug}`,
             autoFixes: materialized.allFixedIssues.length > 0 ? materialized.allFixedIssues : undefined,
         });
     });
@@ -1482,7 +1425,7 @@ async function startMainServer() {
         if (seo.title) schema.name = seo.title;
         if (seo.description) schema.description = seo.description;
         if (pageUrl) schema.url = pageUrl;
-        const script = `<script type="application/ld+json" id="ecomgear-route-structured-data">${JSON.stringify(schema)}</script>`;
+        const script = `<script type="application/ld+json" id="SMEsAgent-route-structured-data">${JSON.stringify(schema)}</script>`;
         out = out.replace('</head>', `  ${script}\n</head>`);
 
         return out;
@@ -1496,10 +1439,10 @@ async function startMainServer() {
     // it. Reading it fresh on every export makes it (a) survive every publish
     // and (b) actually disappear when the user clears the field and re-syncs
     // or republishes, instead of lingering from a stale patched copy.
-    const HEADER_INTEGRATIONS_HEAD_START = '<!-- ecomgear:header-integrations:head:start -->';
-    const HEADER_INTEGRATIONS_HEAD_END = '<!-- ecomgear:header-integrations:head:end -->';
-    const HEADER_INTEGRATIONS_BODY_START = '<!-- ecomgear:header-integrations:body:start -->';
-    const HEADER_INTEGRATIONS_BODY_END = '<!-- ecomgear:header-integrations:body:end -->';
+    const HEADER_INTEGRATIONS_HEAD_START = '<!-- SMEsAgent:header-integrations:head:start -->';
+    const HEADER_INTEGRATIONS_HEAD_END = '<!-- SMEsAgent:header-integrations:head:end -->';
+    const HEADER_INTEGRATIONS_BODY_START = '<!-- SMEsAgent:header-integrations:body:start -->';
+    const HEADER_INTEGRATIONS_BODY_END = '<!-- SMEsAgent:header-integrations:body:end -->';
 
     function replaceHeaderIntegrationsBlock(html, startMarker, endMarker, block, insertBeforeAnchor) {
         const re = new RegExp(`${startMarker}[\\s\\S]*?${endMarker}\\n?`, 'm');
@@ -1636,10 +1579,10 @@ async function startMainServer() {
             const rows = await r.json();
             const p = rows[0];
             if (!p) return '';
-            if (p.published_url && !String(p.published_url).includes('ecomgear.app')) {
+            if (p.published_url && !String(p.published_url).includes('SMEsAgent.app')) {
                 return `https://${String(p.published_url).replace(/^https?:\/\//, '')}`;
             }
-            return p.published_subdomain ? `https://${p.published_subdomain}.ecomgear.app` : '';
+            return p.published_subdomain ? `https://${p.published_subdomain}.SMEsAgent.app` : '';
         } catch {
             return '';
         }
@@ -1706,13 +1649,6 @@ async function startMainServer() {
         if (!fs.existsSync(projectRoot) || !fs.existsSync(path.join(projectRoot, 'src', 'main.tsx'))) {
             return res.status(404).json({ error: 'Project not found or not initialized' });
         }
-        // Hosting fix: vite build below bakes import.meta.env.VITE_* from this
-        // project's .env.local. Without a refresh here the published bundle
-        // carried whatever env was on disk from the LAST run -- so a secret
-        // saved after that run shipped a hosted site with missing/stale values
-        // until a manual republish. Self-heal from the DB first (restart of the
-        // dev server is not needed for a build; the file is read from disk).
-        await refreshProjectEnvFromDb(projectId, { restartRunning: false });
         const buildDir = path.join(projectRoot, '.export-dist');
         try {
             // Rewrite index.html to use root-relative script path for production build
@@ -1972,11 +1908,6 @@ async function startMainServer() {
 
         console.log(`[${projectId}] Updating ${files.length} files...`);
         const projectRoot = initProject(projectId);
-        // Keep .env.local current BEFORE the Vite server is (re)started and
-        // warmed below, so this push's app boots with the project's real
-        // secrets -- self-heal from the DB, not a dependency on the runner
-        // having synced first. Never blocks or fails the push.
-        await refreshProjectEnvFromDb(projectId, { restartRunning: true });
         let requiresServerRestart = shouldRestartViteForUpdate(files, projectRoot);
         let depsResult = null;
 
@@ -2429,7 +2360,7 @@ export default App;
 
     // DISABLED 2026-07-21 (production incident): locked out real project
     // owners/members in the editor's embedded preview iframe. Root cause:
-    // preview.ecomgear.app and ecomgear.dev are different registrable
+    // preview.SMEsAgent.app and SMEsAgent.dev are different registrable
     // domains, so the session cookie set by POST /session is a third-party
     // cookie from the iframe's perspective   blocked outright by browsers'
     // third-party-cookie policies regardless of SameSite=None, not just in

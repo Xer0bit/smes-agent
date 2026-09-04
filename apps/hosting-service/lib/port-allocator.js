@@ -17,7 +17,7 @@ const net = require('net');
 const BASE_PORT = parseInt(process.env.TENANT_PORT_BASE || '10000', 10);
 const PORT_STRIDE = 10; // ports reserved per tenant
 const LOCAL_DEV = process.env.LOCAL_DEV === '1' || process.env.NODE_ENV === 'development';
-const SITES_ROOT = process.env.SITES_ROOT || (LOCAL_DEV ? path.join(__dirname, '..', '.local-sites') : '/var/www/ecomgear/sites');
+const SITES_ROOT = process.env.SITES_ROOT || (LOCAL_DEV ? path.join(__dirname, '..', '.local-sites') : '/var/www/SMEsAgent/sites');
 
 const PORTS_FILE = path.join(SITES_ROOT, '.ports.json');
 

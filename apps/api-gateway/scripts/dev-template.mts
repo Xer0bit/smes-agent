@@ -35,11 +35,11 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // initProjectFromTemplate()'s ensureBaseTemplate() runs a buffered `npm
-// install` (execAsync, not inherited stdio) into ~/.ecomgear/base-template/
+// install` (execAsync, not inherited stdio) into ~/.SMEsAgent/base-template/
 // the first time it's ever called on a machine -- nothing prints until it
 // finishes, which can take a minute or more and looks exactly like a hang.
 // Warn up front so that wait isn't mistaken for a broken script.
-const baseTemplateDir = process.env.BASE_TEMPLATE_DIR || path.join(os.homedir(), '.ecomgear', 'base-template');
+const baseTemplateDir = process.env.BASE_TEMPLATE_DIR || path.join(os.homedir(), '.SMEsAgent', 'base-template');
 if (!fs.existsSync(path.join(baseTemplateDir, 'node_modules'))) {
   console.log(`[dev-template] First run on this machine: building the shared base template into ${baseTemplateDir}`);
   console.log('[dev-template] This runs `npm install` with no live progress output -- can take 1-3 min. Not stuck, just quiet.');

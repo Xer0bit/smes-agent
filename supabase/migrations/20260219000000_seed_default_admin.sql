@@ -2,8 +2,8 @@
 -- Migration: Create user_roles table + seed default super_admin user
 -- Date: 2026-02-19
 -- Default admin credentials:
---   Email:    admin@ecomgear.com
---   Password: Admin@ecomgear2026!
+--   Email:    admin@SMEsAgent.com
+--   Password: Admin@SMEsAgent2026!
 -- Change the password immediately after first login.
 -- =============================================================================
 
@@ -89,15 +89,15 @@ BEGIN
             '00000000-0000-0000-0000-000000000000',
             'authenticated',
             'authenticated',
-            'admin@ecomgear.com',
-            crypt('Admin@ecomgear2026!', gen_salt('bf')),
+            'admin@SMEsAgent.com',
+            crypt('Admin@SMEsAgent2026!', gen_salt('bf')),
             NOW(),
             NOW(),
             NULL,
             NULL,
             NOW(),
             '{"provider":"email","providers":["email"]}'::jsonb,
-            '{"full_name":"eCOMGear Admin"}'::jsonb,
+            '{"full_name":"SMEsAgent Admin"}'::jsonb,
             FALSE,
             NOW(),
             NOW(),
@@ -113,8 +113,8 @@ END $$;
 INSERT INTO profiles (id, email, full_name, created_at, updated_at)
 VALUES (
     'a0000000-0000-0000-0000-000000000001',
-    'admin@ecomgear.com',
-    'eCOMGear Admin',
+    'admin@SMEsAgent.com',
+    'SMEsAgent Admin',
     NOW(),
     NOW()
 )

@@ -37,7 +37,7 @@ process.on('unhandledRejection', (reason) => {
 // malformed wss://host:/path URL that fails to connect and reload-loops.
 const hmrConfig = {};
 if (isProduction) {
-    hmrConfig.host = process.env.HMR_HOST || 'preview.ecomgear.app';
+    hmrConfig.host = process.env.HMR_HOST || 'preview.SMEsAgent.app';
     hmrConfig.protocol = process.env.HMR_PROTOCOL || 'wss';
     hmrConfig.clientPort = process.env.HMR_PORT ? parseInt(process.env.HMR_PORT, 10) : 443;
 }

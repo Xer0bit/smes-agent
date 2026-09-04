@@ -13,7 +13,7 @@ const { execSync, exec } = require('child_process');
 const crypto = require('crypto');
 
 const NETWORK_NAME = 'ecg-tenant-net';
-const TENANT_DATA_ROOT = process.env.TENANT_DATA_ROOT || '/var/lib/ecomgear/tenants';
+const TENANT_DATA_ROOT = process.env.TENANT_DATA_ROOT || '/var/lib/SMEsAgent/tenants';
 const LOCAL_DEV = process.env.LOCAL_DEV === '1' || process.env.NODE_ENV === 'development';
 
 // Docker images

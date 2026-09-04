@@ -2,7 +2,7 @@
 // All API calls go through Supabase Edge Functions
 
 const IS_PRODUCTION = import.meta.env.PROD;
-const DEFAULT_SUPABASE_BASE = IS_PRODUCTION ? 'https://api.ecomgear.dev' : 'http://127.0.0.1:54321';
+const DEFAULT_SUPABASE_BASE = IS_PRODUCTION ? 'https://api.SMEsAgent.dev' : 'http://127.0.0.1:54321';
 const RESOLVED_SUPABASE_BASE = (import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_BASE).replace(/\/$/, '');
 
 export const EXTERNAL_API_CONFIG = {
@@ -32,7 +32,7 @@ export const EXTERNAL_API_CONFIG = {
 
 // Preview Service Configuration
 // Normalize URL to remove trailing /preview for consistent construction
-const rawPreviewUrl = import.meta.env.VITE_PREVIEW_URL || import.meta.env.VITE_PREVIEW_SERVICE_URL || (IS_PRODUCTION ? 'https://preview.ecomgear.app' : 'http://localhost:3001');
+const rawPreviewUrl = import.meta.env.VITE_PREVIEW_URL || import.meta.env.VITE_PREVIEW_SERVICE_URL || (IS_PRODUCTION ? 'https://preview.SMEsAgent.app' : 'http://localhost:3001');
 export const PREVIEW_CONFIG = {
   BASE_URL: rawPreviewUrl.replace(/\/preview\/?$/, ''),
 };
@@ -60,7 +60,7 @@ export const isExternalApiConfigured = (): boolean => {
 
 // ── VPS3 Generation & AI Server (US) ─────────────────────────────────────
 // All AI / code-gen workloads run here for lower Anthropic latency.
-const resolvedGenBase = import.meta.env.VITE_GEN_SERVER_URL || (IS_PRODUCTION ? 'https://gen.ecomgear.dev' : 'http://localhost:5001');
+const resolvedGenBase = import.meta.env.VITE_GEN_SERVER_URL || (IS_PRODUCTION ? 'https://gen.SMEsAgent.dev' : 'http://localhost:5001');
 const resolvedAgentBase = import.meta.env.VITE_AGENT_SERVER_URL || resolvedGenBase;
 
 export const GEN_SERVER_CONFIG = {
@@ -106,7 +106,7 @@ export const getAgentServerUrl = (path: string): string =>
 // system, runtime, database, admin-database, seo, header-integrations, github,
 // functions, ecg-*). In local dev this is the same single process as the gen
 // server (port 5001), so it defaults to the same fallback.
-const resolvedApiBase = import.meta.env.VITE_API_SERVER_URL || (IS_PRODUCTION ? 'https://api.ecomgear.dev' : 'http://localhost:5001');
+const resolvedApiBase = import.meta.env.VITE_API_SERVER_URL || (IS_PRODUCTION ? 'https://api.SMEsAgent.dev' : 'http://localhost:5001');
 
 export const API_SERVER_CONFIG = {
   BASE_URL: resolvedApiBase.replace(/\/$/, ''),

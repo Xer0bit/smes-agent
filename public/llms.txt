@@ -1,8 +1,8 @@
-# eComGear AI IDE
+# SMEsAgent AI IDE
 
 > Autonomous AI-Powered IDE & Sandboxed MicroVM Coding Engine
 
-eComGear is a next-generation AI IDE that enables developers and AI builders to generate, refactor, execute, and deploy full-stack web applications. Built on multi-modal LLM streaming, Firecracker MicroVM execution sandboxes, and automated deployment pipelines.
+SMEsAgent is a next-generation AI IDE that enables developers and AI builders to generate, refactor, execute, and deploy full-stack web applications. Built on multi-modal LLM streaming, Firecracker MicroVM execution sandboxes, and automated deployment pipelines.
 
 ---
 
@@ -53,6 +53,6 @@ eComGear is a next-generation AI IDE that enables developers and AI builders to 
 
 ## Documentation & Repository Links
 
-- **Main Website**: https://ecomgear.dev
-- **Documentation**: https://ecomgear.dev/features
-- **GitHub Repository**: https://github.com/ecomgear/ecomgear
+- **Main Website**: https://SMEsAgent.dev
+- **Documentation**: https://SMEsAgent.dev/features
+- **GitHub Repository**: https://github.com/SMEsAgent/SMEsAgent

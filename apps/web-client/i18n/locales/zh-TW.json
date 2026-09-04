@@ -1,6 +1,6 @@
 {
   "auth": {
-    "welcome": "歡迎來到 eComGear",
+    "welcome": "歡迎來到 SMEsAgent",
     "subtitle": "登入您的帳戶或創建新帳戶",
     "backToHome": "返回首頁",
     "email": "電子郵件",
@@ -35,7 +35,7 @@
     }
   },
   "loginDialog": {
-    "description": "選擇您想要登入 eComGear 的方式",
+    "description": "選擇您想要登入 SMEsAgent 的方式",
     "login": "登入",
     "signup": "註冊",
     "socialLogin": "或使用社交登入"
@@ -59,7 +59,7 @@
     "navigation": "導航"
   },
   "admin": {
-    "title": "eComGear 管理後台",
+    "title": "SMEsAgent 管理後台",
     "dashboard": "儀表板",
     "organizations": "組織",
     "projects": "專案",

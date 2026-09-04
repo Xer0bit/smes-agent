@@ -1,0 +1,51 @@
+<svg width="900" height="640" viewBox="0 0 900 640" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>SMEs Agent icon logo — prompt mark, signal green</title>
+  <desc>Icon-only mark for SMEs Agent: a terminal-style prompt chevron and cursor bar, shown on light, dark, black, white, and as app tiles.</desc>
+
+  <!-- ===== Icon, light background ===== -->
+  <rect x="0" y="0" width="440" height="300" fill="#F6F8F6"/>
+  <g transform="translate(220,150) scale(1.7)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#14161A" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#34D399"/>
+  </g>
+  <text x="220" y="270" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-weight="400" font-size="12" letter-spacing="2" fill="#9CA3A0">LIGHT BACKGROUND</text>
+
+  <!-- ===== Icon, dark background ===== -->
+  <rect x="460" y="0" width="440" height="300" fill="#14161A"/>
+  <g transform="translate(680,150) scale(1.7)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#F6F8F6" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#34D399"/>
+  </g>
+  <text x="680" y="270" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-weight="400" font-size="12" letter-spacing="2" fill="#4B524E">DARK BACKGROUND</text>
+
+  <!-- ===== Solid black ===== -->
+  <rect x="0" y="320" width="290" height="300" fill="#FFFFFF" stroke="#E4E4E0" stroke-width="1"/>
+  <g transform="translate(145,470) scale(1.7)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#000000" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#000000"/>
+  </g>
+  <text x="145" y="600" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-weight="400" font-size="12" letter-spacing="1.5" fill="#9CA3A0">SOLID BLACK</text>
+
+  <!-- ===== Solid white ===== -->
+  <rect x="305" y="320" width="290" height="300" fill="#14161A"/>
+  <g transform="translate(450,470) scale(1.7)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#FFFFFF"/>
+  </g>
+  <text x="450" y="600" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-weight="400" font-size="12" letter-spacing="1.5" fill="#4B524E">SOLID WHITE</text>
+
+  <!-- ===== App tile, near-black ===== -->
+  <rect x="610" y="320" width="140" height="140" rx="30" fill="#14161A"/>
+  <g transform="translate(680,390) scale(1.35)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#F6F8F6" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#34D399"/>
+  </g>
+
+  <!-- ===== App tile, signal green ===== -->
+  <rect x="765" y="320" width="140" height="140" rx="30" fill="#34D399"/>
+  <g transform="translate(835,390) scale(1.35)">
+    <path d="M -22 -26 L 4 0 L -22 26" fill="none" stroke="#14161A" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="14" y="-15" width="12" height="30" rx="2" fill="#14161A"/>
+  </g>
+  <text x="750" y="600" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-weight="400" font-size="12" letter-spacing="1.5" fill="#9CA3A0">APP ICON TILES</text>
+</svg>

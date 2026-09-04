@@ -7,12 +7,12 @@ import { logger } from '../utils/logger.js';
 import { databaseService } from './database.service.js';
 import { SNAPSHOTS_DIR } from './agentSnapshot.js';
 
-// /var/ecomgear is the real, root-owned path on VPS1 in production. Locally
+// /var/SMEsAgent is the real, root-owned path on VPS1 in production. Locally
 // the dev server runs as a normal user and can't mkdir under /var at all
 // (confirmed live: EACCES on every agent write_file call, not just eCG's),
 // so this is overridable   same pattern as BASE_TEMPLATE_DIR in
-// baseTemplateService.ts. Set ECOMGEAR_PROJECTS_DIR in server/.env locally.
-export const PROJECTS_BASE_DIR = process.env.ECOMGEAR_PROJECTS_DIR || '/var/ecomgear/projects';
+// baseTemplateService.ts. Set SMEsAgent_PROJECTS_DIR in server/.env locally.
+export const PROJECTS_BASE_DIR = process.env.SMEsAgent_PROJECTS_DIR || '/var/SMEsAgent/projects';
 
 export function getProjectDirName(userId: string, projectId: string): string {
     return `user_${userId.substring(0, 8)}_project_${projectId.substring(0, 8)}`;
@@ -407,7 +407,7 @@ export class ProjectService {
     // in-memory map tracking it (the actual "free the memory" for this
     // project), then delete its files from the preview host's disk.
     private async _cleanupPreviewService(projectId: string): Promise<void> {
-        const base = (process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app').replace(/\/$/, '');
+        const base = (process.env.PREVIEW_SERVICE_URL || 'https://preview.SMEsAgent.app').replace(/\/$/, '');
         try {
             const res = await fetch(`${base}/control/project/${projectId}`, {
                 method: 'DELETE',
@@ -436,7 +436,7 @@ export class ProjectService {
         const targets = [
             path.join(PROJECTS_BASE_DIR, projectId),
             path.join(PROJECTS_BASE_DIR, getProjectDirName(ownerId, projectId)),
-            path.join(os.tmpdir(), 'ecomgear-chat-uploads', projectId),
+            path.join(os.tmpdir(), 'SMEsAgent-chat-uploads', projectId),
         ];
         for (const dir of targets) {
             try {

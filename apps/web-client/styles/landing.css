@@ -1,5 +1,5 @@
 /* ============================================================
-   ECOMGEAR LANDING PAGE   Design System & Styles
+   SMEsAgent LANDING PAGE   Design System & Styles
    Scoped under .ecg-landing to avoid conflicts with the main app.
    ============================================================ */
 
@@ -17,7 +17,7 @@
   --ink-3: #6B6D73;
   --line: rgba(10, 11, 13, 0.1);
   --line-dk: rgba(246, 245, 241, 0.09);
-  --ecg-accent: oklch(0.72 0.17 248);
+  --ecg-accent: oklch(0.80 0.15 160);
   --accent-soft: color-mix(in oklch, var(--ecg-accent) 12%, transparent);
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --sans: "Geist", "Inter", -apple-system, system-ui, sans-serif;
@@ -351,7 +351,7 @@
   position: absolute; inset: 0; width: 100%; height: 100%;
   animation: ecg-reach-breathe 9s ease-in-out infinite;
   transform-origin: 50% 55%;
-  filter: drop-shadow(0 0 22px rgba(60, 140, 255, 0.10));
+  filter: drop-shadow(0 0 22px rgba(52, 211, 153, 0.15));
 }
 @keyframes ecg-reach-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.018); } }
 

@@ -1,0 +1,60 @@
+# =============================================================================
+# Single-server public edge (Caddy owns 80/443, automatic HTTPS).
+#
+# Every platform hostname reverse_proxies to the internal nginx on
+# 127.0.0.1:8081 (see nginx-platform.conf), which keeps all the
+# incident-tuned CORS/rate-limit/path-rewrite logic from the old per-VPS
+# confs unchanged. Caddy passes the original Host header through by default,
+# so nginx's server_name matching there needs no changes.
+#
+# Dynamic, per-tenant custom domains stay exactly as apps/hosting-service
+# already manages them today (docker-manager.js / tenant-caddy.js write
+# /etc/caddy/sites/*.caddy and reload Caddy) — imported below, unchanged.
+#
+# preview.gen-smes.xer0bit.com's wildcard cert (*.preview.gen-smes.xer0bit.com) needs a
+# DNS-01 challenge, which stock Caddy can't do without a DNS provider plugin
+# (xcaddy build). Simplest path: keep using the certbot-issued wildcard cert
+# that already exists from the VPS2 setup, loaded explicitly below instead of
+# Caddy's on-demand TLS.
+# =============================================================================
+
+{
+    email admin@smes.xer0bit.com
+}
+
+smes.xer0bit.com {
+    reverse_proxy 127.0.0.1:8081
+}
+
+api-smes.xer0bit.com, gen-smes.xer0bit.com {
+    reverse_proxy 127.0.0.1:8081 {
+        flush_interval -1   # SSE: don't buffer the agent/gen stream
+    }
+}
+
+hosting.app-smes.xer0bit.com, app-smes.xer0bit.com {
+    reverse_proxy 127.0.0.1:8081
+}
+
+cloud-smes.xer0bit.com {
+    reverse_proxy 127.0.0.1:8081
+}
+
+preview.gen-smes.xer0bit.com, *.preview.gen-smes.xer0bit.com {
+    tls /etc/letsencrypt/live/preview.gen-smes.xer0bit.com/fullchain.pem /etc/letsencrypt/live/preview.gen-smes.xer0bit.com/privkey.pem
+    reverse_proxy 127.0.0.1:8081
+}
+
+# Wildcard for per-tenant app-smes.xer0bit.com subdomains — needs the same DNS-01
+# wildcard cert as preview above. Arbitrary custom domains (imported below)
+# don't: each gets its own automatic per-domain cert from Caddy.
+*.app-smes.xer0bit.com {
+    tls /etc/letsencrypt/live/app-smes.xer0bit.com/fullchain.pem /etc/letsencrypt/live/app-smes.xer0bit.com/privkey.pem
+    reverse_proxy 127.0.0.1:8081
+}
+
+# Per-tenant custom domains — written and reloaded by apps/hosting-service
+# (HOSTING_CADDY_CONFIG_DIR). Each site block here proxies straight to that
+# tenant's allocated static path or container port; hosting-service owns the
+# content, this file just needs to keep importing it.
+import /etc/caddy/sites/*.caddy

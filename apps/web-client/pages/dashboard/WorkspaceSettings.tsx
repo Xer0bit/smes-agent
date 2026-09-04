@@ -679,7 +679,7 @@ export default function WorkspaceSettings() {
   if (loading) {
     return (
       <div className="mx-auto max-w-4xl space-y-4 p-8" aria-busy="true">
-        <div className="skeleton h-6 w-48" /><div className="skeleton h-24 w-full rounded-xl" /><div className="skeleton h-40 w-full rounded-xl" />
+        <div className="skeleton h-6 w-48" /><div className="skeleton h-24 w-full rounded-none" /><div className="skeleton h-40 w-full rounded-none" />
       </div>
     );
   }
@@ -688,7 +688,7 @@ export default function WorkspaceSettings() {
     return (
       <div className="p-6 sm:p-8">
         <DashboardPageHeader title="Workspace Settings" description="No workspace selected." />
-        <Card className="rounded-xl border-dashed border-border/60 bg-card/40">
+        <Card className="rounded-none border-dashed border-border/60 bg-card/40">
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <Building2 className="h-10 w-10 text-muted-foreground mb-3" />
             <p className="text-sm text-muted-foreground">Select or create a workspace from the sidebar to continue.</p>
@@ -709,19 +709,19 @@ export default function WorkspaceSettings() {
         <TabsList className="flex h-auto shrink-0 flex-col items-stretch gap-4 bg-transparent p-0 lg:w-56">
           <div className="space-y-1">
             <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Workspace</p>
-            <TabsTrigger value="overview" className="w-full justify-start rounded-lg px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Overview</TabsTrigger>
-            <TabsTrigger value="general" className="w-full justify-start rounded-lg px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">General</TabsTrigger>
-            <TabsTrigger value="members" className="w-full justify-start rounded-lg px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Members</TabsTrigger>
-            <TabsTrigger value="billing" className="w-full justify-start rounded-lg px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Billing</TabsTrigger>
+            <TabsTrigger value="overview" className="w-full justify-start rounded-none px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Overview</TabsTrigger>
+            <TabsTrigger value="general" className="w-full justify-start rounded-none px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">General</TabsTrigger>
+            <TabsTrigger value="members" className="w-full justify-start rounded-none px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Members</TabsTrigger>
+            <TabsTrigger value="billing" className="w-full justify-start rounded-none px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Billing</TabsTrigger>
           </div>
           <div className="space-y-1">
             <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Preferences</p>
-            <TabsTrigger value="preferences" className="w-full justify-start rounded-lg px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Preferences</TabsTrigger>
+            <TabsTrigger value="preferences" className="w-full justify-start rounded-none px-3 py-2 text-sm data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Preferences</TabsTrigger>
           </div>
           {isAdmin && (
             <div className="space-y-1">
               <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Danger Zone</p>
-              <TabsTrigger value="danger" className="w-full justify-start rounded-lg px-3 py-2 text-sm text-destructive data-[state=active]:bg-destructive/10 data-[state=active]:text-destructive data-[state=active]:shadow-none">Delete workspace</TabsTrigger>
+              <TabsTrigger value="danger" className="w-full justify-start rounded-none px-3 py-2 text-sm text-destructive data-[state=active]:bg-destructive/10 data-[state=active]:text-destructive data-[state=active]:shadow-none">Delete workspace</TabsTrigger>
             </div>
           )}
         </TabsList>
@@ -729,7 +729,7 @@ export default function WorkspaceSettings() {
         <div className="min-w-0 flex-1">
         {/* ── Overview ─────────────────────────────────────────── */}
         <TabsContent value="overview" className="mt-0 space-y-6">
-          <div className="flex items-center justify-between gap-4 rounded-xl border border-border/60 px-5 py-4">
+          <div className="flex items-center justify-between gap-4 rounded-none border border-border/60 px-5 py-4">
             <div className="flex items-center gap-3 min-w-0">
               {org.avatar_url ? (
                 <img src={org.avatar_url} alt="" className="h-10 w-10 rounded-full object-cover" />
@@ -774,7 +774,7 @@ export default function WorkspaceSettings() {
                   databases: () => navigate('/dashboard/projects'),
                 };
                 return (
-                  <div key={unit} className="rounded-xl border border-border/60 p-4 flex flex-col gap-3">
+                  <div key={unit} className="rounded-none border border-border/60 p-4 flex flex-col gap-3">
                     <div className="flex items-center justify-between">
                       <span className="flex items-center gap-2 text-sm font-medium"><Icon className="h-4 w-4 text-muted-foreground" />{UNIT_LABELS[unit].plural}</span>
                       {full && <Badge variant="outline" className="rounded-full text-[10px] border-amber-500/40 text-amber-600 dark:text-amber-400">Full</Badge>}
@@ -794,15 +794,15 @@ export default function WorkspaceSettings() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <button type="button" onClick={openInvite} className="rounded-xl border border-border/60 p-4 text-left hover:bg-muted/40 transition-colors">
+            <button type="button" onClick={openInvite} className="rounded-none border border-border/60 p-4 text-left hover:bg-muted/40 transition-colors">
               <p className="text-sm font-medium flex items-center gap-2"><Send className="h-4 w-4 text-muted-foreground" />Invite a member</p>
               <p className="text-xs text-muted-foreground mt-1">{orgInvitations.length} pending invitation{orgInvitations.length === 1 ? '' : 's'}.</p>
             </button>
-            <button type="button" onClick={() => goTab('general')} className="rounded-xl border border-border/60 p-4 text-left hover:bg-muted/40 transition-colors">
+            <button type="button" onClick={() => goTab('general')} className="rounded-none border border-border/60 p-4 text-left hover:bg-muted/40 transition-colors">
               <p className="text-sm font-medium flex items-center gap-2"><Building2 className="h-4 w-4 text-muted-foreground" />Workspace profile</p>
               <p className="text-xs text-muted-foreground mt-1">Name, avatar, handle and access.</p>
             </button>
-            <button type="button" onClick={() => goTab('preferences')} className="rounded-xl border border-border/60 p-4 text-left hover:bg-muted/40 transition-colors">
+            <button type="button" onClick={() => goTab('preferences')} className="rounded-none border border-border/60 p-4 text-left hover:bg-muted/40 transition-colors">
               <p className="text-sm font-medium flex items-center gap-2"><Settings2 className="h-4 w-4 text-muted-foreground" />Preferences</p>
               <p className="text-xs text-muted-foreground mt-1">Language, invitations, sounds.</p>
             </button>
@@ -816,7 +816,7 @@ export default function WorkspaceSettings() {
             <p className="text-sm text-muted-foreground">Control how this workspace appears and identifies itself.</p>
           </div>
 
-          <div className="rounded-xl border border-border/60">
+          <div className="rounded-none border border-border/60">
             {/* Avatar */}
             <div className="flex items-center justify-between gap-4 px-5 py-4">
               <div>
@@ -932,7 +932,7 @@ export default function WorkspaceSettings() {
           <div>
             <h2 className="text-base font-semibold text-foreground">Workspace access</h2>
           </div>
-          <div className="rounded-xl border border-border/60">
+          <div className="rounded-none border border-border/60">
             <div className="flex items-center justify-between gap-4 px-5 py-4">
               <div>
                 <p className="text-sm font-medium">Leave workspace</p>
@@ -954,7 +954,7 @@ export default function WorkspaceSettings() {
         {/* ── Danger Zone ─────────────────────────────────────────────────── */}
         {isAdmin && (
           <TabsContent value="danger" className="mt-0 space-y-5">
-            <Card className="rounded-xl border-destructive/30">
+            <Card className="rounded-none border-destructive/30">
               <CardHeader>
                 <CardTitle className="text-base font-semibold text-destructive">Delete workspace</CardTitle>
               </CardHeader>
@@ -993,14 +993,14 @@ export default function WorkspaceSettings() {
           {loadingMembers ? (
             <div className="space-y-2.5 py-2" aria-busy="true">
               {[0, 1, 2].map((i) => (
-                <div key={i} className="flex items-center gap-4 rounded-xl border border-border/60 px-4 py-3">
+                <div key={i} className="flex items-center gap-4 rounded-none border border-border/60 px-4 py-3">
                   <div className="skeleton h-9 w-9 rounded-full" />
                   <div className="flex-1 space-y-2"><div className="skeleton h-3 w-40" /><div className="skeleton h-2.5 w-56" /></div>
                 </div>
               ))}
             </div>
           ) : filteredCollaborators.length === 0 ? (
-            <Card className="rounded-xl border-dashed border-border/60 bg-card/40">
+            <Card className="rounded-none border-dashed border-border/60 bg-card/40">
               <CardContent className="flex flex-col items-center justify-center py-14 text-center">
                 <Users className="h-9 w-9 text-muted-foreground mb-3" />
                 <p className="text-sm text-muted-foreground">
@@ -1013,7 +1013,7 @@ export default function WorkspaceSettings() {
               {filteredCollaborators.map((c) => (
                 <div
                   key={c.user_id}
-                  className="animate-msg-appear flex items-center gap-4 rounded-xl border border-border/60 bg-card/60 px-4 py-3 transition-colors duration-200 hover:bg-card"
+                  className="animate-msg-appear flex items-center gap-4 rounded-none border border-border/60 bg-card/60 px-4 py-3 transition-colors duration-200 hover:bg-card"
                 >
                   <Avatar className="h-9 w-9 flex-shrink-0">
                     <AvatarFallback className="bg-primary/10 text-primary text-xs font-medium">
@@ -1092,7 +1092,7 @@ export default function WorkspaceSettings() {
 
         {/* ── Preferences ───────────────────────────────────────────────────── */}
         <TabsContent value="preferences" className="mt-0 space-y-5">
-          <Card className="rounded-xl border-border/60">
+          <Card className="rounded-none border-border/60">
             <CardHeader>
               <CardTitle className="text-base font-semibold">Preferences</CardTitle>
               <p className="text-sm text-muted-foreground">Personalize how this workspace works for its members.</p>
@@ -1116,7 +1116,7 @@ export default function WorkspaceSettings() {
                 <div>
                   <p className="text-sm font-medium">Auto-accept invitations</p>
                   <p className="text-sm text-muted-foreground">
-                    Skip the manual accept step for invitees who already have an EcomGear account   they're added the moment you invite them.
+                    Skip the manual accept step for invitees who already have an SMEsAgent account   they're added the moment you invite them.
                   </p>
                 </div>
                 <Switch checked={preferences.auto_accept_invitations} onCheckedChange={(v) => savePreferences({ auto_accept_invitations: v })} disabled={!isAdmin || savingPrefs} />
@@ -1140,14 +1140,14 @@ export default function WorkspaceSettings() {
         setIsInviteOpen(open);
         if (!open) { setInviteEmail(''); setInviteRole('member'); setInviteProjectIds([]); }
       }}>
-        <DialogContent className="max-w-lg rounded-xl">
+        <DialogContent className="max-w-lg rounded-none">
           <DialogHeader>
             <DialogTitle className="font-display">Invite member to {org.name}</DialogTitle>
           </DialogHeader>
           <div className="space-y-5 py-2">
             <div className="space-y-2">
               <Label htmlFor="invite-email">Email address</Label>
-              <Input id="invite-email" type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="colleague@company.com" className="rounded-lg" />
+              <Input id="invite-email" type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="colleague@company.com" className="rounded-none" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="invite-role">Organization role</Label>
@@ -1173,7 +1173,7 @@ export default function WorkspaceSettings() {
               {orgProjects.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-2">No projects in this workspace yet.</p>
               ) : (
-                <ScrollArea className="h-36 rounded-lg border border-border/60 p-3">
+                <ScrollArea className="h-36 rounded-none border border-border/60 p-3">
                   <div className="space-y-2">
                     {orgProjects.map(project => (
                       <div key={project.id} className="flex items-center gap-2">
@@ -1199,7 +1199,7 @@ export default function WorkspaceSettings() {
 
       {/* ── Upgrade Prompt ────────────────────────────────────────────────── */}
       <Dialog open={isUpgradePromptOpen} onOpenChange={setIsUpgradePromptOpen}>
-        <DialogContent className="max-w-md rounded-xl text-center">
+        <DialogContent className="max-w-md rounded-none text-center">
           <DialogHeader><DialogTitle className="font-display">Upgrade required</DialogTitle></DialogHeader>
           <div className="py-4 space-y-4">
             <Crown className="mx-auto h-12 w-12 text-amber-500" />
@@ -1239,7 +1239,7 @@ export default function WorkspaceSettings() {
           {loadingSheet ? (
             <div className="space-y-2.5 py-2" aria-busy="true">
               {[0, 1, 2].map((i) => (
-                <div key={i} className="flex items-center gap-4 rounded-xl border border-border/60 px-4 py-3">
+                <div key={i} className="flex items-center gap-4 rounded-none border border-border/60 px-4 py-3">
                   <div className="skeleton h-9 w-9 rounded-full" />
                   <div className="flex-1 space-y-2"><div className="skeleton h-3 w-40" /><div className="skeleton h-2.5 w-56" /></div>
                 </div>
@@ -1308,7 +1308,7 @@ export default function WorkspaceSettings() {
                     <Zap className="h-4 w-4 text-primary" />
                     <h3 className="text-sm font-semibold">ECO Usage Limit</h3>
                   </div>
-                  <div className="mb-4 rounded-lg border border-border/60 bg-card/40 p-3 space-y-2">
+                  <div className="mb-4 rounded-none border border-border/60 bg-card/40 p-3 space-y-2">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-muted-foreground">Used this period</span>
                       <span className="font-medium tabular-nums">
@@ -1326,7 +1326,7 @@ export default function WorkspaceSettings() {
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="eco-limit" className="text-sm">Monthly cap (eco units)</Label>
-                    <Input id="eco-limit" type="number" min={0} placeholder="Leave blank for no limit" value={editEcoLimit} onChange={e => setEditEcoLimit(e.target.value)} className="rounded-lg" />
+                    <Input id="eco-limit" type="number" min={0} placeholder="Leave blank for no limit" value={editEcoLimit} onChange={e => setEditEcoLimit(e.target.value)} className="rounded-none" />
                   </div>
                 </section>
 
@@ -1346,7 +1346,7 @@ export default function WorkspaceSettings() {
                         return (
                           <div key={mod.key} className="flex items-start justify-between gap-4">
                             <div className="flex items-start gap-2.5 flex-1">
-                              <div className="mt-0.5 rounded-lg bg-muted p-1.5">
+                              <div className="mt-0.5 rounded-none bg-muted p-1.5">
                                 <Icon className="h-3.5 w-3.5 text-muted-foreground" />
                               </div>
                               <div>
@@ -1386,7 +1386,7 @@ export default function WorkspaceSettings() {
 
       {/* ── Delete Workspace Confirmation ─────────────────────────────────── */}
       <AlertDialog open={deleteOrgOpen} onOpenChange={setDeleteOrgOpen}>
-        <AlertDialogContent className="rounded-xl">
+        <AlertDialogContent className="rounded-none">
           <AlertDialogHeader>
             <AlertDialogTitle className="font-display">Delete workspace</AlertDialogTitle>
             {deleteOrgProjectCount > 0 ? (
@@ -1421,7 +1421,7 @@ export default function WorkspaceSettings() {
 
       {/* ── Leave Workspace Confirmation ───────────────────────────────────── */}
       <AlertDialog open={leaveWorkspaceOpen} onOpenChange={setLeaveWorkspaceOpen}>
-        <AlertDialogContent className="rounded-xl">
+        <AlertDialogContent className="rounded-none">
           <AlertDialogHeader>
             <AlertDialogTitle className="font-display">Leave {org.name}?</AlertDialogTitle>
             <AlertDialogDescription>

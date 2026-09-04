@@ -477,7 +477,7 @@ function preprocessFile(filePath, content) {
     // Fix 3.47: The platform-auth client (src/integrations/supabase/client.ts)
     // points every generated project at the SAME Supabase project --
     // database.service.ts: "VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are the
-    // EcomGear platform's OWN Supabase instance ... NOT the per-project hosted
+    // SMEsAgent platform's OWN Supabase instance ... NOT the per-project hosted
     // database" -- and every preview is served from one origin, differentiated
     // only by URL path. @supabase/supabase-js's default auth lock is a
     // Navigator LockManager lock keyed off that shared URL's hostname, so it's
@@ -1051,10 +1051,10 @@ async function materializeProjectFiles(projectId, projectRoot, files, { dryRun =
 
         // Binary files arrive as base64-encoded strings from the agent sync.
         // Decode and write them directly — no preprocessing or validation needed.
-        if (file.content && file.content.startsWith('__ECOMGEAR_BIN64__')) {
+        if (file.content && file.content.startsWith('__SMEsAgent_BIN64__')) {
             hashedFiles.push({ path: safePath, content: file.content });
             if (!dryRun) {
-                const buf = Buffer.from(file.content.slice('__ECOMGEAR_BIN64__'.length), 'base64');
+                const buf = Buffer.from(file.content.slice('__SMEsAgent_BIN64__'.length), 'base64');
                 fs.writeFileSync(filePath, buf);
                 binaryWroteFiles.push(filePath);
             }

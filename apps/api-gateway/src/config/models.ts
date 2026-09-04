@@ -1,17 +1,19 @@
 /**
  * Canonical LLM model registry.
  *
- * Single source of truth for valid model IDs across the whole server.
- * Historically, invalid IDs (gemini-3-flash-preview, claude-3-7-sonnet-latest, ...)
- * were hardcoded in 6+ places and persisted to the DB, causing `not_found_error` /
- * 400s at call time. `canonicalizeModelId` maps any known-stale or unknown ID to a
- * valid one so a bad value can never reach a provider.
+ * Single provider (OpenRouter, OpenAI-compatible endpoint) with exactly two
+ * models, chosen by task shape rather than user/billing tier:
+ *   - CODE_MODEL:  code generation, edits, fixes, builds   anything that
+ *     touches project files.
+ *   - CHEAP_MODEL: small tasks   chit-chat, follow-up suggestions,
+ *     reranking, narration   anything intentClassifier's isCheapTier flags.
  *
- * gemini-3.1-pro-preview is a thinking model   it always reasons before responding.
- * Never pass thinkingBudget: 0 to it; it requires maxOutputTokens >= 8000.
+ * `canonicalizeModelId` maps any stale/unknown ID (old picker choice, DB
+ * leftover) to one of these two rather than letting a bad value reach the
+ * provider.
  */
 
-export type LlmProvider = 'anthropic' | 'deepseek' | 'gemini' | 'zai';
+export type LlmProvider = 'openrouter';
 
 export interface ModelDef {
   id: string;
@@ -19,88 +21,40 @@ export interface ModelDef {
   label: string;
 }
 
-/** Models surfaced to users (admin settings, model picker). */
+export const CODE_MODEL = 'google/gemini-2.5-flash';
+export const CHEAP_MODEL = 'anthropic/claude-3-haiku';
+
 export const CANONICAL_MODELS: ModelDef[] = [
-  // ── Gemini ────────────────────────────────────────────────────────────────
-  { id: 'gemini-3.1-pro-preview',   provider: 'gemini',    label: 'Gemini 3.1 Pro (Advanced)' },
-  { id: 'gemini-2.5-pro',           provider: 'gemini',    label: 'Gemini 2.5 Pro' },
-  { id: 'gemini-flash-latest',      provider: 'gemini',    label: 'Gemini Flash (Fast, latest)' },
-  // ── Anthropic ─────────────────────────────────────────────────────────────
-  { id: 'claude-sonnet-5',        provider: 'anthropic', label: 'Claude Sonnet 5' },
-  // ── GLM / z.ai (free tier) ────────────────────────────────────────────────
-  { id: 'glm-4.5-flash',    provider: 'zai', label: 'GLM-4.5 Flash (Free tier)' },
-  // ── GLM / z.ai (paid resource packages required) ──────────────────────────
-  { id: 'glm-5.2',          provider: 'zai', label: 'GLM-5.2' },
-  { id: 'glm-5',            provider: 'zai', label: 'GLM-5' },
-  { id: 'glm-5-turbo',      provider: 'zai', label: 'GLM-5 Turbo' },
-  { id: 'glm-4.7',          provider: 'zai', label: 'GLM-4.7' },
-  { id: 'glm-4.7-flash',    provider: 'zai', label: 'GLM-4.7 Flash' },
-  // ── Other ─────────────────────────────────────────────────────────────────
-  { id: 'deepseek-chat',            provider: 'deepseek',  label: 'DeepSeek (Everyday)' },
+  { id: CODE_MODEL, provider: 'openrouter', label: 'Gemini 2.5 Flash (code)' },
+  { id: CHEAP_MODEL, provider: 'openrouter', label: 'Claude 3 Haiku (small tasks)' },
 ];
 
-export const DEFAULT_PRIMARY_MODEL = 'gemini-3.1-pro-preview';
-export const DEFAULT_FREE_MODEL = 'glm-4.5-flash';
-export const DEFAULT_FALLBACK_MODEL = 'gemini-flash-latest';
+export const DEFAULT_PRIMARY_MODEL = CODE_MODEL;
+export const DEFAULT_FREE_MODEL = CHEAP_MODEL;
+export const DEFAULT_FALLBACK_MODEL = CHEAP_MODEL;
 
-/**
- * IDs that are valid but not shown in the picker.
- */
-const EXTRA_VALID_IDS = new Set<string>();
+const VALID_IDS = new Set<string>(CANONICAL_MODELS.map((m) => m.id));
 
-const VALID_IDS = new Set<string>([
-  ...CANONICAL_MODELS.map((m) => m.id),
-  ...EXTRA_VALID_IDS,
-]);
-
-/** Known-stale or invalid IDs → their canonical replacement. */
-const STALE_ID_MAP: Record<string, string> = {
-  'gemini-2.5-flash':                  'gemini-flash-latest',
-  'gemini-2.5-flash-preview':          'gemini-flash-latest',
-  'gemini-3-flash-preview':            'gemini-flash-latest',
-  'gemini-3-flash':                    'gemini-flash-latest',
-  'gemini-3-pro':                      'gemini-3.1-pro-preview',
-  'gemini-1.5-flash':                  'gemini-flash-latest',
-  'gemini-1.5-pro':                    'gemini-2.5-pro',
-  'claude-3-7-sonnet-latest':          'claude-sonnet-5',
-  'claude-3-5-sonnet-20241022':        'claude-sonnet-5',
-  'claude-3-5-sonnet-20241022-latest': 'claude-sonnet-5',
-  'claude-sonnet-4-5':                 'claude-sonnet-5',
-  'claude-sonnet-4-20250514':          'claude-sonnet-5',
-  'deepseek-reasoner':                 'deepseek-chat',
-};
-
-export function inferProvider(model: string): LlmProvider {
-  const lower = model.toLowerCase();
-  if (lower.startsWith('glm')) return 'zai';
-  if (lower.includes('deepseek')) return 'deepseek';
-  if (lower.includes('gemini')) return 'gemini';
-  return 'anthropic';
+export function inferProvider(_model: string): LlmProvider {
+  return 'openrouter';
 }
 
 /**
- * Normalize any model ID to a known-valid one. Returns `fallback` when the
- * input is empty/garbage and can't be mapped by provider family.
+ * Normalize any model ID to one of the two canonical ones. Anything that
+ * looks like a request for a small/cheap task maps to CHEAP_MODEL; anything
+ * else (the common case: code generation) maps to CODE_MODEL.
  */
 export function canonicalizeModelId(input: unknown, fallback: string = DEFAULT_PRIMARY_MODEL): string {
   if (typeof input !== 'string') return fallback;
 
-  // Strip accidental pasted JSON punctuation (e.g. "deepseek-chat}").
   const id = input.trim().replace(/[}\],;]+$/g, '').trim();
   if (!id) return fallback;
 
   if (VALID_IDS.has(id)) return id;
-  if (STALE_ID_MAP[id]) return STALE_ID_MAP[id];
 
-  // Unknown ID   map by provider family to a safe default.
   const lower = id.toLowerCase();
-  if (lower.startsWith('glm')) return lower.includes('flash') ? DEFAULT_FREE_MODEL : DEFAULT_PRIMARY_MODEL;
-  if (lower.includes('gemini')) {
-    return lower.includes('flash') ? 'gemini-flash-latest' : 'gemini-3.1-pro-preview';
+  if (lower.includes('flash-lite') || lower.includes('cheap') || lower.includes('mini') || lower.includes('haiku') || lower.includes('flash')) {
+    return CHEAP_MODEL;
   }
-  if (lower.includes('deepseek')) return 'deepseek-chat';
-  if (lower.includes('claude') || lower.includes('sonnet') || lower.includes('haiku') || lower.includes('opus')) {
-    return 'claude-sonnet-5';
-  }
-  return fallback;
+  return CODE_MODEL;
 }

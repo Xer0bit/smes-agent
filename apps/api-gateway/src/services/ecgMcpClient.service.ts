@@ -1,7 +1,7 @@
 /**
  * eCG Agents MCP client   speaks the legacy MCP "HTTP+SSE" transport this
  * server actually uses (confirmed by the official connect script: `claude mcp
- * add --transport sse ecg-agents https://mcp.ecomgear.ai/sse`), NOT the newer
+ * add --transport sse ecg-agents https://mcp.SMEsAgent.ai/sse`), NOT the newer
  * Streamable-HTTP transport (a single POST endpoint returning `mcp-session-id`)
  * that src/base-example's own mcp-proxy edge function assumes for a generic
  * MCP server. POSTing directly to /sse 404s on this server   confirmed live.
@@ -19,7 +19,7 @@
  */
 import { logger } from '../utils/logger.js';
 
-const MCP_SSE_URL = process.env.ECG_MCP_URL || 'https://mcp.ecomgear.ai/sse';
+const MCP_SSE_URL = process.env.ECG_MCP_URL || 'https://mcp.SMEsAgent.ai/sse';
 const SESSION_TIMEOUT_MS = 20_000;
 
 interface SseEvent {
@@ -186,7 +186,7 @@ export async function discoverEcgOrg(apiKey: string): Promise<EcgDiscovery> {
     await session.call('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'EcomGear Dev-Agent', version: '1.0.0' },
+      clientInfo: { name: 'SMEsAgent Dev-Agent', version: '1.0.0' },
     }, apiKey);
     await session.call('notifications/initialized', {}, apiKey, /* expectResponse */ false);
 
@@ -224,7 +224,7 @@ export async function listEcgTools(apiKey: string): Promise<EcgMcpTool[]> {
     await session.call('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'EcomGear Dev-Agent', version: '1.0.0' },
+      clientInfo: { name: 'SMEsAgent Dev-Agent', version: '1.0.0' },
     }, apiKey);
     await session.call('notifications/initialized', {}, apiKey, /* expectResponse */ false);
     const result = await session.call('tools/list', {}, apiKey);
@@ -248,7 +248,7 @@ export async function callEcgTool(apiKey: string, toolName: string, args: Record
     await session.call('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'EcomGear Dev-Agent', version: '1.0.0' },
+      clientInfo: { name: 'SMEsAgent Dev-Agent', version: '1.0.0' },
     }, apiKey);
     await session.call('notifications/initialized', {}, apiKey, /* expectResponse */ false);
     return await callTool(session, apiKey, toolName, args);

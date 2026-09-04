@@ -6,7 +6,7 @@ import { issueDashboardAccessToken } from '../utils/dashboardAccessToken.js';
 const router = Router();
 
 // POST /api/v1/ecg-access?projectId=
-// Anonymous   visitors to a deployed dashboard have no eComGear account.
+// Anonymous   visitors to a deployed dashboard have no SMEsAgent account.
 // Issues a short-lived token for ecg-proxy/ecg-chat. If the project has no
 // password set, issues one unconditionally (dashboard is open by default).
 router.post('/', async (req: Request, res: Response): Promise<void> => {

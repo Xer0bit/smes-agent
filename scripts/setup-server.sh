@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# EcomGear Server Setup   Entrypoint
+# SMEsAgent Server Setup   Entrypoint
 # Delegates to the appropriate VPS-specific script.
 #
 #   Usage: bash setup-server.sh [vps1|vps2|vps3]

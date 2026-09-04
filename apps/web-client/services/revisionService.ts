@@ -70,7 +70,7 @@ export function isStaleParentError(err: unknown): boolean {
 }
 
 // Binary-safe storage download. Most writers store binaries as
-// '__ECOMGEAR_BIN64__' + base64 TEXT (safe through every JSON/utf8 hop),
+// '__SMEsAgent_BIN64__' + base64 TEXT (safe through every JSON/utf8 hop),
 // but some revisions hold RAW binary bytes (confirmed live 2026-08-18: a
 // rollback revision stored a raw PNG; blob.text() then UTF-8-mangled it,
 // every reload full-synced the mangled soup to the preview, and the user's
@@ -78,7 +78,7 @@ export function isStaleParentError(err: unknown): boolean {
 // Reading raw binaries as bytes and sentinel-wrapping them HERE makes the
 // client immune to whatever format storage holds.
 const BINARY_DOWNLOAD_EXT_RE = /\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3|pdf|zip)$/i;
-const DOWNLOAD_BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+const DOWNLOAD_BINARY_SENTINEL = '__SMEsAgent_BIN64__';
 async function blobToSyncContent(filePath: string, blob: Blob): Promise<string> {
   if (!BINARY_DOWNLOAD_EXT_RE.test(filePath)) return blob.text();
   const bytes = new Uint8Array(await blob.arrayBuffer());

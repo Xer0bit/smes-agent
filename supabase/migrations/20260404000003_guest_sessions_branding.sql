@@ -77,7 +77,7 @@ GRANT EXECUTE ON FUNCTION public.record_guest_project(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.record_guest_project(text) TO service_role;
 
 -- ── 4. Preview Branding table ──────────────────────────────────────────────────
--- branding_type: 'footer' = "Made with eComGear" link at bottom
+-- branding_type: 'footer' = "Made with SMEsAgent" link at bottom
 --                'watermark' = "Geared by eCG" corner badge
 --                'none' = no branding (pro/agency)
 CREATE TABLE IF NOT EXISTS public.preview_branding (

@@ -13,7 +13,7 @@ const execAsync = promisify(exec);
 
 const BASE_TEMPLATE_DIR =
   process.env.BASE_TEMPLATE_DIR ||
-  path.join(os.homedir(), '.ecomgear', 'base-template');
+  path.join(os.homedir(), '.SMEsAgent', 'base-template');
 
 // Stable versions of the most commonly requested packages.
 // Update this list periodically   bump the hash file to force a re-install.
@@ -22,7 +22,7 @@ const BASE_TEMPLATE_DIR =
 // The agent can import any of these without triggering a slow npm install.
 // Keep this list in sync with preview-service/package.json.
 const COMMON_PACKAGE_JSON = {
-  name: 'ecomgear-base-template',
+  name: 'SMEsAgent-base-template',
   private: true,
   version: '0.0.0',
   type: 'module',
@@ -137,7 +137,7 @@ function packageJsonHash(): string {
     .slice(0, 16);
 }
 
-const HASH_FILE = path.join(BASE_TEMPLATE_DIR, '.ecomgear-hash');
+const HASH_FILE = path.join(BASE_TEMPLATE_DIR, '.SMEsAgent-hash');
 const NODE_MODULES = path.join(BASE_TEMPLATE_DIR, 'node_modules');
 
 function isMuslLibc(): boolean {

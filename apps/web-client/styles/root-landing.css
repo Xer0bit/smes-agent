@@ -1,0 +1,220 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap");
+
+/* Retained for Legal pages (Privacy, Terms) only.
+ * Marketing site uses public-site.css + per-page CSS.
+ */
+
+.smes-root-legal {
+  --smes-paper: #030303;
+  --smes-paper-strong: #0a0a0a;
+  --smes-ink: #ffffff;
+  --smes-surface: #060606;
+  --smes-surface-raised: #0a0a0a;
+  --smes-line: rgba(255, 255, 255, 0.2);
+  --smes-line-dark: rgba(255, 255, 255, 0.14);
+  --smes-muted: rgba(255, 255, 255, 0.6);
+  --smes-muted-dark: rgba(255, 255, 255, 0.45);
+  --smes-accent: #34D399;
+  --smes-accent-ink: #030303;
+  --smes-font-display: "Inter", "Inter Tight", Arial, sans-serif;
+  --smes-font-body: "Inter", Arial, sans-serif;
+  --smes-font-mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --smes-space-1: 0.25rem;
+  --smes-space-2: 0.5rem;
+  --smes-space-3: 0.75rem;
+  --smes-space-4: 1rem;
+  --smes-space-5: 1.25rem;
+  --smes-space-6: 1.5rem;
+  --smes-space-8: 2rem;
+  --smes-space-10: 2.5rem;
+  --smes-space-12: 3rem;
+  --smes-space-16: 4rem;
+  --smes-space-20: 5rem;
+  --smes-space-24: 6rem;
+  --smes-space-32: 8rem;
+  --smes-text-xs: 0.75rem;
+  --smes-text-sm: 0.875rem;
+  --smes-text-base: 1rem;
+  --smes-text-lg: 1.125rem;
+  --smes-text-xl: 1.25rem;
+  --smes-text-2xl: 1.5rem;
+  --smes-text-3xl: clamp(1.75rem, 3.2vw, 2.25rem);
+  --smes-text-display: clamp(2.75rem, 6vw, 3.75rem);
+  --smes-radius-sm: 0;
+  --smes-radius-md: 0;
+  --smes-radius-lg: 0;
+  --smes-radius-xl: 0;
+  --smes-rule: 1px;
+  --smes-rule-soft: 1px solid var(--smes-line);
+  --smes-dur-fast: 160ms;
+  --smes-dur-base: 240ms;
+  --smes-dur-reveal: 600ms;
+  --smes-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --smes-ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --smes-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --smes-ease-reveal: cubic-bezier(0.22, 1, 0.36, 1);
+  min-width: 0;
+  overflow-x: clip;
+  color: var(--smes-ink);
+  background: var(--smes-paper);
+  font-family: var(--smes-font-body);
+  font-style: normal;
+  line-height: 1.5;
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.smes-root-legal *,
+.smes-root-legal *::before,
+.smes-root-legal *::after {
+  box-sizing: border-box;
+}
+
+.smes-root-legal a:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 2px;
+}
+
+.smes-root-brand {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--smes-space-2);
+  color: var(--smes-ink);
+  font-family: var(--smes-font-body);
+  font-size: var(--smes-text-base);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.smes-root-brand img {
+  display: block;
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+/* LEGAL PAGES */
+.smes-root-legal {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.smes-root-legal__nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: min(100% - 2rem, 77rem);
+  margin-inline: auto;
+  padding-block: var(--smes-space-5);
+}
+
+.smes-root-legal__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--smes-space-2);
+  color: var(--smes-muted);
+  font-size: var(--smes-text-sm);
+  text-decoration: none;
+  transition: color var(--smes-dur-base) var(--smes-ease-out);
+}
+
+.smes-root-legal__back:hover {
+  color: var(--smes-ink);
+}
+
+.smes-root-legal__main {
+  flex: 1;
+  width: min(100% - 2rem, 46rem);
+  margin-inline: auto;
+  padding-block: var(--smes-space-12) var(--smes-space-16);
+}
+
+.smes-root-legal__main h1 {
+  margin: 0;
+  font-size: clamp(2.25rem, 4vw, 3rem);
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+
+.smes-root-legal__updated {
+  margin: var(--smes-space-4) 0 0;
+  color: var(--smes-muted-dark);
+  font-family: var(--smes-font-mono);
+  font-size: var(--smes-text-xs);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.smes-root-legal__intro {
+  margin: var(--smes-space-6) 0 0;
+  color: var(--smes-muted);
+  font-size: var(--smes-text-lg);
+  line-height: 1.6;
+}
+
+.smes-root-legal__main section {
+  margin-top: var(--smes-space-10);
+  padding-top: var(--smes-space-8);
+  border-top: 1px solid var(--smes-line-dark);
+}
+
+.smes-root-legal__main h2 {
+  margin: 0 0 var(--smes-space-4);
+  font-size: var(--smes-text-xl);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.smes-root-legal__main p {
+  margin: 0 0 var(--smes-space-4);
+  color: var(--smes-muted);
+  font-size: var(--smes-text-base);
+  line-height: 1.7;
+}
+
+.smes-root-legal__main ul {
+  margin: 0 0 var(--smes-space-4);
+  display: grid;
+  gap: var(--smes-space-2);
+  padding-left: 1.25rem;
+  color: var(--smes-muted);
+  font-size: var(--smes-text-base);
+  line-height: 1.7;
+}
+
+.smes-root-legal__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--smes-space-4);
+  width: min(100% - 2rem, 77rem);
+  margin-inline: auto;
+  padding-block: var(--smes-space-6);
+  border-top: 1px solid var(--smes-line);
+  color: var(--smes-muted);
+  font-size: var(--smes-text-xs);
+}
+
+.smes-root-legal__footer a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.smes-root-legal__footer a:hover {
+  color: var(--smes-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .smes-root-legal * {
+    scroll-behavior: auto;
+    transition-duration: 0ms;
+    animation-duration: 0ms;
+  }
+}

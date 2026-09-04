@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# EcomGear   Local Build + Boot Smoke Test
+# SMEsAgent   Local Build + Boot Smoke Test
 #
 # Run this before every ./scripts/deploy.sh. Type-checks and builds each
 # service, boots the gen server and preview-service locally, and confirms

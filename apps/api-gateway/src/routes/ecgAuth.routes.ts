@@ -240,7 +240,7 @@ router.post('/login', loginLimiter, async (req: Request, res: Response, next: Ne
             logger.warn('security_event', { event: 'login_failure', email, ip: req.ip, path: req.path, reason: 'ecg_wrong_password_migrated' });
             res.status(401).json({
               error: 'invalid_credentials',
-              message: 'This email is registered with a unified eCG account. Please use the password you use on other eCG apps like Mirofish, OneNET, or eComGear, or use "Forgot Password" to reset it.',
+              message: 'This email is registered with a unified eCG account. Please use the password you use on other eCG apps like Mirofish, OneNET, or SMEsAgent, or use "Forgot Password" to reset it.',
             });
             return;
           }
@@ -614,7 +614,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
       return;
     }
 
-    const frontendUrl = process.env.FRONTEND_URL || 'https://ecomgear.dev';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://SMEsAgent.dev';
     const resetUrl = `${frontendUrl}/auth/reset-password`;
 
     // Look up user in profiles to determine which auth path to use

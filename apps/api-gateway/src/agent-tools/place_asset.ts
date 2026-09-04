@@ -6,7 +6,7 @@
  * (e.g. the logo) before the agent understands what the user actually wants.
  *
  * Security guarantees:
- *  - Source must be under /tmp/ecomgear-chat-uploads/ (no path traversal)
+ *  - Source must be under /tmp/SMEsAgent-chat-uploads/ (no path traversal)
  *  - Destination is always inside public/assets/ (plain filename only)
  *  - File is validated with magic-byte check before copying
  */
@@ -17,7 +17,7 @@ import { z } from 'zod';
 import { ToolDefinition, AgentContext, safeJoin, escapeXmlAttr } from './types.js';
 import { writeProjectFileSync } from '../services/projectFileWriter.js';
 
-const UPLOAD_BASE = path.join(os.tmpdir(), 'ecomgear-chat-uploads');
+const UPLOAD_BASE = path.join(os.tmpdir(), 'SMEsAgent-chat-uploads');
 
 /** Known image magic-byte signatures. */
 const IMAGE_SIGNATURES: Array<{ bytes: number[]; label: string }> = [
@@ -60,7 +60,7 @@ function validateImage(filePath: string): { valid: boolean; format?: string; rea
 
 const schema = z.object({
   tmpPath: z.string().describe(
-    'Absolute path to the uploaded file, which must be under /tmp/ecomgear-chat-uploads/',
+    'Absolute path to the uploaded file, which must be under /tmp/SMEsAgent-chat-uploads/',
   ),
   destName: z.string().describe(
     'Destination filename inside public/assets/   plain filename only, e.g. "logo.png". No directory separators.',
@@ -83,7 +83,7 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
   getConsentPreview: (args) => `Place uploaded image → public/assets/${args.destName}`,
 
   execute: async (args, ctx: AgentContext) => {
-    // ── Security: source must be under /tmp/ecomgear-chat-uploads ────────────
+    // ── Security: source must be under /tmp/SMEsAgent-chat-uploads ────────────
     const resolvedSrc = path.resolve(args.tmpPath);
     if (!resolvedSrc.startsWith(path.resolve(UPLOAD_BASE) + path.sep)) {
       return `ERROR: tmpPath must be inside ${UPLOAD_BASE}. Received: "${args.tmpPath}"`;
@@ -161,7 +161,7 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
     // Surface the placed asset in the chat as an activity chip/steps entry AND
     // register it with the same operation-tracking pathway write_file uses.
     // MUST be a real open/close tag, not self-closing: parseXmlOperation's
-    // <ecomgear-write> regex requires a closing </ecomgear-write> to match
+    // <SMEsAgent-write> regex requires a closing </SMEsAgent-write> to match
     // (see agentXmlParser.ts) -- a self-closing tag silently fails to match,
     // so this file never reached agentLoopService.ts's `filesToWrite` array
     // and `agentWroteFiles` stayed false on any place_asset-only turn. That
@@ -171,7 +171,7 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
     // below, which this codebase's own agent_locks check rejects with 423
     // whenever the run holding it doesn't send a matching lock token (which
     // this push never did). Confirmed live: the tool always returned success
-    // regardless. Fix: emit a real <ecomgear-write>...</ecomgear-write> so
+    // regardless. Fix: emit a real <SMEsAgent-write>...</SMEsAgent-write> so
     // this participates in the exact same tracked-write / full-sync path
     // write_file already uses, and drop the dead push entirely -- content
     // here is a placeholder (binary content is re-read fresh from disk by
@@ -179,7 +179,7 @@ export const placeAssetTool: ToolDefinition<z.infer<typeof schema>> = {
     // entry's only job is to flip `agentWroteFiles` to true).
     const placeholderContent = `[binary asset — ${validation.format}, ${sizeKB} KB — see public/assets/${safeDest} on disk]`;
     ctx.onXmlComplete?.(
-      `<ecomgear-write path="${escapeXmlAttr(`public/assets/${safeDest}`)}" description="${escapeXmlAttr(`Placed uploaded image (${validation.format}, ${sizeKB} KB)`)}">${placeholderContent}</ecomgear-write>`
+      `<SMEsAgent-write path="${escapeXmlAttr(`public/assets/${safeDest}`)}" description="${escapeXmlAttr(`Placed uploaded image (${validation.format}, ${sizeKB} KB)`)}">${placeholderContent}</SMEsAgent-write>`
     );
 
     return (

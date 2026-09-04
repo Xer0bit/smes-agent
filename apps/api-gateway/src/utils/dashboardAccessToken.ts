@@ -1,5 +1,5 @@
 // Signs/verifies the short-lived token a deployed eCG dashboard uses to call
-// ecg-proxy/ecg-chat without an eComGear account (see ecg-access.routes.ts).
+// ecg-proxy/ecg-chat without an SMEsAgent account (see ecg-access.routes.ts).
 import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
 import { logger } from './logger.js';
 

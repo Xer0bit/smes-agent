@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# EcomGear   Start local dev stack
+# SMEsAgent   Start local dev stack
 #
 # Clears whatever's squatting on our dev ports, then starts the services you
 # pick (or all of them, or interactively). Logs go to logs/*.log (gitignored)
@@ -13,8 +13,8 @@
 #   scripts/start-dev.sh --all          # frontend + backend + preview
 #   scripts/start-dev.sh --frontend --backend
 #   scripts/start-dev.sh --prod-backend # frontend only, pointed at the real
-#                                       # production backend (api.ecomgear.dev /
-#                                       # gen.ecomgear.dev / preview.ecomgear.app)
+#                                       # production backend (api-smes.xer0bit.com /
+#                                       # gen-smes.xer0bit.com / app-smes.xer0bit.com)
 #                                       # -- no local Supabase/backend/preview
 #                                       # needed. Use this when you're only
 #                                       # touching frontend code. Writes REAL
@@ -27,9 +27,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$ROOT/logs"
 mkdir -p "$LOG_DIR"
 
-FRONTEND_PORT=8080
-BACKEND_PORT=5001
-PREVIEW_PORT=3001
+FRONTEND_PORT=8081
+BACKEND_PORT=5002
+PREVIEW_PORT=3002
 SUPABASE_PORT=54321
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -109,7 +109,7 @@ fi
 
 # ── Supabase: only touch it if a LOCAL service that needs it is being started ─
 # --prod-backend skips this entirely -- the frontend talks straight to
-# api.ecomgear.dev, no local Supabase required at all.
+# api-smes.xer0bit.com, no local Supabase required at all.
 if { [ "$START_BACKEND" -eq 1 ] || [ "$START_FRONTEND" -eq 1 ]; } && [ "$PROD_BACKEND" -eq 0 ]; then
     if port_alive "$SUPABASE_PORT"; then
         success "Supabase already running on :$SUPABASE_PORT"
@@ -134,19 +134,19 @@ fi
 if [ "$START_FRONTEND" -eq 1 ]; then
     free_port "$FRONTEND_PORT" "frontend"
     if [ "$PROD_BACKEND" -eq 1 ]; then
-        warn "PRODUCTION MODE: this frontend will read/write REAL production data (api.ecomgear.dev, gen.ecomgear.dev, preview.ecomgear.app). No local backend/Supabase/preview will start."
+        warn "PRODUCTION MODE: this frontend will read/write REAL production data (api-smes.xer0bit.com, gen-smes.xer0bit.com, app-smes.xer0bit.com). No local backend/Supabase/preview will start."
         info "Starting frontend on :$FRONTEND_PORT (--mode production)..."
         # --mode production makes Vite load .env.production (already committed
         # with the real prod URLs) instead of .env/.env.local, and flips
         # import.meta.env.PROD so every VITE_*_URL fallback in
         # apps/web-client/config/external-api.ts resolves to the production host too --
         # same mechanism a real `vite build` uses, just kept in dev/serve mode.
-        (cd "$ROOT" && nohup npx vite --port "$FRONTEND_PORT" --mode production > "$LOG_DIR/frontend.log" 2>&1 &)
+        (cd "$ROOT" && DEV_PORT="$FRONTEND_PORT" PREVIEW_DEV_PORT="$PREVIEW_PORT" nohup npx vite --port "$FRONTEND_PORT" --mode production > "$LOG_DIR/frontend.log" 2>&1 &)
     else
         info "Starting frontend on :$FRONTEND_PORT..."
         # Force local Supabase for this process only (never written to disk).
         # Root cause of a real incident (2026-08-04): .env.local and
-        # .env.development both commit VITE_SUPABASE_URL=https://api.ecomgear.dev
+        # .env.development both commit VITE_SUPABASE_URL=https://api-smes.xer0bit.com
         # (production) -- Vite's precedence (.env.local > .env.[mode] > .env)
         # means plain `vite`/`npm run dev` ALWAYS resolved to production for
         # auth/DB, even though the local backend/agent-loop writes projects to
@@ -160,7 +160,7 @@ if [ "$START_FRONTEND" -eq 1 ]; then
         VITE_SUPABASE_URL="http://127.0.0.1:$SUPABASE_PORT" \
         VITE_SUPABASE_PUBLISHABLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0" \
         VITE_SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0" \
-        nohup bash -c "cd '$ROOT' && npx vite --port '$FRONTEND_PORT'" > "$LOG_DIR/frontend.log" 2>&1 &
+        DEV_PORT="$FRONTEND_PORT" PREVIEW_DEV_PORT="$PREVIEW_PORT" nohup bash -c "cd '$ROOT' && npx vite --port '$FRONTEND_PORT'" > "$LOG_DIR/frontend.log" 2>&1 &
     fi
 fi
 
@@ -178,14 +178,14 @@ if [ "$START_BACKEND" -eq 1 ]; then
     # tsx watch, not plain tsx: code edits must hot-reload. A plain-tsx backend
     # kept serving stale agent-loop code after a bug fix landed on disk, and the
     # retry burned $1.34 re-hitting the already-fixed bug (2026-07-21).
-    (cd "$ROOT/apps/api-gateway" && nohup npx tsx watch src/index.ts > "$LOG_DIR/backend.log" 2>&1 &)
+    (cd "$ROOT/apps/api-gateway" && PORT="$BACKEND_PORT" nohup npx tsx watch src/index.ts > "$LOG_DIR/backend.log" 2>&1 &)
 fi
 
 # ── Preview service ───────────────────────────────────────────────────────────
 if [ "$START_PREVIEW" -eq 1 ]; then
     free_port "$PREVIEW_PORT" "preview-service"
     info "Starting preview service on :$PREVIEW_PORT..."
-    (cd "$ROOT/apps/preview-service" && nohup node --no-deprecation server.js > "$LOG_DIR/preview.log" 2>&1 &)
+    (cd "$ROOT/apps/preview-service" && PORT="$PREVIEW_PORT" nohup node --no-deprecation server.js > "$LOG_DIR/preview.log" 2>&1 &)
 fi
 
 # ── Wait + report ─────────────────────────────────────────────────────────────

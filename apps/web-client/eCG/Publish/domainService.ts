@@ -24,10 +24,10 @@ const HOSTING_BASE = rawHostingUrl.replace(/\/$/, '');
 // secret used to be extractable from the built output. The proxy holds the
 // secret server-side and checks project ownership / admin role instead.
 async function apiAuthHeaders(): Promise<HeadersInit> {
-  const { anySessionToken } = await import('@/integrations/supabase/sessionToken');
-  const token = await anySessionToken();
+  const { lovableCloud } = await import('@/integrations/supabase/client');
+  const { data: { session } } = await lovableCloud.auth.getSession();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (session) headers['Authorization'] = `Bearer ${session.access_token}`;
   return headers;
 }
 
@@ -95,18 +95,18 @@ class DomainService {
       return {
         a_record: { type: 'A', host: '@', value: hostingIp || '(configure HOSTING_PUBLIC_IP on hosting node)' },
         cname_record: undefined,
-        txt_record: { type: 'TXT', host: '_ecomgear-verify', value: verifyToken },
+        txt_record: { type: 'TXT', host: '_SMEsAgent-verify', value: verifyToken },
         is_apex: true,
       };
     }
     // Subdomain   A record pointing directly to the hosting node IP.
-    // (Previously used CNAME → hosting.ecomgear.app, but that resolves to
+    // (Previously used CNAME → hosting.SMEsAgent.app, but that resolves to
     // VPS2/preview which runs nginx, causing 404 for custom domains.)
     const hostPart = parts.slice(0, parts.length - 2).join('.');
     return {
       a_record: { type: 'A', host: hostPart, value: hostingIp || '(configure HOSTING_PUBLIC_IP on hosting node)' },
       cname_record: undefined,
-      txt_record: { type: 'TXT', host: `_ecomgear-verify.${hostPart}`, value: verifyToken },
+      txt_record: { type: 'TXT', host: `_SMEsAgent-verify.${hostPart}`, value: verifyToken },
       is_apex: false,
     };
   }
@@ -259,7 +259,7 @@ class DomainService {
         subdomain: data.subdomain!,
         full_domain: data.deployment_url
           ? stripProtocol(data.deployment_url)
-          : `preview.ecomgear.app/p/${data.subdomain}`,
+          : `preview.SMEsAgent.app/p/${data.subdomain}`,
         is_primary: true,
         status: 'active',
         created_at: data.published_at || new Date().toISOString(),
@@ -469,6 +469,191 @@ class DomainService {
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : 'Remove error' };
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Multi-Server Tenant Lifecycle
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get available hosting servers (online + has capacity).
+   */
+  async getAvailableServers(): Promise<{
+    id: string;
+    name: string;
+    public_ip: string;
+    region: string;
+    capacity_used: number;
+    capacity_total: number;
+  }[]> {
+    const { supabase } = await import('@/integrations/supabase/client');
+    const { data } = await supabase
+      .from('hosting_servers')
+      .select('id, name, public_ip, region, capacity_used, capacity_total, api_port')
+      .eq('status', 'online')
+      .order('capacity_used', { ascending: true });
+
+    return ((data as any[]) || []).filter(
+      (s: any) => s.capacity_used < s.capacity_total
+    );
+  }
+
+  /**
+   * Pick a server using round-robin (least-loaded).
+   */
+  async pickServer(): Promise<{ id: string; name: string; public_ip: string; api_port: number; api_key: string | null } | null> {
+    const { supabase } = await import('@/integrations/supabase/client');
+    const { data } = await supabase
+      .from('hosting_servers')
+      .select('id, name, public_ip, api_port, api_key, capacity_used, capacity_total')
+      .eq('status', 'online')
+      .order('capacity_used', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    return data as any;
+  }
+
+  /**
+   * Provision a tenant on a hosting server.
+   * Creates Docker stack (Postgres + PostgREST + Edge Runtime).
+   */
+  async provisionTenant(
+    projectId: string,
+    serverId: string,
+    subdomain?: string,
+  ): Promise<{ success: boolean; domain?: string; ports?: any; error?: string }> {
+    const { supabase } = await import('@/integrations/supabase/client');
+    const { data: server } = await supabase
+      .from('hosting_servers')
+      .select('id, name, public_ip, api_port, api_key')
+      .eq('id', serverId)
+      .maybeSingle();
+    if (!server) return { success: false, error: 'Server not found' };
+
+    const srv = server as any;
+    try {
+      const url = `http://${srv.public_ip}:${srv.api_port}/tenants/provision`;
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (srv.api_key) headers['Authorization'] = `Bearer ${srv.api_key}`;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ projectId, subdomain }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        return { success: false, error: `Provision failed: ${res.status} ${text}` };
+      }
+      const data = await res.json();
+
+      // Save deployment record in DB
+      await supabase.from('tenant_deployments').upsert({
+        project_id: projectId,
+        hosting_server_id: serverId,
+        status: 'running',
+        postgres_port: data.ports?.postgres,
+        postgrest_port: data.ports?.postgrest,
+        edge_runtime_port: data.ports?.edge,
+        db_name: data.dbName,
+        subdomain: data.domain,
+        container_ids: data.containerIds || {},
+        deployed_at: new Date().toISOString(),
+      } as any, { onConflict: 'project_id' });
+
+      // Increment server capacity
+      try {
+        await supabase.rpc('increment_capacity_used', { server_id: serverId } as any);
+      } catch {
+        // Fallback: manual increment if rpc doesn't exist
+        await supabase.from('hosting_servers')
+          .update({ capacity_used: (srv as any).capacity_used + 1 } as any)
+          .eq('id', serverId);
+      }
+
+      return { success: true, domain: data.domain, ports: data.ports };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : 'Provision error' };
+    }
+  }
+
+  /**
+   * Deploy app files to an existing tenant.
+   */
+  async deployToTenant(
+    projectId: string,
+    files: { path: string; content: string }[],
+    edgeFunctions?: { name: string; code: string }[],
+  ): Promise<{ success: boolean; error?: string }> {
+    const { supabase } = await import('@/integrations/supabase/client');
+
+    // Look up the deployment + server
+    const { data: dep } = await supabase
+      .from('tenant_deployments')
+      .select('hosting_server_id')
+      .eq('project_id', projectId)
+      .maybeSingle();
+    if (!dep) return { success: false, error: 'No tenant deployment for this project' };
+
+    const { data: server } = await supabase
+      .from('hosting_servers')
+      .select('public_ip, api_port, api_key')
+      .eq('id', (dep as any).hosting_server_id)
+      .maybeSingle();
+    if (!server) return { success: false, error: 'Server not found' };
+
+    const srv = server as any;
+    try {
+      const url = `http://${srv.public_ip}:${srv.api_port}/tenants/${projectId}/deploy`;
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (srv.api_key) headers['Authorization'] = `Bearer ${srv.api_key}`;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ files, edgeFunctions }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        return { success: false, error: `Deploy failed: ${res.status} ${text}` };
+      }
+
+      // Update last_deploy_at
+      await supabase.from('tenant_deployments')
+        .update({ last_deploy_at: new Date().toISOString() } as any)
+        .eq('project_id', projectId);
+
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : 'Deploy error' };
+    }
+  }
+
+  /**
+   * Get tenant deployment status.
+   */
+  async getTenantStatus(projectId: string): Promise<{
+    exists: boolean;
+    status?: string;
+    domain?: string;
+    serverId?: string;
+  }> {
+    const { supabase } = await import('@/integrations/supabase/client');
+    const { data } = await supabase
+      .from('tenant_deployments')
+      .select('status, subdomain, custom_domain, hosting_server_id')
+      .eq('project_id', projectId)
+      .maybeSingle();
+
+    if (!data) return { exists: false };
+    const d = data as any;
+    return {
+      exists: true,
+      status: d.status,
+      domain: d.custom_domain || d.subdomain,
+      serverId: d.hosting_server_id,
+    };
   }
 }
 

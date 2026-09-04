@@ -20,10 +20,10 @@ set -euo pipefail
 #   TS_ACCEPT_ROUTES (default: false)
 #   CODESERVER_USER (default: root)
 #   CODESERVER_BIND_ADDR (default: 127.0.0.1:8443)
-#   CODESERVER_WORKDIR (default: /var/www/ecomgear)
+#   CODESERVER_WORKDIR (default: /var/www/SMEsAgent)
 #   SSH_DISABLE_ROOT_LOGIN (default: false)
-#   NGINX_SITE_PATH (default: /etc/nginx/sites-available/ecomgear-gen)
-#   NGINX_SOURCE_CONF (default: infrastructure/nginx/vps3-gen.ecomgear.dev.conf in this repo)
+#   NGINX_SITE_PATH (default: /etc/nginx/sites-available/SMEsAgent-gen)
+#   NGINX_SOURCE_CONF (default: infrastructure/nginx/vps3-gen.SMEsAgent.dev.conf in this repo)
 
 if [[ "$EUID" -ne 0 ]]; then
   echo "[error] Run as root"
@@ -40,10 +40,10 @@ TS_HOSTNAME="${TS_HOSTNAME:-vps3-devhub}"
 TS_ACCEPT_ROUTES="${TS_ACCEPT_ROUTES:-false}"
 CODESERVER_USER="${CODESERVER_USER:-root}"
 CODESERVER_BIND_ADDR="${CODESERVER_BIND_ADDR:-127.0.0.1:8443}"
-CODESERVER_WORKDIR="${CODESERVER_WORKDIR:-/var/www/ecomgear}"
+CODESERVER_WORKDIR="${CODESERVER_WORKDIR:-/var/www/SMEsAgent}"
 SSH_DISABLE_ROOT_LOGIN="${SSH_DISABLE_ROOT_LOGIN:-false}"
-NGINX_SITE_PATH="${NGINX_SITE_PATH:-/etc/nginx/sites-available/ecomgear-gen}"
-NGINX_SOURCE_CONF="${NGINX_SOURCE_CONF:-$ROOT_DIR/infrastructure/nginx/vps3-gen.ecomgear.dev.conf}"
+NGINX_SITE_PATH="${NGINX_SITE_PATH:-/etc/nginx/sites-available/SMEsAgent-gen}"
+NGINX_SOURCE_CONF="${NGINX_SOURCE_CONF:-$ROOT_DIR/infrastructure/nginx/vps3-gen.SMEsAgent.dev.conf}"
 
 if [[ ! -f "$NGINX_SOURCE_CONF" ]]; then
   echo "[error] Nginx source config not found: $NGINX_SOURCE_CONF"
@@ -77,7 +77,7 @@ CODESERVER_WORKDIR="$CODESERVER_WORKDIR" \
 
 echo "[step] Applying nginx config with VPN-only editor route"
 cp "$NGINX_SOURCE_CONF" "$NGINX_SITE_PATH"
-ln -sf "$NGINX_SITE_PATH" /etc/nginx/sites-enabled/ecomgear-gen
+ln -sf "$NGINX_SITE_PATH" /etc/nginx/sites-enabled/SMEsAgent-gen
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl reload nginx
@@ -94,4 +94,4 @@ curl -sf http://127.0.0.1:5001/health >/dev/null 2>&1 && echo "[ok] gen API loca
 curl -sf http://127.0.0.1:8443/healthz >/dev/null 2>&1 && echo "[ok] code-server local health passed" || echo "[warn] code-server local health failed"
 
 echo "[done] VPS3 Dev Hub bootstrap complete"
-echo "[next] From your laptop: connect to tailnet, then open https://gen.ecomgear.dev/editor/"
+echo "[next] From your laptop: connect to tailnet, then open https://gen.SMEsAgent.dev/editor/"

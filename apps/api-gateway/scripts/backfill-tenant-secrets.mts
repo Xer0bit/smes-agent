@@ -11,7 +11,7 @@
  * database.service.ts:264-270) and hasn't had an agent turn since keeps
  * whatever stale value it was written with -- confirmed live: one production
  * project's VITE_FUNCTIONS_API_URL still pointed at the wrong host
- * (api.ecomgear.dev instead of cloud.ecomgear.app/<schema>/functions) with no
+ * (api.SMEsAgent.dev instead of cloud.SMEsAgent.app/<schema>/functions) with no
  * self-heal trigger. This script forces that resync for every active tenant
  * DB in one pass instead of waiting on each project's next agent turn.
  *

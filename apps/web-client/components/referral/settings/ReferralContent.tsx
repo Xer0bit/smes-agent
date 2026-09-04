@@ -70,11 +70,11 @@ export function ReferralContent() {
 
   const shareReferral = async () => {
     const link = `${window.location.origin}?ref=${referralCode}`;
-    const text = `Join eComGear and get started with AI-powered web building! Use my referral link: ${link}`;
+    const text = `Join SMEsAgent and get started with AI-powered web building! Use my referral link: ${link}`;
 
     if (navigator.share) {
       try {
-        await navigator.share({ title: 'Join eComGear', text, url: link });
+        await navigator.share({ title: 'Join SMEsAgent', text, url: link });
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {
           copyReferralLink();

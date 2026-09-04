@@ -1,5 +1,5 @@
 /**
- * Shared types for the EcomGear Agent Tool system.
+ * Shared types for the SMEsAgent Agent Tool system.
  * Express-native port of the Dyad local_agent tools (no Electron / Drizzle deps).
  */
 
@@ -18,10 +18,10 @@ export interface AgentContext {
   projectId: string;
   /**
    * Called once when a tool finishes to stream the rendered XML block
-   * to the SSE client (e.g. <ecomgear-write …>…</ecomgear-write>).
+   * to the SSE client (e.g. <SMEsAgent-write …>…</SMEsAgent-write>).
    */
   onXmlComplete: (xml: string) => void;
-  /** Returns packages declared via <ecomgear-add-dependency> so far in this run. */
+  /** Returns packages declared via <SMEsAgent-add-dependency> so far in this run. */
   getDeclaredDependencies?: () => string[];
   /**
    * Tracks which project-relative paths have been fetched via read_file in this run.
@@ -231,7 +231,7 @@ export interface AgentContext {
    * filesToDelete/renames, so a turn whose only action was this kind of
    * mutation still triggers the end-of-turn preview-sync gate and doesn't get
    * mislabeled ghostRun. Deliberately NOT implemented via a synthetic
-   * <ecomgear-write> entry: agentLoopService.ts's disk-walk sync re-reads
+   * <SMEsAgent-write> entry: agentLoopService.ts's disk-walk sync re-reads
    * every path in filesToWrite from disk, and a path with nothing real there
    * would inject a bogus placeholder file into the live project instead of
    * fixing anything (found during the 2026-08 sync audit, provision_database.ts).

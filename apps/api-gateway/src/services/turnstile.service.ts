@@ -94,9 +94,14 @@ export async function verifyTurnstile(
   const errorCodes = Array.isArray(data['error-codes']) ? data['error-codes'].join(',') : '';
 
   if (!success) return { ok: false, reason: `failed: ${errorCodes}` };
-  if (action !== expectedAction) return { ok: false, reason: `action-mismatch: ${action}` };
-  if (allowedHostnames.size > 0 && !allowedHostnames.has(hostname ?? '')) {
-    return { ok: false, reason: `hostname-not-allowed: ${hostname}` };
+  // The dummy dev secret never echoes the token's action (or hostname) back
+  // from siteverify, so those checks are only enforceable against the real
+  // secret; enforcing them in dev would block every local registration.
+  if (secret !== TURNSTILE_DEV_SECRET) {
+    if (action !== expectedAction) return { ok: false, reason: `action-mismatch: ${action}` };
+    if (allowedHostnames.size > 0 && !allowedHostnames.has(hostname ?? '')) {
+      return { ok: false, reason: `hostname-not-allowed: ${hostname}` };
+    }
   }
   return { ok: true };
 }

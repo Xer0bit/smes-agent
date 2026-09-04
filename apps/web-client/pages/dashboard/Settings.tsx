@@ -177,13 +177,13 @@ export default function DashboardSettings() {
 
       <div className="space-y-6">
         <div className="grid gap-4 md:grid-cols-3">
-          <Card className="rounded-xl border-border/60">
+          <Card className="rounded-none border-border/60">
             <CardContent className="p-5">
               <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Email</p>
               <p className="mt-3 truncate text-sm font-medium text-foreground">{authUser?.email || 'No email'}</p>
             </CardContent>
           </Card>
-          <Card className="rounded-xl border-border/60">
+          <Card className="rounded-none border-border/60">
             <CardContent className="p-5">
               <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Eco</p>
               <p className="mt-3 font-display text-xl font-semibold text-foreground">
@@ -192,7 +192,7 @@ export default function DashboardSettings() {
               <Progress value={getUsagePercentage()} className="mt-3 h-1.5" />
             </CardContent>
           </Card>
-          <Card className="rounded-xl border-border/60">
+          <Card className="rounded-none border-border/60">
             <CardContent className="p-5">
               <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Plan</p>
               {loading ? (
@@ -211,7 +211,7 @@ export default function DashboardSettings() {
 
         <AppearanceCard />
 
-        <Card className="rounded-xl border-border/60">
+        <Card className="rounded-none border-border/60">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <User className="h-5 w-5 text-primary" />
@@ -226,7 +226,7 @@ export default function DashboardSettings() {
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="Full name"
-                className="rounded-lg"
+                className="rounded-none"
               />
             </div>
             <div className="space-y-2">
@@ -237,7 +237,7 @@ export default function DashboardSettings() {
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="Phone number"
-                className="rounded-lg"
+                className="rounded-none"
               />
             </div>
             <Button onClick={handleSaveProfile} disabled={savingProfile} className="rounded-full">
@@ -247,7 +247,7 @@ export default function DashboardSettings() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-xl border-border/60">
+        <Card className="rounded-none border-border/60">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <SettingsIcon className="h-5 w-5 text-primary" />
@@ -273,7 +273,7 @@ export default function DashboardSettings() {
           </CardContent>
         </Card>
 
-        <Card ref={billingCardRef} className="rounded-xl border-border/60 scroll-mt-6">
+        <Card ref={billingCardRef} className="rounded-none border-border/60 scroll-mt-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <CreditCard className="h-5 w-5 text-primary" />
@@ -296,7 +296,7 @@ export default function DashboardSettings() {
                     show something here if it's real, new information (the
                     suspended-payment warning), not a restated status claim. */}
                 {status === 'suspended' && (
-                  <div className="space-y-1 rounded-lg border border-destructive/30 bg-destructive/[0.04] p-4">
+                  <div className="space-y-1 rounded-none border border-destructive/30 bg-destructive/[0.04] p-4">
                     <p className="text-sm font-medium text-destructive">Payment is overdue</p>
                     <p className="text-sm text-muted-foreground">Update billing to restore full access.</p>
                   </div>
@@ -314,7 +314,7 @@ export default function DashboardSettings() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-xl border-border/60">
+        <Card className="rounded-none border-border/60">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <Lock className="h-5 w-5 text-primary" />
@@ -332,7 +332,7 @@ export default function DashboardSettings() {
                   onChange={(e) => setCurrentPassword(e.target.value)}
                   placeholder="Current password"
                   disabled={isChangingPassword}
-                  className="rounded-lg"
+                  className="rounded-none"
                 />
               </div>
 
@@ -345,7 +345,7 @@ export default function DashboardSettings() {
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="New password"
                   disabled={isChangingPassword}
-                  className="rounded-lg"
+                  className="rounded-none"
                 />
               </div>
 
@@ -358,7 +358,7 @@ export default function DashboardSettings() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Confirm password"
                   disabled={isChangingPassword}
-                  className="rounded-lg"
+                  className="rounded-none"
                 />
               </div>
 
@@ -387,7 +387,7 @@ function AppearanceCard() {
     { value: 'system', label: 'System', icon: <Monitor className="h-3.5 w-3.5" /> },
   ];
   return (
-    <Card className="rounded-xl border-border/60">
+    <Card className="rounded-none border-border/60">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base font-semibold">
           <Sun className="h-4 w-4" />
@@ -396,7 +396,7 @@ function AppearanceCard() {
       </CardHeader>
       <CardContent>
         <p className="mb-3 text-sm text-muted-foreground">Applies to the dashboard. The editor and project pages stay dark.</p>
-        <div className="inline-flex rounded-lg border border-border/60 p-0.5">
+        <div className="inline-flex rounded-none border border-border/60 p-0.5">
           {options.map((o) => (
             <button
               key={o.value}

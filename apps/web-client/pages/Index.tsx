@@ -6,13 +6,17 @@ import { toast } from "sonner";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { LandingContext } from "@/contexts/LandingContext";
 import { LoginDialog } from "@/components/LoginDialog";
-import { LandingPage } from "@/components/landing/LandingPage";
+import AlkhidmatBanner from "@/components/AlkhidmatBanner";
+import SiteHeader from "@/components/public-site/SiteHeader";
+import SiteFooter from "@/components/public-site/SiteFooter";
+import Home from "./marketing/Home";
 import { canCreateProject, showLimitToast, trackUsage } from "@/services/subscriptionService";
 import { useGuestSession } from "@/hooks/useGuestSession";
+import "@/styles/home.css";
 
 // Key for storing pending prompt when redirecting to login
-const PENDING_PROMPT_KEY = 'ecomgear_pending_prompt';
-const TEMP_PROJECT_KEY = 'ecomgear_temp_project';
+const PENDING_PROMPT_KEY = 'SMEsAgent_pending_prompt';
+const TEMP_PROJECT_KEY = 'SMEsAgent_temp_project';
 
 interface PendingPrompt {
   prompt: string;
@@ -29,6 +33,7 @@ const Index = () => {
   const { currentOrganizationId } = useOrganization();
   const navigate = useNavigate();
   const prevUserIdRef = useRef<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const { canRequest, requestsRemaining, getFingerprint } = useGuestSession();
 
   // Auth subscription   mirrors LandingLayout pattern
@@ -43,6 +48,25 @@ const Index = () => {
     });
     return () => subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const targets = el.querySelectorAll(".smes-site-reveal");
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+            io.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.12, rootMargin: "0px 0px -40px 0px" }
+    );
+    targets.forEach((t) => io.observe(t));
+    return () => io.disconnect();
   }, []);
 
   // Create project helper function
@@ -239,8 +263,13 @@ const Index = () => {
   }, [user, navigate]);
 
   return (
-    <LandingContext.Provider value={{ user, onLoginClick: () => setIsLoginOpen(true) }}>
-      <LandingPage onLaunch={handleLaunch} />
+    <LandingContext.Provider value={{ user, onLoginClick: () => setIsLoginOpen(true), onLaunch: handleLaunch }}>
+      <div className="smes-site-root" ref={containerRef}>
+        <AlkhidmatBanner />
+        <SiteHeader />
+        <Home />
+        <SiteFooter />
+      </div>
       <LoginDialog open={isLoginOpen} onOpenChange={setIsLoginOpen} />
     </LandingContext.Provider>
   );

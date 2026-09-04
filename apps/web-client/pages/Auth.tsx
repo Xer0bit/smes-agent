@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ArrowLeft, Loader2 } from 'lucide-react';
-import logo from '@/assets/ecomgear-auth-logo.png';
+import logo from '@/assets/logo/svg/smes-agent-icon.svg';
+import BrandLoader from '@/components/BrandLoader';
 import { Turnstile } from '@/components/Turnstile';
 
 // Platform login/signup now routes through this app's own server
@@ -209,7 +210,7 @@ export default function AuthPage() {
   if (checkingSession) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="h-5 w-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        <BrandLoader variant="compass" size={100} label="Checking session" />
       </div>
     );
   }
@@ -234,7 +235,7 @@ export default function AuthPage() {
         </button>
 
         <div className="mb-8 flex items-center gap-2.5">
-          <img src={logo} alt="eComGear" className="h-7 w-auto object-contain" />
+          <img src={logo} alt="SMEsAgent" className="h-7 w-auto object-contain" />
         </div>
 
         <div className="mb-6 space-y-1">
@@ -253,12 +254,12 @@ export default function AuthPage() {
         </div>
 
         {error && (
-          <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <div className="mb-4 rounded-none border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {error}
           </div>
         )}
         {message && (
-          <div className="mb-4 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
+          <div className="mb-4 rounded-none border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
             {message}
           </div>
         )}

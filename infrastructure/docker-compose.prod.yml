@@ -3,14 +3,14 @@ version: '3.8'
 # docker-compose.prod.yml   VPS2 (72.62.126.99, Indonesia)
 # =============================================================================
 # VPS2 (72.62.126.99, Indonesia)   Preview Service
-# Domain: preview.ecomgear.app  *.preview.ecomgear.app
+# Domain: preview.SMEsAgent.app  *.preview.SMEsAgent.app
 # =============================================================================
 services:
   preview-service:
     build:
       context: ../apps/preview-service
       dockerfile: Dockerfile
-    container_name: ecomgear-preview
+    container_name: SMEsAgent-preview
     restart: unless-stopped
     ports:
       - "3001:3001"
@@ -20,13 +20,13 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3001
-      - ALLOWED_ORIGINS=https://ecomgear.dev,https://www.ecomgear.dev,https://ecomgear.app,https://www.ecomgear.app
+      - ALLOWED_ORIGINS=https://SMEsAgent.dev,https://www.SMEsAgent.dev,https://SMEsAgent.app,https://www.SMEsAgent.app
       # HMR connects through nginx wildcard subdomain on VPS2
-      - VITE_HMR_HOST=preview.ecomgear.app
+      - VITE_HMR_HOST=preview.SMEsAgent.app
       - VITE_HMR_PORT=443
       - VITE_HMR_PROTOCOL=wss
     networks:
-      - ecomgear-network
+      - SMEsAgent-network
     deploy:
       resources:
         limits:
@@ -52,15 +52,15 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: /var/www/ecomgear/preview-service/projects
+      device: /var/www/SMEsAgent/preview-service/projects
 
   preview-logs:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: /var/www/ecomgear/logs
+      device: /var/www/SMEsAgent/logs
 
 networks:
-  ecomgear-network:
+  SMEsAgent-network:
     driver: bridge

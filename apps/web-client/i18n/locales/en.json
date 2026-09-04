@@ -1,6 +1,6 @@
 {
   "auth": {
-    "welcome": "Welcome to eComGear",
+    "welcome": "Welcome to SMEsAgent",
     "subtitle": "Sign in to your account or create a new one",
     "backToHome": "Back to Home",
     "email": "Email",
@@ -35,7 +35,7 @@
     }
   },
   "loginDialog": {
-    "description": "Choose how you'd like to sign in to eComGear",
+    "description": "Choose how you'd like to sign in to SMEsAgent",
     "login": "Log In",
     "signup": "Sign Up",
     "socialLogin": "Or use social login"
@@ -59,7 +59,7 @@
     "navigation": "Navigation"
   },
   "admin": {
-    "title": "eComGear Admin",
+    "title": "SMEsAgent Admin",
     "dashboard": "Dashboard",
     "organizations": "Organizations",
     "projects": "Projects",

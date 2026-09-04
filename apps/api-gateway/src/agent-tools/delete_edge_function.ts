@@ -112,7 +112,7 @@ export const deleteEdgeFunctionTool: ToolDefinition<z.infer<typeof schema>> = {
       logger.warn(`[delete_edge_function] mirror cleanup failed for ${name}`, mirrorErr);
     }
 
-    ctx.onXmlComplete?.(`<ecomgear-delete path="${EDGE_FUNCTIONS_DIR}/${name}.js"></ecomgear-delete>`);
+    ctx.onXmlComplete?.(`<SMEsAgent-delete path="${EDGE_FUNCTIONS_DIR}/${name}.js"></SMEsAgent-delete>`);
 
     const syncWarning = syncStatus === 'failed'
       ? `\n⚠️ SYNC FAILED: the DB row was removed, but the code was NOT deactivated on the execution host. ` +

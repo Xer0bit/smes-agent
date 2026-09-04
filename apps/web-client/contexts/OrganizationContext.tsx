@@ -20,7 +20,7 @@ interface OrganizationContextType {
 
 const OrganizationContext = createContext<OrganizationContextType | undefined>(undefined);
 
-const storageKey = (userId: string) => `ecomgear.currentOrganizationId.${userId}`;
+const storageKey = (userId: string) => `SMEsAgent.currentOrganizationId.${userId}`;
 
 export const OrganizationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentOrganizationId, setCurrentOrganizationIdState] = useState<string | null>(null);

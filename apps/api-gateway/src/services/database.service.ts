@@ -12,7 +12,7 @@ function cfg() {
   const password = process.env.TENANT_DB_SUPERUSER_PASSWORD;
   const database = process.env.TENANT_DB_NAME          || 'ecg_tenants';
   const jwtSecret = process.env.TENANT_DB_JWT_SECRET;
-  const apiUrl   = process.env.TENANT_DB_API_URL       || 'https://cloud.ecomgear.app';
+  const apiUrl   = process.env.TENANT_DB_API_URL       || 'https://cloud.SMEsAgent.app';
 
   if (!host || !password || !jwtSecret) {
     throw new Error('Missing TENANT_DB_HOST, TENANT_DB_SUPERUSER_PASSWORD or TENANT_DB_JWT_SECRET env vars');
@@ -66,7 +66,7 @@ function tenantJwts(schemaId: string): { anon_key: string; service_key: string }
  * Returns the decoded { role, exp } payload if the signature and expiry are
  * valid, or null otherwise. Used to authenticate public/anonymous requests
  * (e.g. edge-function invocation from a generated app's own end users) without
- * requiring an EcomGear platform login.
+ * requiring an SMEsAgent platform login.
  */
 export function verifyTenantJwt(token: string): { role: string; exp: number } | null {
   try {
@@ -296,7 +296,7 @@ export interface ProjectSecret {
 // SINGLE SOURCE OF TRUTH for every env var injected into the agent's prompt
 // context. Previously ai.routes.ts independently re-derived VITE_FUNCTIONS_API_URL
 // / VITE_DB_* with its own fallback logic and disagreed with this file (used
-// gen.ecomgear.dev   the wrong server   as a fallback, and injected the
+// gen.SMEsAgent.dev   the wrong server   as a fallback, and injected the
 // full-privilege service_key under a VITE_ name). Every caller that needs "what
 // env vars does this project have" MUST go through this function instead of
 // recomputing anything locally   that's how the two diverged last time.
@@ -311,7 +311,7 @@ export async function buildProjectEnvSecrets(userId: string, projectId: string):
   const derived: ProjectSecret[] = [];
 
   // Nothing from the platform's own environment is ever derived here. Until
-  // 2026-09-02 every project was handed EcomGear's own Supabase URL and anon
+  // 2026-09-02 every project was handed SMEsAgent's own Supabase URL and anon
   // key as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY (and they were upserted
   // into project_secrets, 46 projects' worth), so every generated app's users
   // signed up against the platform's auth database with the platform's key
@@ -325,9 +325,9 @@ export async function buildProjectEnvSecrets(userId: string, projectId: string):
   const dbCreds = await databaseService.getCredentials(userId, projectId);
   if (dbCreds) {
     // Edge functions execute on VPS5, next to the tenant database   never on
-    // api.ecomgear.dev, which is reserved for EcomGear's own platform API.
+    // api.SMEsAgent.dev, which is reserved for SMEsAgent's own platform API.
     // dbCreds.api_url already carries the tenant schema segment
-    // (https://cloud.ecomgear.app/tenant_xxxx), so /functions lands on the
+    // (https://cloud.SMEsAgent.app/tenant_xxxx), so /functions lands on the
     // same nginx-routed path the function-runner (vps5-functions-runner/) serves.
     const functionsApiUrl = `${dbCreds.api_url}/functions`;
     derived.push({ key_name: 'VITE_DB_API_URL', key_value: dbCreds.api_url });
@@ -370,7 +370,7 @@ export async function buildProjectEnvSecrets(userId: string, projectId: string):
 // flat `ALTER DEFAULT PRIVILEGES ... GRANT SELECT ... TO anon` (see step 5b
 // in provision() below) with Row Level Security never enabled anywhere. The
 // anon key is shipped client-side in every generated app's JS bundle BY
-// DESIGN (public, like a Supabase anon key) and cloud.ecomgear.app/PostgREST
+// DESIGN (public, like a Supabase anon key) and cloud.SMEsAgent.app/PostgREST
 // enforces nothing beyond that JWT + these Postgres GRANTs   so anyone who
 // pulled the anon key out of a generated app's bundle could SELECT any table
 // in that tenant's schema directly. Confirmed live, internet-reachable.
@@ -481,7 +481,7 @@ export const databaseService = {
     const c = cfg();
     const { anon_key, service_key } = tenantJwts(record.schema_name);
     // api_url carries the tenant's schema AS PART OF THE PATH
-    // (https://cloud.ecomgear.app/tenant_xxxx), not just the bare shared host.
+    // (https://cloud.SMEsAgent.app/tenant_xxxx), not just the bare shared host.
     // Old convention required every caller to remember a separate
     // Accept-Profile/Content-Profile header naming the schema   forget it (as
     // generated frontend code repeatedly did) and PostgREST 404s/406s silently
@@ -502,8 +502,8 @@ export const databaseService = {
     if (projectId) {
       // VITE_FUNCTIONS_API_URL: edge functions execute on VPS5 (the
       // function-runner in vps5-functions-runner/), reached through the same
-      // tenant-scoped cloud.ecomgear.app path as the DB   never api.ecomgear.dev,
-      // which stays reserved for EcomGear's own platform API. Synced here so
+      // tenant-scoped cloud.SMEsAgent.app path as the DB   never api.SMEsAgent.dev,
+      // which stays reserved for SMEsAgent's own platform API. Synced here so
       // the env var the system prompt tells the agent to use actually exists.
       const functionsApiUrl = `${creds.api_url}/functions`;
       supabase.from('project_secrets').upsert(
@@ -1207,7 +1207,7 @@ export const databaseService = {
     const pg = await pool();
     let truncated = false;
     const lines: string[] = [
-      `-- EcomGear hosted database dump`,
+      `-- SMEsAgent hosted database dump`,
       `-- schema: ${record.schema_name}`,
       `-- generated: ${new Date().toISOString()}`,
       `-- row limit per table: ${DUMP_ROW_LIMIT}`,

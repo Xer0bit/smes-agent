@@ -19,11 +19,11 @@ const knowledgeUpload = multer({
   }),
 });
 
-const PORTAL_API_URL = process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai';
+const PORTAL_API_URL = process.env.ECG_PORTAL_URL || 'https://api.SMEsAgent.ai';
 
 // Helper: fetch all relevant project secrets in one round-trip.
 // userId=null means "trust dashboardAccessMiddleware, don't require ownership"
-// (an anonymous dashboard visitor, not the eComGear account that built it).
+// (an anonymous dashboard visitor, not the SMEsAgent account that built it).
 async function getProjectSecrets(projectId: string, userId: string | null) {
   const query = supabase.from('projects').select('id, user_id').eq('id', projectId);
   const { data: project } = await (userId ? query.eq('user_id', userId) : query).maybeSingle();
@@ -39,7 +39,7 @@ async function getProjectSecrets(projectId: string, userId: string | null) {
 
 // ── MCP bridge ────────────────────────────────────────────────────────────────
 // Projects connected via ecg-dev-agent.routes.ts (paste an MCP API key) have no
-// portal JWT   api.ecomgear.ai/v1/ecg/* requires one and rejects an MCP key
+// portal JWT   api.SMEsAgent.ai/v1/ecg/* requires one and rejects an MCP key
 // outright (confirmed live: "Invalid or expired token"). There's also no way
 // to mint a portal JWT for these projects anymore (the only issuer, the old
 // launch-token handoff, is retired). So for MCP-key projects, REST-shaped
@@ -301,13 +301,13 @@ function mapToMcpTool(method: string, path: string, body: any, query: Record<str
 // dashboard); then a trusted internal caller (an edge function running the
 // project's OWN code, already having verified the real caller against cloud
 // auth itself -- see functionRunner.service.ts's ecg.portal()); falls back to
-// the eComGear owner Supabase session otherwise.
+// the SMEsAgent owner Supabase session otherwise.
 //
 // Why the internal-secret branch exists: a social-v2-style dashboard's own
 // end users authenticate against this platform's central auth service (the
 // SAME issuer authMiddleware verifies -- see docs on eCG cloud auth), but
 // they are never `projects.user_id` (they're a customer of the agency that
-// built the dashboard, not the EcomGear account that built it), so they can
+// built the dashboard, not the SMEsAgent account that built it), so they can
 // never satisfy the owner-session branch below. Their own edge functions
 // verify identity themselves (fetching /auth/v1/user with the caller's
 // token, then checking the project's own hosted-DB role table) and only

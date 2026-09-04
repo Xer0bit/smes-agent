@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto';
 // of duplicating either half.
 
 /**
- * Store files in Supabase revisions so the eComGear editor can read them.
+ * Store files in Supabase revisions so the SMEsAgent editor can read them.
  * Files go to Storage + a lean manifest row, never inline in generated_files
  * -- that used to hold raw file content directly, which silently re-inflated a
  * project's revision to tens of MB every time this ran (confirmed on CardPro,
@@ -95,7 +95,7 @@ export async function syncEcgPreviewService(
   projectId: string,
   filesArray: { path: string; content: string }[],
 ): Promise<void> {
-  const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
+  const previewServiceUrl = process.env.PREVIEW_SERVICE_URL || 'https://preview.SMEsAgent.app';
   const previewSecret = process.env.PREVIEW_UPDATE_SECRET || '';
   try {
     await fetch(`${previewServiceUrl}/preview/${projectId}/update`, {

@@ -23,7 +23,7 @@ import {
   buildFallbackSummary,
   detectLiveTool,
   parseCommandSuggestions,
-  stripEcomgearTags,
+  stripSMEsAgentTags,
   filePathToLabel,
   tokenize,
   relevanceScore,
@@ -137,7 +137,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     id: 'greeting',
     role: 'assistant',
     content:
-      "Welcome to **EcomGear App Builder**",
+      "Welcome to **SMEsAgent App Builder**",
     status: 'complete',
   };
 
@@ -171,7 +171,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
   const [chatModeMenuOpen, setChatModeMenuOpen] = useState(false);
   const [agentMode, setAgentMode] = useState<'agent' | 'plan'>(() => {
     try {
-      const saved = localStorage.getItem('ecomgear:agentMode');
+      const saved = localStorage.getItem('SMEsAgent:agentMode');
       return saved === 'plan' ? 'plan' : 'agent';
     } catch { return 'agent'; }
   });
@@ -348,7 +348,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
   // Persist plan/build mode across refreshes
   useEffect(() => {
-    try { localStorage.setItem('ecomgear:agentMode', agentMode); } catch {}
+    try { localStorage.setItem('SMEsAgent:agentMode', agentMode); } catch {}
   }, [agentMode]);
 
   // ── Adopt attachments handed over from another surface ──────────────────
@@ -475,12 +475,12 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
         setHasMoreMessages(hasMore);
 
         // Prepend GREETING once, then map DB rows using their real IDs.
-        // Strip all ecomgear operational tags from stored content.
+        // Strip all SMEsAgent operational tags from stored content.
         const mapped: Message[] = [
           GREETING,
           ...history.map((m) => {
             if (m.role === 'assistant') {
-              const { body, summary } = extractSummary(stripEcomgearTags(m.content));
+              const { body, summary } = extractSummary(stripSMEsAgentTags(m.content));
               return { id: m.id, role: 'assistant' as const, content: body, status: 'complete' as const, summary };
             }
             // Map DB attachments to the ChatAttachment shape for rendering.
@@ -557,7 +557,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
       const mapped: Message[] = older.map((m) => {
         if (m.role === 'assistant') {
-          const { body, summary } = extractSummary(stripEcomgearTags(m.content));
+          const { body, summary } = extractSummary(stripSMEsAgentTags(m.content));
           return { id: m.id, role: 'assistant' as const, content: body, status: 'complete' as const, summary };
         }
         const dbAttachments = (m.attachments ?? []).map(a => ({
@@ -653,7 +653,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             const json = await r.json();
             if (cancelled) return;
             if (json.active && json.attachable === false && !isGenerating) {
-              // A run IS live, but it belongs to the other `ecomgear-gen`
+              // A run IS live, but it belongs to the other `SMEsAgent-gen`
               // cluster worker, so its SSE event bus is in that process's
               // memory and there is nothing here to attach to. Opening a
               // reconnect stream anyway just round-robins into the lock check
@@ -708,7 +708,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
               });
               const paint = perFrame(() => {
                 if (generationDone || cancelled) return;
-                const displayContent = stripEcomgearTags(currentContent);
+                const displayContent = stripSMEsAgentTags(currentContent);
                 setMessages(prev => prev.map(m => m.id === asstId
                   ? { ...m, content: displayContent, status: 'streaming' }
                   : m));
@@ -750,7 +750,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                   onToolOutput: (xml) => {
                     if (generationDone || cancelled) return;
                     toolXmlAccum += xml + '\n';
-                    const target = /ecomgear-(?:write|edit|delete)[^>]*\bpath="([^"]+)"/.exec(xml)?.[1];
+                    const target = /SMEsAgent-(?:write|edit|delete)[^>]*\bpath="([^"]+)"/.exec(xml)?.[1];
                     const row = target ? rejoinSteps.find((st) => !st.done && st.target === target.replace(/^\/+/, '')) : undefined;
                     if (row) { row.done = true; paintSteps.schedule(); }
                   },
@@ -770,7 +770,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                     setIsGenerating(false);
                     setStatusText('');
                     const rawContent = currentContent || result.summary || '';
-                    const { body: finalContent, summary } = extractSummary(stripEcomgearTags(rawContent));
+                    const { body: finalContent, summary } = extractSummary(stripSMEsAgentTags(rawContent));
                     const toolActivities = parseToolActivities(toolXmlAccum || rawContent);
                     const displayContent = finalContent || buildFallbackSummary(toolActivities) || 'Something went wrong   please try again.';
                     setMessages(prev => prev.map(m => m.id === asstId
@@ -996,7 +996,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
     const history = recentTurns.map(m => ({
       role: m.role as 'user' | 'assistant',
-      // Content is already cleaned (ecomgear tags stripped on save/load)
+      // Content is already cleaned (SMEsAgent tags stripped on save/load)
       content: m.content,
     }));
 
@@ -1071,7 +1071,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     let currentContent = '';
     // Accumulate XML from tool-output events (write_file / delete_file / rename_file).
     // This is the real source for toolActivities chips   the text-delta stream
-    // almost never contains <ecomgear-*> tags when the agent uses tool calls.
+    // almost never contains <SMEsAgent-*> tags when the agent uses tool calls.
     let toolXmlAccum = '';
     // Guard: once 'done' is received, ignore any late text-delta events.
     let generationDone = false;
@@ -1112,7 +1112,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
     // live-tool scan run here, once per frame, instead of once per chunk.
     const paint = perFrame(() => {
       if (generationDone) return;
-      const displayContent = stripEcomgearTags(currentContent);
+      const displayContent = stripSMEsAgentTags(currentContent);
       const liveTool = detectLiveTool(currentContent);
       if (liveTool) pushStatus(liveTool);
       setMessages(prev =>
@@ -1181,11 +1181,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             toolXmlAccum += xml + '\n';
 
             // Track live file changes
-            const writeMatch = /ecomgear-write[^>]*\bpath="([^"]+)"/.exec(xml);
-            const editMatch = /ecomgear-edit[^>]*\bpath="([^"]+)"/.exec(xml);
-            const deleteMatch = /ecomgear-delete[^>]*\bpath="([^"]+)"/.exec(xml);
-            const renameMatch = /ecomgear-rename[^>]*\bfrom="([^"]+)"/.exec(xml);
-            const depMatch = /ecomgear-add-dependency[^>]*\bpackages="([^"]+)"/.exec(xml);
+            const writeMatch = /SMEsAgent-write[^>]*\bpath="([^"]+)"/.exec(xml);
+            const editMatch = /SMEsAgent-edit[^>]*\bpath="([^"]+)"/.exec(xml);
+            const deleteMatch = /SMEsAgent-delete[^>]*\bpath="([^"]+)"/.exec(xml);
+            const renameMatch = /SMEsAgent-rename[^>]*\bfrom="([^"]+)"/.exec(xml);
+            const depMatch = /SMEsAgent-add-dependency[^>]*\bpackages="([^"]+)"/.exec(xml);
 
             // These template labels are a placeholder only   never force, so
             // real LLM narration (onAgentNarration/onStepStatusRefine) always
@@ -1275,7 +1275,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
 
             // Prefer full streamed text over backend summary
             const rawContent = currentContent || result.summary || '';
-            const { body: strippedContent, summary } = extractSummary(stripEcomgearTags(rawContent));
+            const { body: strippedContent, summary } = extractSummary(stripSMEsAgentTags(rawContent));
             const isPlan = result.mode === 'plan'
               || (!result.mode && /reply\s+\*\*execute\*\*/i.test(rawContent) && !overridePrompt);
             // Server-side execute-confirmation override (agentLoopService.ts
@@ -1284,7 +1284,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             // since that decision no longer happens in this component.
             if (result.mode === 'build' && resolvedMode === 'plan') setAgentMode('agent');
             // Tool activities come from tool-output XML (accumulated during streaming),
-            // not from the text-delta stream which rarely contains ecomgear tags.
+            // not from the text-delta stream which rarely contains SMEsAgent tags.
             const toolActivities = isPlan ? [] : parseToolActivities(toolXmlAccum || rawContent);
             // Show actual output; if model returned nothing and no tool activity, show a retry hint.
             const finalContent = strippedContent.trim() || result.summary?.trim()
@@ -1388,11 +1388,6 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 // and onRepairFailed (fired for this same run, above) is escalating the repair
                 // counter. Showing "App updated." here would contradict both. Don't reset the
                 // counter either: onRepairFailed just incremented it for this exact failure.
-              } else if (result.revertedToPreAgent) {
-                // The run's changes were all reverted to the last known-good state because
-                // the build could not be repaired. onRepairFailed already escalated to the
-                // Auto-fix affordance; the summary/caveat text says what happened. A success
-                // toast would claim changes landed that were just discarded.
               } else {
                 autoRepairCountRef.current = 0; // successful build   reset repair counter
                 toast.success('App updated.');
@@ -1664,7 +1659,7 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
             <div key={msg.id} className="group">
               {msg.id === 'greeting' ? (
                 <div className="py-1">
-                  <p className="text-[13px] font-medium text-white/85">EcomGear Agent</p>
+                  <p className="text-[13px] font-medium text-white/85">SMEsAgent Agent</p>
                   <p className="text-[13px] text-white/45 leading-relaxed">
                     Describe what you want to build or change, and I'll do it.
                   </p>

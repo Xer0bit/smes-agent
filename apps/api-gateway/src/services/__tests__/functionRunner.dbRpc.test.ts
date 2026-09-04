@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildDbHelper } from '../functionRunner.service.js';
 
 const baseCtx = {
-  apiUrl: 'https://cloud.ecomgear.dev',
+  apiUrl: 'https://cloud.SMEsAgent.dev',
   schema: 'tenant_test',
   serviceKey: 'test-service-key',
 };

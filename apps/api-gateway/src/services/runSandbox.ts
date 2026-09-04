@@ -28,10 +28,10 @@ const STORAGE_BUCKET = 'user-projects-free';
 // ponytail: sentinel is duplicated across ~7 files today (each redefines it);
 // matching the prevailing pattern rather than introducing a shared export in
 // this increment. Unify when the reconstruction touches the wire format.
-const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+const BINARY_SENTINEL = '__SMEsAgent_BIN64__';
 const BINARY_EXT_RE = /\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3|pdf|zip|svg)$/i;
 const SKIP_DIRS = new Set(['node_modules', '.git', '.vite', '.vite-cache', 'dist', 'build', '.tmp', 'coverage', '.cache']);
-const SKIP_FILES = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production']);
+const SKIP_FILES = new Set(['package-lock.json', '.SMEsAgent-hash', '.DS_Store', '.env', '.env.local', '.env.production']);
 const MAX_TEXT_FILE_SIZE = 512 * 1024;
 const MAX_FILES = 5000;
 /** How far back to look for a readable manifest before giving up on HEAD. */
@@ -42,25 +42,14 @@ const HEAD_PLAUSIBILITY_RATIO = 0.5;
 const MIN_DISK_FILES_FOR_PLAUSIBILITY = 10;
 
 /** Ephemeral runs root. Sibling of the projects dir on the runner, tmp locally. */
-const RUNS_BASE_DIR = process.env.ECOMGEAR_RUNS_DIR
-  || (process.env.ECOMGEAR_PROJECTS_DIR ? path.join(path.dirname(process.env.ECOMGEAR_PROJECTS_DIR), 'runs') : path.join(os.tmpdir(), 'ecomgear-runs'));
+const RUNS_BASE_DIR = process.env.SMEsAgent_RUNS_DIR
+  || (process.env.SMEsAgent_PROJECTS_DIR ? path.join(path.dirname(process.env.SMEsAgent_PROJECTS_DIR), 'runs') : path.join(os.tmpdir(), 'SMEsAgent-runs'));
 
 export interface Sandbox {
   sandboxPath: string;
   runId: string;
   headRevisionId: string | null;
   headPaths: ReadonlySet<string>;
-  /**
-   * path -> content hash of the revision this sandbox was materialized from
-   * (the run-start HEAD). Lets the run-end persist distinguish "this file is
-   * identical to what the run started from" from "the run changed this file":
-   * an untouched file whose content the USER edited mid-run (a newer revision
-   * landed while the agent worked) must be carried forward from that newer
-   * revision, never re-uploaded from this stale copy. Null when the sandbox
-   * was seeded from the scaffold (no usable HEAD), in which case the whole
-   * tree is the run's output by definition.
-   */
-  headByPath: ReadonlyMap<string, string> | null;
 }
 
 export interface SandboxFile {
@@ -223,11 +212,10 @@ export async function openSandbox(projectId: string, projectDir?: string): Promi
 
   if (!head || !supabase || headTooSmall) {
     if (projectDir) copyScaffoldSource(projectDir, sandboxPath);
-    return { sandboxPath, runId, headRevisionId: null, headPaths: new Set(), headByPath: null };
+    return { sandboxPath, runId, headRevisionId: null, headPaths: new Set() };
   }
 
   const headPaths = new Set<string>();
-  const headByPath = new Map<string, string>();
   let wrote = 0;
   let failed = 0;
   const BATCH = 12;
@@ -237,7 +225,6 @@ export async function openSandbox(projectId: string, projectDir?: string): Promi
       const srcRev = typeof entry.source_revision === 'string' ? entry.source_revision : '';
       if (!p || !srcRev) return;
       headPaths.add(p);
-      if (typeof entry.hash === 'string') headByPath.set(p, entry.hash);
       const { data: blob, error } = await supabase.storage
         .from(STORAGE_BUCKET)
         .download(`projects/${projectId}/${srcRev}/${p}`);
@@ -264,7 +251,7 @@ export async function openSandbox(projectId: string, projectDir?: string): Promi
     }));
   }
   logger.info('[runSandbox] opened', { projectId, runId, headRevisionId: head.revisionId, wrote, failed, headFiles: headPaths.size });
-  return { sandboxPath, runId, headRevisionId: head.revisionId, headPaths, headByPath };
+  return { sandboxPath, runId, headRevisionId: head.revisionId, headPaths };
 }
 
 /**

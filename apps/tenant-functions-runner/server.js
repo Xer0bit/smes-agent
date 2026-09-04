@@ -160,7 +160,7 @@ app.post('/:schema/secrets/_sync', requireInternalSecret, async (req, res) => {
 // ── POST /:schema/functions/:name/invoke   public path, a generated app's own
 // end users call this with the project's anon/service key. Fully local: reads
 // tenant_functions/tenant_secrets from this box's own Postgres, never calls
-// api.ecomgear.dev. ──────────────────────────────────────────────────────────
+// api.SMEsAgent.dev. ──────────────────────────────────────────────────────────
 async function handleInvoke(req, res) {
   const { schema, name } = req.params;
 
@@ -207,7 +207,7 @@ async function handleInvoke(req, res) {
 
     const ecgCtx = secrets.ECG_PORTAL_TOKEN ? {
       portalToken: secrets.ECG_PORTAL_TOKEN,
-      portalApiUrl: process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai',
+      portalApiUrl: process.env.ECG_PORTAL_URL || 'https://api.SMEsAgent.ai',
       llmApiKey: secrets.ECG_LLM_API_KEY,
       llmModel: secrets.ECG_LLM_MODEL,
       llmProvider: secrets.ECG_LLM_PROVIDER,

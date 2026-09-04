@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import logo from "@/assets/ecomgear-logo.jpg";
+import logo from "@/assets/logo/svg/smes-agent-icon.svg";
 import { supabase } from "@/integrations/supabase/client";
 import { getOAuthCallbackUrl } from '@/lib/authRedirect';
 
@@ -50,7 +50,7 @@ export const LoginDialog = ({ open, onOpenChange }: LoginDialogProps) => {
           <div className="flex justify-center mb-4">
             <img 
               src={logo} 
-              alt="eComGear Logo" 
+              alt="SMEsAgent Logo" 
               className="h-16 object-contain"
             />
           </div>

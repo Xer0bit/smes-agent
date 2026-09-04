@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 process.env.TENANT_DB_HOST = 'db.internal';
 process.env.TENANT_DB_SUPERUSER_PASSWORD = 'test-pass';
 process.env.TENANT_DB_JWT_SECRET = 'test-secret';
-process.env.SUPABASE_URL = 'https://api.ecomgear.dev';
+process.env.SUPABASE_URL = 'https://api.SMEsAgent.dev';
 process.env.SUPABASE_ANON_KEY = 'platform-anon-key';
 
 const upsertCalls: any[] = [];
@@ -123,7 +123,7 @@ describe('databaseService.getCredentials   VITE_DB_* secret sync', () => {
     // convention was error-prone (forgetting the header silently 404/406'd),
     // so the schema now lives in the URL itself and VPS5's nginx derives the
     // real header from it.
-    expect(creds!.api_url).toBe('https://cloud.ecomgear.app/tenant_project1');
+    expect(creds!.api_url).toBe('https://cloud.SMEsAgent.app/tenant_project1');
 
     // upsert is fired async (not awaited)   flush microtasks.
     await new Promise((r) => setImmediate(r));
@@ -136,9 +136,9 @@ describe('databaseService.getCredentials   VITE_DB_* secret sync', () => {
     expect(keyNames).toEqual(['VITE_DB_ANON_KEY', 'VITE_DB_API_URL', 'VITE_DB_SCHEMA', 'VITE_FUNCTIONS_API_URL']);
 
     // Functions execute on VPS5 (the tenant function-runner), reached through
-    // the same tenant-scoped cloud.ecomgear.app path as the DB itself   never
-    // api.ecomgear.dev, which stays reserved for EcomGear's own platform API.
-    // (Stale assertion fixed: this used to expect ECOMGEAR_SERVER_URL/api.ecomgear.dev,
+    // the same tenant-scoped cloud.SMEsAgent.app path as the DB itself   never
+    // api.SMEsAgent.dev, which stays reserved for SMEsAgent's own platform API.
+    // (Stale assertion fixed: this used to expect SMEsAgent_SERVER_URL/api.SMEsAgent.dev,
     // which was the wrong host and silently 404'd every generated app's function calls.)
     const fnUrlRow = secretsUpsert.rows.find((r: any) => r.key_name === 'VITE_FUNCTIONS_API_URL');
     expect(fnUrlRow.key_value).toBe(`${creds!.api_url}/functions`);
@@ -288,16 +288,16 @@ describe('buildProjectEnvSecrets   platform-managed keys always win over stale s
   // ever actually preferred the fresh value over the stale stored one.
   it('ignores a stale stored VITE_FUNCTIONS_API_URL and returns the freshly-derived value', async () => {
     projectSecretsRows = [
-      { project_id: 'project-1', key_name: 'VITE_FUNCTIONS_API_URL', key_value: 'https://api.ecomgear.dev' },
-      { project_id: 'project-1', key_name: 'VITE_DB_API_URL', key_value: 'https://cloud.ecomgear.app/tenant_project1' },
+      { project_id: 'project-1', key_name: 'VITE_FUNCTIONS_API_URL', key_value: 'https://api.SMEsAgent.dev' },
+      { project_id: 'project-1', key_name: 'VITE_DB_API_URL', key_value: 'https://cloud.SMEsAgent.app/tenant_project1' },
     ];
 
     const secrets = await buildProjectEnvSecrets('user-1', 'project-1');
     const fnUrl = secrets.find((s) => s.key_name === 'VITE_FUNCTIONS_API_URL');
 
     expect(fnUrl).toBeTruthy();
-    expect(fnUrl!.key_value).toBe('https://cloud.ecomgear.app/tenant_project1/functions');
-    expect(fnUrl!.key_value).not.toBe('https://api.ecomgear.dev');
+    expect(fnUrl!.key_value).toBe('https://cloud.SMEsAgent.app/tenant_project1/functions');
+    expect(fnUrl!.key_value).not.toBe('https://api.SMEsAgent.dev');
   });
 
   it('still lets a genuine user-set secret (not one of the six platform-managed keys) win as usual', async () => {

@@ -2,7 +2,7 @@
 # =============================================================================
 # VPS2 Setup   72.62.126.99 (Indonesia)
 # Roles: Preview Hosting + Generated App serving
-# Domains: preview.ecomgear.app  *.preview.ecomgear.app  (wildcard SSL)
+# Domains: preview.SMEsAgent.app  *.preview.SMEsAgent.app  (wildcard SSL)
 # Run as root: bash setup-vps2.sh
 # =============================================================================
 set -euo pipefail
@@ -14,7 +14,7 @@ err()     { echo -e "${RED}[ERR]${NC} $1"; exit 1; }
 
 [[ $EUID -ne 0 ]] && err "Run as root"
 
-DEPLOY_PATH="/var/www/ecomgear"
+DEPLOY_PATH="/var/www/SMEsAgent"
 
 step "Updating system..."
 apt-get update -qq && apt-get upgrade -y -qq
@@ -52,16 +52,16 @@ apt-get install -y -qq git curl wget htop rsync unzip jq
 success "Tools ready"
 
 step "Nginx site config placeholder..."
-cat > /etc/nginx/sites-available/ecomgear-preview << 'NGINX_PLACEHOLDER'
+cat > /etc/nginx/sites-available/SMEsAgent-preview << 'NGINX_PLACEHOLDER'
 # Temporary plain-HTTP server while wildcard cert is not yet issued
 server {
     listen 80;
-    server_name preview.ecomgear.app;
+    server_name preview.SMEsAgent.app;
     location /health { return 200 "ok\n"; add_header Content-Type text/plain; }
     location / { proxy_pass http://127.0.0.1:3001; }
 }
 NGINX_PLACEHOLDER
-ln -sf /etc/nginx/sites-available/ecomgear-preview /etc/nginx/sites-enabled/ecomgear-preview
+ln -sf /etc/nginx/sites-available/SMEsAgent-preview /etc/nginx/sites-enabled/SMEsAgent-preview
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 success "Nginx placeholder active"
@@ -74,8 +74,8 @@ echo ""
 echo "NEXT STEPS:"
 echo ""
 echo "1. Point DNS records to this server (72.62.126.99):"
-echo "     preview.ecomgear.app   → 72.62.126.99"
-echo "     *.preview.ecomgear.app → 72.62.126.99"
+echo "     preview.SMEsAgent.app   → 72.62.126.99"
+echo "     *.preview.SMEsAgent.app → 72.62.126.99"
 echo ""
 echo "2. Obtain WILDCARD SSL certificate (requires DNS challenge):"
 echo "   a) Create /etc/letsencrypt/cloudflare.ini with:"
@@ -83,11 +83,11 @@ echo "        dns_cloudflare_api_token = <YOUR_CF_TOKEN>"
 echo "   b) Run:"
 echo "        certbot certonly --dns-cloudflare \\"
 echo "          --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \\"
-echo "          -d preview.ecomgear.app -d '*.preview.ecomgear.app'"
+echo "          -d preview.SMEsAgent.app -d '*.preview.SMEsAgent.app'"
 echo ""
 echo "3. Upload the production nginx config:"
-echo "     scp infrastructure/nginx/vps2-preview.ecomgear.app.conf \\"
-echo "       root@72.62.126.99:/etc/nginx/sites-available/ecomgear-preview"
+echo "     scp infrastructure/nginx/vps2-preview.SMEsAgent.app.conf \\"
+echo "       root@72.62.126.99:/etc/nginx/sites-available/SMEsAgent-preview"
 echo "     ssh root@72.62.126.99 'nginx -t && systemctl reload nginx'"
 echo ""
 echo "4. CI/CD will deploy the preview-service on first push."

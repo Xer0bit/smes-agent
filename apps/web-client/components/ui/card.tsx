@@ -3,11 +3,11 @@ import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "@/lib/utils";
 
-const cardVariants = cva("rounded-lg border bg-card text-card-foreground", {
+const cardVariants = cva("rounded-none border bg-card text-card-foreground", {
   variants: {
     density: {
       comfy: "",
-      compact: "rounded-md",
+      compact: "",
     },
     elevation: {
       flat: "shadow-none",

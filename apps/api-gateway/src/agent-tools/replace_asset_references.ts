@@ -279,7 +279,7 @@ export const replaceAssetReferencesTool: ToolDefinition<z.infer<typeof schema>> 
         content = fs.readFileSync(safeJoin(ctx.appPath, relPath), 'utf8');
       } catch { /* full-disk-walk sync will still pick up the real content from disk */ }
       ctx.onXmlComplete?.(
-        `<ecomgear-write path="${escapeXmlAttr(relPath)}" description="${escapeXmlAttr(`Updated asset reference: ${oldAssetPath} -> ${newAssetPath}`)}">${content}</ecomgear-write>`
+        `<SMEsAgent-write path="${escapeXmlAttr(relPath)}" description="${escapeXmlAttr(`Updated asset reference: ${oldAssetPath} -> ${newAssetPath}`)}">${content}</SMEsAgent-write>`
       );
     }
 

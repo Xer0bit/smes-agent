@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { User, Loader2 } from 'lucide-react';
+import SmesLoader from '@/components/SmesLoader';
 import { toast } from 'sonner';
 
 type OrgMember = {
@@ -141,8 +142,7 @@ export function ProjectMemberAccess({ projectId, organizationId }: ProjectMember
     if (loading) {
         return (
             <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                <span className="ml-2 text-sm text-muted-foreground">Loading members...</span>
+                <SmesLoader variant="bars" />
             </div>
         );
     }

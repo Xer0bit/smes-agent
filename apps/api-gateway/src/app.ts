@@ -14,7 +14,6 @@ import systemRoutes from './routes/system.routes.js';
 import runtimeRoutes from './routes/runtime.routes.js';
 import databaseRoutes from './routes/database.routes.js';
 import adminDatabaseRoutes from './routes/admin-database.routes.js';
-import adminRoutes from './routes/admin.routes.js';
 import hostingRoutes from './routes/hosting.routes.js';
 import seoRoutes from './routes/seo.routes.js';
 import headerIntegrationsRoutes from './routes/header-integrations.routes.js';
@@ -51,13 +50,13 @@ app.use(helmet());
 
 // CORS configuration
 // 2026-08 security audit finding: this allowlist previously accepted ANY
-// subdomain of ecomgear.dev/ecomgear.app via hostname.endsWith(...), combined
-// with credentials:true. Since {slug}.preview.ecomgear.app is the actual
+// subdomain of SMEsAgent.dev/SMEsAgent.app via hostname.endsWith(...), combined
+// with credentials:true. Since {slug}.preview.SMEsAgent.app is the actual
 // domain space where user-published (potentially malicious) sites live, that
 // suffix match was an effective wildcard-with-credentials over attacker-
 // reachable origins. Replaced with an exact-match list. If per-project
 // published subdomains genuinely need authenticated access to THIS platform
-// API (api.ecomgear.dev) -- as opposed to preview-service's own separate
+// API (api.SMEsAgent.dev) -- as opposed to preview-service's own separate
 // API, which has its own, already-exact-match CORS config -- that requires a
 // DB-backed origin validator (checking against provisioned domains) rather
 // than a string suffix check. Flagged as a product question, not decided
@@ -74,17 +73,17 @@ const localOrigins = [
     'http://127.0.0.1:4173',
 ];
 const allowedOrigins = [
-    'https://ecomgear.dev',
-    'https://www.ecomgear.dev',
-    'https://1000.ecomgear.dev', // legitimate secondary domain -- own nginx vhost
-    // (infrastructure/nginx/vps1-1000.ecomgear.dev.conf), auto-deployed by
+    'https://SMEsAgent.dev',
+    'https://www.SMEsAgent.dev',
+    'https://1000.SMEsAgent.dev', // legitimate secondary domain -- own nginx vhost
+    // (infrastructure/nginx/vps1-1000.SMEsAgent.dev.conf), auto-deployed by
     // scripts/deploy.sh, whitelisted in every Supabase edge function's CORS
-    // list. Dropped when the wildcard *.ecomgear.dev suffix match was
+    // list. Dropped when the wildcard *.SMEsAgent.dev suffix match was
     // replaced with this exact-match list during the 2026-08 security
     // remediation -- confirmed live regression: every /api/v1/* call from
     // this domain (including agent chat streaming) was being silently
     // rejected by CORS with no visible error in the chat UI.
-    'https://preview.ecomgear.app',
+    'https://preview.SMEsAgent.app',
     ...(process.env.NODE_ENV !== 'production' ? localOrigins : []),
     ...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((s: string) => s.trim()) : []),
 ];
@@ -217,7 +216,6 @@ if (servesApi) {
     mount('/api/v1/runtime', runtimeRoutes);
     mount('/api/v1/database', databaseRoutes);
     mount('/api/v1/admin/database', adminDatabaseRoutes);
-    mount('/api/v1/admin', adminRoutes);
     mount('/api/v1/hosting', hostingRoutes);
     mount('/api/v1/seo', seoRoutes);
     mount('/api/v1/header-integrations', headerIntegrationsRoutes);

@@ -10,13 +10,13 @@ import { lovableCloud } from '@/integrations/supabase/client';
 import type { GeneratedFile, GenerationResponse } from './types';
 
 function extractSummaryFromText(content: string): string {
-  const summaryMatch = content.match(/<ecomgear-chat-summary>([\s\S]*?)<\/ecomgear-chat-summary>/i);
+  const summaryMatch = content.match(/<SMEsAgent-chat-summary>([\s\S]*?)<\/SMEsAgent-chat-summary>/i);
   if (summaryMatch?.[1]) {
     return summaryMatch[1].trim();
   }
 
   return content
-    .replace(/<ecomgear-chat-summary>[\s\S]*?<\/ecomgear-chat-summary>/gi, '')
+    .replace(/<SMEsAgent-chat-summary>[\s\S]*?<\/SMEsAgent-chat-summary>/gi, '')
     .trim()
     .split('\n')[0] ?? '';
 }
@@ -26,7 +26,7 @@ function normalizeMode(value: unknown): 'build' | 'plan' | undefined {
 }
 
 function applyToolXmlToResult(xml: string, filesByPath: Map<string, GeneratedFile>, filesToDelete: Set<string>, renames: Array<{ from: string; to: string }>, dependencies: Set<string>) {
-  const writeMatch = /<ecomgear-write\s+path="([^"]+)"[^>]*>([\s\S]*?)<\/ecomgear-write>/i.exec(xml);
+  const writeMatch = /<SMEsAgent-write\s+path="([^"]+)"[^>]*>([\s\S]*?)<\/SMEsAgent-write>/i.exec(xml);
   if (writeMatch) {
     const path = writeMatch[1];
     const content = writeMatch[2].trim();
@@ -40,7 +40,7 @@ function applyToolXmlToResult(xml: string, filesByPath: Map<string, GeneratedFil
     return;
   }
 
-  const deleteMatch = /<ecomgear-delete\s+path="([^"]+)"/i.exec(xml);
+  const deleteMatch = /<SMEsAgent-delete\s+path="([^"]+)"/i.exec(xml);
   if (deleteMatch) {
     const path = deleteMatch[1];
     filesByPath.delete(path);
@@ -48,7 +48,7 @@ function applyToolXmlToResult(xml: string, filesByPath: Map<string, GeneratedFil
     return;
   }
 
-  const renameMatch = /<ecomgear-rename\s+from="([^"]+)"\s+to="([^"]+)"/i.exec(xml);
+  const renameMatch = /<SMEsAgent-rename\s+from="([^"]+)"\s+to="([^"]+)"/i.exec(xml);
   if (renameMatch) {
     const from = renameMatch[1];
     const to = renameMatch[2];
@@ -61,7 +61,7 @@ function applyToolXmlToResult(xml: string, filesByPath: Map<string, GeneratedFil
     return;
   }
 
-  const dependencyMatch = /<ecomgear-add-dependency\s+packages="([^"]+)"/i.exec(xml);
+  const dependencyMatch = /<SMEsAgent-add-dependency\s+packages="([^"]+)"/i.exec(xml);
   if (dependencyMatch) {
     dependencyMatch[1]
       .split(/[\s,]+/)
@@ -92,7 +92,7 @@ export interface AgentStreamCallbacks {
   onTextReset?: () => void;
   /** Called when files are available (on 'done' event) */
   onDone?: (result: GenerationResponse) => void;
-  /** Called when the agent emits tool XML (e.g. <ecomgear-write>) */
+  /** Called when the agent emits tool XML (e.g. <SMEsAgent-write>) */
   onToolOutput?: (xml: string) => void;
   /**
    * A tool call's arguments are being generated: which tool, which file (or
@@ -200,7 +200,7 @@ export async function streamAgentGeneration(params: {
   // existingFiles is deliberately NOT sent.
   //
   // The server does not need it: agentLoopService builds preAgentDiskSnapshot
-  // from /var/ecomgear/projects/<projectId> on every run, and that disk state is
+  // from /var/SMEsAgent/projects/<projectId> on every run, and that disk state is
   // authoritative -- it is what the preview push and every file tool operate on.
   // Sending the client's copy uploaded the whole project source on each message
   // (hundreds of files on a real project) purely to be ignored or, worse, used.
@@ -491,7 +491,6 @@ export async function streamAgentGeneration(params: {
                 stagedSql: Array.isArray(payload.stagedSql) ? payload.stagedSql : [],
                 batchId: typeof payload.batchId === 'string' ? payload.batchId : null,
                 smokeFailureSurvivedRepair: payload.smokeFailureSurvivedRepair === true,
-                revertedToPreAgent: payload.revertedToPreAgent === true,
                 previewDepsError: typeof payload.previewDepsError === 'string' ? payload.previewDepsError : null,
                 costUsd: typeof payload.costUsd === 'number' ? payload.costUsd : undefined,
                 ecoUsed: typeof payload.ecoUsed === 'number' ? payload.ecoUsed : undefined,

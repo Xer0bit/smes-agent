@@ -92,7 +92,7 @@ interface MultiDevicePreviewProps {
  * (its HashRouter navigation), the same way browser back/forward buttons
  * drive a real tab. Goes through postMessage rather than calling
  * contentWindow.history.back()/forward() directly   the iframe is
- * cross-origin (preview.ecomgear.app vs the app's own origin), and nav-patch.js
+ * cross-origin (preview.SMEsAgent.app vs the app's own origin), and nav-patch.js
  * (already injected into every preview) runs history.go() same-origin on the
  * other end, the same pattern already used for ecg-inspect-mode below. It
  * also reports the resulting route back to the parent via postMessage. */
@@ -437,13 +437,13 @@ MultiDevicePreview.displayName = 'MultiDevicePreview';
  */
 function PreviewSkeleton() {
     return (
-        <div className="h-full w-full overflow-hidden bg-[#0c0c0e] p-6">
+        <div className="h-full w-full overflow-hidden bg-background p-6">
             <div className="mx-auto flex max-w-3xl flex-col gap-6">
                 <div className="flex items-center gap-3">
-                    <div className="skeleton h-6 w-6 rounded-md" />
+                    <div className="skeleton h-6 w-6 rounded-none" />
                     <div className="skeleton h-3 w-24" />
                     <div className="ml-auto flex gap-2"><div className="skeleton h-3 w-12" /><div className="skeleton h-3 w-12" /><div className="skeleton h-3 w-12" /></div>
-                    <div className="skeleton h-7 w-20 rounded-full" />
+                    <div className="skeleton h-7 w-20 rounded-none" />
                 </div>
                 <div className="mt-4 space-y-3">
                     <div className="skeleton h-8 w-3/5" />
@@ -452,7 +452,7 @@ function PreviewSkeleton() {
                 </div>
                 <div className="grid grid-cols-3 gap-3">
                     {[0, 1, 2].map((i) => (
-                        <div key={i} className="space-y-2 rounded-lg border border-white/[0.06] p-3">
+                        <div key={i} className="space-y-2 rounded-none border border-white/[0.06] p-3">
                             <div className="skeleton h-20 w-full" />
                             <div className="skeleton h-2.5 w-3/4" />
                             <div className="skeleton h-2.5 w-1/2" />

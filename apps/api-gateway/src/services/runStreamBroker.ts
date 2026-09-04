@@ -8,7 +8,7 @@
  * component links them, treating each as a remote provider", with access
  * mediated by a mechanism that preserves the interface.
  *
- * WHAT THIS FIXES. `activeAgentRuns` is a per-process Map but `ecomgear-gen`
+ * WHAT THIS FIXES. `activeAgentRuns` is a per-process Map but `SMEsAgent-gen`
  * runs 2 PM2 cluster workers, so a live run is only attachable from the worker
  * that owns it. Phase 0 made the OTHER worker at least tell the truth
  * (`attachable: false`) instead of reporting an idle project and then rejecting

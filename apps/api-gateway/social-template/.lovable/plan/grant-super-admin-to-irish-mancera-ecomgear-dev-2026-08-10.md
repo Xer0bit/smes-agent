@@ -1,4 +1,4 @@
-# Grant super_admin to irish.mancera@ecomgear.dev
+# Grant super_admin to irish.mancera@SMEsAgent.dev
 
 Add the `super_admin` role alongside the existing `admin` role for user `80ff4cda-7d35-4dd3-83a2-2457fe4c673f`.
 

@@ -4,6 +4,7 @@ import { useNavigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
+import BrandLoader from '@/components/BrandLoader';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectSeparator } from '@/components/ui/select';
 import {
   LogOut,
@@ -19,7 +20,7 @@ import {
   Database,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
-import ecomgearLogo from '@/assets/ecomgear-logo.png';
+import SMEsAgentLogo from '@/assets/logo/svg/smes-agent-icon.svg';
 import { useOrganization } from '@/contexts/OrganizationContext';
 import { NotificationBell } from '@/components/dashboard/NotificationBell';
 import { CreateWorkspaceDialog } from '@/components/dashboard/CreateWorkspaceDialog';
@@ -87,7 +88,7 @@ const DashboardSidebar = ({
       end={item.end}
       title={collapsed ? item.title : undefined}
       className={({ isActive }) =>
-        `group relative flex min-w-fit items-center rounded-lg text-sm transition-colors duration-150 md:min-w-0 ${
+        `group relative flex min-w-fit items-center rounded-none text-sm transition-colors duration-150 md:min-w-0 ${
           collapsed ? 'justify-center p-2 gap-0' : 'gap-3 px-3 py-2'
         } ${
           isActive
@@ -99,7 +100,7 @@ const DashboardSidebar = ({
       {({ isActive }) => (
         <>
           {isActive && (
-            <span className="absolute inset-0 rounded-lg bg-primary/10" />
+            <span className="absolute inset-0 rounded-none bg-primary/10" />
           )}
           <item.icon className="relative z-[1] h-4 w-4 shrink-0" />
           <span
@@ -130,7 +131,7 @@ const DashboardSidebar = ({
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-background/60"
             title={collapsedPref ? 'Expand sidebar' : 'Collapse sidebar'}
           >
-            <img src={ecomgearLogo} alt="eCOMGear logo" className="h-5 w-auto object-contain" />
+            <img src={SMEsAgentLogo} alt="SMEsAgent logo" className="h-5 w-auto object-contain" />
           </button>
 
           {!collapsed && (
@@ -146,12 +147,12 @@ const DashboardSidebar = ({
               <SelectTrigger className="mt-2.5 h-10 rounded-full border-border/60 bg-background/60 pl-1.5 pr-2.5 text-xs text-foreground focus:ring-0 [&>span]:flex [&>span]:min-w-0 [&>span]:flex-1">
                 <SelectValue placeholder={loadingOrganizations ? 'Loading…' : 'No workspace'} className="truncate" />
               </SelectTrigger>
-              <SelectContent className="min-w-[15rem] rounded-xl border-border/60 bg-card p-1.5 text-foreground">
+              <SelectContent className="min-w-[15rem] rounded-none border-border/60 bg-card p-1.5 text-foreground">
                 {organizations.map((organization) => (
                   <SelectItem
                     key={organization.id}
                     value={organization.id}
-                    className="rounded-lg py-2 pl-8 pr-2 focus:bg-primary/10 focus:text-foreground"
+                    className="rounded-none py-2 pl-8 pr-2 focus:bg-primary/10 focus:text-foreground"
                   >
                     <span className="flex items-center gap-2">
                       {organization.avatar_url ? (
@@ -168,7 +169,7 @@ const DashboardSidebar = ({
                 <SelectSeparator className="bg-border/60" />
                 <SelectItem
                   value={CREATE_WORKSPACE_VALUE}
-                  className="rounded-lg py-2 pl-8 pr-2 text-primary focus:bg-primary/10 focus:text-primary"
+                  className="rounded-none py-2 pl-8 pr-2 text-primary focus:bg-primary/10 focus:text-primary"
                 >
                   <span className="flex items-center gap-2">
                     <Plus className="h-3.5 w-3.5" />
@@ -245,7 +246,7 @@ const DashboardSidebar = ({
                 to="/dashboard/settings"
                 title={t('dashboard.settings')}
                 className={({ isActive }) =>
-                  `flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors duration-150 ${
+                  `flex min-w-0 flex-1 items-center gap-2.5 rounded-none px-2 py-1.5 transition-colors duration-150 ${
                     isActive ? 'bg-primary/10 text-primary' : 'hover:bg-background/60'
                   }`
                 }
@@ -333,25 +334,30 @@ export function DashboardLayout({ children }: { children?: React.ReactNode }) {
   }, []);
 
   const checkAuth = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      navigate('/auth');
-      return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        navigate('/auth');
+        return;
+      }
+      // Block admins from the user panel   redirect them to the admin panel
+      const { data: roleData } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', session.user.id)
+        .in('role', ['super_admin', 'admin'])
+        .maybeSingle();
+      if (roleData) {
+        navigate('/admin/dashboard');
+        return;
+      }
+      setUser(session.user);
+      await refreshOrganization(session.user);
+    } catch (err) {
+      console.warn('[Dashboard] Auth check failed:', err);
+    } finally {
+      setLoading(false);
     }
-    // Block admins from the user panel   redirect them to the admin panel
-    const { data: roleData } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', session.user.id)
-      .in('role', ['super_admin', 'admin'])
-      .maybeSingle();
-    if (roleData) {
-      navigate('/admin/dashboard');
-      return;
-    }
-    setUser(session.user);
-    await refreshOrganization(session.user);
-    setLoading(false);
   };
 
   const handleLogout = async () => {
@@ -362,16 +368,7 @@ export function DashboardLayout({ children }: { children?: React.ReactNode }) {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
-        {/* The frame of the dashboard, not a spinner: sidebar and a few cards. */}
-        <div className="flex h-screen w-screen" aria-busy="true">
-          <div className="hidden w-64 shrink-0 border-r border-border/60 p-4 md:block">
-            <div className="skeleton mb-6 h-6 w-32" />
-            {[0, 1, 2, 3, 4].map((i) => <div key={i} className="skeleton mb-3 h-8 w-full" />)}
-          </div>
-          <div className="flex-1 p-8"><div className="skeleton mb-8 h-40 w-full rounded-2xl" />
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-56 w-full rounded-xl" />)}</div>
-          </div>
-        </div>
+        <BrandLoader variant="compass" size={100} label="Preparing workspace" />
       </div>
     );
   }

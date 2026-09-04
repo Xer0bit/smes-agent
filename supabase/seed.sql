@@ -1,7 +1,7 @@
 -- =============================================================
 -- Seed: Default Admin User for Local Development
 -- =============================================================
--- Email:    admin@ecomgear.local
+-- Email:    admin@SMEsAgent.local
 -- Password: admin123456
 -- =============================================================
 
@@ -35,7 +35,7 @@ INSERT INTO auth.users (
   '00000000-0000-0000-0000-000000000000',
   'authenticated',
   'authenticated',
-  'admin@ecomgear.local',
+  'admin@SMEsAgent.local',
   crypt('admin123456', gen_salt('bf')),
   now(),
   '{"provider": "email", "providers": ["email"]}',
@@ -68,11 +68,11 @@ INSERT INTO auth.identities (
 ) VALUES (
   'a0000000-0000-0000-0000-000000000001',
   'a0000000-0000-0000-0000-000000000001',
-  'admin@ecomgear.local',
+  'admin@SMEsAgent.local',
   'email',
   jsonb_build_object(
     'sub', 'a0000000-0000-0000-0000-000000000001',
-    'email', 'admin@ecomgear.local',
+    'email', 'admin@SMEsAgent.local',
     'email_verified', true,
     'phone_verified', false
   ),
@@ -93,7 +93,7 @@ INSERT INTO public.profiles (
   region
 ) VALUES (
   'a0000000-0000-0000-0000-000000000001',
-  'admin@ecomgear.local',
+  'admin@SMEsAgent.local',
   'Admin User',
   now(),
   now(),
@@ -123,8 +123,8 @@ INSERT INTO public.organizations (
   region
 ) VALUES (
   'b0000000-0000-0000-0000-000000000001',
-  'eComGear Admin',
-  'ecomgear-admin',
+  'SMEsAgent Admin',
+  'SMEsAgent-admin',
   'active',
   'a0000000-0000-0000-0000-000000000001',
   'enterprise',
@@ -159,8 +159,8 @@ INSERT INTO public.projects (
   revision_count
 ) VALUES (
   'c0000000-0000-0000-0000-000000000001',
-  'My eComGear Store',
-  'my-ecomgear-store',
+  'My SMEsAgent Store',
+  'my-SMEsAgent-store',
   'A sample e-commerce project for local development and testing.',
   'active',
   'a0000000-0000-0000-0000-000000000001',

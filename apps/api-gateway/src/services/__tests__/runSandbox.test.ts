@@ -9,7 +9,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { collectSandboxFiles } from '../runSandbox.js';
 
-const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+const BINARY_SENTINEL = '__SMEsAgent_BIN64__';
 let dir: string;
 
 function seed(files: Record<string, Buffer | string>): string {

@@ -24,7 +24,7 @@
  * file outside that set is never dropped even if it somehow carries one.
  */
 
-const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+const BINARY_SENTINEL = '__SMEsAgent_BIN64__';
 
 /** Mirrors preview-service materialize.js NEVER_PRUNE_EXT_RE. Keep in sync. */
 const NEVER_PRUNED_EXT_RE = /\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3|pdf|zip|svg)$/i;

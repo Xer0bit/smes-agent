@@ -1,7 +1,7 @@
 import { getGenServerUrl, getApiServerUrl } from '@/config/external-api';
 import { supabase } from '@/integrations/supabase/adminClient';
 
-export type LlmProvider = 'anthropic' | 'deepseek' | 'gemini' | 'zai';
+export type LlmProvider = 'openrouter';
 
 export interface LlmModelEntry {
   id: string;
@@ -10,23 +10,19 @@ export interface LlmModelEntry {
 
 export interface LlmStatus {
   providers: {
-    anthropic: { enabled: boolean; keyConfigured?: boolean };
-    deepseek: { enabled: boolean; fallbackEnabled: boolean; keyConfigured?: boolean };
-    gemini: { enabled: boolean; fallbackEnabled: boolean; keyConfigured?: boolean };
-    zai?: { enabled: boolean; keyConfigured?: boolean };
+    openrouter: { enabled: boolean; keyConfigured?: boolean };
   };
   models: {
+    /** Code-generation model (edits/fixes/builds). */
     primary: string;
+    /** Kept for API-shape compatibility; same as freeModel. */
     fallback: string;
-    /** Model served to free-tier users. Defaults to fallback model. */
+    /** Small-task model (chit-chat, suggestions, reranking, narration). */
     freeModel?: string;
     allowed: LlmModelEntry[];
   };
   apiKeys?: {
-    anthropic?: string;
-    deepseek?: string;
-    gemini?: string;
-    zai?: string;
+    openrouter?: string;
   };
   updatedAt: string;
 }

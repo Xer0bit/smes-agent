@@ -11,11 +11,8 @@ export const config = {
     supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
     supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
 
-    // AI
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-    deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
-    geminiApiKey: process.env.GEMINI_API_KEY || '',
-    aiModel: process.env.AI_MODEL || 'gemini-2.5-pro',
+    // AI (OpenRouter; see config/models.ts for the two canonical model IDs)
+    openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
     aiMaxTokens: parseInt(process.env.AI_MAX_TOKENS || '8192', 10),
 
     // Redis (optional)

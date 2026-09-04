@@ -34,7 +34,7 @@ function stripe(): Stripe {
 }
 
 function appUrl(): string {
-  return (process.env.FRONTEND_URL || 'https://www.ecomgear.dev').replace(/\/$/, '');
+  return (process.env.FRONTEND_URL || 'https://www.SMEsAgent.dev').replace(/\/$/, '');
 }
 
 const priceCache = new Map<string, string>();
@@ -48,7 +48,7 @@ async function ensurePrice(catalog: Catalog, key: LineKey): Promise<string> {
   const existing = await s.prices.list({ lookup_keys: [lookup], active: true, limit: 1 });
   if (existing.data[0]) { priceCache.set(lookup, existing.data[0].id); return existing.data[0].id; }
   const products = await s.products.search({ query: `metadata['ecg_line']:'${key}'`, limit: 1 });
-  const product = products.data[0] ?? await s.products.create({ name: `EcomGear ${LABELS[key]}`, metadata: { ecg_line: key } });
+  const product = products.data[0] ?? await s.products.create({ name: `SMEsAgent ${LABELS[key]}`, metadata: { ecg_line: key } });
   const price = await s.prices.create({
     product: product.id, currency: catalog.currency.toLowerCase(), unit_amount: cents,
     recurring: { interval: 'month' }, lookup_key: lookup, transfer_lookup_key: true,

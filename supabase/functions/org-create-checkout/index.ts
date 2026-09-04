@@ -5,8 +5,8 @@ import { hasBillingAccess } from "../_shared/billing-access.ts";
 import { STRIPE_PRICE_PLAN_MAP } from "../_shared/stripe-prices.ts";
 
 const ALLOWED_ORIGINS = [
-  'https://ecomgear.app', 'https://www.ecomgear.app',
-  'https://ecomgear.dev', 'https://www.ecomgear.dev', 'https://1000.ecomgear.dev',
+  'https://SMEsAgent.app', 'https://www.SMEsAgent.app',
+  'https://SMEsAgent.dev', 'https://www.SMEsAgent.dev', 'https://1000.SMEsAgent.dev',
   'http://localhost:8080', 'http://localhost:3000',
 ];
 const getCorsHeaders = (origin: string | null) => ({

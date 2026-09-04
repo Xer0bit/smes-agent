@@ -33,7 +33,7 @@ serve(async (req) => {
     const resendKey = Deno.env.get('RESEND_API_KEY');
     if (!resendKey) return json({ error: 'Email service not configured' }, 500);
 
-    const frontendUrl = (Deno.env.get('FRONTEND_URL') || 'https://ecomgear.dev').replace(/\/$/, '');
+    const frontendUrl = (Deno.env.get('FRONTEND_URL') || 'https://SMEsAgent.dev').replace(/\/$/, '');
     const safeName = safe(user_name, 'there');
     const safePlan = safe(plan, 'Free');
     const pct = Math.round((used / limit) * 100);
@@ -44,8 +44,8 @@ serve(async (req) => {
     const alertBorder = isExhausted ? '#fecaca' : '#fde68a';
 
     const subject = isExhausted
-      ? 'You\'ve reached your EcomGear usage limit'
-      : `You've used ${pct}% of your EcomGear quota`;
+      ? 'You\'ve reached your SMEsAgent usage limit'
+      : `You've used ${pct}% of your SMEsAgent quota`;
 
     const html = baseTemplate({
       title: subject,

@@ -42,7 +42,7 @@ export const renameFileTool: ToolDefinition<z.infer<typeof schema>> = {
     fs.mkdirSync(path.dirname(toPath), { recursive: true });
     fs.renameSync(fromPath, toPath);
 
-    const xml = `<ecomgear-rename from="${escapeXmlAttr(args.from)}" to="${escapeXmlAttr(args.to)}"></ecomgear-rename>`;
+    const xml = `<SMEsAgent-rename from="${escapeXmlAttr(args.from)}" to="${escapeXmlAttr(args.to)}"></SMEsAgent-rename>`;
     ctx.onXmlComplete(xml);
 
     const refWarning = references.length > 0

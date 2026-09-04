@@ -42,7 +42,7 @@ describe('agentToolSet edge-function mutation circuit breaker', () => {
   let toolSet: ReturnType<typeof buildToolSet>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecomgear-edgefn-mutation-breaker-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'SMEsAgent-edgefn-mutation-breaker-'));
     ctx = {
       appPath: tmpDir,
       projectId: 'test-project',

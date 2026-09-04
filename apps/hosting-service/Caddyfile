@@ -1,12 +1,12 @@
 # =============================================================================
-# eComGear Hosting Service   Caddy with automatic HTTPS
+# SMEsAgent Hosting Service   Caddy with automatic HTTPS
 # Runs on any hosting VPS node. Public IP configured via HOSTING_PUBLIC_IP.
 # Replaces nginx   handles TLS for all domains on this node.
 # =============================================================================
 
 {
   # Global options
-  email admin@ecomgear.dev
+  email admin@SMEsAgent.dev
   
   # ACME staging for testing (remove for production):
   # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
@@ -18,16 +18,16 @@ srv1492858.hstgr.cloud {
 }
 
 # Hosting management API   auto-HTTPS via Caddy
-hosting.ecomgear.app {
+hosting.SMEsAgent.app {
   reverse_proxy localhost:4000
 }
 
-# Default catch-all   apps.ecomgear.app
-apps.ecomgear.app {
-  respond "eComGear Hosting   no site configured for this domain" 404
+# Default catch-all   apps.SMEsAgent.app
+apps.SMEsAgent.app {
+  respond "SMEsAgent Hosting   no site configured for this domain" 404
 }
 
-# Wildcard for *.apps.ecomgear.app subdomains
+# Wildcard for *.apps.SMEsAgent.app subdomains
 # NOTE: Wildcard certs require DNS challenge. For subdomain-based hosting,
 # each subdomain is added as a separate site block via /etc/caddy/sites/*.caddy
 # Caddy auto-provisions individual certs per domain.

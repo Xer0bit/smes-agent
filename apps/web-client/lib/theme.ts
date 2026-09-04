@@ -14,7 +14,7 @@ import { useCallback, useEffect, useSyncExternalStore } from 'react';
 
 export type ThemePreference = 'light' | 'dark' | 'system';
 
-export const THEME_STORAGE_KEY = 'ecomgear:theme';
+export const THEME_STORAGE_KEY = 'SMEsAgent:theme';
 
 const listeners = new Set<() => void>();
 

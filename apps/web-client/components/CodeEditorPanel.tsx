@@ -39,8 +39,8 @@ interface CodeEditorPanelProps {
 
 function stripXmlTags(text: string): string {
     return text
-        .replace(/<ecomgear-[^>]*>/g, '')
-        .replace(/<\/ecomgear-[^>]*>/g, '')
+        .replace(/<SMEsAgent-[^>]*>/g, '')
+        .replace(/<\/SMEsAgent-[^>]*>/g, '')
         .trim();
 }
 

@@ -179,7 +179,7 @@ async function ensureProjectDeps(projectRoot, packageJsonContent = null) {
         }
 
         fs.mkdirSync(depsDir, { recursive: true });
-        fs.writeFileSync(path.join(depsDir, 'package.json'), JSON.stringify({ name: 'ecomgear-project-deps', private: true, version: '0.0.0', dependencies: extras }, null, 2));
+        fs.writeFileSync(path.join(depsDir, 'package.json'), JSON.stringify({ name: 'SMEsAgent-project-deps', private: true, version: '0.0.0', dependencies: extras }, null, 2));
         const started = Date.now();
         const res = await run('npm install --ignore-scripts --no-audit --no-fund --legacy-peer-deps --no-package-lock', depsDir);
         if (!res.ok) {

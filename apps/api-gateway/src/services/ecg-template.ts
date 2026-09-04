@@ -44,7 +44,7 @@ const WALK_EXCLUDE = new Set(['node_modules', '.git', 'dist', 'coverage', 'edge-
 // as-is (plain text, no Postgres Unicode issue) -- no other pipeline change
 // needed.
 const BINARY_EXTS = new Set(['.ico', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.mp3', '.mp4']);
-const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+const BINARY_SENTINEL = '__SMEsAgent_BIN64__';
 
 function resolveTemplateDir(agentType?: string): string {
   return TEMPLATE_REGISTRY[agentType ?? DEFAULT_AGENT_TYPE] ?? TEMPLATE_REGISTRY[DEFAULT_AGENT_TYPE];

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { History, RotateCcw, Loader2, FileText, Clock, AlertTriangle, CheckCircle2, RefreshCw, X } from 'lucide-react';
+import SmesLoader from '@/components/SmesLoader';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
@@ -127,9 +128,8 @@ export function VersionHistoryPanel({ projectId, onRestored, onClose }: VersionH
 
   if (loading && versions.length === 0) {
     return (
-      <div className="flex items-center justify-center h-48 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin mr-2" />
-        Loading version history...
+      <div className="flex items-center justify-center h-48">
+        <SmesLoader variant="typing" text="Loading version history" />
       </div>
     );
   }

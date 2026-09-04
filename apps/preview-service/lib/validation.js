@@ -219,7 +219,7 @@ function checkCrossFileImports(projectRoot, requestFiles, fullSync) {
         if (!content || typeof content !== 'string') continue;
 
         // Skip binary-encoded files
-        if (content.startsWith('__ECOMGEAR_BIN64__')) continue;
+        if (content.startsWith('__SMEsAgent_BIN64__')) continue;
 
         // Extract relative imports (starting with ./ or ../)
         const importRegex = /(?:import\s+(?:[\w{}\s*,]+\s+from\s+)?|require\s*\(\s*|export\s+(?:[\w{}\s*,]+\s+from\s+)?)['"](\.[^'"]+)['"]/g;

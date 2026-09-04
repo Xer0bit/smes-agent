@@ -3,9 +3,8 @@
  * cross-encoder buys over independent embedding-similarity scores (joint
  * query+candidate scoring instead of comparing two separately-computed
  * vectors), without adding a dedicated reranker API (Cohere Rerank, etc.) as
- * a new paid external dependency. Reuses the same fast/cheap provider chain
- * already configured for agent narration (narration.service.ts): Gemini
- * Flash, then z.ai GLM-4.5-Flash, then Claude Haiku.
+ * a new paid external dependency. Reuses the shared cheap-task provider
+ * (cheapModel.ts) -- same one used for agent narration and small side-tasks.
  *
  * Bounded and best-effort by design, matching every other step in this
  * module: any timeout, provider failure, or malformed response degrades to
@@ -15,9 +14,7 @@
  * bounded to 2s and already tolerates degrading to heuristic sort.
  */
 import { generateText } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createOpenAI } from '@ai-sdk/openai';
+import { getCheapProvider } from '../services/cheapModel.js';
 import type { RetrievedFile } from './retrieval.js';
 
 const RERANK_TIMEOUT_MS = 2500;
@@ -26,31 +23,15 @@ const RERANK_TIMEOUT_MS = 2500;
 // re-sort.
 const MIN_CANDIDATES_TO_RERANK = 5;
 
-function getRerankModel(): { model: Parameters<typeof generateText>[0]['model']; label: string } | null {
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey && process.env.AI_DISABLE_GEMINI !== '1') {
-    return { model: createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-flash-latest'), label: 'gemini-flash-latest' };
-  }
-  const zaiKey = process.env.ZAI_API_KEY;
-  if (zaiKey) {
-    return { model: createOpenAI({ apiKey: zaiKey, baseURL: 'https://api.z.ai/api/paas/v4' }).chat('glm-4.5-flash'), label: 'glm-4.5-flash' };
-  }
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (anthropicKey) {
-    return { model: createAnthropic({ apiKey: anthropicKey })('claude-haiku-4-5-20251001'), label: 'claude-haiku-4-5-20251001' };
-  }
-  return null;
-}
-
 export async function rerankFiles(
   query: string,
   candidates: RetrievedFile[],
   fileContents: Map<string, string>,
 ): Promise<RetrievedFile[]> {
   if (candidates.length < MIN_CANDIDATES_TO_RERANK) return candidates;
+  if (!process.env.OPENROUTER_API_KEY) return candidates;
 
-  const provider = getRerankModel();
-  if (!provider) return candidates;
+  const provider = getCheapProvider();
 
   const listing = candidates
     .map((c, i) => {

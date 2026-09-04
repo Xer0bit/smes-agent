@@ -34,7 +34,7 @@ describe('agentToolSet retrieval-consult telemetry (CP4a)', () => {
   let toolSet: ReturnType<typeof buildToolSet>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecomgear-retrieval-telemetry-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'SMEsAgent-retrieval-telemetry-'));
     ctx = {
       appPath: tmpDir,
       projectId: 'test-project',

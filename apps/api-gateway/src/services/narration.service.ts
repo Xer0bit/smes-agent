@@ -68,17 +68,11 @@ export function endRun(projectId: string): void {
 
 // ─── Provider ────────────────────────────────────────────────────────────────
 
-// Per-1M-token pricing for narration's own (always-cheap) model choices   kept
-// local rather than importing agentLoopService's priceFor() to avoid a
-// cross-service dependency for three fixed, rarely-changing rates.
+// Per-1M-token pricing for narration's own (always-cheap) model choice   kept
+// local rather than importing agentCost's priceFor() to avoid a
+// cross-service dependency for one fixed, rarely-changing rate.
 const NARRATION_PRICING: Record<string, { input: number; output: number }> = {
-  // "gemini-flash-latest" is a Google-managed alias   it moved 2.5 Flash ->
-  // 3.5 Flash -> 3.6 Flash (2026-07-21) while this rate stayed frozen at the
-  // original 2.5 Flash price, undercounting narration cost ~20x. Verified
-  // current rate for whatever model "-latest" resolves to today.
-  'gemini-flash-latest':        { input: 1.50,  output: 7.50 },
-  'glm-4.5-flash':              { input: 0.60,  output: 2.20 },
-  'claude-haiku-4-5-20251001':  { input: 1.00,  output: 5.00 },
+  'anthropic/claude-3-haiku': { input: 0.25, output: 1.25 },
 };
 
 // Provider chain moved to cheapModel.ts so narration and the request-tier
@@ -124,14 +118,6 @@ export async function generateStatus(projectId: string, what: StatusKind): Promi
   // ── Build the prompt + fallback for everything else ────────────────────────
   const { prompt, fallback } = buildPromptAndFallback(what, state);
 
-  // A status was emitted very recently (a burst of tool calls in one step):
-  // skip the LLM round-trip and use the specific fallback -- same event
-  // quality at ~zero cost. Distinct events outside the window still get the
-  // natural LLM phrasing.
-  if (state && Date.now() - state.lastStatusAt < STATUS_LLM_COOLDOWN_MS) {
-    return emit(projectId, state, fallback);
-  }
-
   let status: string | null = null;
   try {
     const { model, priceTag } = getProvider();
@@ -148,7 +134,7 @@ export async function generateStatus(projectId: string, what: StatusKind): Promi
     ]);
     status = cleanLlmText(result.text ?? '');
     if (state) {
-      const rate = NARRATION_PRICING[priceTag] ?? NARRATION_PRICING['gemini-flash-latest'];
+      const rate = NARRATION_PRICING[priceTag] ?? NARRATION_PRICING['anthropic/claude-3-haiku'];
       const usage = result.usage as any;
       const inTok = usage?.inputTokens ?? usage?.promptTokens ?? 0;
       const outTok = usage?.outputTokens ?? usage?.completionTokens ?? 0;
@@ -262,15 +248,7 @@ function buildPromptAndFallback(
   return { prompt, fallback: cfg.fallback };
 }
 
-// ── Emit (with dedup + throttle) ────────────────────────────────────────────
-// Model-call cooldown: when statuses fire in a burst (multiple tool calls in
-// one step, or rapid repair passes), only the first in each window needs the
-// LLM -- the fallbacks are built from the real operation and are specific and
-// truthful on their own. Skips the provider call entirely within the window
-// and emits the fallback, which cuts narration's provider load (and rate-limit
-// pressure on the shared cheap model) on burst-heavy runs without making the
-// status rail less honest.
-const STATUS_LLM_COOLDOWN_MS = 2500;
+// ─── Emit (with dedup + throttle) ────────────────────────────────────────────
 
 function emit(projectId: string, state: RunState | undefined, status: string): string | null {
   const now = Date.now();

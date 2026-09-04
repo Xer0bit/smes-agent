@@ -49,7 +49,7 @@ describe('agentToolSet declared-scope gate (fixture: logo incident)', () => {
   let toolSet: ReturnType<typeof buildToolSet>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecomgear-scope-gate-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'SMEsAgent-scope-gate-'));
     ctx = {
       appPath: tmpDir,
       projectId: 'test-project',

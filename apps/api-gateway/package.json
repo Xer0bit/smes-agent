@@ -1,7 +1,7 @@
 {
-    "name": "ecomgear-server",
+    "name": "SMEsAgent-server",
     "version": "1.0.0",
-    "description": "eComGear AI Code Generation Platform Backend",
+    "description": "SMEsAgent AI Code Generation Platform Backend",
     "main": "dist/index.js",
     "type": "module",
     "scripts": {
@@ -12,8 +12,6 @@
         "template:dev": "tsx scripts/dev-template.mts"
     },
     "dependencies": {
-        "@ai-sdk/anthropic": "^3.0.64",
-        "@ai-sdk/google": "^3.0.53",
         "@ai-sdk/openai": "^3.0.48",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@octokit/rest": "^22.0.1",

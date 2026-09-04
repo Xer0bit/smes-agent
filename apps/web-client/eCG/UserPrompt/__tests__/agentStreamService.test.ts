@@ -68,9 +68,9 @@ describe('agentStreamService', () => {
       start(controller) {
         controller.enqueue(encoder.encode([
           'event: text-delta\n',
-          'data: {"text":"<ecomgear-chat-summary>Created pricing dashboard</ecomgear-chat-summary>"}\n\n',
+          'data: {"text":"<SMEsAgent-chat-summary>Created pricing dashboard</SMEsAgent-chat-summary>"}\n\n',
           'event: tool-output\n',
-          'data: {"xml":"<ecomgear-write path=\\"src/App.tsx\\">export default function App() { return null; }</ecomgear-write>"}\n\n',
+          'data: {"xml":"<SMEsAgent-write path=\\"src/App.tsx\\">export default function App() { return null; }</SMEsAgent-write>"}\n\n',
         ].join('')));
         controller.close();
       },
@@ -104,7 +104,7 @@ describe('agentStreamService', () => {
 /**
  * The request body must not carry the project's source.
  *
- * agentLoopService snapshots /var/ecomgear/projects/<projectId> on every run and
+ * agentLoopService snapshots /var/SMEsAgent/projects/<projectId> on every run and
  * that disk state is authoritative. A non-empty existingFiles in the body
  * OVERRIDES it (fileSources prefers the client array), so shipping it both
  * uploaded the whole tree on every message and let a stale browser snapshot

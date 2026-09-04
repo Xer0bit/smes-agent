@@ -28,7 +28,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// dist/bootstrap-env.js -> server/dist -> ROOT = /var/www/ecomgear on a host;
+// dist/bootstrap-env.js -> server/dist -> ROOT = /var/www/SMEsAgent on a host;
 // identical resolution to what index.ts used, so paths do not change.
 const ROOT = path.resolve(__dirname, '..', '..');
 

@@ -41,7 +41,7 @@ import { safeErrorMessage } from '../utils/sendError.js';
 const router = Router();
 router.use(authMiddleware);
 
-const ECOMGEAR_SERVER_URL = process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.ai';
+const SMEsAgent_SERVER_URL = process.env.SMEsAgent_SERVER_URL || 'https://api.SMEsAgent.ai';
 
 // package.json/vite.config.ts/tsconfig*.json aren't part of agent-template/
 // (it assumes a scaffolded project) and aren't part of seedEcgTemplate's
@@ -333,7 +333,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
       agentNames: resolvedAgentNames,
       config: dashConfig,
       projectId: project.id,
-      proxyUrl: ECOMGEAR_SERVER_URL,
+      proxyUrl: SMEsAgent_SERVER_URL,
       agentType,
     });
     sseWrite(res, 'step', { id: 'template_seeded', status: 'done', pages: Object.keys(templateFiles).filter((f) => f.startsWith('src/pages/')).length });
@@ -403,7 +403,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
     // thumbnail; this route never did, so every eCG dashboard was created
     // with revisions.preview_url permanently null and no thumbnail ever
     // generated for it.
-    const publicPreviewBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
+    const publicPreviewBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.SMEsAgent.app';
     const revisionPreviewUrl = `${publicPreviewBase}/preview/${project.id}/`;
     try {
       await supabase.from('revisions').update({ preview_url: revisionPreviewUrl, preview_status: 'ready' }).eq('project_id', project.id);

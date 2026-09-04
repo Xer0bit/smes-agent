@@ -10,22 +10,22 @@ const UUID = 'a1b2c3d4-e5f6-4890-9bcd-ef1234567890';
 
 describe('extractPreviewProjectIdFromReferer', () => {
     it('extracts a plain uuid project id', () => {
-        expect(extractPreviewProjectIdFromReferer(`https://preview.ecomgear.app/preview/${UUID}/`))
+        expect(extractPreviewProjectIdFromReferer(`https://preview.SMEsAgent.app/preview/${UUID}/`))
             .toBe(UUID);
     });
 
     it('extracts a guest-prefixed project id', () => {
         const guestId = `guest-${UUID}`;
-        expect(extractPreviewProjectIdFromReferer(`https://preview.ecomgear.app/preview/${guestId}/`))
+        expect(extractPreviewProjectIdFromReferer(`https://preview.SMEsAgent.app/preview/${guestId}/`))
             .toBe(guestId);
     });
 
     it('returns null when there is no preview path', () => {
-        expect(extractPreviewProjectIdFromReferer('https://preview.ecomgear.app/p/some-slug')).toBeNull();
+        expect(extractPreviewProjectIdFromReferer('https://preview.SMEsAgent.app/p/some-slug')).toBeNull();
     });
 
     it('returns null for a malformed id', () => {
-        expect(extractPreviewProjectIdFromReferer('https://preview.ecomgear.app/preview/not-an-id/')).toBeNull();
+        expect(extractPreviewProjectIdFromReferer('https://preview.SMEsAgent.app/preview/not-an-id/')).toBeNull();
     });
 
     it('returns null when referer is missing', () => {

@@ -251,7 +251,7 @@ export const writeFileTool: ToolDefinition<z.infer<typeof schema>> = {
         `\nVerify those files still compile after your changes.\n\n`
       : '';
 
-    const xml = `<ecomgear-write path="${escapeXmlAttr(args.path)}" description="${escapeXmlAttr(args.description ?? '')}">\n${content}\n</ecomgear-write>`;
+    const xml = `<SMEsAgent-write path="${escapeXmlAttr(args.path)}" description="${escapeXmlAttr(args.description ?? '')}">\n${content}\n</SMEsAgent-write>`;
     ctx.onXmlComplete(xml);
 
     // ── Buffer for deferred preview sync ─────────────────────────────────────

@@ -1,15 +1,15 @@
 {
-  "name": "ecomgear-hosting-service",
+  "name": "SMEsAgent-hosting-service",
   "version": "1.0.0",
-  "description": "Enterprise hosting service for published eComGear applications (VPS4)",
+  "description": "Enterprise hosting service for published SMEsAgent applications (VPS4)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "NODE_ENV=development node server.js",
     "test": "node test-hosting-local.js",
-    "pm2:start": "pm2 start server.js --name ecomgear-hosting --node-args='--no-deprecation'",
-    "pm2:stop": "pm2 stop ecomgear-hosting",
-    "pm2:restart": "pm2 restart ecomgear-hosting"
+    "pm2:start": "pm2 start server.js --name SMEsAgent-hosting --node-args='--no-deprecation'",
+    "pm2:stop": "pm2 stop SMEsAgent-hosting",
+    "pm2:restart": "pm2 restart SMEsAgent-hosting"
   },
   "dependencies": {
     "express": "^4.21.0",

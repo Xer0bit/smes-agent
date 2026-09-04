@@ -42,7 +42,7 @@ const COMMON_DEPS = [
 
 function resilientHmrPlugin(onDiagnostic) {
     return {
-        name: 'ecomgear-resilient-hmr',
+        name: 'SMEsAgent-resilient-hmr',
         async handleHotUpdate({ file, server, modules, read }) {
             try {
                 if (typeof read === 'function') {
@@ -56,7 +56,7 @@ function resilientHmrPlugin(onDiagnostic) {
                 if (server && server.ws) {
                     server.ws.send({
                         type: 'custom',
-                        event: 'ecomgear:hmr-error',
+                        event: 'SMEsAgent:hmr-error',
                         data: {
                             errorMsg: `HMR update failed for ${path.basename(file)}: ${errorMsg}`,
                             file,
@@ -111,7 +111,7 @@ async function buildViteConfig({
             // Vite's own stack, so it applies regardless of how the request
             // reaches this instance (direct middlewares call or proxied).
             {
-                name: 'ecomgear-block-edge-functions',
+                name: 'SMEsAgent-block-edge-functions',
                 configureServer(server) {
                     server.middlewares.use((req, res, next) => {
                         if (req.url && req.url.includes('__edge_functions__')) {
@@ -130,7 +130,7 @@ async function buildViteConfig({
             // 'page-reload' → browser reloads → requests files again → transform
             // fires again → writes again → infinite reload loop.
             {
-                name: 'ecomgear-transform-repair',
+                name: 'SMEsAgent-transform-repair',
                 enforce: 'pre',
                 async transform(code, id) {
                     // Only process project source files
@@ -200,7 +200,7 @@ async function buildViteConfig({
             // back to the preview service so they appear in the /status endpoint
             // and trigger the Repair overlay (same as build errors).
             {
-                name: 'ecomgear-runtime-error-reporter',
+                name: 'SMEsAgent-runtime-error-reporter',
                 transformIndexHtml() {
                     return [
                         {

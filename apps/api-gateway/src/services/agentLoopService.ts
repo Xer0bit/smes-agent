@@ -91,7 +91,7 @@ const SUPPRESS_RECOVERY_UI = (process.env.AGENT_SUPPRESS_RECOVERY_UI ?? '1') !==
 // restore/salvage fullSync push went out built from that snapshot -- confirmed
 // 2026-08-09 as the cause of "my logo disappears when I deploy".
 const BINARY_EXTS_SET = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.webp', '.mp4', '.mp3', '.pdf', '.zip']);
-const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+const BINARY_SENTINEL = '__SMEsAgent_BIN64__';
 
 
 /** Read a file for a disk snapshot/write-collection payload, base64-encoding binaries with BINARY_SENTINEL so they survive the JSON sync payload intact (mirrors preview-service's own BINARY_EXTS handling on the receiving end). */
@@ -261,7 +261,7 @@ export interface AgentRunParams {
   /** Existing files to provide as context */
   existingFiles?: Array<{ path: string; content: string }>;
   /**
-   * Recent conversation history (already-cleaned, no ecomgear tags).
+   * Recent conversation history (already-cleaned, no SMEsAgent tags).
    * The current user prompt is NOT included   it is always appended last.
    * Max recommended: last 6 messages (3 user+assistant pairs).
    */
@@ -314,17 +314,6 @@ export interface AgentRunParams {
    * a direct manual push racing this same run.
    */
   agentLockToken?: string;
-  /**
-   * path -> content hash of the revision the run's sandbox was materialized
-   * from (run-start HEAD). Passed to the run-end persist so it can tell files
-   * the run left unchanged apart from files the run actually changed: an
-   * unchanged file whose content a NEWER revision (a mid-run autosave of the
-   * user's own edit) changed must be carried from that revision, not
-   * re-uploaded from the stale sandbox copy -- the whole-tree persist used to
-   * revert exactly that edit. Null/absent (scaffold-seeded sandbox, template
-   * remix, rollback) keeps the legacy whole-tree behavior.
-   */
-  sandboxHeadByPath?: ReadonlyMap<string, string> | null;
 }
 
 export interface AgentRunResult {
@@ -474,11 +463,6 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       projectId, requestedModelId, substitute: modelSwap.modelId,
     });
     requestedModelId = modelSwap.modelId;
-  }
-
-  if (requestedModelId === 'deepseek-reasoner') {
-    logger.error('_runAgentLoopInner: requested model does not support tool calling', { projectId, requestedModelId });
-    throw new Error('DeepSeek Reasoner (R1) does not support the necessary tool-calling features. Please select deepseek-chat instead.');
   }
 
   logger.debug('_runAgentLoopInner: resolving provider for model', { projectId, requestedModelId });
@@ -764,7 +748,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   //
   // Tier-gated loading: micro only snapshots the target file (zero wasted I/O);
   // all other tiers read the full project as before.
-  const SNAP_SKIP_FILES = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
+  const SNAP_SKIP_FILES = new Set(['package-lock.json', '.SMEsAgent-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
   const preAgentDiskSnapshot = new Map<string, string>();
   const promptLower = prompt.toLowerCase();
 
@@ -884,28 +868,17 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   let reconciledClientFiles = existingFiles ?? [];
   if (existingFiles && existingFiles.length > 0 && projectId && supabase) {
     try {
-      // Newest READABLE manifest-v1 row (10-row lookback), mirroring how the
-      // sandbox materializes and how the client's own loader skips half-written
-      // or legacy rows. Reading strictly the newest row here diverged from the
-      // sandbox when that row was a half-written insert (manifest null) or a
-      // legacy-format revision: the sandbox treated an older readable revision
-      // as HEAD while this reconcile trusted the raw newest row's (possibly
-      // different) path set -- the membership decision disagreed with the very
-      // manifest the run's files came from.
-      const { data: headRows } = await supabase
+      const { data: headRev } = await supabase
         .from('revisions')
         .select('generated_files')
         .eq('project_id', projectId)
         .order('created_at', { ascending: false })
-        .limit(10);
-      let headPaths: Set<string> | null = null;
-      for (const row of headRows ?? []) {
-        const gf = row?.generated_files as { format?: unknown; files?: unknown } | null;
-        if (!gf || typeof gf !== 'object' || gf.format !== 'manifest-v1') continue;
-        if (!Array.isArray(gf.files)) continue;
-        headPaths = new Set(gf.files.map((f) => (typeof (f as { path?: unknown })?.path === 'string' ? (f as { path: string }).path : '')).filter(Boolean));
-        break;
-      }
+        .limit(1)
+        .maybeSingle();
+      const headFiles = (headRev?.generated_files as { files?: Array<{ path?: unknown }> } | null)?.files;
+      const headPaths = Array.isArray(headFiles)
+        ? new Set(headFiles.map((f) => (typeof f.path === 'string' ? f.path : '')).filter(Boolean))
+        : null;
       const { files, dropped } = reconcileClientFilesToHead(existingFiles, headPaths);
       reconciledClientFiles = files;
       if (dropped.length > 0) {
@@ -1197,7 +1170,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       // matches the stricter check place_asset.ts already applies to the same
       // class of path, including the trailing separator that makes the prefix
       // test a real directory-containment test.
-      const uploadRoot = path.resolve(path.join(os.tmpdir(), 'ecomgear-chat-uploads')) + path.sep;
+      const uploadRoot = path.resolve(path.join(os.tmpdir(), 'SMEsAgent-chat-uploads')) + path.sep;
       let resolvedPath = path.resolve(att.tempPath);
       let tempPathValid = resolvedPath.startsWith(uploadRoot) && fs.existsSync(resolvedPath);
 
@@ -1210,7 +1183,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
       // fallback happened.
       if (!tempPathValid && att.publicUrl) {
         try {
-          const uploadBase = path.join(os.tmpdir(), 'ecomgear-chat-uploads');
+          const uploadBase = path.join(os.tmpdir(), 'SMEsAgent-chat-uploads');
           await fs.promises.mkdir(uploadBase, { recursive: true });
           const safeRefetchName = `refetched-${Date.now()}-${att.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
           const refetchPath = path.join(uploadBase, safeRefetchName);
@@ -1439,7 +1412,7 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   // ── Pre-flight vision analysis ────────────────────────────────────────────
   // BEFORE the agent loop starts, ask the model to describe each uploaded image.
   // This gives the agent a concrete textual understanding of the image content
-  // ("company logo with a blue shield and white text 'EcomGear'") so it can
+  // ("company logo with a blue shield and white text 'SMEsAgent'") so it can
   // decide the correct action without guessing from the filename alone.
   // Only runs when the selected model supports vision (Claude, Gemini   not DeepSeek).
   if (visionCapable && imageVisionData.length > 0) {
@@ -1509,9 +1482,9 @@ You are operating in **PLAN MODE**. You are a strategic planning assistant   you
 
 ## Hard rules
 - NEVER call write_file, edit_file, delete_file, or any file-modification tool.
-- NEVER emit <ecomgear-write>, <ecomgear-edit>, or any operational tags.
+- NEVER emit <SMEsAgent-write>, <SMEsAgent-edit>, or any operational tags.
 - Do NOT produce code blocks that represent final implementation   only illustrative snippets to explain a concept.
-- Do NOT emit any <ecomgear-*> tags.
+- Do NOT emit any <SMEsAgent-*> tags.
 
 ## What you CAN do
 - Discuss the project vision, goals, and target users.
@@ -1690,17 +1663,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // access unconditional instead of tool-call-dependent.
   const secretsBlock = await (async () => {
     if (!projectSecrets || projectSecrets.length === 0) return '';
-    // Each key is annotated the way list_secrets annotates: a VITE_ prefix is
-    // the ONLY way a value reaches browser code (import.meta.env.VITE_X); a
-    // non-VITE key exists only in the edge-function runtime (secrets.NAME).
-    // This stops the recurring failure where the agent sees a bare name like
-    // MY_API_KEY in the list, writes import.meta.env.MY_API_KEY or
-    // process.env.MY_API_KEY into FRONTEND code, and the value is silently
-    // undefined at runtime (Vite only exposes VITE_* to the browser; there is
-    // no process.env in generated frontend code).
-    const secretLines = projectSecrets
-      .map(s => `${s.key_name}=${s.key_value}${s.key_name.startsWith('VITE_') ? '' : '   (edge-function only: secrets.' + s.key_name + ')  '}`)
-      .join('\n');
+    const lines = projectSecrets.map(s => `${s.key_name}=${s.key_value}`).join('\n');
     const hasSb  = projectSecrets.some(s => s.key_name === 'VITE_SUPABASE_URL');
     const hasDb  = projectSecrets.some(s => s.key_name === 'VITE_DB_API_URL');
     const hasEcg = projectSecrets.some(s => s.key_name === 'ECG_PORTAL_TOKEN');
@@ -1819,7 +1782,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         'This endpoint is public and rate-limited (30 req/min)   it authenticates with the SAME `VITE_DB_ANON_KEY` used for the database, not a login session, so it works for anonymous visitors of the generated app, not just its owner.'
       : '';
     const ecgNote = hasEcg
-      ? '\n\n## eCG Agents Portal Integration\n\nThis project is linked to the eCG Agents Portal. Follow these rules strictly:\n\n**Frontend (React) code**   NEVER call the portal API directly from the browser. All portal data goes through the eComGear server proxy:\n```ts\n// In src/lib/ecgClient.ts   already configured\nconst url = `${import.meta.env.VITE_ECG_PROXY_URL}/api/v1/ecg-proxy${path}?projectId=${import.meta.env.VITE_PROJECT_ID}`;\n```\nUse `ecgApi` from `src/lib/ecgClient.ts` for all data fetching. Do not use `ECG_PORTAL_TOKEN`   it is server-side only.\n\n**Edge functions**   use the pre-injected `ecg` helper (not `fetch`). ECG credentials are injected server-side:\n```js\n// Agents\nconst agents = await ecg.get(\'/agents\');\n// Approve a post\nawait ecg.patch(\'/planned-posts/\' + params.postId, { status: \'approved\' });\n// Run history\nconst runs = await ecg.get(\'/runs\');\n// LLM call (uses the configured AI model, key stays server-side)\nconst reply = await ecg.llm([\n  { role: \'user\', content: \'Summarize agent performance\' }\n], \'You are an eCG assistant.\');\n```\n`ecg` is `null` for projects without portal integration   check before using.\n\n**AI chat**   the dashboard has a built-in `src/pages/ChatPage.tsx` (the "Assistant" nav tab, mounted at `/`) that calls `chat()` from `src/lib/ecgClient.ts`, which hits `/api/v1/ecg-chat`   an agentic tool-calling endpoint (list/create/run agents, approve/reject posts, trigger schedulers, etc., defined server-side in `ecg-chat.routes.ts`). Extend `ChatPage.tsx`/`ecg-chat.routes.ts`, do not duplicate it. Do not confuse this with `/api/v1/ecg-proxy/ai-chat`   that is a separate, tool-less plain LLM passthrough that the template does not use.\n\n**Security rule**   NEVER expose `ECG_PORTAL_TOKEN`, `ECG_LLM_API_KEY`, or any `ECG_*` secret in frontend code, logs, or responses.' +
+      ? '\n\n## eCG Agents Portal Integration\n\nThis project is linked to the eCG Agents Portal. Follow these rules strictly:\n\n**Frontend (React) code**   NEVER call the portal API directly from the browser. All portal data goes through the SMEsAgent server proxy:\n```ts\n// In src/lib/ecgClient.ts   already configured\nconst url = `${import.meta.env.VITE_ECG_PROXY_URL}/api/v1/ecg-proxy${path}?projectId=${import.meta.env.VITE_PROJECT_ID}`;\n```\nUse `ecgApi` from `src/lib/ecgClient.ts` for all data fetching. Do not use `ECG_PORTAL_TOKEN`   it is server-side only.\n\n**Edge functions**   use the pre-injected `ecg` helper (not `fetch`). ECG credentials are injected server-side:\n```js\n// Agents\nconst agents = await ecg.get(\'/agents\');\n// Approve a post\nawait ecg.patch(\'/planned-posts/\' + params.postId, { status: \'approved\' });\n// Run history\nconst runs = await ecg.get(\'/runs\');\n// LLM call (uses the configured AI model, key stays server-side)\nconst reply = await ecg.llm([\n  { role: \'user\', content: \'Summarize agent performance\' }\n], \'You are an eCG assistant.\');\n```\n`ecg` is `null` for projects without portal integration   check before using.\n\n**AI chat**   the dashboard has a built-in `src/pages/ChatPage.tsx` (the "Assistant" nav tab, mounted at `/`) that calls `chat()` from `src/lib/ecgClient.ts`, which hits `/api/v1/ecg-chat`   an agentic tool-calling endpoint (list/create/run agents, approve/reject posts, trigger schedulers, etc., defined server-side in `ecg-chat.routes.ts`). Extend `ChatPage.tsx`/`ecg-chat.routes.ts`, do not duplicate it. Do not confuse this with `/api/v1/ecg-proxy/ai-chat`   that is a separate, tool-less plain LLM passthrough that the template does not use.\n\n**Security rule**   NEVER expose `ECG_PORTAL_TOKEN`, `ECG_LLM_API_KEY`, or any `ECG_*` secret in frontend code, logs, or responses.' +
         (hasEcgMcp ? '\n\n**Knowledge base**   you have a `search_org_knowledge` tool. Use it to ground generated UI copy and content (brand voice, product descriptions, business context) in the organization\'s real knowledge instead of inventing generic placeholder text.' : '') +
         '\n\n**Customization surface**   this dashboard was seeded from the eCG template; its README.md documents the architecture. Respect these layers when customizing: `src/ecg-config.ts` holds appName/logoUrl/layout/modules; ALL colors and fonts are CSS variables in `src/index.css` (`--accent`, `--sidebar-bg`, `--body-bg`, `--card-bg`, `--text`, `--muted`, `--border`)   restyle by changing tokens, never by hardcoding colors in components. `src/components/Layout.tsx` builds nav from `ECG.modules`; new pages = route in `src/App.tsx` + `ALL_NAV` entry. Never edit `src/pages/AccessGate.tsx` or the token handling in `src/lib/ecgClient.ts`   they are the dashboard\'s authentication.' +
         '\n\n**This is a live dashboard the user is already using, not a blank scaffold   know what you\'re building before you touch it.** Before any change, check the current file tree and read the existing page(s) you\'re about to affect. Never break, remove, or silently rewrite a page/component the user didn\'t ask you to touch just to implement something unrelated. A custom feature request is additive by default: a new route + `ALL_NAV` entry that calls `ecgApi`, not a replacement of what already renders.' +
@@ -1827,9 +1790,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       : '';
 
     const noHardcodeRule = '\n\n**NEVER hardcode any secret value from this list as a string literal anywhere in generated code   not even as a fallback/default for a missing env var (e.g. `getEnvVar(\'X\', \'<real value>\')`).** Always reference `import.meta.env.VITE_XXX` / `process.env.XXX` directly. A hardcoded fallback that happens to be a real credential from THIS project can end up copied into a DIFFERENT project by mistake, silently pointing that other project at this one\'s database or auth   this has happened before. If an env var might be missing, fail loudly (throw/log an error) instead of falling back to a real value.' +
-      '\n\n**The same rule applies to EcomGear platform URLs.** `api.ecomgear.dev`, `gen.ecomgear.dev`, `preview.ecomgear.app`, and `apps.ecomgear.app` are EcomGear\'s own infrastructure servers   they are NOT part of the user\'s app and must NEVER appear as string literals in generated code, not even as env-var fallbacks like `import.meta.env.X || \'https://api.ecomgear.dev\'`. The hosted database endpoint (`db.ecomgear.app` / `cloud.ecomgear.app`) is only ever reached through `import.meta.env.VITE_DB_API_URL`   never hardcode it either. Never invent placeholder values like `\'dummy\'` for keys. If an integration\'s env var is NOT in the list below, that integration is not configured for this project   do not guess a URL or key; tell the user what needs to be set up instead.';
+      '\n\n**The same rule applies to SMEsAgent platform URLs.** `api.SMEsAgent.dev`, `gen.SMEsAgent.dev`, `preview.SMEsAgent.app`, and `apps.SMEsAgent.app` are SMEsAgent\'s own infrastructure servers   they are NOT part of the user\'s app and must NEVER appear as string literals in generated code, not even as env-var fallbacks like `import.meta.env.X || \'https://api.SMEsAgent.dev\'`. The hosted database endpoint (`db.SMEsAgent.app` / `cloud.SMEsAgent.app`) is only ever reached through `import.meta.env.VITE_DB_API_URL`   never hardcode it either. Never invent placeholder values like `\'dummy\'` for keys. If an integration\'s env var is NOT in the list below, that integration is not configured for this project   do not guess a URL or key; tell the user what needs to be set up instead.';
 
-    return `\n\n# Project Environment Variables\n\nSaved secrets for this project are listed below with values. Treat them as confidential: NEVER echo, print, log, or reveal their values in chat responses or in generated code.\n\n**How each secret can be read from generated code (this is the whole rule):**\n- A key that starts with \`VITE_\` is available to FRONTEND code as \`import.meta.env.VITE_X\` (Vite exposes only \`VITE_\`-prefixed names to the browser) AND inside edge functions as \`secrets.VITE_X\`.\n- A key WITHOUT the \`VITE_\` prefix is available ONLY inside edge functions, read with the EXACT saved name: \`secrets.MY_KEY\`, not a shortened guess and not \`secrets.MY_KEY\`-with-VITE added.\n- \`process.env.X\` does NOT exist in generated frontend code, and \`import.meta.env.MY_KEY\` (a non-VITE name) is \`undefined\` in the browser. Do not write either.\n\n**If the user's app needs a custom key in the BROWSER (frontend):** the key must be saved with a \`VITE_\` prefix (e.g. a maps/analytics/payment PUBLISHABLE key stored as \`VITE_GOOGLE_MAPS_KEY\`). If the saved name has no \`VITE_\` prefix, do NOT copy its value into code and do NOT invent a fallback. Ask the user to re-save it with the \`VITE_\` prefix (Settings → Secrets), or save a new \`VITE_\`-named copy of the same value if the value is public and safe to ship to browsers. If the key is server-only (private/secret/token), it must stay non-VITE and be used inside an edge function only.\n\n**If the app has no hosted database, edge functions cannot be invoked** (function calls require the project's database credentials). A non-VITE key then cannot be used by generated code at all -- tell the user that server-only features (and this key) need the hosted database, or that a browser-usable key must be saved with a \`VITE_\` prefix.${noHardcodeRule}${sbNote}${dbNote}${ecgNote}\n\n\`\`\`\n${secretLines}\n\`\`\``;
+    return `\n\n# Project Environment Variables\n\nThe following secrets are available as \`import.meta.env.VITE_XXX\` (frontend) or \`process.env.XXX\` (backend). NEVER echo, print, log, or reveal their values in chat responses   treat them as confidential.${noHardcodeRule}${sbNote}${dbNote}${ecgNote}\n\n\`\`\`\n${lines}\n\`\`\``;
   })();
 
   // micro: no modeInstruction (MICRO_SYSTEM_PROMPT already embeds directives)
@@ -2041,10 +2004,6 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // Set to true when the timeout handler already emitted a 'done' event.
   // Prevents the route-level catch from emitting a second 'error' SSE after abort.
   let timeoutDoneSent = false;
-  // Set when the timeout handler persisted the salvaged partial progress, so
-  // the abort catch can mark the run 'completed' instead of 'failed' -- the
-  // client was already told the partial work was saved.
-  let timeoutPersistedRevisionId: string | null = null;
 
   const agentTimeoutId = AGENT_TIMEOUT_MS > 0 ? setTimeout(async () => {
     if (abortController.signal.aborted) return;
@@ -2075,9 +2034,9 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       } else {
         logger.warn('[AgentLoop] Timeout salvage: no clean pre-agent snapshot available, scanning current disk state', { projectId, tier: _tier ?? 'unset' });
         const SKIP_DIRS_TIMEOUT = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.tmp', 'coverage']);
-        const SKIP_FILES_TIMEOUT = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
+        const SKIP_FILES_TIMEOUT = new Set(['package-lock.json', '.SMEsAgent-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
         const BINARY_EXTS_TIMEOUT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.webp', '.mp4', '.mp3', '.pdf', '.zip']);
-        const BIN_SENTINEL = '__ECOMGEAR_BIN64__';
+        const BIN_SENTINEL = '__SMEsAgent_BIN64__';
 
         const salvageMap = new Map<string, string>();
         const salvageCollect = (dir: string) => {
@@ -2132,37 +2091,6 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         logger.warn('[AgentLoop] Timeout: salvaged files emitted as done event', {
           projectId, userId, fileCount: salvageFiles.length, usedCleanSnapshot: useCleanSnapshot,
         });
-
-        // Persist the salvaged partial progress so HEAD matches what the client
-        // was just told ('done' with these files). The clean-snapshot revert
-        // skips this: it restored the pre-agent state, which already IS the
-        // current HEAD -- persisting would only duplicate it. Without this the
-        // disk-scan branch left the salvaged files only in the client's memory,
-        // so the "Partial progress was saved" summary was false after a reload,
-        // and a reload reverted to HEAD (the recurring "where did my changes
-        // go" failure class). Same base-aware persist the success path uses, so
-        // a mid-run user edit is never reverted by the salvage.
-        if (!useCleanSnapshot && runtimeMode === 'build' && supabase && userId && agentRunId && salvageFiles.length > 0) {
-          try {
-            const persistResult = await persistAgentRevision(
-              projectId, userId, salvageFiles,
-              'Agent timed out; partial progress saved', prompt, params.sandboxHeadByPath,
-            );
-            if (persistResult.ok) {
-              timeoutPersistedRevisionId = persistResult.revisionId ?? null;
-              void linkRevision(agentRunId, persistResult.revisionId!);
-              logger.info('[AgentLoop] Timeout: partial progress persisted', {
-                projectId, revisionId: persistResult.revisionId, fileCount: salvageFiles.length,
-              });
-            } else {
-              logger.warn('[AgentLoop] Timeout: partial progress persist FAILED, HEAD stays at the pre-run state', {
-                projectId, error: persistResult.error,
-              });
-            }
-          } catch (persistErr: any) {
-            logger.warn('[AgentLoop] Timeout: partial progress persist threw', { projectId, error: persistErr?.message });
-          }
-        }
       }
     } catch (salvageErr: any) {
       logger.warn('[AgentLoop] File salvage on timeout failed', {
@@ -3455,20 +3383,36 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     accumulatedText += firstConsume.text;
     streamError = firstConsume.err;
 
-    // Recovery path: transient transport drops can emit undici "terminated" / ECONNRESET
-    // after stream start. Retry once via fallback providers before failing the run.
-    if (streamError && !abortController.signal.aborted && (isNetworkError(streamError) || isAuthOrBillingError(streamError))) {
+    // Recovery path: transient transport drops (ECONNRESET, terminated),
+    // auth/billing errors, AND retryable errors (429/5xx/overloaded) mid-stream
+    // can all surface as streamError after attemptStream succeeded. Retry once
+    // via fallback providers before failing the run. The 429 extension fixes a
+    // real gap: a mid-stream shared-pool rate limit on the primary (observed
+    // live 2026-09-04 00:26:39 / 00:27:34) previously fell straight through to
+    // "streamError not recovered, rethrowing" with no fallback attempt.
+    if (streamError && !abortController.signal.aborted && (isNetworkError(streamError) || isAuthOrBillingError(streamError) || isRetryableError(streamError))) {
       const isBillingErr = isAuthOrBillingError(streamError);
       if (isBillingErr) tripBillingCircuit(providerName);
-      const recoveryReason = isBillingErr ? 'Billing/auth error mid-stream' : 'Stream interrupted';
+      const recoveryReason = isBillingErr ? 'Billing/auth error mid-stream'
+        : isNetworkError(streamError) ? 'Stream interrupted'
+        : 'Retryable error mid-stream';
       logger.warn('[AgentLoop] mid-stream error, trying fallback recovery once', {
         projectId, userId, recoveryReason, errorMessage: streamError?.message ?? String(streamError),
       });
       if (!SUPPRESS_RECOVERY_UI) {
-        const statusMsg = isAuthOrBillingError(streamError)
+        const statusMsg = isBillingErr
           ? 'Provider billing issue. Switching to backup model...'
-          : 'Connection interrupted. Recovering with backup model...';
+          : isNetworkError(streamError)
+          ? 'Connection interrupted. Recovering with backup model...'
+          : 'Provider busy. Switching to backup model...';
         sink.emit('step-finish', { step: 0, toolCount: 0, status: statusMsg });
+      }
+      // For rate limits, give the upstream pool a moment to clear before the
+      // fallback attempt -- otherwise the other model may also 429 instantly
+      // (shared-pool 429s sometimes span both models via OpenRouter routing).
+      if (isRateLimitError(streamError)) {
+        const waitMs = Math.min(getRetryAfterMs(streamError) ?? 3000, 10_000);
+        await new Promise<void>(r => setTimeout(r, waitMs));
       }
 
       const recoveryCandidates = buildFallbackCandidates(providerName, modelId);
@@ -3515,13 +3459,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // ─── Hallucinated-completion guard ──────────────────────────────────────
     // Some runs end with the model narrating a file change in prose ("I've
     // updated X to do Y") without ever calling write_file/edit_file, and
-    // without the legacy <ecomgear-write> tag protocol either   i.e. nothing
+    // without the legacy <SMEsAgent-write> tag protocol either   i.e. nothing
     // was actually saved, but the text reads exactly like a real completion.
     // Detect that specific pattern and force one corrective continuation
     // (spending steps we already have budget for) instead of silently
     // finalizing on a claim that isn't backed by any tool call.
     const wroteAnythingSoFar = filesToWrite.length > 0 || filesEdited.length > 0 || filesToDelete.length > 0 || renames.length > 0;
-    const hasLegacyWriteTags = /<ecomgear-(write|edit|delete|rename)\b/i.test(accumulatedText);
+    const hasLegacyWriteTags = /<SMEsAgent-(write|edit|delete|rename)\b/i.test(accumulatedText);
     const claimsCompletedEdit = /\b(i'?ve|i have)\s+(updated|changed|fixed|edited|modified|created|added|rewritten|refactored|implemented)\b/i.test(accumulatedText)
       || /\b(updated|changed|fixed|edited|modified)\s+(the\s+)?`?[\w./-]+\.(tsx?|jsx?|css|html|json)`?/i.test(accumulatedText);
     const stepsRemaining = MAX_STEPS - stepCount;
@@ -4052,35 +3996,66 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // with zero visible text, zero tool calls, and nothing written. Usage
     // tokens (and cost) are still burned, and the user got nothing but the
     // generic "didn't respond" fallback with no explanation and no retry.
-    // Detect that exact empty-run signature and retry once via a fallback
-    // provider before giving up for real.
+    // Detect that exact empty-run signature and retry via fallback providers
+    // before giving up for real. The retry is bounded (2 rounds) and includes
+    // the empty-run model itself: Gemini finishReason=other empty responses
+    // are frequently transient and clear on re-ask, and the other model may
+    // be 429ing (qwen shared-pool) -- both need a second chance with backoff.
+    // Observed live 2026-09-04 00:28:46: gemini empty -> fallback qwen 429
+    // instantly -> throw. With this change the same sequence retries both
+    // models with pauses, which is what actually clears the failure.
     {
       const suspiciousFinish = outerFinishReason === 'error' || outerFinishReason === 'other' || outerFinishReason === 'content-filter';
       const producedNothing = !accumulatedText.trim() && !wroteAnythingSoFar && !hasLegacyWriteTags;
-      if (producedNothing && suspiciousFinish && !abortController.signal.aborted) {
-        logger.warn('[AgentLoop] Empty run detected (zero text/tools/writes), retrying once via fallback provider', {
+      if (producedNothing && suspiciousFinish && !abortController.signal.aborted && !isBillingCircuitOpen('openrouter')) {
+        logger.warn('[AgentLoop] Empty run detected (zero text/tools/writes), retrying via fallback providers with backoff', {
           projectId, userId: userId ?? 'unknown', finishReason: outerFinishReason,
         });
+        if (!SUPPRESS_RECOVERY_UI) {
+          sink.emit('step-finish', { step: 0, toolCount: 0, status: 'The model returned an empty response. Retrying with backup model...' });
+        }
+        // Other model first (matches existing fallback intent), then the empty-run
+        // model itself -- its empty response is often transient.
+        const candidates = [...buildFallbackCandidates(providerName, modelId), modelId];
         let recovered = false;
-        for (const fallbackModelId of buildFallbackCandidates(providerName, modelId)) {
-          const fallbackInfo = createProviderForModel(fallbackModelId);
-          if (!fallbackInfo) continue;
-          try {
-            const retryStream = await attemptStream(fallbackInfo.provider, 0, fallbackInfo.providerName);
-            const retryConsume = await consumeResultStream(retryStream);
-            if (!retryConsume.err && retryConsume.text.trim()) {
-              accumulatedText = retryConsume.text;
-              logger.info('[AgentLoop] Empty-run retry succeeded via fallback provider', {
-                projectId, userId, fallbackProviderName: fallbackInfo.providerName, fallbackModelId,
-              });
-              recovered = true;
-              break;
+        const MAX_EMPTY_RETRY_ROUNDS = 2;
+        for (let round = 0; round < MAX_EMPTY_RETRY_ROUNDS && !recovered; round++) {
+          for (let ci = 0; ci < candidates.length && !recovered; ci++) {
+            const candidateModelId = candidates[ci];
+            const candidateInfo = createProviderForModel(candidateModelId);
+            if (!candidateInfo) continue;
+            // Backoff: first attempt goes out immediately (the empty response
+            // already cost the user tokens, so latency matters); subsequent
+            // attempts pause briefly so a shared-pool 429 has a moment to
+            // clear (3s between candidates in round 0, 5s between rounds).
+            if (round > 0 || ci > 0) {
+              const delay = round === 0 ? 3000 : 5000;
+              await new Promise<void>(r => setTimeout(r, delay));
             }
-          } catch (retryErr: any) {
-            logger.warn('[AgentLoop] Empty-run retry failed', {
-              projectId, userId, fallbackProviderName: fallbackInfo.providerName, fallbackModelId,
-              errorMessage: retryErr?.message ?? String(retryErr),
-            });
+            try {
+              const retryStream = await attemptStream(candidateInfo.provider, 0, candidateInfo.providerName);
+              const retryConsume = await consumeResultStream(retryStream);
+              if (!retryConsume.err && retryConsume.text.trim()) {
+                accumulatedText = retryConsume.text;
+                logger.info('[AgentLoop] Empty-run retry succeeded', {
+                  projectId, userId, fallbackProviderName: candidateInfo.providerName,
+                  fallbackModelId: candidateModelId, round,
+                });
+                recovered = true;
+                break;
+              }
+              // retryConsume returned without text -- log and keep trying.
+              logger.warn('[AgentLoop] Empty-run retry returned no text, continuing', {
+                projectId, userId, fallbackModelId: candidateModelId, round,
+                retryErr: retryConsume.err?.message ?? String(retryConsume.err ?? 'no-error'),
+              });
+            } catch (retryErr: any) {
+              logger.warn('[AgentLoop] Empty-run retry failed', {
+                projectId, userId, fallbackProviderName: candidateInfo.providerName,
+                fallbackModelId: candidateModelId, round,
+                errorMessage: retryErr?.message ?? String(retryErr),
+              });
+            }
           }
         }
         if (!recovered && !accumulatedText.trim()) {
@@ -4113,8 +4088,8 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     }
     const finalText = failureArbitration.text;
 
-    // Extract summary from <ecomgear-chat-summary> if present
-    const summaryMatch = /<ecomgear-chat-summary>([\s\S]*?)<\/ecomgear-chat-summary>/.exec(finalText);
+    // Extract summary from <SMEsAgent-chat-summary> if present
+    const summaryMatch = /<SMEsAgent-chat-summary>([\s\S]*?)<\/SMEsAgent-chat-summary>/.exec(finalText);
     if (summaryMatch) {
       summary = summaryMatch[1].trim();
     } else {
@@ -4177,7 +4152,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           `and if anything is still missing, send a follow-up and I'll continue from there.`;
     }
 
-    // Parse ecomgear tags from the full final text as well (XML parser is more reliable)
+    // Parse SMEsAgent tags from the full final text as well (XML parser is more reliable)
     parseXmlResponse(finalText, { filesToWrite, filesEdited, filesToDelete, renames, dependencies });
 
     // ─── Post-generation App.tsx validation ────────────────────────────────────
@@ -4242,7 +4217,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // BINARY_EXTS_SET / BINARY_SENTINEL are module-level now, shared with the
     // pre-agent snapshot path above   see readFileForSync.
     const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.vite', '.tmp', 'coverage']);
-    const SKIP_FILES = new Set(['package-lock.json', '.ecomgear-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
+    const SKIP_FILES = new Set(['package-lock.json', '.SMEsAgent-hash', '.DS_Store', '.env', '.env.local', '.env.production', '.gitignore']);
 
     // Keep only files explicitly written by tool calls and refresh their content from disk.
     const latestWriteByPath = new Map<string, string>();
@@ -4452,13 +4427,6 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // silently drop it with no visible explanation. Surfaced as a caveat
     // after the push section resolves (see the text-delta emit below).
     const droppedFiles: string[] = [];
-
-    // True when the repair give-up path reverted the run's whole output back
-    // to the pre-agent state (below). The client must not toast "App updated."
-    // for a run whose changes were all discarded -- the summary streamed
-    // earlier is kept (it says what was attempted) and repair-failed drives
-    // the Auto-fix affordance, but the success toast would contradict both.
-    let revertedToPreAgent = false;
 
     let previewPushOk = false;
     let previewDepsError: string | null = null;
@@ -4873,7 +4841,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           runTokens.billableTotal < RUN_TOKEN_CAP
         ) {
           try {
-            const smokeBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
+            const smokeBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.SMEsAgent.app';
             const smokeUrl = `${smokeBase}/preview/${projectId}`;
             const first = await runPreviewSmokeCheck(smokeUrl);
             smokeGateResult = first;
@@ -5423,10 +5391,6 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const preAgentFiles = Array.from(preAgentDiskSnapshot.entries()).map(([p, c]) => ({ path: p, content: c }));
             mergedWrites.length = 0;
             preAgentFiles.forEach(f => mergedWrites.push(f));
-            // The run's own output is being discarded in favor of the pre-agent
-            // state; from here on the changes the user asked for are gone, so
-            // the success toast downstream must not fire.
-            revertedToPreAgent = true;
             // Push the clean pre-agent state to the preview service. This is the
             // last line of defense when repair fails   if it silently fails too,
             // the live preview stays broken with nothing telling the user. Retry
@@ -5552,7 +5516,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // Legacy XML-declared packages not in the pre-installed set   these should now
       // be installed via run_command by the agent. Show a mild warning for visibility.
       sink.emit('text-delta', {
-        text: `\n> *Note: ${unsupportedPreviewDependencies.join(', ')} ${unsupportedPreviewDependencies.length === 1 ? 'was' : 'were'} declared via legacy <ecomgear-add-dependency>. In future runs, use \`run_command\` to install packages directly.*\n\n`,
+        text: `\n> *Note: ${unsupportedPreviewDependencies.join(', ')} ${unsupportedPreviewDependencies.length === 1 ? 'was' : 'were'} declared via legacy <SMEsAgent-add-dependency>. In future runs, use \`run_command\` to install packages directly.*\n\n`,
       });
     }
 
@@ -5719,25 +5683,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       previewDepsError,
       needsAutoContinue,
       continuationPrompt,
-      // True when every change this run made was reverted to the pre-agent
-      // state (repair gave up). The client suppresses its "App updated." toast
-      // for this run -- repair-failed already escalated, and the summary text
-      // above is caveated.
-      revertedToPreAgent,
     });
 
-    // ── Durable post-run commit (awaited) ───────────────────────────────────
-    // The agent_runs 'completed' write and the server-side revision persist
-    // must finish BEFORE _runAgentLoopInner returns, or the route's finally
-    // (lock release, sandbox discard) could outrun them: a following run would
-    // materialize a stale HEAD, and a transient Storage failure at this exact
-    // moment would silently lose a run the user was told was done. 'done' is
-    // already emitted above, so awaiting here never delays what the user sees;
-    // it only keeps the project lock held a few seconds longer. Failures are
-    // logged and swallowed -- the run is already delivered.
-    logger.debug('[AgentLoop] durable post-run commit starting', { projectId, userId, agentRunId, stepCount });
-    try {
-      await (async () => {
+    // ── Background: save token usage + npm install (non-blocking) ───────────
+    logger.debug('[AgentLoop] background post-response tasks starting', { projectId, userId, agentRunId, stepCount });
+    void (async () => {
       // runTokens is already populated by onStepFinish at this point.
       // Fall back to result.usage only if onStepFinish captured nothing (e.g. non-Anthropic provider).
       let tokensUsed = runTokens.total;
@@ -5783,7 +5733,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         try {
           let smokeResult = smokeGateResult;
           if (!smokeResult) {
-            const smokeCheckPreviewBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
+            const smokeCheckPreviewBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.SMEsAgent.app';
             smokeResult = await runPreviewSmokeCheck(`${smokeCheckPreviewBase}/preview/${projectId}`);
           }
           if (!smokeResult.skipped && !smokeResult.ok) {
@@ -5839,12 +5789,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         });
       }
 
-      // Update agent_runs with all completion data (status + token count + snapshot_id).
-      // Awaited (not fire-and-forget): this row must read 'completed' before the
-      // lock is released, so the watchdog can never mislabel a finished run.
+      // Update agent_runs with all completion data (status + token count + snapshot_id)
       if (supabase && agentRunId) {
         stopRunHeartbeat();
-        await supabase.from('agent_runs').update({
+        supabase.from('agent_runs').update({
           status: 'completed',
           phase: 'done',
           // The column has existed since 20260417100000 with DEFAULT false and
@@ -5903,30 +5851,11 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // dedup-aware uploads at run-end buys a durability guarantee; failures
       // log server-side where they are actually observable.
       if (supabase && userId && doneFilesToWrite.length > 0) {
-        // The durable write gets ONE retry: a transient Storage hiccup at the
-        // exact moment of commit is how a finished run silently loses its
-        // revision. This runs before the lock is released, so retrying is
-        // cheap; it closes the single-attempt gap.
-        const persistWithRetry = async () => {
-          const attempt = () => persistAgentRevision(
+        try {
+          const persistResult = await persistAgentRevision(
             projectId, userId, doneFilesToWrite,
             summary || `Agent run: ${stepCount} step(s)`, prompt,
-            params.sandboxHeadByPath,
           );
-          try {
-            const first = await attempt();
-            if (first.ok) return first;
-            logger.warn('[AgentLoop] revision persist attempt 1 not ok, retrying once', { projectId, userId, error: first.error });
-            await new Promise((resolve) => setTimeout(resolve, 750));
-            return attempt();
-          } catch (attemptErr: any) {
-            logger.warn('[AgentLoop] revision persist attempt 1 threw, retrying once', { projectId, userId, error: attemptErr?.message });
-            await new Promise((resolve) => setTimeout(resolve, 750));
-            return attempt();
-          }
-        };
-        try {
-          const persistResult = await persistWithRetry();
           if (persistResult.ok) {
             void linkRevision(agentRunId, persistResult.revisionId);
             logger.info('[AgentLoop] Revision persisted server-side', {
@@ -5963,7 +5892,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // Update the latest revision's preview_url after a successful preview push
       // so the Editor can load it directly without needing to re-sync on open.
       if (supabase && previewPushOk && doneFilesToWrite.length > 0) {
-        const publicPreviewBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app';
+        const publicPreviewBase = process.env.PREVIEW_SERVICE_URL || 'https://preview.SMEsAgent.app';
         const revisionPreviewUrl = `${publicPreviewBase}/preview/${projectId}/`;
         supabase.from('revisions')
           .update({ preview_url: revisionPreviewUrl, preview_status: 'ready' })
@@ -6018,14 +5947,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           }
         })();
       }
-      })();
-    } catch (postRunErr: any) {
-      // Non-fatal by design: 'done' already went out. Error level on purpose --
-      // this is the last place a lost commit can hide.
-      logger.error('[AgentLoop] durable post-run commit failed', {
-        projectId, userId, agentRunId, error: postRunErr instanceof Error ? postRunErr.message : String(postRunErr),
-      });
-    }
+    })();
 
     // Semantic cache: only store a fresh, empty-project, first-message BUILD
     // run that actually produced files and didn't get stuck -- that's the one
@@ -6061,10 +5983,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const isAbort = abortController.signal.aborted || err?.name === 'AbortError';
     if (isAbort) {
       if (abortSignal?.aborted) {
-        // A client disconnect deliberately does NOT abort a run (runs outlive
-        // their connection); the only route to abortSignal is an explicit
-        // cancel (Stop button, peer-worker cancel relay).
-        logger.warn('[AgentLoop] Aborted by user cancel', { projectId, userId, stepCount, durationMs: Date.now() - _innerStartedAtMs });
+        logger.warn('[AgentLoop] Aborted due to client disconnect', { projectId, userId, stepCount, durationMs: Date.now() - _innerStartedAtMs });
       } else {
         logger.warn('[AgentLoop] Aborted due to timeout/cancellation', { projectId, userId, stepCount, durationMs: Date.now() - _innerStartedAtMs });
       }
@@ -6075,16 +5994,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
       if (supabase && agentRunId) {
         stopRunHeartbeat();
-        // A timeout whose partial progress was persisted delivered a real
-        // outcome (client got 'done' with the files, HEAD has them), so the
-        // run reads 'completed', not 'failed'. Internal aborts here are the
-        // agent timeout; external abortSignal is a user cancel.
-        const isUserCancel = Boolean(abortSignal?.aborted);
-        const partialSavedOnTimeout = !isUserCancel && timeoutPersistedRevisionId != null;
         supabase.from('agent_runs').update({
-          status: partialSavedOnTimeout ? 'completed' : 'failed',
+          status: 'failed',
           phase: 'done',
-          error_message: isUserCancel ? 'Cancelled by user' : partialSavedOnTimeout ? null : 'Agent timed out',
+          error_message: abortSignal?.aborted ? 'Cancelled: client disconnected' : 'Cancelled: aborted',
           completed_at: new Date().toISOString(),
           is_internal: isInternalRun,
           estimated_cost_usd: runCostUsd,

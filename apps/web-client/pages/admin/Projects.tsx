@@ -1,24 +1,29 @@
+import BrandLoader from '@/components/BrandLoader';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/adminClient';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Page, Panel, Table, Tag, btn, input, when } from '@/components/admin/ui';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
+import { buttonVariants } from '@/components/ui/button';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
+  Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext,
+} from '@/components/ui/pagination';
+import { Search, Pencil, Trash2, FolderKanban, Users } from 'lucide-react';
 import { ProjectMemberAccess } from '@/components/ProjectMemberAccess';
 import { toast } from 'sonner';
 import { confirmRowDeleted } from '@/services/confirmDeletion';
 
 const PAGE_SIZE = 20;
-const DIALOG = 'bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white';
-const STATUS_TONE: Record<string, 'ok' | 'gray' | 'accent'> = { active: 'ok', archived: 'gray', draft: 'accent' };
-
-interface ProjectRow {
-  id: string;
-  name: string;
-  status: string | null;
-  created_at: string;
-  organization_id: string | null;
-  organizations: { name: string } | null;
-}
 
 interface ProjectWithOrg {
   id: string;
@@ -59,15 +64,18 @@ export default function Projects() {
       setLoading(true);
       let query = supabase
         .from('projects')
-        .select<string, ProjectRow>('id, name, status, created_at, organization_id, organizations(name)', { count: 'exact' })
+        .select('id, name, status, created_at, organization_id, organizations(name)', { count: 'exact' })
         .order('created_at', { ascending: false });
+
       if (debouncedSearch) {
         const q = debouncedSearch.replace(/[%,]/g, '');
         query = query.ilike('name', `%${q}%`);
       }
-      const { data, error, count } = await query.range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
+
+      const { data, error, count } = await query
+        .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
       if (error) throw error;
-      const mapped: ProjectWithOrg[] = (data || []).map((p) => ({
+      const mapped = (data || []).map((p: any) => ({
         id: p.id,
         name: p.name,
         status: p.status || 'active',
@@ -94,13 +102,15 @@ export default function Projects() {
   const handleUpdate = async () => {
     if (!editProject) return;
     try {
-      const { error } = await supabase.from('projects').update({ name: editName, status: editStatus }).eq('id', editProject.id);
+      const { error } = await supabase.from('projects')
+        .update({ name: editName, status: editStatus })
+        .eq('id', editProject.id);
       if (error) throw error;
       toast.success('Project updated');
       setEditProject(null);
       loadProjects();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to update project');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to update project');
     }
   };
 
@@ -110,105 +120,224 @@ export default function Projects() {
       const { error } = await supabase.from('projects').delete().eq('id', id);
       if (error) throw error;
       const outcome = await confirmRowDeleted('projects', id);
-      toast.success(outcome === 'gone' ? 'Project deleted' : 'Delete sent, but it could not be confirmed. Refresh to check.');
+      toast.success(outcome === 'gone'
+        ? 'Project deleted'
+        : 'Delete sent, but it could not be confirmed. Refresh to check.');
       loadProjects();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to delete project');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to delete project');
     } finally {
       setDeletingProject(false);
       setDeleteProjectId(null);
     }
   };
 
-  const pageCount = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const formatDate = (d: string) =>
+    new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+
+  const statusBadge = (status: string) => {
+    const colors: Record<string, { bg: string; text: string; border: string }> = {
+      active: { bg: 'rgba(34,197,94,0.1)', text: '#4ade80', border: 'rgba(34,197,94,0.2)' },
+      archived: { bg: 'rgba(107,114,128,0.1)', text: '#9ca3af', border: 'rgba(107,114,128,0.2)' },
+      draft: { bg: 'rgba(59,130,246,0.1)', text: '#60a5fa', border: 'rgba(59,130,246,0.2)' },
+    };
+    const s = colors[status] || colors.active;
+    return (
+      <span className="text-[11px] font-medium px-2 py-0.5 rounded-full capitalize inline-flex items-center gap-1"
+        style={{ background: s.bg, color: s.text, border: `1px solid ${s.border}` }}>
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.text }} />
+        {status}
+      </span>
+    );
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <BrandLoader variant="bead" size={100} label="Loading projects" />
+      </div>
+    );
+  }
 
   return (
-    <Page
-      title="Projects"
-      actions={
-        <>
-          <span className="text-xs text-gray-500">{totalCount}</span>
-          <input className={`${input} w-64`} placeholder="Search" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-        </>
-      }
-    >
-      <Panel>
-        <Table head={['Project', 'Organization', 'Status', 'Created', '']} empty={loading ? 'Loading' : 'No projects'}>
-          {projects.map((project) => (
-            <tr key={project.id}>
-              <td className="text-white">{project.name}</td>
-              <td className="text-gray-400">{project.org_name ?? '—'}</td>
-              <td><Tag tone={STATUS_TONE[project.status] ?? 'ok'}>{project.status}</Tag></td>
-              <td className="text-gray-400">{when(project.created_at)}</td>
-              <td className="text-right whitespace-nowrap">
-                {project.organization_id && <button className={btn.ghost} onClick={() => setAccessProject(project)}>Access</button>}
-                <button className={`${btn.ghost} ml-1`} onClick={() => handleEdit(project)}>Edit</button>
-                <button className={`${btn.danger} ml-1`} onClick={() => setDeleteProjectId(project.id)}>Delete</button>
-              </td>
-            </tr>
-          ))}
-        </Table>
-      </Panel>
-
-      {totalCount > PAGE_SIZE && (
-        <div className="flex items-center justify-end gap-2 text-xs text-gray-500">
-          <button className={btn.ghost} disabled={page === 0} onClick={() => setPage(page - 1)}>Prev</button>
-          <span>{page + 1} / {pageCount}</span>
-          <button className={btn.ghost} disabled={page + 1 >= pageCount} onClick={() => setPage(page + 1)}>Next</button>
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search projects..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="h-9 w-72 pl-9 text-xs bg-white/5 border-white/10 text-white placeholder:text-muted-foreground focus:border-primary/50"
+          />
         </div>
+        <span className="text-xs text-muted-foreground">{totalCount} projects</span>
+      </div>
+
+      <div className="rounded-none border overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
+        <table className="w-full">
+          <thead>
+            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <th className="text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-5 py-3">Project</th>
+              <th className="text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-5 py-3">Organization</th>
+              <th className="text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-5 py-3">Status</th>
+              <th className="text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-5 py-3">Created</th>
+              <th className="text-right text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-5 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {projects.map((project) => (
+              <tr key={project.id} className="group hover:bg-white/[0.03] transition-colors" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <td className="px-5 py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-none bg-emerald-500/10 flex items-center justify-center">
+                      <FolderKanban className="h-4 w-4 text-emerald-400" />
+                    </div>
+                    <span className="text-sm text-white font-medium">{project.name}</span>
+                  </div>
+                </td>
+                <td className="px-5 py-3">
+                  {project.org_name ? (
+                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-full" style={{ background: 'rgba(139,92,246,0.1)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
+                      {project.org_name}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground"> </span>
+                  )}
+                </td>
+                <td className="px-5 py-3">{statusBadge(project.status)}</td>
+                <td className="px-5 py-3 text-xs text-muted-foreground">{formatDate(project.created_at)}</td>
+                <td className="px-5 py-3 text-right">
+                  <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {project.organization_id && (
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-muted-foreground hover:bg-muted" title="Manage Access" onClick={() => setAccessProject(project)}>
+                        <Users className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-white hover:bg-white/10" onClick={() => handleEdit(project)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400 hover:bg-red-500/10" onClick={() => setDeleteProjectId(project.id)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {projects.length === 0 && (
+              <tr><td colSpan={5} className="text-center py-12 text-sm text-muted-foreground">No projects found</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      {totalCount > PAGE_SIZE && (
+        <Pagination>
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                href="#"
+                onClick={(e) => { e.preventDefault(); if (page > 0) setPage(page - 1); }}
+                className={page === 0 ? 'pointer-events-none opacity-50' : ''}
+              />
+            </PaginationItem>
+            <PaginationItem>
+              <span className="text-xs text-muted-foreground px-3">
+                Page {page + 1} of {Math.max(1, Math.ceil(totalCount / PAGE_SIZE))}
+              </span>
+            </PaginationItem>
+            <PaginationItem>
+              <PaginationNext
+                href="#"
+                onClick={(e) => { e.preventDefault(); if ((page + 1) * PAGE_SIZE < totalCount) setPage(page + 1); }}
+                className={(page + 1) * PAGE_SIZE >= totalCount ? 'pointer-events-none opacity-50' : ''}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
       )}
 
+      {/* Access Management Dialog */}
       <Dialog open={!!accessProject} onOpenChange={() => setAccessProject(null)}>
-        <DialogContent className={`${DIALOG} max-w-lg`}>
-          <DialogHeader><DialogTitle className="text-sm">Access: {accessProject?.name}</DialogTitle></DialogHeader>
-          {accessProject?.organization_id ? (
-            <ProjectMemberAccess projectId={accessProject.id} organizationId={accessProject.organization_id} />
-          ) : (
-            <p className="text-[13px] text-gray-500 text-center py-6">No organization.</p>
-          )}
-          <DialogFooter><button className={btn.ghost} onClick={() => setAccessProject(null)}>Close</button></DialogFooter>
+        <DialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-white flex items-center gap-2">
+              <Users className="h-4 w-4 text-muted-foreground" />
+              Member Access   {accessProject?.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            {accessProject?.organization_id ? (
+              <ProjectMemberAccess
+                projectId={accessProject.id}
+                organizationId={accessProject.organization_id}
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-6">This project has no organization.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAccessProject(null)} className="text-muted-foreground">Close</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Edit Dialog */}
       <Dialog open={!!editProject} onOpenChange={() => setEditProject(null)}>
-        <DialogContent className={DIALOG}>
-          <DialogHeader><DialogTitle className="text-sm">Edit project</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <label className="block space-y-1 text-xs text-gray-400">
-              Name
-              <input className={input} value={editName} onChange={(e) => setEditName(e.target.value)} />
-            </label>
-            <label className="block space-y-1 text-xs text-gray-400">
-              Status
+        <DialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">Edit Project</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-foreground/80">Name</Label>
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="bg-white/5 border-white/10 text-white" />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-foreground/80">Status</Label>
               <Select value={editStatus} onValueChange={setEditStatus}>
-                <SelectTrigger className={input}><SelectValue /></SelectTrigger>
-                <SelectContent className="bg-[#1a1d24] border-white/10">
+                <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-white/10">
                   <SelectItem value="active">Active</SelectItem>
                   <SelectItem value="draft">Draft</SelectItem>
                   <SelectItem value="archived">Archived</SelectItem>
                 </SelectContent>
               </Select>
-            </label>
+            </div>
           </div>
           <DialogFooter>
-            <button className={btn.ghost} onClick={() => setEditProject(null)}>Cancel</button>
-            <button className={btn.primary} onClick={handleUpdate}>Save</button>
+            <Button variant="ghost" onClick={() => setEditProject(null)} className="text-muted-foreground">Cancel</Button>
+            <Button onClick={handleUpdate} className="bg-primary hover:bg-primary/90 text-primary-foreground">Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!deleteProjectId} onOpenChange={(open) => { if (!open && !deletingProject) setDeleteProjectId(null); }}>
-        <DialogContent className={DIALOG}>
-          <DialogHeader><DialogTitle className="text-sm">Delete this project?</DialogTitle></DialogHeader>
-          <p className="text-[13px] text-gray-400">This cannot be undone.</p>
-          <DialogFooter>
-            <button className={btn.ghost} disabled={deletingProject} onClick={() => setDeleteProjectId(null)}>Cancel</button>
-            <button className={btn.danger} disabled={deletingProject} onClick={() => { if (deleteProjectId) handleDelete(deleteProjectId); }}>
-              {deletingProject ? 'Deleting' : 'Delete'}
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </Page>
+      {/* Delete Project Confirmation */}
+      <AlertDialog open={!!deleteProjectId} onOpenChange={(open) => { if (!open) setDeleteProjectId(null); }}>
+        <AlertDialogContent className="bg-[hsl(var(--admin-surface-dialog))] border-white/10 text-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Delete this project?</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingProject} className="bg-transparent border-white/10 text-foreground/80 hover:bg-white/10 hover:text-white">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deletingProject}
+              onClick={(e) => { e.preventDefault(); if (deleteProjectId) handleDelete(deleteProjectId); }}
+              className={buttonVariants({ variant: 'destructive' })}
+            >
+              {deletingProject ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   );
 }

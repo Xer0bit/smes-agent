@@ -1,12 +1,12 @@
 -- The platform used to hand every project its OWN Supabase URL and anon key
 -- as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY (database.service.ts
 -- syncPlatformAuthSecrets, removed 2026-09-02). Generated apps then signed
--- their users up against EcomGear's auth database, with the platform key in
+-- their users up against SMEsAgent's auth database, with the platform key in
 -- every bundle. Scoped to the platform's own values so an owner's genuinely
 -- saved Supabase credentials under the same names are left alone.
 DELETE FROM public.project_secrets
 WHERE key_name = 'VITE_SUPABASE_URL'
-  AND key_value IN ('https://api.ecomgear.dev', 'https://api.ecomgear.dev/');
+  AND key_value IN ('https://api.SMEsAgent.dev', 'https://api.SMEsAgent.dev/');
 
 DELETE FROM public.project_secrets
 WHERE key_name = 'VITE_SUPABASE_ANON_KEY'

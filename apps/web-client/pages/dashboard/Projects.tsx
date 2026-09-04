@@ -492,7 +492,7 @@ export default function DashboardProjects() {
       <div className="p-6 sm:p-8">
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
           {[0, 1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="overflow-hidden rounded-xl border border-border/60 bg-card/40">
+            <div key={i} className="overflow-hidden rounded-none border border-border/60 bg-card/40">
               <div className="h-48 animate-pulse bg-card/60" />
               <div className="flex items-center gap-3 p-4">
                 <div className="h-4 w-2/3 animate-pulse rounded bg-card/60" />
@@ -607,7 +607,7 @@ export default function DashboardProjects() {
       </Tabs>
 
       {filteredProjects.length === 0 ? (
-        <Card className="rounded-xl border-dashed border-border/60 bg-card/40">
+        <Card className="rounded-none border-dashed border-border/60 bg-card/40">
           <CardContent className="flex flex-col items-center justify-center py-20 text-center">
             <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
               <Database className="h-6 w-6 text-primary" />
@@ -640,7 +640,7 @@ export default function DashboardProjects() {
               key={project.id}
             >
               <Card
-                className={`group flex cursor-pointer flex-col overflow-hidden rounded-xl transition-colors duration-150 ${project.organization_id
+                className={`group flex cursor-pointer flex-col overflow-hidden rounded-none transition-colors duration-150 ${project.organization_id
                   ? 'border-border/60 hover:border-primary/40'
                   : 'border-amber-500/40 bg-amber-500/[0.04] hover:border-amber-500/60'
                   }`}

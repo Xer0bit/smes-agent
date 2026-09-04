@@ -9,7 +9,7 @@
  * a billboard instead: an app wireframe assembling itself on a loop, the
  * build pipeline with a moving progress line, a few facts about how apps
  * built here ship, and a rotating tip. Same flat dark style as the editor,
- * EcomGear mark linking to ecomgear.dev.
+ * SMEsAgent mark linking to SMEsAgent.dev.
  *
  * Self-contained on purpose: React only, inline styles plus one <style> tag
  * for the keyframes, no Tailwind classes and no imports the scaffold might
@@ -18,7 +18,7 @@
  * tool that counts "user files") that nothing here is the owner's.
  */
 
-const PLACEHOLDER_MARKER = 'ECOMGEAR_PLACEHOLDER_APP';
+const PLACEHOLDER_MARKER = 'SMEsAgent_PLACEHOLDER_APP';
 
 const PLACEHOLDER_APP_TSX = `// ${PLACEHOLDER_MARKER}: scaffold billboard, not the owner's app. Replace this whole file.
 import { useEffect, useState, type CSSProperties } from 'react';
@@ -164,7 +164,7 @@ function App() {
         </p>
 
         <p style={{ margin: 0, fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
-          Built with <a href="https://ecomgear.dev" target="_blank" rel="noreferrer" style={{ color: 'rgba(255,255,255,0.5)' }}>ecomgear.dev</a>
+          Built with <a href="https://SMEsAgent.dev" target="_blank" rel="noreferrer" style={{ color: 'rgba(255,255,255,0.5)' }}>SMEsAgent.dev</a>
         </p>
       </div>
     </div>

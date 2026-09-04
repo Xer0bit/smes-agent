@@ -41,7 +41,7 @@ function readEnvFileVar(name) {
 // With the old `process.env.X || file` order, VPS3 ran for an unknown period
 // with three different values in play: deploy.sh wrote the correct secret into
 // .env.production, but a stale PREVIEW_UPDATE_SECRET already present in the pm2
-// start environment took precedence, so ecomgear-gen sent a value matching
+// start environment took precedence, so SMEsAgent-gen sent a value matching
 // neither its own env file nor VPS2's. Measured 2026-08-24 (sha256, distinct):
 // deploy source fca5db..., VPS3 file fca5db..., VPS3 runtime a539b1...,
 // VPS2 runtime 98c8e5... -- every preview push 401'd, and because the push
@@ -61,7 +61,7 @@ module.exports = {
         //  Serves generated React apps via Vite HMR
         // ──────────────────────────────────────────────────────────
         {
-            name: 'ecomgear-preview',
+            name: 'SMEsAgent-preview',
             script: path.join(ROOT, 'preview-service', 'server.js'),
             cwd: path.join(ROOT, 'preview-service'),
             instances: 1,
@@ -72,10 +72,10 @@ module.exports = {
             env: {
                 NODE_ENV: 'production',
                 PORT: PREVIEW_PORT,
-                VITE_HMR_HOST: 'preview.ecomgear.app',
+                VITE_HMR_HOST: 'preview.SMEsAgent.app',
                 VITE_HMR_PORT: '443',
                 VITE_HMR_PROTOCOL: 'wss',
-                SUPABASE_URL: 'https://api.ecomgear.dev',
+                SUPABASE_URL: 'https://api.SMEsAgent.dev',
                 SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '',
                 PREVIEW_UPDATE_SECRET,
             },
@@ -98,14 +98,14 @@ module.exports = {
 
         // ──────────────────────────────────────────────────────────
         //  Gen / Agent Server   VPS3 (generation-only)
-        //  Serves gen.ecomgear.dev + agent.ecomgear.dev (port 5001)
+        //  Serves gen.SMEsAgent.dev + agent.SMEsAgent.dev (port 5001)
         //  SERVICE_ROLE=gen mounts only /api/v1/ai   every other route group
-        //  lives on ecomgear-api (VPS1) instead. See server/src/app.ts.
+        //  lives on SMEsAgent-api (VPS1) instead. See server/src/app.ts.
         //  Cluster mode: 2 instances → pm2 reload gives true zero-downtime
         //  (new worker starts + signals ready, then old worker drains and exits)
         // ──────────────────────────────────────────────────────────
         {
-            name: 'ecomgear-gen',
+            name: 'SMEsAgent-gen',
             script: path.join(ROOT, 'server', 'dist', 'index.js'),
             cwd: path.join(ROOT, 'server'),
             instances: 2,
@@ -117,7 +117,7 @@ module.exports = {
                 NODE_ENV: 'production',
                 PORT: GEN_API_PORT,
                 SERVICE_ROLE: 'gen',
-                TENANT_DB_API_URL: 'https://cloud.ecomgear.app',
+                TENANT_DB_API_URL: 'https://cloud.SMEsAgent.app',
                 PREVIEW_UPDATE_SECRET,
                 // Lets a local dev frontend (npm run dev, default Vite port) call
                 // this production server directly -- see server/src/app.ts's
@@ -140,13 +140,13 @@ module.exports = {
 
         // ──────────────────────────────────────────────────────────
         //  API Server   VPS1 (everything except LLM generation)
-        //  Serves api.ecomgear.dev/api/v1/* (port 5002), fronted by the
+        //  Serves api.SMEsAgent.dev/api/v1/* (port 5002), fronted by the
         //  same nginx server block that proxies Supabase/Kong   see
-        //  infrastructure/nginx/vps1-ecomgear.dev.conf's /api/v1/ location.
+        //  infrastructure/nginx/vps1-SMEsAgent.dev.conf's /api/v1/ location.
         //  SERVICE_ROLE=api mounts everything except /api/v1/ai.
         // ──────────────────────────────────────────────────────────
         {
-            name: 'ecomgear-api',
+            name: 'SMEsAgent-api',
             script: path.join(ROOT, 'server', 'dist', 'index.js'),
             cwd: path.join(ROOT, 'server'),
             instances: 2,
@@ -158,9 +158,9 @@ module.exports = {
                 NODE_ENV: 'production',
                 PORT: API_SERVER_PORT,
                 SERVICE_ROLE: 'api',
-                TENANT_DB_API_URL: 'https://cloud.ecomgear.app',
-                PREVIEW_SERVICE_URL: process.env.PREVIEW_SERVICE_URL || 'https://preview.ecomgear.app',
-                ECG_AUTH_BASE_URL: process.env.ECG_AUTH_BASE_URL || 'https://auth.ecomgear.ai',
+                TENANT_DB_API_URL: 'https://cloud.SMEsAgent.app',
+                PREVIEW_SERVICE_URL: process.env.PREVIEW_SERVICE_URL || 'https://preview.SMEsAgent.app',
+                ECG_AUTH_BASE_URL: process.env.ECG_AUTH_BASE_URL || 'https://auth.SMEsAgent.ai',
                 ECG_AUTH_API_KEY: process.env.ECG_AUTH_API_KEY || '',
                 ECG_AUTH_2FA_ACTIVE: process.env.ECG_AUTH_2FA_ACTIVE || 'false',
                 PREVIEW_UPDATE_SECRET,

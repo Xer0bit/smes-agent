@@ -9,12 +9,12 @@ const SNAPSHOT_INCLUDE_DOTFILES = new Set(['.env.local', '.env.production', '.gi
 
 /**
  * Persistent snapshots root   survives server restarts.
- * Configurable via SNAPSHOTS_DIR env var (recommended on VPS: /var/www/ecomgear/snapshots).
- * Falls back to ~/.ecomgear/snapshots locally.
+ * Configurable via SNAPSHOTS_DIR env var (recommended on VPS: /var/www/SMEsAgent/snapshots).
+ * Falls back to ~/.SMEsAgent/snapshots locally.
  */
 export const SNAPSHOTS_DIR = process.env.SNAPSHOTS_DIR
   ? path.resolve(process.env.SNAPSHOTS_DIR)
-  : path.join(os.homedir(), '.ecomgear', 'snapshots');
+  : path.join(os.homedir(), '.SMEsAgent', 'snapshots');
 
 /**
  * Max snapshots kept per project. Oldest are pruned when the limit is exceeded.

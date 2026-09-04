@@ -6,9 +6,9 @@
     "scripts": {
         "start": "node --no-deprecation server.js",
         "dev": "node --no-deprecation server.js",
-        "pm2:start": "pm2 start server.js --name ecomgear-preview --node-args='--no-deprecation' -- --port 3001",
-        "pm2:stop": "pm2 stop ecomgear-preview",
-        "pm2:restart": "pm2 restart ecomgear-preview"
+        "pm2:start": "pm2 start server.js --name SMEsAgent-preview --node-args='--no-deprecation' -- --port 3001",
+        "pm2:stop": "pm2 stop SMEsAgent-preview",
+        "pm2:restart": "pm2 restart SMEsAgent-preview"
     },
     "dependencies": {
         "@heroicons/react": "^2.2.0",

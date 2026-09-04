@@ -10,6 +10,7 @@ import { SubscriptionProvider } from "./contexts/SubscriptionContext";
 import { UsageProvider } from "./contexts/UsageContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import RouteLoadingFallback from "./components/RouteLoadingFallback";
+import BrandLoader from "./components/BrandLoader";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
@@ -30,6 +31,17 @@ import { DashboardLayout } from "./pages/Dashboard";
  * on dark. Force `dark` on <html> off the dashboard so those pages and their
  * portals (dialogs, sheets, popovers render on body) stay as designed.
  */
+function ScrollReset() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.history.scrollRestoration = 'manual';
+  }, []);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
+}
+
 function ThemeScope({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const onDashboard = pathname === '/dashboard' || pathname.startsWith('/dashboard/');
@@ -40,17 +52,21 @@ function ThemeScope({ children }: { children: ReactNode }) {
 /** The editor's frame, drawn before its code arrives: sidebar, toolbar, an empty stage. */
 function EditorShellFallback() {
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#09090b]">
-      <div className="hidden lg:flex w-[380px] shrink-0 flex-col border-r border-white/[0.06] bg-[#0c0c0e]">
-        <div className="h-10 border-b border-white/[0.06] px-3 flex items-center"><div className="skeleton h-3 w-28" /></div>
+    <div className="flex h-screen w-screen overflow-hidden bg-background">
+      <div className="hidden lg:flex w-[380px] shrink-0 flex-col border-r border-border bg-card">
+        <div className="h-10 border-b border-border px-3 flex items-center"><div className="skeleton h-3 w-28" /></div>
         <div className="flex-1 p-4 space-y-3"><div className="skeleton h-3 w-32" /><div className="skeleton h-3 w-56" /></div>
-        <div className="p-2.5"><div className="skeleton h-[92px] w-full rounded-2xl" /></div>
+        <div className="p-2.5"><div className="skeleton h-[92px] w-full" /></div>
       </div>
       <div className="flex flex-1 flex-col">
-        <div className="h-10 border-b border-white/[0.06] px-3 flex items-center gap-2">
-          <div className="skeleton h-5 w-16" /><div className="skeleton h-5 w-5" /><div className="skeleton h-5 w-5" /><div className="skeleton ml-auto h-6 w-20 rounded-full" />
+        <div className="h-10 border-b border-border px-3 flex items-center gap-2">
+          <div className="skeleton h-5 w-16" /><div className="skeleton h-5 w-5" /><div className="skeleton h-5 w-5" /><div className="skeleton ml-auto h-6 w-20" />
         </div>
-        <div className="flex-1 p-1"><div className="h-full w-full rounded-lg bg-[#0c0c0e] ring-1 ring-white/[0.06]" /></div>
+        <div className="flex-1 flex items-center justify-center p-1">
+          <div className="h-full w-full bg-card ring-1 ring-border flex items-center justify-center">
+            <BrandLoader variant="orbit" size={120} label="Loading editor" />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -70,15 +86,16 @@ const AdminLogin = lazy(() => import("./pages/admin/Login"));
 const AdminApp = lazy(() => import("./pages/admin/AdminApp"));
 const AcceptInvite = lazy(() => import("./pages/AcceptInvite"));
 const AcceptProjectInvite = lazy(() => import("./pages/AcceptProjectInvite"));
-import { LandingLayout } from "./layouts/LandingLayout";
-const Features = lazy(() => import("./pages/landing/Features"));
-const Product = lazy(() => import("./pages/landing/Product"));
-const China = lazy(() => import("./pages/landing/China"));
-const Agents = lazy(() => import("./pages/landing/Agents"));
-const Pricing = lazy(() => import("./pages/landing/Pricing"));
-const Contact = lazy(() => import("./pages/landing/Contact"));
-const PrivacyPolicy = lazy(() => import("./pages/landing/PrivacyPolicy"));
-const TermsOfService = lazy(() => import("./pages/landing/TermsOfService"));
+const Privacy = lazy(() => import("./pages/Privacy"));
+const Terms = lazy(() => import("./pages/Terms"));
+const PublicLayout = lazy(() => import("./components/public-site/PublicLayout"));
+const Features = lazy(() => import("./pages/marketing/Features"));
+const Pricing = lazy(() => import("./pages/marketing/Pricing"));
+const About = lazy(() => import("./pages/marketing/About"));
+const Contact = lazy(() => import("./pages/marketing/Contact"));
+const Docs = lazy(() => import("./pages/marketing/Docs"));
+const Blog = lazy(() => import("./pages/marketing/Blog"));
+const Changelog = lazy(() => import("./pages/marketing/Changelog"));
 import AuthCallback from "./pages/AuthCallback";
 import { supabase } from "./integrations/supabase/client";
 import './i18n/config';
@@ -121,7 +138,11 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   }, []);
 
   if (status === 'loading') {
-    return null;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <BrandLoader variant="compass" size={100} label="Verifying session" />
+      </div>
+    );
   }
 
   if (status === 'unauthenticated') {
@@ -148,20 +169,9 @@ const App = () => (
                 }}
               >
                 <ThemeScope>
+                <ScrollReset />
                 <Routes>
-                {/* Index has its own nav/footer from the v2 landing design */}
                 <Route path="/" element={<Index />} />
-                {/* Other landing routes still use shared Header/Footer */}
-                <Route element={<LandingLayout />}>
-                  <Route path="/product" element={<Suspense fallback={<RouteLoadingFallback />}><Product /></Suspense>} />
-                  <Route path="/china" element={<Suspense fallback={<RouteLoadingFallback />}><China /></Suspense>} />
-                  <Route path="/features" element={<Suspense fallback={<RouteLoadingFallback />}><Features /></Suspense>} />
-                  <Route path="/agents" element={<Suspense fallback={<RouteLoadingFallback />}><Agents /></Suspense>} />
-                  <Route path="/pricing" element={<Suspense fallback={<RouteLoadingFallback />}><Pricing /></Suspense>} />
-                  <Route path="/contact" element={<Suspense fallback={<RouteLoadingFallback />}><Contact /></Suspense>} />
-                  <Route path="/privacy" element={<Suspense fallback={<RouteLoadingFallback />}><PrivacyPolicy /></Suspense>} />
-                  <Route path="/terms" element={<Suspense fallback={<RouteLoadingFallback />}><TermsOfService /></Suspense>} />
-                </Route>
                 <Route path="/auth" element={<Auth />} />
                 <Route path="/auth/callback" element={<AuthCallback />} />
                 <Route path="/project/:projectId" element={<RequireAuth><Suspense fallback={<EditorShellFallback />}><Editor /></Suspense></RequireAuth>} />
@@ -185,6 +195,17 @@ const App = () => (
                 <Route path="/batch-validate" element={<Suspense fallback={<RouteLoadingFallback />}><BatchValidate /></Suspense>} />
                 <Route path="/invite/:token" element={<Suspense fallback={<RouteLoadingFallback />}><AcceptInvite /></Suspense>} />
                 <Route path="/project-invite/:token" element={<Suspense fallback={<RouteLoadingFallback />}><AcceptProjectInvite /></Suspense>} />
+                <Route path="/privacy" element={<Suspense fallback={<RouteLoadingFallback />}><Privacy /></Suspense>} />
+                <Route path="/terms" element={<Suspense fallback={<RouteLoadingFallback />}><Terms /></Suspense>} />
+                <Route element={<Suspense fallback={<RouteLoadingFallback />}><PublicLayout /></Suspense>}>
+                  <Route path="/features" element={<Suspense fallback={<RouteLoadingFallback />}><Features /></Suspense>} />
+                  <Route path="/pricing" element={<Suspense fallback={<RouteLoadingFallback />}><Pricing /></Suspense>} />
+                  <Route path="/about" element={<Suspense fallback={<RouteLoadingFallback />}><About /></Suspense>} />
+                  <Route path="/contact" element={<Suspense fallback={<RouteLoadingFallback />}><Contact /></Suspense>} />
+                  <Route path="/docs" element={<Suspense fallback={<RouteLoadingFallback />}><Docs /></Suspense>} />
+                  <Route path="/blog" element={<Suspense fallback={<RouteLoadingFallback />}><Blog /></Suspense>} />
+                  <Route path="/changelog" element={<Suspense fallback={<RouteLoadingFallback />}><Changelog /></Suspense>} />
+                </Route>
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

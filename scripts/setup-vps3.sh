@@ -2,7 +2,7 @@
 # =============================================================================
 # VPS3 Setup   3.148.126.20 (United States)
 # Roles: LLM / Code Generation API + Agent Runner
-# Domains: gen.ecomgear.dev  agent.ecomgear.dev
+# Domains: gen.SMEsAgent.dev  agent.SMEsAgent.dev
 # Run as root: bash setup-vps3.sh
 # =============================================================================
 set -euo pipefail
@@ -14,7 +14,7 @@ err()     { echo -e "${RED}[ERR]${NC} $1"; exit 1; }
 
 [[ $EUID -ne 0 ]] && err "Run as root"
 
-DEPLOY_PATH="/var/www/ecomgear"
+DEPLOY_PATH="/var/www/SMEsAgent"
 
 step "Updating system..."
 apt-get update -qq && apt-get upgrade -y -qq
@@ -52,16 +52,16 @@ apt-get install -y -qq git curl wget htop rsync unzip jq
 success "Tools ready"
 
 step "Nginx site config placeholder..."
-cat > /etc/nginx/sites-available/ecomgear-gen << 'NGINX_PLACEHOLDER'
+cat > /etc/nginx/sites-available/SMEsAgent-gen << 'NGINX_PLACEHOLDER'
 # Temporary plain-HTTP server while certs are not yet issued
 server {
     listen 80;
-    server_name gen.ecomgear.dev agent.ecomgear.dev;
+    server_name gen.SMEsAgent.dev agent.SMEsAgent.dev;
     location /health { return 200 "ok\n"; add_header Content-Type text/plain; }
     location / { proxy_pass http://127.0.0.1:5001; }
 }
 NGINX_PLACEHOLDER
-ln -sf /etc/nginx/sites-available/ecomgear-gen /etc/nginx/sites-enabled/ecomgear-gen
+ln -sf /etc/nginx/sites-available/SMEsAgent-gen /etc/nginx/sites-enabled/SMEsAgent-gen
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 success "Nginx placeholder active"
@@ -74,22 +74,22 @@ echo ""
 echo "NEXT STEPS:"
 echo ""
 echo "1. Point DNS A records to this server (3.148.126.20):"
-echo "     gen.ecomgear.dev   → 3.148.126.20"
-echo "     agent.ecomgear.dev → 3.148.126.20"
+echo "     gen.SMEsAgent.dev   → 3.148.126.20"
+echo "     agent.SMEsAgent.dev → 3.148.126.20"
 echo ""
 echo "2. Obtain SSL certificates:"
-echo "     certbot --nginx -d gen.ecomgear.dev -d agent.ecomgear.dev"
+echo "     certbot --nginx -d gen.SMEsAgent.dev -d agent.SMEsAgent.dev"
 echo ""
 echo "3. Upload the production nginx config:"
-echo "     scp infrastructure/nginx/vps3-gen.ecomgear.dev.conf \\"
-echo "       root@3.148.126.20:/etc/nginx/sites-available/ecomgear-gen"
+echo "     scp infrastructure/nginx/vps3-gen.SMEsAgent.dev.conf \\"
+echo "       root@3.148.126.20:/etc/nginx/sites-available/SMEsAgent-gen"
 echo "     ssh root@3.148.126.20 'nginx -t && systemctl reload nginx'"
 echo ""
-echo "4. Create /var/www/ecomgear/.env.production with:"
+echo "4. Create /var/www/SMEsAgent/.env.production with:"
 echo "     ANTHROPIC_API_KEY=..."
 echo "     OPENAI_API_KEY=..."
-echo "     PREVIEW_SERVICE_URL=https://preview.ecomgear.app"
-echo "     SUPABASE_URL=https://api.ecomgear.dev"
+echo "     PREVIEW_SERVICE_URL=https://preview.SMEsAgent.app"
+echo "     SUPABASE_URL=https://api.SMEsAgent.dev"
 echo "     SUPABASE_SERVICE_ROLE_KEY=..."
 echo ""
 echo "5. CI/CD will deploy the server + agent on first push."

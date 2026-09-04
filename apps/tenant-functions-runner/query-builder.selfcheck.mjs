@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { buildDbHelper } from './runEdgeFunction.js';
 
-const ctx = { apiUrl: 'https://cloud.ecomgear.app', schema: 'tenant_test', serviceKey: 'test-key' };
+const ctx = { apiUrl: 'https://cloud.SMEsAgent.app', schema: 'tenant_test', serviceKey: 'test-key' };
 
 function mockFetch(handler) {
   global.fetch = async (url, init) => handler(String(url), init);
@@ -15,7 +15,7 @@ function mockFetch(handler) {
 //    regression for every currently-working function).
 {
   mockFetch(async (url) => {
-    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/parents?status=eq.active');
+    assert.equal(url, 'https://cloud.SMEsAgent.app/rest/v1/parents?status=eq.active');
     return { ok: true, json: async () => [{ id: 1 }] };
   });
   const db = buildDbHelper(ctx);
@@ -26,7 +26,7 @@ function mockFetch(handler) {
 // 2. Chained select: db.select('parents').eq('status','active').order('name')
 {
   mockFetch(async (url) => {
-    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/parents?status=eq.active&order=name.asc');
+    assert.equal(url, 'https://cloud.SMEsAgent.app/rest/v1/parents?status=eq.active&order=name.asc');
     return { ok: true, json: async () => [{ id: 2 }] };
   });
   const db = buildDbHelper(ctx);
@@ -58,7 +58,7 @@ function mockFetch(handler) {
 //    actually columns, from() supplies the real table.
 {
   mockFetch(async (url) => {
-    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/attendance?select=id%2Cstatus');
+    assert.equal(url, 'https://cloud.SMEsAgent.app/rest/v1/attendance?select=id%2Cstatus');
     return { ok: true, json: async () => [] };
   });
   const db = buildDbHelper(ctx);
@@ -71,7 +71,7 @@ function mockFetch(handler) {
   mockFetch(async (url, init) => {
     assert.equal(init.method, 'POST');
     assert.equal(init.headers.Prefer, 'return=representation');
-    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/projects?select=id');
+    assert.equal(url, 'https://cloud.SMEsAgent.app/rest/v1/projects?select=id');
     return { ok: true, json: async () => [{ id: 9 }] };
   });
   const db = buildDbHelper(ctx);
@@ -94,7 +94,7 @@ function mockFetch(handler) {
 // 8. .not(col, op, val) negates an arbitrary operator.
 {
   mockFetch(async (url) => {
-    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/renewals?renewal_date=not.is.null');
+    assert.equal(url, 'https://cloud.SMEsAgent.app/rest/v1/renewals?renewal_date=not.is.null');
     return { ok: true, json: async () => [] };
   });
   const db = buildDbHelper(ctx);
@@ -106,7 +106,7 @@ function mockFetch(handler) {
 //    updating every row instead of one).
 {
   mockFetch(async (url, init) => {
-    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/orders?id=eq.5');
+    assert.equal(url, 'https://cloud.SMEsAgent.app/rest/v1/orders?id=eq.5');
     assert.equal(init.method, 'PATCH');
     return { ok: true, json: async () => [{ id: 5 }] };
   });
@@ -118,7 +118,7 @@ function mockFetch(handler) {
 // 10. Same for delete() -- chaining .select() must not drop the filter.
 {
   mockFetch(async (url, init) => {
-    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/orders?id=eq.5');
+    assert.equal(url, 'https://cloud.SMEsAgent.app/rest/v1/orders?id=eq.5');
     assert.equal(init.method, 'DELETE');
     return { ok: true, json: async () => [{ id: 5 }] };
   });
@@ -131,7 +131,7 @@ function mockFetch(handler) {
 //     page 1's rows).
 {
   mockFetch(async (url) => {
-    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/posts?order=created_at.asc&limit=10&offset=20');
+    assert.equal(url, 'https://cloud.SMEsAgent.app/rest/v1/posts?order=created_at.asc&limit=10&offset=20');
     return { ok: true, json: async () => [] };
   });
   const db = buildDbHelper(ctx);
@@ -142,7 +142,7 @@ function mockFetch(handler) {
 //     an unescaped '&' or ',' inside a value corrupted the query string).
 {
   mockFetch(async (url) => {
-    assert.equal(url, 'https://cloud.ecomgear.app/rest/v1/t?status=in.(a%2Cb%26c,plain)');
+    assert.equal(url, 'https://cloud.SMEsAgent.app/rest/v1/t?status=in.(a%2Cb%26c,plain)');
     return { ok: true, json: async () => [] };
   });
   const db = buildDbHelper(ctx);

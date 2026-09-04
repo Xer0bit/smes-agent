@@ -80,20 +80,20 @@ rsync_preview_service() {
 }
 
 # ============================================================
-# VPS1   Frontend (ecomgear.dev)
+# VPS1   Frontend (SMEsAgent.dev)
 # ============================================================
 deploy_vps1() {
   log "═══ VPS1 ($VPS1_HOST)   Building & deploying frontend ═══"
   cd "$ROOT_DIR"
-  local active_supabase_dir="/root/ecom-ondy/ecomgear/supabase"
-  local legacy_supabase_dir="/var/www/ecomgear/ecomgear-agent/supabase"
+  local active_supabase_dir="/root/ecom-ondy/SMEsAgent/supabase"
+  local legacy_supabase_dir="/var/www/SMEsAgent/SMEsAgent-agent/supabase"
 
   # ── 1. Build ──────────────────────────────────────────────
   log "Building React SPA..."
   [[ -f .env.production ]] || die ".env.production missing"
   if grep -q "YOUR_SUPABASE_ANON_KEY" .env.production; then
     warn "VITE_SUPABASE_ANON_KEY is still a placeholder in .env.production"
-    warn "Get it via: ssh root@$VPS1_HOST 'cd /var/www/ecomgear && npx supabase status'"
+    warn "Get it via: ssh root@$VPS1_HOST 'cd /var/www/SMEsAgent && npx supabase status'"
   fi
   npm run build
   ok "Build complete (dist/)"
@@ -102,7 +102,7 @@ deploy_vps1() {
   ssh_run "$VPS1_HOST" "$VPS1_USER" "$VPS1_PASS" "
     export DEBIAN_FRONTEND=noninteractive
     command -v certbot &>/dev/null || apt-get install -y -qq certbot python3-certbot-nginx
-    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/ecomgear/dist
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/SMEsAgent/dist
   "
 
   # ── 3. Upload dist/ ───────────────────────────────────────
@@ -110,7 +110,7 @@ deploy_vps1() {
   # shellcheck disable=SC2086
   sshpass -p "$VPS1_PASS" rsync -avz --delete \
     -e "ssh $SSH_OPTS" \
-    "$ROOT_DIR/dist/" "${VPS1_USER}@${VPS1_HOST}:/var/www/ecomgear/dist/"
+    "$ROOT_DIR/dist/" "${VPS1_USER}@${VPS1_HOST}:/var/www/SMEsAgent/dist/"
 
   # ── 3.5. Deploy edge functions ───────────────────────────
   log "Uploading edge functions → VPS1..."
@@ -135,7 +135,7 @@ deploy_vps1() {
   log "Setting edge function secrets on VPS1..."
   if [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
     # Build secrets env string from .deploy.env values
-    SECRETS_CMD="cd /root/ecom-ondy/ecomgear && export SUPABASE_ACCESS_TOKEN='${SUPABASE_ACCESS_TOKEN}'"
+    SECRETS_CMD="cd /root/ecom-ondy/SMEsAgent && export SUPABASE_ACCESS_TOKEN='${SUPABASE_ACCESS_TOKEN}'"
     [[ -n "${STRIPE_SECRET_KEY:-}" ]] && \
       SECRETS_CMD+=" && npx supabase secrets set STRIPE_SECRET_KEY='${STRIPE_SECRET_KEY}'"
     [[ -n "${STRIPE_WEBHOOK_SECRET:-}" ]] && \
@@ -162,10 +162,10 @@ deploy_vps1() {
   cat > "$TMP_DIR/vps1-http.conf" << 'NGINX'
 map $http_origin $cors_origin {
     default                                       "";
-    "https://www.ecomgear.dev"                    "https://www.ecomgear.dev";
-    "https://ecomgear.dev"                        "https://ecomgear.dev";
-    "https://1000.ecomgear.dev"                   "https://1000.ecomgear.dev";
-    ~^https://.*\.preview\.ecomgear\.app$         $http_origin;
+    "https://www.SMEsAgent.dev"                    "https://www.SMEsAgent.dev";
+    "https://SMEsAgent.dev"                        "https://SMEsAgent.dev";
+    "https://1000.SMEsAgent.dev"                   "https://1000.SMEsAgent.dev";
+    ~^https://.*\.preview\.SMEsAgent\.app$         $http_origin;
     "http://localhost:8080"                       "http://localhost:8080";
     "http://localhost:5173"                       "http://localhost:5173";
 }
@@ -176,8 +176,8 @@ map $http_upgrade $connection_upgrade {
 }
 server {
     listen 80;
-    server_name www.ecomgear.dev ecomgear.dev;
-    root  /var/www/ecomgear/dist;
+    server_name www.SMEsAgent.dev SMEsAgent.dev;
+    root  /var/www/SMEsAgent/dist;
     index index.html;
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
@@ -207,7 +207,7 @@ server {
 }
 server {
     listen 80;
-    server_name api.ecomgear.dev;
+    server_name api.SMEsAgent.dev;
     client_max_body_size 20m;  # allow large file uploads to storage
     # ── Realtime WebSocket   must be before the catch-all location ──
     location /realtime/ {
@@ -248,8 +248,8 @@ server {
 }
 server {
     listen 80;
-    server_name 1000.ecomgear.dev;
-    root  /var/www/ecomgear/dist;
+    server_name 1000.SMEsAgent.dev;
+    root  /var/www/SMEsAgent/dist;
     index index.html;
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
@@ -278,12 +278,12 @@ server {
 NGINX
 
   # ── 5. Upload nginx config + reload ──────────────────────
-  rsync_file "$TMP_DIR/vps1-http.conf" "/etc/nginx/sites-available/ecomgear" \
+  rsync_file "$TMP_DIR/vps1-http.conf" "/etc/nginx/sites-available/SMEsAgent" \
     "$VPS1_HOST" "$VPS1_USER" "$VPS1_PASS"
   ssh_run "$VPS1_HOST" "$VPS1_USER" "$VPS1_PASS" "
-    rm -f /etc/nginx/sites-enabled/test2.ecomgear.dev /etc/nginx/sites-available/test2.ecomgear.dev
-    rm -f /etc/nginx/sites-enabled/ecomgear.conf /etc/nginx/sites-available/ecomgear.conf
-    ln -sf /etc/nginx/sites-available/ecomgear /etc/nginx/sites-enabled/ecomgear
+    rm -f /etc/nginx/sites-enabled/test2.SMEsAgent.dev /etc/nginx/sites-available/test2.SMEsAgent.dev
+    rm -f /etc/nginx/sites-enabled/SMEsAgent.conf /etc/nginx/sites-available/SMEsAgent.conf
+    ln -sf /etc/nginx/sites-available/SMEsAgent /etc/nginx/sites-enabled/SMEsAgent
     nginx -t && systemctl reload nginx && echo 'Nginx reloaded on VPS1'
   "
 
@@ -342,16 +342,16 @@ MIGRATE_EOF
   # ── 7. SSL cert   reinstall if exists, issue if not ───────
   log "Configuring SSL for VPS1..."
   ssh_run "$VPS1_HOST" "$VPS1_USER" "$VPS1_PASS" "
-    if [ -f /etc/letsencrypt/live/www.ecomgear.dev/fullchain.pem ]; then
+    if [ -f /etc/letsencrypt/live/www.SMEsAgent.dev/fullchain.pem ]; then
       certbot --nginx --non-interactive --agree-tos --no-eff-email --redirect --expand \
-        --cert-name www.ecomgear.dev \
-        -d ecomgear.dev -d www.ecomgear.dev -d api.ecomgear.dev -d 1000.ecomgear.dev 2>&1 \
+        --cert-name www.SMEsAgent.dev \
+        -d SMEsAgent.dev -d www.SMEsAgent.dev -d api.SMEsAgent.dev -d 1000.SMEsAgent.dev 2>&1 \
         && systemctl reload nginx \
         && echo '[SSL] apex/www/api cert updated'
     else
       certbot --nginx --non-interactive --agree-tos --no-eff-email \
-        -m admin@ecomgear.dev \
-        -d ecomgear.dev -d www.ecomgear.dev -d api.ecomgear.dev -d 1000.ecomgear.dev \
+        -m admin@SMEsAgent.dev \
+        -d SMEsAgent.dev -d www.SMEsAgent.dev -d api.SMEsAgent.dev -d 1000.SMEsAgent.dev \
         2>&1 && echo '[SSL] apex/www/api cert issued' || echo '[SSL] certbot failed - HTTP for now'
     fi
   " || true
@@ -359,7 +359,7 @@ MIGRATE_EOF
 }
 
 # ============================================================
-# VPS2   Preview Service (preview.ecomgear.app)
+# VPS2   Preview Service (preview.SMEsAgent.app)
 # ============================================================
 deploy_vps2() {
   log "═══ VPS2 ($VPS2_HOST)   Deploying preview service ═══"
@@ -376,21 +376,21 @@ deploy_vps2() {
     command -v nginx &>/dev/null || (apt-get update -qq && apt-get install -y -qq nginx)
     command -v pm2 &>/dev/null || npm install -g pm2
     command -v certbot &>/dev/null || apt-get install -y -qq certbot python3-certbot-nginx
-    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/ecomgear/preview-service /var/www/html
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/SMEsAgent/preview-service /var/www/html
   " "$VPS2_SSH_PORT"
 
   # ── 2. Upload apps/preview-service/ ───────────────────────────
   log "Uploading apps/preview-service/ → VPS2..."
-  rsync_preview_service "$ROOT_DIR/apps/preview-service/" "/var/www/ecomgear/preview-service/" \
+  rsync_preview_service "$ROOT_DIR/apps/preview-service/" "/var/www/SMEsAgent/preview-service/" \
     "$VPS2_HOST" "$VPS2_USER" "$VPS2_PASS" "$VPS2_SSH_PORT"
-  rsync_file "$ROOT_DIR/infrastructure/ecosystem.config.cjs" "/var/www/ecomgear/ecosystem.config.cjs" \
+  rsync_file "$ROOT_DIR/infrastructure/ecosystem.config.cjs" "/var/www/SMEsAgent/ecosystem.config.cjs" \
     "$VPS2_HOST" "$VPS2_USER" "$VPS2_PASS" "$VPS2_SSH_PORT"
 
   # ── 3. Write local HTTP-only nginx config ─────────────────
   cat > "$TMP_DIR/vps2-http.conf" << 'NGINX'
 server {
     listen 80;
-    server_name preview.ecomgear.app;
+    server_name preview.SMEsAgent.app;
 
     location /.well-known/acme-challenge/ { root /var/www/html; }
 
@@ -476,18 +476,18 @@ server {
     }
 }
 
-# Wildcard published subdomains   redirect {slug}.ecomgear.app → path-based HTTPS
+# Wildcard published subdomains   redirect {slug}.SMEsAgent.app → path-based HTTPS
 # .app TLD is HSTS-preloaded: HTTP is blocked by all browsers.
-# All published sites use https://preview.ecomgear.app/p/{slug} instead.
+# All published sites use https://preview.SMEsAgent.app/p/{slug} instead.
 server {
     listen 80;
-    server_name ~^(?<slug>[a-z0-9][a-z0-9-]*[a-z0-9])\.ecomgear\.app$;
+    server_name ~^(?<slug>[a-z0-9][a-z0-9-]*[a-z0-9])\.SMEsAgent\.app$;
 
     location /.well-known/acme-challenge/ { root /var/www/html; }
 
     # Permanent redirect to path-based HTTPS URL (works even without wildcard cert)
     location / {
-        return 301 https://preview.ecomgear.app/p/$slug$request_uri;
+        return 301 https://preview.SMEsAgent.app/p/$slug$request_uri;
     }
 }
 NGINX
@@ -496,7 +496,7 @@ NGINX
   rsync_file "$TMP_DIR/vps2-http.conf" "/etc/nginx/sites-available/preview.conf" \
     "$VPS2_HOST" "$VPS2_USER" "$VPS2_PASS" "$VPS2_SSH_PORT"
   ssh_run "$VPS2_HOST" "$VPS2_USER" "$VPS2_PASS" "
-    rm -f /etc/nginx/sites-enabled/ecomgear-preview /etc/nginx/sites-available/ecomgear-preview
+    rm -f /etc/nginx/sites-enabled/SMEsAgent-preview /etc/nginx/sites-available/SMEsAgent-preview
     ln -sf /etc/nginx/sites-available/preview.conf /etc/nginx/sites-enabled/preview.conf
     nginx -t && systemctl reload nginx && echo 'nginx OK on VPS2'
   " "$VPS2_SSH_PORT"
@@ -504,58 +504,58 @@ NGINX
   # ── 5. SSL cert   reinstall if exists, issue if not ───────
   log "Configuring SSL for VPS2..."
   ssh_run "$VPS2_HOST" "$VPS2_USER" "$VPS2_PASS" "
-    if [ -f /etc/letsencrypt/live/preview.ecomgear.app/fullchain.pem ]; then
-      certbot install --nginx --cert-name preview.ecomgear.app --non-interactive 2>&1 \
+    if [ -f /etc/letsencrypt/live/preview.SMEsAgent.app/fullchain.pem ]; then
+      certbot install --nginx --cert-name preview.SMEsAgent.app --non-interactive 2>&1 \
         && systemctl reload nginx \
         && echo '[SSL] Cert reinstalled into new config'
     else
       pkill -f certbot 2>/dev/null || true
       certbot --nginx --non-interactive --agree-tos --no-eff-email \
-        -m admin@ecomgear.dev -d preview.ecomgear.app \
-        2>&1 && echo '[SSL] preview.ecomgear.app cert issued' || echo '[SSL] certbot failed - HTTP for now'
+        -m admin@SMEsAgent.dev -d preview.SMEsAgent.app \
+        2>&1 && echo '[SSL] preview.SMEsAgent.app cert issued' || echo '[SSL] certbot failed - HTTP for now'
     fi
   " "$VPS2_SSH_PORT" || true
   log "Wildcard preview subdomains are redirected to path-based HTTPS; wildcard cert is optional for current routing"
 
   # ── 6. npm ci + PM2 ──────────────────────────────────────
   ssh_run "$VPS2_HOST" "$VPS2_USER" "$VPS2_PASS" "
-    cd /var/www/ecomgear/preview-service
+    cd /var/www/SMEsAgent/preview-service
     npm ci --omit=dev
-    cd /var/www/ecomgear
-    if pm2 list | grep -q 'ecomgear-preview'; then
-      pm2 reload ecomgear-preview
+    cd /var/www/SMEsAgent
+    if pm2 list | grep -q 'SMEsAgent-preview'; then
+      pm2 reload SMEsAgent-preview
     else
-      pm2 start ecosystem.config.cjs --only ecomgear-preview
+      pm2 start ecosystem.config.cjs --only SMEsAgent-preview
     fi
     pm2 save --force
     echo 'Preview service running on VPS2'
   " "$VPS2_SSH_PORT"
 
-  # ── 7. Write + deploy hosting.ecomgear.app reverse-proxy ─
-  log "Configuring hosting.ecomgear.app proxy on VPS2..."
+  # ── 7. Write + deploy hosting.SMEsAgent.app reverse-proxy ─
+  log "Configuring hosting.SMEsAgent.app proxy on VPS2..."
   local vps4_target="${VPS4_HOST:-187.77.157.231}"
   cat > "$TMP_DIR/hosting-proxy.conf" << NGINX
-# Allowed origins map   only ecomgear.dev frontends get CORS header
+# Allowed origins map   only SMEsAgent.dev frontends get CORS header
 map \$http_origin \$cors_hosting {
     default                      "";
-    "https://ecomgear.dev"       "https://ecomgear.dev";
-    "https://www.ecomgear.dev"   "https://www.ecomgear.dev";
+    "https://SMEsAgent.dev"       "https://SMEsAgent.dev";
+    "https://www.SMEsAgent.dev"   "https://www.SMEsAgent.dev";
     "http://localhost:5173"      "http://localhost:5173";
     "http://localhost:8080"      "http://localhost:8080";
 }
 
 server {
     listen 80;
-    server_name hosting.ecomgear.app;
+    server_name hosting.SMEsAgent.app;
     location /.well-known/acme-challenge/ { root /var/www/html; }
     location / { return 301 https://\$host\$request_uri; }
 }
 server {
     listen 443 ssl;
-    server_name hosting.ecomgear.app;
+    server_name hosting.SMEsAgent.app;
 
-    ssl_certificate     /etc/letsencrypt/live/hosting.ecomgear.app/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/hosting.ecomgear.app/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/hosting.SMEsAgent.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/hosting.SMEsAgent.app/privkey.pem;
 
     client_max_body_size 200M;
 
@@ -595,20 +595,20 @@ server {
 NGINX
 
   rsync_file "$TMP_DIR/hosting-proxy.conf" \
-    "/etc/nginx/sites-available/hosting.ecomgear.app.conf" \
+    "/etc/nginx/sites-available/hosting.SMEsAgent.app.conf" \
     "$VPS2_HOST" "$VPS2_USER" "$VPS2_PASS" "$VPS2_SSH_PORT"
   ssh_run "$VPS2_HOST" "$VPS2_USER" "$VPS2_PASS" "
-    ln -sf /etc/nginx/sites-available/hosting.ecomgear.app.conf \
-           /etc/nginx/sites-enabled/hosting.ecomgear.app.conf
+    ln -sf /etc/nginx/sites-available/hosting.SMEsAgent.app.conf \
+           /etc/nginx/sites-enabled/hosting.SMEsAgent.app.conf
     nginx -t && systemctl reload nginx && echo 'hosting proxy config reloaded'
   " "$VPS2_SSH_PORT"
-  ok "hosting.ecomgear.app proxy configured on VPS2 ✓"
+  ok "hosting.SMEsAgent.app proxy configured on VPS2 ✓"
 
   ok "VPS2 preview service deployed ✓"
 }
 
 # ============================================================
-# VPS3   Agent / Gen Server (gen.ecomgear.dev + agent.ecomgear.dev)
+# VPS3   Agent / Gen Server (gen.SMEsAgent.dev + agent.SMEsAgent.dev)
 # ============================================================
 deploy_vps3() {
   log "═══ VPS3 ($VPS3_HOST)   Building & deploying agent/gen server ═══"
@@ -623,7 +623,7 @@ deploy_vps3() {
     command -v nginx &>/dev/null || (apt-get update -qq && apt-get install -y -qq nginx)
     command -v certbot &>/dev/null || apt-get install -y -qq certbot python3-certbot-nginx
     command -v pm2 &>/dev/null || npm install -g pm2
-    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/ecomgear/server /var/www/ecomgear/supabase/functions
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/SMEsAgent/server /var/www/SMEsAgent/supabase/functions
   "
 
   # ── 2. Build TypeScript ───────────────────────────────────
@@ -642,19 +642,19 @@ deploy_vps3() {
     --filter='P logs/***' \
     --exclude='node_modules' --exclude='.git' --exclude='*.log' \
     -e "ssh $SSH_OPTS" \
-    "$ROOT_DIR/apps/api-gateway/" "${VPS3_USER}@${VPS3_HOST}:/var/www/ecomgear/server/"
-  rsync_to "$ROOT_DIR/supabase/functions/" "/var/www/ecomgear/supabase/functions/" \
+    "$ROOT_DIR/apps/api-gateway/" "${VPS3_USER}@${VPS3_HOST}:/var/www/SMEsAgent/server/"
+  rsync_to "$ROOT_DIR/supabase/functions/" "/var/www/SMEsAgent/supabase/functions/" \
     "$VPS3_HOST" "$VPS3_USER" "$VPS3_PASS"
-  rsync_file "$ROOT_DIR/infrastructure/ecosystem.config.cjs" "/var/www/ecomgear/ecosystem.config.cjs" \
+  rsync_file "$ROOT_DIR/infrastructure/ecosystem.config.cjs" "/var/www/SMEsAgent/ecosystem.config.cjs" \
     "$VPS3_HOST" "$VPS3_USER" "$VPS3_PASS"
 
   # ── 4. Write local nginx config ───────────────────────────
   cat > "$TMP_DIR/vps3-http.conf" << 'NGINX'
   map $http_origin $frontend_cors_origin {
     default                     "";
-    "https://ecomgear.dev"     "https://ecomgear.dev";
-    "https://www.ecomgear.dev" "https://www.ecomgear.dev";
-    "https://preview.ecomgear.app" "https://preview.ecomgear.app";
+    "https://SMEsAgent.dev"     "https://SMEsAgent.dev";
+    "https://www.SMEsAgent.dev" "https://www.SMEsAgent.dev";
+    "https://preview.SMEsAgent.app" "https://preview.SMEsAgent.app";
     "http://localhost:8080"    "http://localhost:8080";
     "http://localhost:5173"    "http://localhost:5173";
     "http://localhost:3000"    "http://localhost:3000";
@@ -665,7 +665,7 @@ deploy_vps3() {
 
   server {
     listen 80;
-    server_name gen.ecomgear.dev;
+    server_name gen.SMEsAgent.dev;
     client_max_body_size 25m;
 
     location / {
@@ -704,7 +704,7 @@ deploy_vps3() {
 
   server {
     listen 80;
-    server_name agent.ecomgear.dev;
+    server_name agent.SMEsAgent.dev;
     client_max_body_size 25m;
 
     location / {
@@ -746,7 +746,7 @@ NGINX
   rsync_file "$TMP_DIR/vps3-http.conf" "/etc/nginx/sites-available/gen-agent.conf" \
     "$VPS3_HOST" "$VPS3_USER" "$VPS3_PASS"
   ssh_run "$VPS3_HOST" "$VPS3_USER" "$VPS3_PASS" "
-    rm -f /etc/nginx/sites-enabled/ecomgear-gen /etc/nginx/sites-available/ecomgear-gen
+    rm -f /etc/nginx/sites-enabled/SMEsAgent-gen /etc/nginx/sites-available/SMEsAgent-gen
     ln -sf /etc/nginx/sites-available/gen-agent.conf /etc/nginx/sites-enabled/gen-agent.conf
     nginx -t
     if ! systemctl is-active --quiet nginx; then
@@ -757,15 +757,15 @@ NGINX
   "
 
   # ── 6. Try SSL cert ───────────────────────────────────────
-  log "Attempting certbot for gen/agent.ecomgear.dev..."
+  log "Attempting certbot for gen/agent.SMEsAgent.dev..."
   ssh_run "$VPS3_HOST" "$VPS3_USER" "$VPS3_PASS" "
-    if [ -f /etc/letsencrypt/live/gen.ecomgear.dev/fullchain.pem ]; then
-      certbot install --nginx --cert-name gen.ecomgear.dev --non-interactive 2>&1 \
+    if [ -f /etc/letsencrypt/live/gen.SMEsAgent.dev/fullchain.pem ]; then
+      certbot install --nginx --cert-name gen.SMEsAgent.dev --non-interactive 2>&1 \
         && systemctl reload nginx \
         && echo '[SSL] Cert reinstalled into new config'
     else
       certbot --nginx --non-interactive --agree-tos --no-eff-email \
-        -m admin@ecomgear.dev -d gen.ecomgear.dev -d agent.ecomgear.dev \
+        -m admin@SMEsAgent.dev -d gen.SMEsAgent.dev -d agent.SMEsAgent.dev \
         2>&1 && echo '[SSL] gen/agent certs issued' || echo '[SSL] certbot failed - HTTP for now'
     fi
   " || true
@@ -777,7 +777,7 @@ NGINX
 NODE_ENV=production
 PORT=5001
 AGENT_PORT=5002
-SUPABASE_URL=https://api.ecomgear.dev
+SUPABASE_URL=https://api.SMEsAgent.dev
 SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
 SUPABASE_SERVICE_ROLE_KEY=${supabase_service_key_effective}
 SUPABASE_SERVICE_KEY=${supabase_service_key_effective}
@@ -787,11 +787,11 @@ DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
 GEMINI_API_KEY=${GEMINI_API_KEY:-}
 AI_MODEL=${AI_MODEL:-claude-sonnet-4-6}
 AI_FALLBACK_MODEL=${AI_FALLBACK_MODEL:-deepseek-chat}
-CORS_ORIGIN=https://ecomgear.dev,https://www.ecomgear.dev,http://localhost:5173,http://localhost:3000,http://localhost:8080
-PREVIEW_DOMAIN=preview.ecomgear.app
-PREVIEW_SERVICE_URL=https://preview.ecomgear.app
-PREVIEW_CONTROL_URL=https://preview.ecomgear.app
-SERVER_PROJECTS_DIR=/var/ecomgear/projects
+CORS_ORIGIN=https://SMEsAgent.dev,https://www.SMEsAgent.dev,http://localhost:5173,http://localhost:3000,http://localhost:8080
+PREVIEW_DOMAIN=preview.SMEsAgent.app
+PREVIEW_SERVICE_URL=https://preview.SMEsAgent.app
+PREVIEW_CONTROL_URL=https://preview.SMEsAgent.app
+SERVER_PROJECTS_DIR=/var/SMEsAgent/projects
 LOG_LEVEL=info
 TENANT_DB_HOST=${TENANT_DB_HOST:-}
 TENANT_DB_PORT=${TENANT_DB_PORT:-5432}
@@ -804,23 +804,23 @@ TENANT_DB_SSL=${TENANT_DB_SSL:-}
 TENANT_DB_RELOAD_URL=${TENANT_DB_RELOAD_URL:-}
 TENANT_DB_RELOAD_SECRET=${TENANT_DB_RELOAD_SECRET:-}
 ENVEOF
-  rsync_file "$TMP_DIR/server.env" "/var/www/ecomgear/server/.env" \
+  rsync_file "$TMP_DIR/server.env" "/var/www/SMEsAgent/server/.env" \
     "$VPS3_HOST" "$VPS3_USER" "$VPS3_PASS"
   ssh_run "$VPS3_HOST" "$VPS3_USER" "$VPS3_PASS" "
     true  # env already written via rsync
-    mkdir -p /var/ecomgear/projects
-    cd /var/www/ecomgear/server
+    mkdir -p /var/SMEsAgent/projects
+    cd /var/www/SMEsAgent/server
     npm ci
     npm run build 2>&1 || (echo 'TypeScript build failed'; exit 1)
-    cd /var/www/ecomgear
+    cd /var/www/SMEsAgent
     # Ensure PM2 process receives fresh env values from server/.env
     set -a
-    . /var/www/ecomgear/server/.env
+    . /var/www/SMEsAgent/server/.env
     set +a
-    if pm2 list | grep -q 'ecomgear-gen'; then
-      pm2 restart ecomgear-gen --update-env
+    if pm2 list | grep -q 'SMEsAgent-gen'; then
+      pm2 restart SMEsAgent-gen --update-env
     else
-      pm2 start /var/www/ecomgear/server/dist/index.js --name ecomgear-gen --cwd /var/www/ecomgear/server 2>/dev/null || true
+      pm2 start /var/www/SMEsAgent/server/dist/index.js --name SMEsAgent-gen --cwd /var/www/SMEsAgent/server 2>/dev/null || true
     fi
     pm2 save --force
     echo 'Gen server on VPS3'
@@ -854,7 +854,7 @@ deploy_vps4() {
       apt-get update -qq
       apt-get install -y caddy
     fi
-    mkdir -p /opt/ecomgear/hosting-service /var/www/ecomgear/sites /etc/caddy/sites
+    mkdir -p /opt/SMEsAgent/hosting-service /var/www/SMEsAgent/sites /etc/caddy/sites
     ufw allow 80/tcp 2>/dev/null || true
     ufw allow 443/tcp 2>/dev/null || true
   "
@@ -864,7 +864,7 @@ deploy_vps4() {
   sshpass -p "$VPS4_PASS" rsync -avz --delete \
     --exclude='node_modules' --exclude='.git' --exclude='*.log' \
     -e "ssh $SSH_OPTS" \
-    "$ROOT_DIR/apps/hosting-service/" "${VPS4_USER}@${VPS4_HOST}:/opt/ecomgear/hosting-service/"
+    "$ROOT_DIR/apps/hosting-service/" "${VPS4_USER}@${VPS4_HOST}:/opt/SMEsAgent/hosting-service/"
 
   # ── 3. Upload Caddyfile ──────────────────────────────────
   rsync_file "$ROOT_DIR/apps/hosting-service/Caddyfile" "/etc/caddy/Caddyfile" \
@@ -872,7 +872,7 @@ deploy_vps4() {
 
   # ── 4. npm ci + start services ───────────────────────────
   ssh_run "$VPS4_HOST" "$VPS4_USER" "$VPS4_PASS" "
-    cd /opt/ecomgear/hosting-service
+    cd /opt/SMEsAgent/hosting-service
     npm ci --omit=dev
 
     # Stop nginx (Caddy takes over ports 80/443)
@@ -889,16 +889,16 @@ deploy_vps4() {
     caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>/dev/null || true
 
     # Write PM2 ecosystem config with env vars for the hosting service
-    cat > /opt/ecomgear/hosting-service/ecosystem.config.cjs <<PMEOF
+    cat > /opt/SMEsAgent/hosting-service/ecosystem.config.cjs <<PMEOF
 module.exports = {
   apps: [{
-    name: 'ecomgear-hosting',
+    name: 'SMEsAgent-hosting',
     script: 'server.js',
-    cwd: '/opt/ecomgear/hosting-service',
+    cwd: '/opt/SMEsAgent/hosting-service',
     env: {
       HOSTING_PUBLIC_IP: '$VPS4_HOST',
       HOSTING_NODE_NAME: 'vps4-hosting-1',
-      DEFAULT_DOMAIN: 'apps.ecomgear.app',
+      DEFAULT_DOMAIN: 'apps.SMEsAgent.app',
       HOSTING_PORT: '4000',
       NODE_ENV: 'production',
       HOSTING_DEPLOY_SECRET: '${HOSTING_DEPLOY_SECRET:-}'
@@ -908,9 +908,9 @@ module.exports = {
 PMEOF
 
     # Start hosting service via PM2
-    cd /opt/ecomgear/hosting-service
-    if pm2 list | grep -q 'ecomgear-hosting'; then
-      pm2 delete ecomgear-hosting 2>/dev/null || true
+    cd /opt/SMEsAgent/hosting-service
+    if pm2 list | grep -q 'SMEsAgent-hosting'; then
+      pm2 delete SMEsAgent-hosting 2>/dev/null || true
     fi
     pm2 start ecosystem.config.cjs
     pm2 save --force
@@ -946,9 +946,9 @@ ELAPSED=$((END_TIME - START_TIME))
 echo ""
 ok "════════════════════════════════════════════"
 ok "  All targets deployed in ${ELAPSED}s"
-ok "  http://ecomgear.dev   (DNS → $VPS1_HOST)"
-ok "  http://preview.ecomgear.app"
-ok "  http://gen.ecomgear.dev"
-ok "  http://agent.ecomgear.dev"
+ok "  http://SMEsAgent.dev   (DNS → $VPS1_HOST)"
+ok "  http://preview.SMEsAgent.app"
+ok "  http://gen.SMEsAgent.dev"
+ok "  http://agent.SMEsAgent.dev"
 [[ -n "$VPS4_HOST" ]] && ok "  http://$VPS4_HOST:4000 (hosting)"
 ok "════════════════════════════════════════════"

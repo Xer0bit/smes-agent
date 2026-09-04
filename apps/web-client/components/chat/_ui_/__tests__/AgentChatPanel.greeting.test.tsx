@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-// Real bug report (2026-08-04): user sees "EcomGear Agent" rendered twice in
+// Real bug report (2026-08-04): user sees "SMEsAgent Agent" rendered twice in
 // the welcome banner. This test renders the actual component (guest mode,
 // so the message-history effect short-circuits to just the synthetic
 // greeting with zero network calls) and asserts the text appears exactly
@@ -28,7 +28,7 @@ vi.mock('@/contexts/UsageContext', () => ({
 import { AgentChatPanel } from '../AgentChatPanel';
 
 describe('AgentChatPanel greeting banner', () => {
-  it('renders "EcomGear Agent" exactly once', () => {
+  it('renders "SMEsAgent Agent" exactly once', () => {
     render(
       <AgentChatPanel
         projectId="test-project"
@@ -36,6 +36,6 @@ describe('AgentChatPanel greeting banner', () => {
       />,
     );
 
-    expect(screen.getAllByText('EcomGear Agent')).toHaveLength(1);
+    expect(screen.getAllByText('SMEsAgent Agent')).toHaveLength(1);
   });
 });

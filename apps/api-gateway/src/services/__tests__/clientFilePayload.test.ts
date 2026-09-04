@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { stripBinariesForClient, payloadBytes } from '../clientFilePayload.js';
 
-const SENTINEL = '__ECOMGEAR_BIN64__';
+const SENTINEL = '__SMEsAgent_BIN64__';
 const bin = (path: string, kb = 1) => ({ path, content: SENTINEL + 'A'.repeat(kb * 1024) });
 const text = (path: string, content = 'export default function App() { return null; }') => ({ path, content });
 

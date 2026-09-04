@@ -13,7 +13,7 @@ export function CloudRegionDialog({ open, onOpenChange, onOpenSettings }: CloudR
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl bg-slate-900 text-white border-slate-700">
         <DialogHeader>
-          <DialogTitle className="text-3xl font-bold">eCOMGear Cloud</DialogTitle>
+          <DialogTitle className="text-3xl font-bold">SMEsAgent Cloud</DialogTitle>
           <DialogDescription className="sr-only">
             Review regional cloud application options for China and Hong Kong services.
           </DialogDescription>

@@ -105,7 +105,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
     const projectSubdomain = projectFull?.published_subdomain || project.slug || '';
     const projectCustomDomain = (() => {
       const url = (projectFull?.published_url as string) ?? '';
-      return url && !url.includes('ecomgear.app') ? url.replace(/^https?:\/\//, '') : '';
+      return url && !url.includes('SMEsAgent.app') ? url.replace(/^https?:\/\//, '') : '';
     })();
 
     const saved = (setting?.setting_value as SeoData) ?? {};
@@ -127,7 +127,7 @@ router.post('/:projectId/sync', async (req: AuthenticatedRequest, res: Response)
     const projectUrl = projectCustomDomain
       ? `https://${projectCustomDomain}`
       : projectSubdomain
-        ? `https://${projectSubdomain}.ecomgear.app`
+        ? `https://${projectSubdomain}.SMEsAgent.app`
         : '';
 
     const updated = applySeoToHtml(original, seo, projectUrl);

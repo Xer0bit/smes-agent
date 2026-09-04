@@ -174,13 +174,13 @@ export const SettingsContent = ({ activeSection, projectId, workspaceFiles = [],
     };
 
     switch (activeSection) {
-      case "ecomgear-database":
+      case "SMEsAgent-database":
         return <DatabaseSettings organizationId={project?.organization_id ?? null} projectId={projectId} />;
 
-      case "ecomgear-functions":
+      case "SMEsAgent-functions":
         return <EdgeFunctionsSettings projectId={projectId} />;
 
-      case "ecomgear-llm":
+      case "SMEsAgent-llm":
         return (
           <div className="space-y-6">
             <div>

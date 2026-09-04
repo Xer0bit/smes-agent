@@ -97,23 +97,23 @@ const BatchValidate = () => {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-4 border rounded-lg">
+                <div className="p-4 border rounded-none">
                   <div className="text-2xl font-bold">{results.stats.total}</div>
                   <div className="text-sm text-muted-foreground">Total</div>
                 </div>
-                <div className="p-4 border rounded-lg bg-green-50 dark:bg-green-950">
+                <div className="p-4 border rounded-none bg-green-50 dark:bg-green-950">
                   <div className="text-2xl font-bold text-green-700 dark:text-green-300">
                     {results.stats.processed}
                   </div>
                   <div className="text-sm text-muted-foreground">Processed</div>
                 </div>
-                <div className="p-4 border rounded-lg bg-red-50 dark:bg-red-950">
+                <div className="p-4 border rounded-none bg-red-50 dark:bg-red-950">
                   <div className="text-2xl font-bold text-red-700 dark:text-red-300">
                     {results.stats.failed}
                   </div>
                   <div className="text-sm text-muted-foreground">Failed</div>
                 </div>
-                <div className="p-4 border rounded-lg bg-yellow-50 dark:bg-yellow-950">
+                <div className="p-4 border rounded-none bg-yellow-50 dark:bg-yellow-950">
                   <div className="text-2xl font-bold text-yellow-700 dark:text-yellow-300">
                     {results.stats.skipped}
                   </div>
@@ -131,7 +131,7 @@ const BatchValidate = () => {
                   {results.details.map((detail: any, index: number) => (
                     <div
                       key={index}
-                      className="p-3 border rounded-lg text-sm flex items-start gap-3"
+                      className="p-3 border rounded-none text-sm flex items-start gap-3"
                     >
                       {detail.status === 'success' ? (
                         <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />

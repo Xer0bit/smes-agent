@@ -134,7 +134,7 @@ export const replaceInFilesTool: ToolDefinition<z.infer<typeof schema>> = {
     for (const p of paths) {
       const { content } = sanitized.get(p)!;
       await writeProjectFile({ appPath: ctx.appPath, projectId: ctx.projectId, runId: ctx.runId }, p, content);
-      ctx.onXmlComplete(`<ecomgear-edit path="${p}"></ecomgear-edit>`);
+      ctx.onXmlComplete(`<SMEsAgent-edit path="${p}"></SMEsAgent-edit>`);
       ctx.pendingPreviewFiles?.set(p, content);
       ctx.ledger?.recordEdit(p, args.edits.find((e) => e.path === p)?.search ?? '');
       if (/\.(tsx?|jsx?)$/.test(p)) {

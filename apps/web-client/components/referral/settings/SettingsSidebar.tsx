@@ -59,9 +59,9 @@ function buildGroups(isChinaOrg: boolean, isEcgProject: boolean): NavGroup[] {
       title: "Platform",
       icon: <Server className="h-4 w-4" />,
       items: [
-        { id: "ecomgear-database", label: "Database", badge: 'hot' },
-        { id: "ecomgear-functions", label: "Edge Functions" },
-        { id: "ecomgear-llm", label: "LLM", disabled: true },
+        { id: "SMEsAgent-database", label: "Database", badge: 'hot' },
+        { id: "SMEsAgent-functions", label: "Edge Functions" },
+        { id: "SMEsAgent-llm", label: "LLM", disabled: true },
         ...(isChinaOrg ? [
           { id: "integrations-china", label: "China Market — Overview" },
           { id: "china-icp", label: ".cn ICP Filing", badge: 'new' as const },

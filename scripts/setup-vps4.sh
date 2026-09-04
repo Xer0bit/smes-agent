@@ -13,7 +13,7 @@
 set -euo pipefail
 
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║  eComGear VPS4   Enterprise Hosting Setup                  ║"
+echo "║  SMEsAgent VPS4   Enterprise Hosting Setup                  ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 
 # ── 1. System updates ─────────────────────────────────────────────────────────
@@ -48,9 +48,9 @@ echo "  Caddy: $(caddy version)"
 
 # ── 5. Create directories ─────────────────────────────────────────────────────
 echo "[5/7] Creating directories..."
-mkdir -p /var/www/ecomgear/sites
+mkdir -p /var/www/SMEsAgent/sites
 mkdir -p /etc/caddy/sites
-mkdir -p /opt/ecomgear/hosting-service
+mkdir -p /opt/SMEsAgent/hosting-service
 
 # ── 6. Firewall ───────────────────────────────────────────────────────────────
 echo "[6/7] Configuring firewall..."
@@ -71,9 +71,9 @@ echo "╔═══════════════════════�
 echo "║  VPS4 base setup complete!                                 ║"
 echo "║                                                            ║"
 echo "║  Next steps:                                               ║"
-echo "║  1. Deploy hosting-service to /opt/ecomgear/hosting-service║"
+echo "║  1. Deploy hosting-service to /opt/SMEsAgent/hosting-service║"
 echo "║  2. Copy Caddyfile to /etc/caddy/Caddyfile                ║"
 echo "║  3. Set HOSTING_DEPLOY_SECRET in env                       ║"
-echo "║  4. pm2 start server.js --name ecomgear-hosting            ║"
+echo "║  4. pm2 start server.js --name SMEsAgent-hosting            ║"
 echo "║  5. pm2 save && pm2 startup                                ║"
 echo "╚══════════════════════════════════════════════════════════════╝"

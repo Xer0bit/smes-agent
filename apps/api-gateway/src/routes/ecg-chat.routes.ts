@@ -9,7 +9,7 @@ import { listEcgTools, callEcgTool, EcgMcpTool } from '../services/ecgMcpClient.
 
 const router = Router();
 
-const PORTAL_API_URL = process.env.ECG_PORTAL_URL || 'https://api.ecomgear.ai';
+const PORTAL_API_URL = process.env.ECG_PORTAL_URL || 'https://api.SMEsAgent.ai';
 
 async function getSecrets(projectId: string, userId: string | null) {
   const query = supabase.from('projects').select('id, user_id').eq('id', projectId);
@@ -23,7 +23,7 @@ async function getSecrets(projectId: string, userId: string | null) {
 }
 
 // Tries the dashboard-access token first (anonymous visitor to a deployed
-// dashboard); falls back to the eComGear owner Supabase session otherwise.
+// dashboard); falls back to the SMEsAgent owner Supabase session otherwise.
 function resolveAuth(req: AuthenticatedRequest, res: ExpressResponse, next: NextFunction): void {
   const projectId = (req.query.projectId ?? req.headers['x-project-id']) as string | undefined;
   dashboardAccessMiddleware(req, res, () => {

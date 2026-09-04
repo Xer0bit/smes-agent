@@ -82,7 +82,7 @@ export interface GenerationResponse {
   renames?: FileRename[];
   /** npm package names the agent wants to install */
   dependencies?: string[];
-  /** Short human-readable summary from <ecomgear-chat-summary> */
+  /** Short human-readable summary from <SMEsAgent-chat-summary> */
   summary?: string;
   usage?: any;
   /** Total tokens consumed by this generation (from server usage telemetry) */
@@ -101,11 +101,6 @@ export interface GenerationResponse {
    *  run and repair couldn't confirm a fix, but the files were kept (not
    *  reverted). Frontend should not show an unqualified success toast. */
   smokeFailureSurvivedRepair?: boolean;
-  /** True when every change this run made was reverted to the pre-agent state
-   *  (repair gave up and restored the last known-good version). Frontend must
-   *  not show an "App updated." success toast for a run whose changes were
-   *  all discarded. */
-  revertedToPreAgent?: boolean;
   /** The preview could not install a package from package.json; the app may not resolve it. */
   previewDepsError?: string | null;
   /** Actual USD cost of this run (0 on ghost/timeout runs) */

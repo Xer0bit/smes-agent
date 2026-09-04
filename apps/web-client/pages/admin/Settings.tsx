@@ -1,23 +1,21 @@
-import { useEffect, useState } from 'react';
+import BrandLoader from '@/components/BrandLoader';
+import { useEffect, useMemo, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Loader2, Plus, Trash2, KeyRound, RefreshCw, CheckCircle2, FlaskConical, XCircle, Server, Cpu } from 'lucide-react';
 import { toast } from 'sonner';
-import { adminLlmService, type LlmProvider, type LlmStatus } from '@/services/adminLlmService';
-import { Page, Stats, Panel, Table, Dot, Tag, btn, input, when } from '@/components/admin/ui';
+import { adminLlmService, type LlmStatus } from '@/services/adminLlmService';
 
 const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
-const PROVIDERS: Array<{ id: LlmProvider; label: string }> = [
-  { id: 'anthropic', label: 'Anthropic' },
-  { id: 'deepseek', label: 'DeepSeek' },
-  { id: 'gemini', label: 'Gemini' },
-  { id: 'zai', label: 'z.ai' },
-];
-const EMPTY_KEYS: Record<LlmProvider, string> = { anthropic: '', deepseek: '', gemini: '', zai: '' };
-const SELECT = 'h-8 text-xs bg-transparent border-white/10 text-white';
-const isProvider = (v: string): v is LlmProvider => PROVIDERS.some((p) => p.id === v);
 
-function normalizeModelId(value: string): string {
-  return value.trim().replace(/[}\],;]+$/g, '').trim();
+function normalizeModelId(input: string): string {
+  return input
+    .trim()
+    .replace(/[}\],;]+$/g, '')
+    .trim();
 }
 
 function formatUptime(seconds: number): string {
@@ -39,55 +37,48 @@ interface RuntimeServerStatus {
   env: string;
 }
 
-type TestResults = Record<string, { ok: boolean; reason: string; testedAt: string }>;
-
 export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [testing, setTesting] = useState(false);
   const [status, setStatus] = useState<LlmStatus | null>(null);
-  const [runtime, setRuntime] = useState<RuntimeServerStatus | null>(null);
-  const [testResults, setTestResults] = useState<TestResults | null>(null);
-  const [keys, setKeys] = useState(EMPTY_KEYS);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [newModelId, setNewModelId] = useState('');
-  const [newModelProvider, setNewModelProvider] = useState<LlmProvider>('anthropic');
+  const [apiKeys, setApiKeys] = useState<{ openrouter: string }>({ openrouter: '' });
+  const [testing, setTesting] = useState(false);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; reason: string; testedAt: string }> | null>(null);
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeServerStatus | null>(null);
 
-  const load = async () => {
-    setLoading(true);
+  useEffect(() => { loadSettings(); }, []);
+
+  const loadSettings = async () => {
     try {
-      const [data, server] = await Promise.all([adminLlmService.getStatus(), adminLlmService.getServerStatus()]);
+      setLoading(true);
+      const [data, runtime] = await Promise.all([
+        adminLlmService.getStatus(),
+        adminLlmService.getServerStatus(),
+      ]);
       setStatus(data);
-      setRuntime(server);
-    } catch {
+      setRuntimeStatus(runtime);
+      setLastSyncedAt(data.updatedAt);
+    } catch (error) {
+      console.error('Failed to load settings:', error);
       toast.error('Failed to load settings');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { void load(); }, []);
-
-  const persist = async (next: LlmStatus, okText: string) => {
+  const persistStatus = async (next: LlmStatus, successText = 'LLM settings synced') => {
     setSyncing(true);
     setStatus(next);
     try {
-      setStatus(await adminLlmService.saveStatus(next));
-      toast.success(okText);
+      const saved = await adminLlmService.saveStatus(next);
+      setStatus(saved);
+      setLastSyncedAt(saved.updatedAt);
+      toast.success(successText);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to sync LLM settings');
-      await load();
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const applyModels = async (fn: () => Promise<LlmStatus>, okText: string) => {
-    setSyncing(true);
-    try {
-      setStatus(await fn());
-      toast.success(okText);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Request failed');
+      await loadSettings();
     } finally {
       setSyncing(false);
     }
@@ -96,9 +87,10 @@ export default function Settings() {
   const runProviderTest = async () => {
     setTesting(true);
     try {
-      setTestResults(await adminLlmService.testProviders());
-      await load();
-      toast.success('Provider test complete');
+      const results = await adminLlmService.testProviders();
+      setTestResults(results);
+      await loadSettings(); // refresh provider enabled states
+      toast.success('Provider test complete   states updated');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Provider test failed');
     } finally {
@@ -106,194 +98,263 @@ export default function Settings() {
     }
   };
 
-  if (!status) {
-    return <Page title="LLM"><div className="text-[13px] text-gray-500">{loading ? 'Loading' : 'Unavailable'}</div></Page>;
-  }
-
-  const { providers, models } = status;
-  const providerConfig = (p: LlmProvider) => (p === 'zai' ? providers.zai : providers[p]);
-  const isGlmExperiment = models.primary.toLowerCase().startsWith('glm');
-  const freeModel = models.freeModel || models.fallback;
-  const hasKeyInput = PROVIDERS.some((p) => keys[p.id]);
-
-  const setProviderEnabled = (p: LlmProvider, enabled: boolean) => {
-    const next: LlmStatus['providers'] = { ...providers };
-    if (p === 'anthropic') next.anthropic = { ...providers.anthropic, enabled };
-    else if (p === 'deepseek') next.deepseek = { ...providers.deepseek, enabled };
-    else if (p === 'gemini') next.gemini = { ...providers.gemini, enabled };
-    else next.zai = { ...providers.zai, enabled };
-    return persist({ ...status, providers: next }, `${p} ${enabled ? 'enabled' : 'disabled'}`);
-  };
-
-  const setFallbackEnabled = (fallbackEnabled: boolean) =>
-    persist({ ...status, providers: { ...providers, deepseek: { ...providers.deepseek, fallbackEnabled } } }, `Fallback ${fallbackEnabled ? 'enabled' : 'disabled'}`);
-
-  const toggleGlmExperiment = (enable: boolean) =>
-    persist(
-      {
-        ...status,
-        models: enable
-          ? { ...models, primary: 'glm-5.2', fallback: 'glm-5', freeModel: 'glm-4.7-flash' }
-          : { ...models, primary: 'gemini-3.1-pro-preview', fallback: 'deepseek-chat', freeModel: 'gemini-flash-latest' },
-      },
-      enable ? 'Switched to GLM' : 'Reverted to Gemini',
-    );
-
-  const setModel = (slot: 'primary' | 'fallback' | 'freeModel', id: string) =>
-    persist({ ...status, models: { ...models, [slot]: id } }, `${slot} model updated`);
-
   const saveApiKeys = async () => {
-    await persist(
-      {
-        ...status,
-        apiKeys: {
-          anthropic: keys.anthropic || undefined,
-          deepseek: keys.deepseek || undefined,
-          gemini: keys.gemini || undefined,
-          zai: keys.zai || undefined,
-        },
-      },
-      'API keys updated',
-    );
-    setKeys(EMPTY_KEYS);
+    if (!status) return;
+    const updates = {
+      apiKeys: {
+        openrouter: apiKeys.openrouter || undefined,
+      }
+    };
+    await persistStatus({ ...status, ...updates }, 'API key updated securely');
+    setApiKeys({ openrouter: '' });
   };
 
-  const addModel = () => {
-    const id = normalizeModelId(newModelId);
-    if (!id) return void toast.error('Model ID is required');
-    if (!MODEL_ID_RE.test(id)) return void toast.error('Invalid model ID');
-    setNewModelId(id);
-    return applyModels(async () => {
-      const next = await adminLlmService.addModel(id, newModelProvider);
-      setNewModelId('');
-      return next;
-    }, 'Model added');
-  };
-
-  const removeModel = (id: string) => {
-    if (id === models.primary || id === models.fallback || id === freeModel) return void toast.error('Model is in use');
-    return applyModels(() => adminLlmService.removeModel(id), 'Model removed');
-  };
-
-  const modelSelect = (value: string, onChange: (id: string) => void) => (
-    <Select value={value} onValueChange={onChange} disabled={syncing}>
-      <SelectTrigger className={SELECT}><SelectValue /></SelectTrigger>
-      <SelectContent>{models.allowed.map((m) => <SelectItem key={m.id} value={m.id}>{m.id}</SelectItem>)}</SelectContent>
-    </Select>
+  const availableModelIds = useMemo(
+    () => (status?.models.allowed || []).map((item) => item.id),
+    [status]
   );
 
+  const setProviderEnabled = async (enabled: boolean) => {
+    if (!status) return;
+    await persistStatus({
+      ...status,
+      providers: {
+        ...status.providers,
+        openrouter: { ...status.providers.openrouter, enabled },
+      },
+    }, `OpenRouter ${enabled ? 'enabled' : 'disabled'}`);
+  };
+
+  const setPrimaryModel = async (modelId: string) => {
+    if (!status) return;
+    await persistStatus({ ...status, models: { ...status.models, primary: modelId } }, 'Primary model updated');
+  };
+
+  const setFreeModel = async (modelId: string) => {
+    if (!status) return;
+    // fallback mirrors freeModel now -- there's no separate third model slot.
+    await persistStatus({ ...status, models: { ...status.models, freeModel: modelId, fallback: modelId } }, 'Small-task model updated');
+  };
+
+  const addModel = async () => {
+    const normalized = normalizeModelId(newModelId);
+    if (!normalized) {
+      toast.error('Model ID is required');
+      return;
+    }
+    if (!MODEL_ID_RE.test(normalized)) {
+      toast.error('Invalid model ID. Use letters, numbers, and . _ : / - only.');
+      return;
+    }
+
+    // Keep input synchronized with what we actually submit.
+    if (normalized !== newModelId) {
+      setNewModelId(normalized);
+    }
+
+    try {
+      setSyncing(true);
+      const next = await adminLlmService.addModel(normalized, 'openrouter');
+      setStatus(next);
+      setLastSyncedAt(next.updatedAt);
+      setNewModelId('');
+      toast.success('Model added');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to add model');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const removeModel = async (id: string) => {
+    if (!status) return;
+    if (id === status.models.primary || id === status.models.fallback || id === (status.models.freeModel || status.models.fallback)) {
+      toast.error('Cannot remove active primary, fallback, or free-tier model');
+      return;
+    }
+    try {
+      setSyncing(true);
+      const next = await adminLlmService.removeModel(id);
+      setStatus(next);
+      setLastSyncedAt(next.updatedAt);
+      toast.success('Model removed');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to remove model');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <BrandLoader variant="orbit" size={100} label="Loading settings" />
+      </div>
+    );
+  }
+
   return (
-    <Page
-      title="LLM"
-      actions={
-        <>
-          <span className="text-[11px] text-gray-500">{syncing ? 'Syncing' : `Synced ${when(status.updatedAt)}`}</span>
-          <button type="button" className={btn.ghost} onClick={() => void load()} disabled={loading || syncing}>Refresh</button>
-          <button type="button" className={btn.primary} onClick={() => void runProviderTest()} disabled={testing || syncing}>{testing ? 'Testing' : 'Test providers'}</button>
-        </>
-      }
-    >
-      {runtime && (
-        <Stats
-          items={[
-            { label: 'Env', value: runtime.env, tone: runtime.env === 'production' ? 'ok' : 'warn' },
-            { label: 'Uptime', value: formatUptime(runtime.uptimeSeconds) },
-            { label: 'Node', value: runtime.nodeVersion },
-            { label: 'CPU', value: `${runtime.cpu.cores} cores / ${(runtime.cpu.loadAvg[0] ?? 0).toFixed(2)}` },
-            { label: 'Heap MB', value: `${runtime.memory.heapUsedMB} / ${runtime.memory.heapTotalMB}` },
-            { label: 'RAM free MB', value: `${runtime.memory.freeMB} / ${runtime.memory.totalMB}` },
-          ]}
-        />
-      )}
+    <div className="space-y-6">
+      <div className="rounded-none border p-4 flex items-center justify-between" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
+        <div className="flex items-center gap-2 text-xs text-foreground/80">
+          {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
+          {syncing ? 'Syncing LLM control with server...' : `Synced${lastSyncedAt ? ` at ${new Date(lastSyncedAt).toLocaleTimeString()}` : ''}`}
+        </div>
+        <Button variant="outline" size="sm" onClick={loadSettings} disabled={loading || syncing} className="h-8 gap-2 border-white/10 bg-white/5 text-foreground hover:bg-white/10">
+          <RefreshCw className="h-3.5 w-3.5" />
+          Refresh
+        </Button>
+      </div>
 
-      <Panel title="Providers">
-        <Table head={['Provider', 'Key', 'Enabled']}>
-          {PROVIDERS.map((p) => {
-            const cfg = providerConfig(p.id);
-            return (
-              <tr key={p.id}>
-                <td>{p.label}</td>
-                <td><Dot tone={cfg?.keyConfigured ? 'ok' : 'off'} /></td>
-                <td><Switch checked={Boolean(cfg?.enabled)} onCheckedChange={(v) => void setProviderEnabled(p.id, v)} disabled={syncing} /></td>
-              </tr>
-            );
-          })}
-          <tr>
-            <td>Anthropic to DeepSeek fallback</td>
-            <td />
-            <td><Switch checked={Boolean(providers.deepseek.fallbackEnabled)} onCheckedChange={(v) => void setFallbackEnabled(v)} disabled={syncing} /></td>
-          </tr>
-          <tr>
-            <td>GLM experiment</td>
-            <td />
-            <td><Switch checked={isGlmExperiment} onCheckedChange={(v) => void toggleGlmExperiment(v)} disabled={syncing} /></td>
-          </tr>
-        </Table>
-      </Panel>
+      <div className="rounded-none border p-6" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
+        <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
+          <Server className="h-4 w-4 text-muted-foreground" />
+          Gen/API Runtime (Production)
+        </h3>
+        <p className="text-xs text-muted-foreground mb-4">Live runtime details from the active production API server.</p>
+        {runtimeStatus ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div className="flex justify-between rounded-none bg-white/[0.02] p-3"><span className="text-muted-foreground">Environment</span><span className={runtimeStatus.env === 'production' ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}>{runtimeStatus.env}</span></div>
+            <div className="flex justify-between rounded-none bg-white/[0.02] p-3"><span className="text-muted-foreground">Uptime</span><span className="text-white font-medium">{formatUptime(runtimeStatus.uptimeSeconds)}</span></div>
+            <div className="flex justify-between rounded-none bg-white/[0.02] p-3"><span className="text-muted-foreground">Node</span><span className="text-white font-mono">{runtimeStatus.nodeVersion}</span></div>
+            <div className="flex justify-between rounded-none bg-white/[0.02] p-3"><span className="text-muted-foreground flex items-center gap-1"><Cpu className="h-3 w-3" /> CPU</span><span className="text-white">{runtimeStatus.cpu.cores} cores · load {runtimeStatus.cpu.loadAvg[0]?.toFixed(2)}</span></div>
+            <div className="flex justify-between rounded-none bg-white/[0.02] p-3"><span className="text-muted-foreground">Heap</span><span className="text-white">{runtimeStatus.memory.heapUsedMB} / {runtimeStatus.memory.heapTotalMB} MB</span></div>
+            <div className="flex justify-between rounded-none bg-white/[0.02] p-3"><span className="text-muted-foreground">RAM free</span><span className="text-white">{runtimeStatus.memory.freeMB} / {runtimeStatus.memory.totalMB} MB</span></div>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">Server runtime details unavailable.</p>
+        )}
+      </div>
 
-      {testResults && (
-        <Panel title="Test results">
-          <Table head={['Provider', 'Status', 'Reason', 'Tested']}>
-            {Object.entries(testResults).map(([provider, r]) => (
-              <tr key={provider}>
-                <td>{provider}</td>
-                <td><Tag tone={r.ok ? 'ok' : 'bad'}>{r.ok ? 'ok' : 'fail'}</Tag></td>
-                <td className="text-gray-400">{r.reason}</td>
-                <td className="text-gray-500">{when(r.testedAt)}</td>
-              </tr>
+      {/* ── API Health Check ── */}
+      <div className="rounded-none border p-6" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-sm font-semibold text-white">API Health Check</h3>
+          <Button onClick={runProviderTest} disabled={testing || syncing} size="sm" className="h-8 gap-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs">
+            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />}
+            {testing ? 'Testing…' : 'Test All Providers'}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">Runs a live API call against each provider. Passing providers are enabled; failing ones are disabled automatically.</p>
+        {testResults && (
+          <div className="space-y-2">
+            {Object.entries(testResults).map(([provider, result]) => (
+              <div key={provider} className="flex items-center justify-between rounded-none border px-3 py-2" style={{ borderColor: result.ok ? 'rgba(52,211,153,0.2)' : 'rgba(239,68,68,0.2)', background: result.ok ? 'rgba(52,211,153,0.04)' : 'rgba(239,68,68,0.04)' }}>
+                <div className="flex items-center gap-2">
+                  {result.ok
+                    ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                    : <XCircle className="h-3.5 w-3.5 text-red-400 shrink-0" />}
+                  <span className="text-xs text-white capitalize font-medium">{provider}</span>
+                  <span className="text-[11px] text-muted-foreground">  {result.reason}</span>
+                </div>
+                <span className="text-[10px] text-muted-foreground/60">{new Date(result.testedAt).toLocaleTimeString()}</span>
+              </div>
             ))}
-          </Table>
-        </Panel>
-      )}
+          </div>
+        )}
+      </div>
 
-      <Panel title="API keys" actions={<button type="button" className={btn.primary} onClick={() => void saveApiKeys()} disabled={syncing || !hasKeyInput}>Save</button>}>
-        <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-2">
-          {PROVIDERS.map((p) => (
-            <label key={p.id} className="text-[11px] text-gray-500 space-y-1">
-              <span>{p.label}</span>
-              <input
-                type="password"
-                className={input}
-                placeholder={providerConfig(p.id)?.keyConfigured ? 'configured' : ''}
-                value={keys[p.id]}
-                onChange={(e) => setKeys((prev) => ({ ...prev, [p.id]: e.target.value }))}
-              />
-            </label>
-          ))}
+      <div className="rounded-none border p-6" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
+        <h3 className="text-sm font-semibold text-white mb-1">LLM Provider Controls</h3>
+        <p className="text-xs text-muted-foreground mb-5">Single provider (OpenRouter). Disabling it disables all AI features.</p>
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <Label className="text-foreground/80 text-xs">OpenRouter</Label>
+            <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-2">
+              <KeyRound className="h-3 w-3" />
+              API Key: {status?.providers.openrouter.keyConfigured ? 'Configured' : 'Missing'}
+            </p>
+          </div>
+          <Switch checked={Boolean(status?.providers.openrouter.enabled)} onCheckedChange={(v) => void setProviderEnabled(v)} disabled={syncing} />
         </div>
-      </Panel>
+      </div>
 
-      <Panel title="Routing">
-        <div className="p-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-          <label className="text-[11px] text-gray-500 space-y-1"><span>Primary</span>{modelSelect(models.primary, (id) => void setModel('primary', id))}</label>
-          <label className="text-[11px] text-gray-500 space-y-1"><span>Free tier</span>{modelSelect(freeModel, (id) => void setModel('freeModel', id))}</label>
-          <label className="text-[11px] text-gray-500 space-y-1"><span>Fallback</span>{modelSelect(models.fallback, (id) => void setModel('fallback', id))}</label>
+      <div className="rounded-none border p-6" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
+        <h3 className="text-sm font-semibold text-white mb-1">API Key Management</h3>
+        <p className="text-xs text-muted-foreground mb-5">Set your OpenRouter API key. It will be stored securely on the backend server.</p>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-foreground/80 text-xs text-white">OpenRouter API Key</Label>
+            <Input
+              type="password"
+              placeholder={status?.providers.openrouter.keyConfigured ? "⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤" : "sk-or-..."}
+              value={apiKeys.openrouter}
+              onChange={(e) => setApiKeys(prev => ({ ...prev, openrouter: e.target.value }))}
+              className="bg-white/5 border-white/10 text-white h-9 text-sm"
+            />
+          </div>
+          <Button onClick={saveApiKeys} disabled={syncing || !apiKeys.openrouter} className="w-full h-9 bg-primary hover:bg-primary/90 text-primary-foreground text-xs mt-2">
+            Save API Key
+          </Button>
         </div>
-      </Panel>
+      </div>
 
-      <Panel
-        title="Models"
-        actions={
-          <>
-            <input className={input} placeholder="model id" value={newModelId} onChange={(e) => setNewModelId(e.target.value)} disabled={syncing} />
-            <Select value={newModelProvider} onValueChange={(v) => { if (isProvider(v)) setNewModelProvider(v); }} disabled={syncing}>
-              <SelectTrigger className={SELECT}><SelectValue /></SelectTrigger>
-              <SelectContent>{PROVIDERS.map((p) => <SelectItem key={p.id} value={p.id}>{p.id}</SelectItem>)}</SelectContent>
+      <div className="rounded-none border p-6" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
+        <h3 className="text-sm font-semibold text-white mb-1">Model Routing</h3>
+        <p className="text-xs text-muted-foreground mb-5">Set default primary and fallback models used by backend services.</p>
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <Label className="text-foreground/80 text-xs">Code Model <span className="text-muted-foreground ml-1">(edits, fixes, builds)</span></Label>
+            <Select value={status?.models.primary} onValueChange={(v) => void setPrimaryModel(v)} disabled={syncing}>
+              <SelectTrigger className="bg-white/5 border-white/10 text-white h-9 text-sm">
+                <SelectValue placeholder="Select code model" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableModelIds.map((id) => (
+                  <SelectItem value={id} key={`primary-${id}`}>{id}</SelectItem>
+                ))}
+              </SelectContent>
             </Select>
-            <button type="button" className={btn.primary} onClick={() => void addModel()} disabled={syncing}>Add</button>
-          </>
-        }
-      >
-        <Table head={['Model', 'Provider', '']} empty="No models">
-          {models.allowed.map((m) => (
-            <tr key={m.id}>
-              <td className="font-mono">{m.id}</td>
-              <td><Tag>{m.provider}</Tag></td>
-              <td className="text-right"><button type="button" className={btn.danger} onClick={() => void removeModel(m.id)} disabled={syncing}>Remove</button></td>
-            </tr>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-foreground/80 text-xs">Small-Task Model <span className="text-amber-400 ml-1">(chit-chat, suggestions, reranking)</span></Label>
+            <Select value={status?.models.freeModel || status?.models.fallback || ''} onValueChange={(v) => void setFreeModel(v)} disabled={syncing}>
+              <SelectTrigger className="bg-white/5 border-white/10 text-white h-9 text-sm">
+                <SelectValue placeholder="Select small-task model" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableModelIds.map((id) => (
+                  <SelectItem value={id} key={`free-${id}`}>{id}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">Used for cheap-tier requests and every small side-task (narration, reranking, suggestions), regardless of user plan.</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-none border p-6" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.1)' }}>
+        <h3 className="text-sm font-semibold text-white mb-1">Allowed Models</h3>
+        <p className="text-xs text-muted-foreground mb-5">Add or remove OpenRouter model IDs available to routing.</p>
+
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 mb-4">
+          <Input
+            placeholder="OpenRouter model ID, e.g. qwen/qwen3.7-flash"
+            value={newModelId}
+            onChange={(e) => setNewModelId(e.target.value)}
+            disabled={syncing}
+            className="bg-white/5 border-white/10 text-white h-9 text-sm"
+          />
+          <Button onClick={addModel} disabled={syncing} className="h-9 bg-primary hover:bg-primary/90 text-primary-foreground gap-2 text-xs">
+            <Plus className="h-3.5 w-3.5" />
+            Add
+          </Button>
+        </div>
+
+        <div className="space-y-2">
+          {(status?.models.allowed || []).map((model) => (
+            <div key={model.id} className="flex items-center justify-between rounded-none border px-3 py-2" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}>
+              <div>
+                <div className="text-xs text-white font-medium">{model.id}</div>
+                <div className="text-[11px] text-muted-foreground">{model.provider}</div>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => void removeModel(model.id)} disabled={syncing} className="text-rose-300 hover:text-rose-200 hover:bg-rose-500/10 h-8 px-2">
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           ))}
-        </Table>
-      </Panel>
-    </Page>
+        </div>
+      </div>
+    </div>
   );
 }

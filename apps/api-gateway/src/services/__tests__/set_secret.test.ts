@@ -112,7 +112,7 @@ describe('set_secret   genuinely allowed key', () => {
     expect(result).toContain('Saved secret "STRIPE_API_KEY"');
     expect(result).toContain('This key has no VITE_ prefix');
     expect(onXmlComplete).toHaveBeenCalledWith(
-      expect.stringContaining('<ecomgear-write path="secrets/STRIPE_API_KEY"')
+      expect.stringContaining('<SMEsAgent-write path="secrets/STRIPE_API_KEY"')
     );
 
     // Preview-service push happened (mocked global fetch), with the full

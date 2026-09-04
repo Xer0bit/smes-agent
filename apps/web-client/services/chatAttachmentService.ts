@@ -54,7 +54,7 @@ export function categorize(mimeType: string): 'image' | 'document' {
 
 /**
  * Upload a file to the backend temp storage.
- * The backend stores it in /tmp/ecomgear-chat-uploads/{projectId}/ and returns
+ * The backend stores it in /tmp/SMEsAgent-chat-uploads/{projectId}/ and returns
  * a tempPath the agent loop can read directly from disk.
  */
 export async function uploadChatAttachment(

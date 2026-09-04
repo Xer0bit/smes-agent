@@ -31,7 +31,7 @@ if [[ "$DISABLE_ROOT_LOGIN" == true ]]; then
   ROOT_MODE="no"
 fi
 
-cat > /etc/ssh/sshd_config.d/99-ecomgear-hardening.conf <<EOF
+cat > /etc/ssh/sshd_config.d/99-SMEsAgent-hardening.conf <<EOF
 PubkeyAuthentication yes
 PasswordAuthentication no
 KbdInteractiveAuthentication no
@@ -42,7 +42,7 @@ EOF
 
 if ! sshd -t; then
   echo "[error] sshd config test failed. Reverting hardening file"
-  rm -f /etc/ssh/sshd_config.d/99-ecomgear-hardening.conf
+  rm -f /etc/ssh/sshd_config.d/99-SMEsAgent-hardening.conf
   exit 1
 fi
 

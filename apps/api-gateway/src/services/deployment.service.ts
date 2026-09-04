@@ -12,7 +12,7 @@ export interface VercelFile {
 }
 
 /**
- * Deploy a sandboxed eComGear project to Vercel via Vercel Deployments API (v13).
+ * Deploy a sandboxed SMEsAgent project to Vercel via Vercel Deployments API (v13).
  */
 export async function deployProject(projectId: string, userId: string): Promise<DeploymentResult> {
   // Step 0: Verify project ownership/access
@@ -69,7 +69,7 @@ export async function deployProject(projectId: string, userId: string): Promise<
 
   if (!filePaths.has('package.json')) {
     const defaultPackageJson = {
-      name: `ecomgear-project-${projectId.slice(0, 8)}`,
+      name: `SMEsAgent-project-${projectId.slice(0, 8)}`,
       private: true,
       version: '1.0.0',
       type: 'module',

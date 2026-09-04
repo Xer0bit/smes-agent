@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
+import BrandLoader from '@/components/BrandLoader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -68,7 +69,7 @@ export default function Billing() {
   };
 
   const handleUpgrade = () => {
-    const paymentLink = import.meta.env.VITE_STRIPE_PAYMENT_LINK || 'https://buy.stripe.com/test_eComGearPro';
+    const paymentLink = import.meta.env.VITE_STRIPE_PAYMENT_LINK || 'https://buy.stripe.com/test_SMEsAgentPro';
     if (!paymentLink) {
       toast.error('Stripe payment link is not configured yet.');
       return;
@@ -80,17 +81,14 @@ export default function Billing() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-100">
-        <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/80 px-6 py-4">
-          <Loader2 className="h-5 w-5 animate-spin text-indigo-400" />
-          <span className="text-sm font-medium text-slate-300">Loading subscription details…</span>
-        </div>
+      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+        <BrandLoader variant="bead" size={100} label="Loading subscription" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-6 md:p-12">
+    <div className="min-h-screen bg-background text-foreground p-6 md:p-12">
       <div className="max-w-5xl mx-auto space-y-8">
         
         {/* Navigation & Header */}
@@ -100,17 +98,17 @@ export default function Billing() {
               variant="outline"
               size="sm"
               onClick={() => navigate('/dashboard')}
-              className="rounded-full border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800 hover:text-white"
+              className="rounded-full border-border bg-muted text-foreground/80 hover:bg-accent hover:text-white"
             >
               <ArrowLeft className="h-4 w-4 mr-2" />
               Dashboard
             </Button>
             <div>
               <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white flex items-center gap-3">
-                <CreditCard className="h-7 w-7 text-indigo-400" />
+                <CreditCard className="h-7 w-7 text-muted-foreground" />
                 Billing & Subscription
               </h1>
-              <p className="text-sm text-slate-400 mt-1">
+              <p className="text-sm text-muted-foreground mt-1">
                 Manage your usage quotas, plan tier, and payment details
               </p>
             </div>
@@ -121,7 +119,7 @@ export default function Billing() {
             className={`px-3 py-1 text-sm font-semibold rounded-full border ${
               isPro
                 ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
-                : 'border-slate-700 bg-slate-800/60 text-slate-300'
+                : 'border-border bg-accent/60 text-foreground/80'
             }`}
           >
             {isPro ? (
@@ -131,7 +129,7 @@ export default function Billing() {
               </span>
             ) : (
               <span className="flex items-center gap-1.5">
-                <Zap className="h-4 w-4 text-slate-400" />
+                <Zap className="h-4 w-4 text-muted-foreground" />
                 FREE TIER
               </span>
             )}
@@ -140,13 +138,13 @@ export default function Billing() {
 
         {/* Current Plan Overview & Usage Card */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="md:col-span-2 border-slate-800 bg-slate-900/60 backdrop-blur-sm text-slate-100">
+          <Card className="md:col-span-2 border-border bg-muted/60 backdrop-blur-sm text-foreground">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold flex items-center justify-between">
                 <span>Usage & Monthly Allowance</span>
-                <BarChart3 className="h-5 w-5 text-indigo-400" />
+                <BarChart3 className="h-5 w-5 text-muted-foreground" />
               </CardTitle>
-              <CardDescription className="text-slate-400">
+              <CardDescription className="text-muted-foreground">
                 {isPro
                   ? 'Your Pro subscription includes unlimited AI code generation runs.'
                   : 'Free tier includes 500,000 AI tokens ($5.00 limit) per 30-day cycle.'}
@@ -156,18 +154,18 @@ export default function Billing() {
               {!isPro ? (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium text-slate-300">Free Tier: Token Usage</span>
-                    <span className="font-mono text-xs text-slate-400">
+                    <span className="font-medium text-foreground/80">Free Tier: Token Usage</span>
+                    <span className="font-mono text-xs text-muted-foreground">
                       {tokensUsed.toLocaleString()} / {tokenLimit.toLocaleString()} tokens ({usagePercentage}%)
                     </span>
                   </div>
-                  <Progress value={usagePercentage} className="h-2.5 bg-slate-800 text-indigo-500" />
-                  <p className="text-xs text-slate-400 leading-relaxed">
+                  <Progress value={usagePercentage} className="h-2.5 bg-accent text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground leading-relaxed">
                     💡 When limit is reached, AI generation is paused until the next cycle or upgrade to Pro.
                   </p>
                 </div>
               ) : (
-                <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 flex items-center gap-3">
+                <div className="p-4 rounded-none border border-emerald-500/20 bg-emerald-500/10 flex items-center gap-3">
                   <ShieldCheck className="h-6 w-6 text-emerald-400 shrink-0" />
                   <div>
                     <h4 className="text-sm font-semibold text-emerald-300">Unlimited Pro AI Access Active</h4>
@@ -179,12 +177,12 @@ export default function Billing() {
               )}
 
               <div className="grid grid-cols-2 gap-4 pt-2">
-                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
-                  <span className="text-xs text-slate-400">Current Plan</span>
+                <div className="p-4 rounded-none border border-border bg-muted/60">
+                  <span className="text-xs text-muted-foreground">Current Plan</span>
                   <p className="text-lg font-bold text-white mt-1 capitalize">{profile?.subscription_tier || 'Free'} Tier</p>
                 </div>
-                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
-                  <span className="text-xs text-slate-400">Billing Cycle</span>
+                <div className="p-4 rounded-none border border-border bg-muted/60">
+                  <span className="text-xs text-muted-foreground">Billing Cycle</span>
                   <p className="text-lg font-bold text-white mt-1">Monthly</p>
                 </div>
               </div>
@@ -192,42 +190,42 @@ export default function Billing() {
           </Card>
 
           {/* Quick Upgrade Callout */}
-          <Card className="border-indigo-500/30 bg-gradient-to-b from-indigo-950/40 via-slate-900/60 to-slate-950 text-slate-100 flex flex-col justify-between">
+          <Card className="border-border bg-gradient-to-b from-muted/40 via-muted/60 to-background text-foreground flex flex-col justify-between">
             <CardHeader>
               <CardTitle className="text-lg font-bold text-white flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-indigo-400" />
+                <Sparkles className="h-5 w-5 text-muted-foreground" />
                 {isPro ? 'Pro Member' : 'Upgrade to Pro'}
               </CardTitle>
-              <CardDescription className="text-slate-300">
+              <CardDescription className="text-foreground/80">
                 Unlock full capacity for building production web applications.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="text-3xl font-extrabold text-white">
-                $20 <span className="text-sm font-normal text-slate-400">/ month</span>
+                $20 <span className="text-sm font-normal text-muted-foreground">/ month</span>
               </div>
-              <ul className="space-y-2 text-xs text-slate-300">
+              <ul className="space-y-2 text-xs text-foreground/80">
                 <li className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-indigo-400 shrink-0" />
+                  <Check className="h-4 w-4 text-muted-foreground shrink-0" />
                   <span>Unlimited AI token runs</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-indigo-400 shrink-0" />
+                  <Check className="h-4 w-4 text-muted-foreground shrink-0" />
                   <span>One-click Vercel Edge publishing</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-indigo-400 shrink-0" />
+                  <Check className="h-4 w-4 text-muted-foreground shrink-0" />
                   <span>Priority MicroVM execution</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-indigo-400 shrink-0" />
+                  <Check className="h-4 w-4 text-muted-foreground shrink-0" />
                   <span>Vision model wireframe parsing</span>
                 </li>
               </ul>
               {!isPro ? (
                 <Button
                   onClick={handleUpgrade}
-                  className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-semibold shadow-lg shadow-indigo-500/20 rounded-xl h-11 transition-all"
+                  className="w-full bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 text-white font-semibold shadow-lg shadow-black/20 rounded-none h-11 transition-all"
                 >
                   <span>Upgrade to Pro</span>
                   <ArrowRight className="h-4 w-4 ml-2" />
@@ -236,7 +234,7 @@ export default function Billing() {
                 <Button
                   variant="outline"
                   onClick={handleUpgrade}
-                  className="w-full border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 rounded-xl h-11"
+                  className="w-full border-border bg-accent text-foreground hover:bg-accent rounded-none h-11"
                 >
                   Manage Subscription
                 </Button>

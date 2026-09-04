@@ -84,7 +84,7 @@ export default function EcgAgentsPage() {
     return (
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3" aria-busy="true">
           {[0, 1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="overflow-hidden rounded-xl border border-border/60 bg-card">
+            <div key={i} className="overflow-hidden rounded-none border border-border/60 bg-card">
               <div className="skeleton h-48 w-full rounded-none" />
               <div className="space-y-2 p-4"><div className="skeleton h-3.5 w-2/3" /><div className="skeleton h-3 w-1/3" /></div>
             </div>
@@ -117,7 +117,7 @@ export default function EcgAgentsPage() {
               key={p.id}
             >
               <Card
-                className="group flex cursor-pointer flex-col overflow-hidden rounded-xl border-border/60 transition-colors duration-150 hover:border-primary/40"
+                className="group flex cursor-pointer flex-col overflow-hidden rounded-none border-border/60 transition-colors duration-150 hover:border-primary/40"
                 onClick={() => navigate(`/project/${p.id}`)}
               >
                 <ProjectThumbnail
@@ -145,7 +145,7 @@ export default function EcgAgentsPage() {
           ))}
           <button
             onClick={() => setShowConnectForm(true)}
-            className="flex min-h-48 items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 bg-card/20 p-4 text-sm text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+            className="flex min-h-48 items-center justify-center gap-2 rounded-none border border-dashed border-border/60 bg-card/20 p-4 text-sm text-muted-foreground transition-colors hover:border-border hover:text-foreground"
           >
             <Plus className="h-4 w-4" /> Connect another
           </button>

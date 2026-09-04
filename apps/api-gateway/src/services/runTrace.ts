@@ -18,7 +18,7 @@
 import { appendFileSync, mkdirSync, readdirSync, rmSync } from 'fs';
 import path from 'path';
 
-const TRACE_ROOT = process.env.AGENT_TRACE_DIR || '/var/www/ecomgear/traces';
+const TRACE_ROOT = process.env.AGENT_TRACE_DIR || '/var/www/SMEsAgent/traces';
 const KEEP_DAYS = 14;
 const CLIP = 4000;
 

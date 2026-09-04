@@ -9,14 +9,14 @@ export interface OperationStore {
 }
 
 export function parseXmlOperation(xml: string, store: OperationStore): void {
-  // ecomgear-edit (must check before ecomgear-write to avoid partial match)
-  const editMatch = /<ecomgear-edit\s+path="([^"]+)"/.exec(xml);
+  // SMEsAgent-edit (must check before SMEsAgent-write to avoid partial match)
+  const editMatch = /<SMEsAgent-edit\s+path="([^"]+)"/.exec(xml);
   if (editMatch) {
     if (!store.filesEdited.includes(editMatch[1])) store.filesEdited.push(editMatch[1]);
     return;
   }
-  // ecomgear-write
-  const writeMatch = /<ecomgear-write\s+path="([^"]+)"[^>]*>([\s\S]*?)<\/ecomgear-write>/.exec(xml);
+  // SMEsAgent-write
+  const writeMatch = /<SMEsAgent-write\s+path="([^"]+)"[^>]*>([\s\S]*?)<\/SMEsAgent-write>/.exec(xml);
   if (writeMatch) {
     const p = writeMatch[1];
     const c = writeMatch[2].trim();
@@ -25,20 +25,20 @@ export function parseXmlOperation(xml: string, store: OperationStore): void {
     else store.filesToWrite.push({ path: p, content: c });
     return;
   }
-  // ecomgear-delete
-  const deleteMatch = /<ecomgear-delete\s+path="([^"]+)"/.exec(xml);
+  // SMEsAgent-delete
+  const deleteMatch = /<SMEsAgent-delete\s+path="([^"]+)"/.exec(xml);
   if (deleteMatch && !store.filesToDelete.includes(deleteMatch[1])) {
     store.filesToDelete.push(deleteMatch[1]);
     return;
   }
-  // ecomgear-rename
-  const renameMatch = /<ecomgear-rename\s+from="([^"]+)"\s+to="([^"]+)"/.exec(xml);
+  // SMEsAgent-rename
+  const renameMatch = /<SMEsAgent-rename\s+from="([^"]+)"\s+to="([^"]+)"/.exec(xml);
   if (renameMatch) {
     store.renames.push({ from: renameMatch[1], to: renameMatch[2] });
     return;
   }
-  // ecomgear-add-dependency
-  const depMatch = /<ecomgear-add-dependency\s+packages="([^"]+)"/.exec(xml);
+  // SMEsAgent-add-dependency
+  const depMatch = /<SMEsAgent-add-dependency\s+packages="([^"]+)"/.exec(xml);
   if (depMatch) {
     depMatch[1].split(/\s+/).filter(Boolean).forEach((d) => {
       if (!store.dependencies.includes(d)) store.dependencies.push(d);
@@ -48,7 +48,7 @@ export function parseXmlOperation(xml: string, store: OperationStore): void {
 
 export function parseXmlResponse(text: string, store: OperationStore): void {
   // Run write regex globally
-  const writeRe = /<ecomgear-write\s+path="([^"]+)"[^>]*>([\s\S]*?)<\/ecomgear-write>/g;
+  const writeRe = /<SMEsAgent-write\s+path="([^"]+)"[^>]*>([\s\S]*?)<\/SMEsAgent-write>/g;
   let m: RegExpExecArray | null;
   while ((m = writeRe.exec(text)) !== null) {
     const p = m[1], c = m[2].trim();
@@ -57,17 +57,17 @@ export function parseXmlResponse(text: string, store: OperationStore): void {
     else store.filesToWrite.push({ path: p, content: c });
   }
 
-  const deleteRe = /<ecomgear-delete\s+path="([^"]+)"/g;
+  const deleteRe = /<SMEsAgent-delete\s+path="([^"]+)"/g;
   while ((m = deleteRe.exec(text)) !== null) {
     if (!store.filesToDelete.includes(m[1])) store.filesToDelete.push(m[1]);
   }
 
-  const renameRe = /<ecomgear-rename\s+from="([^"]+)"\s+to="([^"]+)"/g;
+  const renameRe = /<SMEsAgent-rename\s+from="([^"]+)"\s+to="([^"]+)"/g;
   while ((m = renameRe.exec(text)) !== null) {
     store.renames.push({ from: m[1], to: m[2] });
   }
 
-  const depRe = /<ecomgear-add-dependency\s+packages="([^"]+)"/g;
+  const depRe = /<SMEsAgent-add-dependency\s+packages="([^"]+)"/g;
   while ((m = depRe.exec(text)) !== null) {
     m[1].split(/\s+/).filter(Boolean).forEach((d) => {
       if (!store.dependencies.includes(d)) store.dependencies.push(d);

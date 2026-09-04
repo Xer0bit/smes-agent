@@ -2,7 +2,7 @@
 const rawPreviewUrl =
     import.meta.env.VITE_PREVIEW_URL ||
     import.meta.env.VITE_PREVIEW_SERVICE_URL ||
-    (import.meta.env.PROD ? 'https://preview.ecomgear.app' : 'http://localhost:3001');
+    (import.meta.env.PROD ? 'https://preview.SMEsAgent.app' : 'http://localhost:3001');
 const DOCKER_PREVIEW_URL = rawPreviewUrl.replace(/\/preview\/?$/, '');
 
 const HEALTH_CHECK_TIMEOUT_MS = 8000;

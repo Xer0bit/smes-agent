@@ -1,28 +1,21 @@
 /**
  * LLM Health Service
  *
- * Tests each configured LLM provider with a minimal API call on startup.
- * Providers that fail (bad key, no credits, network error) are automatically
- * disabled in the LLM control state so the agent never tries to call them.
+ * Tests the configured OpenRouter key with a minimal API call on startup and
+ * hourly thereafter. If it fails (bad key, no credits, network error), the
+ * provider is automatically disabled in the LLM control state so the agent
+ * never tries to call it.
  *
- * Admin can re-enable any provider from the Settings panel after resolving
- * the issue, or trigger a re-test via POST /api/v1/ai/test-providers.
+ * Admin can re-enable from the Settings panel after resolving the issue, or
+ * trigger a re-test via POST /api/v1/ai/test-providers.
  */
 
 import { getLlmControlState, updateLlmControlState } from './llm-control.service.js';
 import { logger } from '../utils/logger.js';
 import { isAuthOrBillingError } from './agentProviderResolution.js';
+import { CHEAP_MODEL } from '../config/models.js';
 import { AlertingService } from './alerting.service.js';
 
-// Lifecycle audit finding (2026-08-11/12): today's ~11-hour Anthropic outage
-// ("credit balance too low") went undetected by this exact health-check
-// system -- testAnthropic's 400 handling only failed on "organization" +
-// "disabled" text, so it reported Anthropic healthy the whole time. This repo
-// already has a comprehensive, provider-agnostic billing/auth-error text
-// classifier (isAuthOrBillingError, used at runtime for the retry/circuit-
-// breaker path) that was never reused here -- the two classifiers had
-// drifted apart. Route every ambiguous status code through the shared one
-// instead of each test function re-inventing its own narrower text match.
 function isBillingBodyError(body: unknown): boolean {
   const message = (body as { error?: { message?: string; code?: string | number } } | null)?.error?.message;
   const code = (body as { error?: { message?: string; code?: string | number } } | null)?.error?.code;
@@ -30,61 +23,16 @@ function isBillingBodyError(body: unknown): boolean {
   return isAuthOrBillingError({ data: { error: { message, code } } });
 }
 
-// ─── Per-provider test functions ─────────────────────────────────────────────
-
-async function testAnthropic(apiKey: string): Promise<{ ok: boolean; reason: string }> {
+async function testOpenRouter(apiKey: string): Promise<{ ok: boolean; reason: string }> {
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-5',
-        max_tokens: 1,
-        messages: [{ role: 'user', content: 'hi' }],
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-
-    if (res.status === 200) return { ok: true, reason: 'OK' };
-    if (res.status === 401) return { ok: false, reason: 'Invalid API key (401)' };
-    if (res.status === 403) return { ok: false, reason: 'Forbidden   check billing or permissions (403)' };
-    if (res.status === 529) return { ok: true, reason: 'Anthropic API overloaded (529)   key valid, transient issue' };
-    if (res.status === 400) {
-      // 400 is normally "bad request body but key valid" -- EXCEPT when
-      // Anthropic disables the org, OR (the actual incident: "credit
-      // balance too low" is a 400, not a 402) any other billing/auth
-      // failure the shared classifier already knows how to recognize.
-      try {
-        const body = await res.json() as any;
-        const msg: string = body?.error?.message ?? '';
-        if (isBillingBodyError(body)) {
-          return { ok: false, reason: `Anthropic billing/auth error: ${msg || 'unknown'}` };
-        }
-      } catch {}
-      return { ok: true, reason: 'HTTP 400   key accepted' };
-    }
-    // 5xx = server error, not a key issue
-    return { ok: true, reason: `HTTP ${res.status}   key accepted` };
-  } catch (err: any) {
-    // Network/timeout errors at startup are transient   don't disable a valid key
-    return { ok: true, reason: `Network check skipped: ${err?.message ?? 'timeout'}` };
-  }
-}
-
-async function testDeepSeek(apiKey: string): Promise<{ ok: boolean; reason: string }> {
-  try {
-    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'deepseek-chat',
+        model: CHEAP_MODEL,
         max_tokens: 1,
         messages: [{ role: 'user', content: 'hi' }],
       }),
@@ -93,106 +41,19 @@ async function testDeepSeek(apiKey: string): Promise<{ ok: boolean; reason: stri
 
     if (res.status === 200) return { ok: true, reason: 'OK' };
     if (res.status === 401) return { ok: false, reason: 'Invalid API key (401)' };
-    if (res.status === 402) return { ok: false, reason: 'Insufficient balance   top up DeepSeek account (402)' };
+    if (res.status === 402) return { ok: false, reason: 'Insufficient balance   top up OpenRouter account (402)' };
     if (res.status === 403) return { ok: false, reason: 'Forbidden (403)' };
     if (res.status === 400 || res.status === 429) {
       try {
         const body = await res.json() as any;
         if (isBillingBodyError(body)) {
-          return { ok: false, reason: `DeepSeek billing/auth error: ${body?.error?.message ?? 'unknown'}` };
+          return { ok: false, reason: `OpenRouter billing/auth error: ${body?.error?.message ?? 'unknown'}` };
         }
       } catch {}
     }
-    return { ok: true, reason: `HTTP ${res.status}   key accepted` };
-  } catch (err: any) {
-    return { ok: true, reason: `Network check skipped: ${err?.message ?? 'timeout'}` };
-  }
-}
-
-async function testGemini(apiKey: string): Promise<{ ok: boolean; reason: string }> {
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: 'hi' }] }],
-          generationConfig: { maxOutputTokens: 1 },
-        }),
-        signal: AbortSignal.timeout(15_000),
-      }
-    );
-
-    if (res.status === 200) return { ok: true, reason: 'OK' };
-    if (res.status === 400) {
-      const bodyText = await res.text().catch(() => '');
-      if (bodyText.includes('API key not valid') || bodyText.includes('API_KEY_INVALID')) {
-        return { ok: false, reason: 'Invalid API key' };
-      }
-      try {
-        if (isBillingBodyError(JSON.parse(bodyText))) {
-          return { ok: false, reason: `Gemini billing/auth error: ${bodyText.slice(0, 200)}` };
-        }
-      } catch {}
-      return { ok: true, reason: 'HTTP 400   key accepted' };
-    }
-    if (res.status === 403) return { ok: false, reason: 'Forbidden   check API key permissions (403)' };
-    if (res.status === 429) {
-      // Most 429s are transient rate limits, but Gemini's monthly quota
-      // exhaustion ("You exceeded your current quota...") is ALSO a 429 --
-      // isAuthOrBillingError already special-cases this (see its own
-      // comment); a plain "429 = transient" assumption would have missed
-      // it, same class of bug as the Anthropic 400 case this fix started from.
-      try {
-        const body = await res.json() as any;
-        if (isBillingBodyError(body)) {
-          return { ok: false, reason: `Gemini quota exhausted: ${body?.error?.message ?? 'unknown'}` };
-        }
-      } catch {}
-      return { ok: true, reason: 'HTTP 429   transient rate limit, key accepted' };
-    }
-    // 5xx etc. are transient   key is likely valid
     return { ok: true, reason: `HTTP ${res.status}   key accepted` };
   } catch (err: any) {
     // Network/timeout errors at startup are transient   don't disable a valid key
-    return { ok: true, reason: `Network check skipped: ${err?.message ?? 'timeout'}` };
-  }
-}
-
-async function testZai(apiKey: string): Promise<{ ok: boolean; reason: string }> {
-  try {
-    const res = await fetch('https://api.z.ai/api/paas/v4/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'glm-4.7-flash',
-        max_tokens: 1,
-        messages: [{ role: 'user', content: 'hi' }],
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-
-    if (res.status === 200) return { ok: true, reason: 'OK' };
-    if (res.status === 401) return { ok: false, reason: 'Invalid API key (401)' };
-    if (res.status === 402) return { ok: false, reason: 'Insufficient balance (402)' };
-    if (res.status === 403) return { ok: false, reason: 'Forbidden (403)' };
-    if (res.status === 400 || res.status === 429) {
-      // z.ai's own insufficient-balance/no-resource-package signal is error
-      // code 1113, not a distinct HTTP status -- isAuthOrBillingError already
-      // knows this pattern.
-      try {
-        const body = await res.json() as any;
-        if (isBillingBodyError(body)) {
-          return { ok: false, reason: `z.ai billing/auth error: ${body?.error?.message ?? 'unknown'}` };
-        }
-      } catch {}
-    }
-    return { ok: true, reason: `HTTP ${res.status}   key accepted` };
-  } catch (err: any) {
     return { ok: true, reason: `Network check skipped: ${err?.message ?? 'timeout'}` };
   }
 }
@@ -206,108 +67,54 @@ export type ProviderTestResult = {
 };
 
 export type AllProviderResults = {
-  anthropic: ProviderTestResult;
-  deepseek: ProviderTestResult;
-  gemini: ProviderTestResult;
-  zai?: ProviderTestResult;
+  openrouter: ProviderTestResult;
 };
 
-// ─── Core: test all providers ─────────────────────────────────────────────────
+// ─── Core: test the provider ───────────────────────────────────────────────────
 
 export async function testAllProviders(): Promise<AllProviderResults> {
   const state = await getLlmControlState();
   const now = new Date().toISOString();
 
-  const noKey = (provider: string) =>
-    Promise.resolve({ ok: false, reason: `No ${provider} API key configured` });
+  const openrouter = state.apiKeys.openrouter
+    ? await testOpenRouter(state.apiKeys.openrouter)
+    : { ok: false, reason: 'No OpenRouter API key configured' };
 
-  const zaiKey = state.apiKeys.zai || process.env.ZAI_API_KEY || '';
-  const [anthropic, deepseek, gemini, zai] = await Promise.all([
-    state.apiKeys.anthropic ? testAnthropic(state.apiKeys.anthropic) : noKey('Anthropic'),
-    state.apiKeys.deepseek  ? testDeepSeek(state.apiKeys.deepseek)   : noKey('DeepSeek'),
-    state.apiKeys.gemini    ? testGemini(state.apiKeys.gemini)        : noKey('Gemini'),
-    zaiKey                  ? testZai(zaiKey)                         : noKey('z.ai'),
-  ]);
-
-  return {
-    anthropic: { ...anthropic, testedAt: now },
-    deepseek:  { ...deepseek,  testedAt: now },
-    gemini:    { ...gemini,    testedAt: now },
-    zai:       { ...zai,       testedAt: now },
-  };
+  return { openrouter: { ...openrouter, testedAt: now } };
 }
 
-// ─── Startup: test + auto-disable failing providers ───────────────────────────
+// ─── Startup: test + auto-disable failing provider ────────────────────────────
 
 export async function testAndAutoDisableProviders(): Promise<AllProviderResults> {
-  logger.info('[LlmHealth] Testing all configured LLM providers...');
+  logger.info('[LlmHealth] Testing OpenRouter...');
 
   const results = await testAllProviders();
 
-  // Log every result
-  for (const [provider, result] of Object.entries(results) as [string, ProviderTestResult][]) {
-    if (result.ok) {
-      logger.info(`[LlmHealth] ✓ ${provider}: ${result.reason}`);
-    } else {
-      logger.warn(`[LlmHealth] ✗ ${provider}: ${result.reason}   disabling`);
-    }
+  if (results.openrouter.ok) {
+    logger.info(`[LlmHealth] ✓ openrouter: ${results.openrouter.reason}`);
+  } else {
+    logger.warn(`[LlmHealth] ✗ openrouter: ${results.openrouter.reason}   disabling`);
   }
 
-  // Apply results: enable providers that pass, disable those that fail.
-  // This runs regardless of the current DB state so the live health check
-  // always reflects reality after a key change or billing issue.
   await updateLlmControlState({
     providers: {
-      anthropic: {
-        enabled: results.anthropic.ok,
-      },
-      deepseek: {
-        enabled:         results.deepseek.ok,
-        fallbackEnabled: results.deepseek.ok,
-      },
-      gemini: {
-        enabled:         results.gemini.ok,
-        fallbackEnabled: results.gemini.ok,
-      },
-      zai: {
-        enabled: results.zai?.ok ?? true,
-      } as any,
+      openrouter: { enabled: results.openrouter.ok },
     },
   });
 
-  const passing = (Object.entries(results) as [string, ProviderTestResult][])
-    .filter(([, r]) => r.ok).map(([p]) => p);
-  const failing = (Object.entries(results) as [string, ProviderTestResult][])
-    .filter(([, r]) => !r.ok).map(([p]) => p);
-
-  if (passing.length > 0) logger.info(`[LlmHealth] Enabled providers: ${passing.join(', ')}`);
-  if (failing.length > 0) logger.warn(`[LlmHealth] Disabled providers: ${failing.join(', ')}   admin can re-enable from Settings after fixing.`);
-  if (passing.length === 0) logger.error('[LlmHealth] No LLM providers are functional. All AI features disabled.');
+  if (!results.openrouter.ok) {
+    logger.error('[LlmHealth] OpenRouter is not functional. All AI features disabled.');
+  }
 
   // Alert only on a genuine ok->not-ok transition (or the very first check,
   // where a null baseline means "no prior state to compare against" -- a
   // server starting with a broken provider is real information, not noise).
-  // A provider that was already failing last cycle must NOT re-alert here,
-  // or a sustained outage would fire once per hourly cycle indefinitely.
-  const previousResultsByProvider = lastResults
-    ? new Map(Object.entries(lastResults) as [string, ProviderTestResult][])
-    : null;
-  for (const [provider, result] of Object.entries(results) as [string, ProviderTestResult][]) {
-    if (result.ok) continue;
-    const wasAlreadyFailing = previousResultsByProvider?.get(provider)?.ok === false;
-    if (!wasAlreadyFailing) {
-      // Belt-and-suspenders (followup F-1, 2026-08-13): dispatch() already
-      // catches and logs any delivery failure internally, so this try/catch
-      // is currently redundant -- but the "alert delivery can never block
-      // the health check" guarantee should not rest on a single, unguarded
-      // call site. A future edit inside dispatch() that adds code outside
-      // its own try block would otherwise silently remove the only
-      // protection this invariant has.
-      try {
-        await AlertingService.dispatch({ provider, reason: result.reason, severity: 'critical' });
-      } catch (alertErr) {
-        logger.warn(`[LlmHealth] Alert dispatch threw unexpectedly for ${provider} (non-fatal):`, alertErr);
-      }
+  const wasAlreadyFailing = lastResults?.openrouter.ok === false;
+  if (!results.openrouter.ok && !wasAlreadyFailing) {
+    try {
+      await AlertingService.dispatch({ provider: 'openrouter', reason: results.openrouter.reason, severity: 'critical' });
+    } catch (alertErr) {
+      logger.warn('[LlmHealth] Alert dispatch threw unexpectedly for openrouter (non-fatal):', alertErr);
     }
   }
 
@@ -316,9 +123,6 @@ export async function testAndAutoDisableProviders(): Promise<AllProviderResults>
 }
 
 // ─── Recurring loop + cached read ─────────────────────────────────────────────
-// The startup check alone let mid-uptime credit exhaustion go unnoticed for
-// hours (Anthropic ran dry at least 9 times Jun 12 - Jul 17 2026 and users
-// found out before ops did   production audit 2026-07-21).
 
 let lastResults: AllProviderResults | null = null;
 let healthTimer: NodeJS.Timeout | null = null;

@@ -586,10 +586,10 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Globe className="h-5 w-5" />
-            eComGear Subdomain
+            SMEsAgent Subdomain
           </CardTitle>
           <CardDescription>
-            Free subdomain for your project under ecomgear.app
+            Free subdomain for your project under SMEsAgent.app
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -784,7 +784,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
                           const parts = domain.domain.split('.');
                           const isApex = parts.length <= 2;
                           const hostPart = isApex ? '@' : parts.slice(0, parts.length - 2).join('.');
-                          const txtHost = isApex ? '_ecomgear-verify' : `_ecomgear-verify.${hostPart}`;
+                          const txtHost = isApex ? '_SMEsAgent-verify' : `_SMEsAgent-verify.${hostPart}`;
                           const checkResult = dnsCheckResults[domain.id];
 
                           return (
@@ -800,7 +800,7 @@ export function DomainSettings({ projectId, projectName, organizationId, workspa
                               <div className="space-y-2">
                                 <div className="flex items-center gap-2">
                                   <p className="text-xs font-medium text-white/45">
-                                    Step 1   Point your domain to eCOMGear
+                                    Step 1   Point your domain to SMEsAgent
                                   </p>
                                   {checkResult && (
                                     checkResult.pointingOk

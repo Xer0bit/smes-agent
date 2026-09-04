@@ -19,8 +19,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "pm2:start": "pm2 start infrastructure/ecosystem.config.cjs && pm2 save",
-    "pm2:stop": "pm2 stop ecomgear-preview",
-    "pm2:logs": "pm2 logs ecomgear-preview",
+    "pm2:stop": "pm2 stop SMEsAgent-preview",
+    "pm2:logs": "pm2 logs SMEsAgent-preview",
     "logs:mkdir": "mkdir -p logs"
   },
   "dependencies": {

@@ -295,7 +295,7 @@ router.post('/preview-sync-revision', async (req: AuthenticatedRequest, res: Res
     const generatedFiles = revRow.generated_files as { format?: string; files?: Array<{ path: string; hash: string; source_revision: string }> } | null;
     const STORAGE_BUCKET = 'user-projects-free';
     const BINARY_EXT_RE = /\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3|pdf|zip|svg)$/i;
-    const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+    const BINARY_SENTINEL = '__SMEsAgent_BIN64__';
 
     let files: Array<{ path: string; content: string }>;
     if (generatedFiles?.format === 'manifest-v1' && Array.isArray(generatedFiles.files)) {

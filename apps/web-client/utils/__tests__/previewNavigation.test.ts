@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildPreviewNavigationUrl, normalizePreviewRoute } from '../previewNavigation';
 
-const BASE = 'https://preview.ecomgear.app/project-abc';
+const BASE = 'https://preview.SMEsAgent.app/project-abc';
 
 describe('normalizePreviewRoute', () => {
   it('plain route   returned as-is', () => {

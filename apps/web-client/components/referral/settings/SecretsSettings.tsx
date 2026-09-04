@@ -162,19 +162,6 @@ export function SecretsSettings({ projectId }: SecretsSettingsProps) {
                   className="font-mono text-sm h-8"
                   autoFocus
                 />
-                {newKey.startsWith('VITE_') ? (
-                  <p className="text-[11px] text-emerald-400/80">
-                    Available to your app's frontend code as <code className="font-mono">import.meta.env.{newKey}</code> and to edge functions as <code className="font-mono">secrets.{newKey}</code>. Only save public values (publishable keys) with VITE_.
-                  </p>
-                ) : newKey ? (
-                  <p className="text-[11px] text-amber-400/80">
-                    No VITE_ prefix: this key will NOT be visible to frontend code. It is usable only inside edge functions as <code className="font-mono">secrets.{newKey}</code>. If your app needs it in the browser, name it <code className="font-mono">VITE_{newKey.replace(/^VITE_/, '')}</code> (public values only).
-                  </p>
-                ) : (
-                  <p className="text-[11px] text-white/40">
-                    Prefix with <code className="font-mono">VITE_</code> (e.g. VITE_GOOGLE_MAPS_KEY) to use it in frontend code; without it, the key is edge-function-only.
-                  </p>
-                )}
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Value</Label>

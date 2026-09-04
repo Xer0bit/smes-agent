@@ -104,7 +104,7 @@ export default function EcgCloud() {
         }
       />
 
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 px-5 py-3">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-none border border-border/60 px-5 py-3">
         <div className="flex items-center gap-3 text-sm">
           <Database className="h-4 w-4 text-muted-foreground" />
           <span className="font-medium">Databases</span>
@@ -120,7 +120,7 @@ export default function EcgCloud() {
       </div>
 
       {error && (
-        <div className="mt-4 flex items-center gap-2 rounded-xl border border-destructive/30 px-4 py-3 text-sm text-destructive">
+        <div className="mt-4 flex items-center gap-2 rounded-none border border-destructive/30 px-4 py-3 text-sm text-destructive">
           <AlertCircle className="h-4 w-4" />{error}
         </div>
       )}
@@ -130,7 +130,7 @@ export default function EcgCloud() {
           <div>
             <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Provisioned</p>
             {loading && databases.length === 0 ? (
-              <div className="space-y-2"><div className="skeleton h-16 rounded-xl" /><div className="skeleton h-16 rounded-xl" /></div>
+              <div className="space-y-2"><div className="skeleton h-16 rounded-none" /><div className="skeleton h-16 rounded-none" /></div>
             ) : databases.length === 0 ? (
               <p className="px-1 text-sm text-muted-foreground">No databases yet. Pick a project below to provision one.</p>
             ) : (
@@ -141,7 +141,7 @@ export default function EcgCloud() {
                       type="button"
                       onClick={() => select(db.project_id)}
                       className={cn(
-                        'w-full rounded-xl border px-4 py-3 text-left transition-colors',
+                        'w-full rounded-none border px-4 py-3 text-left transition-colors',
                         selected === db.project_id ? 'border-primary/50 bg-primary/5' : 'border-border/60 hover:bg-muted/40',
                       )}
                     >
@@ -173,7 +173,7 @@ export default function EcgCloud() {
                       type="button"
                       onClick={() => select(p.id)}
                       className={cn(
-                        'flex w-full items-center justify-between gap-2 rounded-xl border border-dashed px-4 py-3 text-left transition-colors',
+                        'flex w-full items-center justify-between gap-2 rounded-none border border-dashed px-4 py-3 text-left transition-colors',
                         selected === p.id ? 'border-primary/50 bg-primary/5' : 'border-border/60 hover:bg-muted/40',
                       )}
                     >
@@ -189,7 +189,7 @@ export default function EcgCloud() {
 
         <section className="min-w-0">
           {selected ? (
-            <div className="rounded-xl border border-border/60 overflow-hidden">
+            <div className="rounded-none border border-border/60 overflow-hidden">
               <div className="flex items-center justify-between gap-3 border-b border-border/60 px-5 py-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold truncate">{selectedName ?? 'Project'}</p>
@@ -203,7 +203,7 @@ export default function EcgCloud() {
               </div>
             </div>
           ) : (
-            <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-dashed border-border/60 text-center">
+            <div className="flex min-h-[320px] flex-col items-center justify-center rounded-none border border-dashed border-border/60 text-center">
               <Database className="h-8 w-8 text-muted-foreground mb-3" />
               <p className="text-sm font-medium">Select a database</p>
               <p className="mt-1 max-w-sm text-sm text-muted-foreground">Open a project's database to browse tables, run SQL, and see its status. Projects without one can be provisioned from the list.</p>

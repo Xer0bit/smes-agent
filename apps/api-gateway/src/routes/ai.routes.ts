@@ -5,7 +5,7 @@ import { logger } from '../utils/logger.js';
 import { recordEffect, markReverted, recoverRun, forgetRun, EFFECT_KINDS } from '../services/effectLedger.js';
 import { compensateFileWrite } from '../services/projectFileWriter.js';
 import { publishRunChunk, publishRunEnd, relayRunStream, runStreamExists, publishRunCancel, subscribeRunCancel } from '../services/runStreamBroker.js';
-import { getLlmControlState, getUserPlanTier } from '../services/llm-control.service.js';
+import { getLlmControlState } from '../services/llm-control.service.js';
 import { testAndAutoDisableProviders, getLastHealthResults } from '../services/llm-health.service.js';
 import { createRunSink } from '../services/runSink.js';
 import { isLockLive, AGENT_LOCK_STALE_MS, AGENT_LOCK_HEARTBEAT_MS } from '../services/agentLockState.js';
@@ -14,7 +14,8 @@ import { openSandbox, discardSandbox, findRunRevision, fetchRevisionFiles, rollb
 import { persistAgentRevision } from '../services/agentRevisionPersist.service.js';
 import { assistantMessageId } from '../services/assistantMessagePersist.js';
 import { checkUsageQuota } from '../services/billing.service.js';
-import { DEFAULT_FREE_MODEL } from '../config/models.js';
+import { CODE_MODEL, CHEAP_MODEL } from '../config/models.js';
+import { getCheapProvider } from '../services/cheapModel.js';
 import { projectService } from '../services/project.service.js';
 import { initProjectFromTemplate, ensureBaseTemplate } from '../services/baseTemplateService.js';
 import { seedEcgTemplate } from '../services/ecg-template.js';
@@ -24,22 +25,20 @@ import os from 'node:os';
 import { EventEmitter } from 'node:events';
 import multer from 'multer';
 import { generateText } from 'ai';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { resolveRequestTier, isCheapTier, TIER_MAX_STEPS } from '../services/intentClassifier.js';
 import { indexFiles, deleteProjectEmbeddings } from '../knowledgebase/index.js';
 import { applySeoToHtml } from './seo.routes.js';
 
 const router = Router();
 
-// Guest model: Gemini Flash for unauthenticated (guest) users   fast, free tier.
-const GUEST_MODEL = DEFAULT_FREE_MODEL;
+// Guest model: cheap model for unauthenticated (guest) users.
+const GUEST_MODEL = CHEAP_MODEL;
 const GUEST_MAX_REQUESTS = 3;
 const FINGERPRINT_RE = /^[a-z0-9]{6,40}$/;
 
 // ─── Temp file upload storage ────────────────────────────────────────────────
 
-const UPLOAD_BASE = path.join(os.tmpdir(), 'ecomgear-chat-uploads');
+const UPLOAD_BASE = path.join(os.tmpdir(), 'SMEsAgent-chat-uploads');
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const UPLOAD_TTL_MS = 60 * 60 * 1000;   // 1 hour
 
@@ -338,22 +337,11 @@ async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
     if (!isLockLive(existing.acquired_at)) {
         const age = Date.now() - new Date(existing.acquired_at).getTime();
         logger.warn(`[agent-lock] Reclaiming stale lock for ${projectId} (age ${Math.round(age / 1000)}s)`);
-        // Compare-and-set on the token we just read: two workers can both find
-        // the same stale row (read-modify-write), and the loser must not
-        // proceed believing it owns the lock. Scoping the UPDATE to the read
-        // token means exactly one reclaim wins; a count of 0 means another
-        // worker reclaimed it first, so this request reports the project as
-        // locked rather than running concurrently.
-        const { error: updateError, count } = await supabase
+        const { error: updateError } = await supabase
             .from('agent_locks')
-            .update({ token, owner: `pid:${process.pid}`, acquired_at: new Date().toISOString() }, { count: 'exact' })
-            .eq('project_id', projectId)
-            .eq('token', existing.token);
+            .update({ token, owner: `pid:${process.pid}`, acquired_at: new Date().toISOString() })
+            .eq('project_id', projectId);
         if (updateError) return null;
-        if (count === 0) {
-            logger.warn(`[agent-lock] Lost stale-lock reclaim race for ${projectId} to another worker`);
-            return null;
-        }
 
         // The lock we just took belonged to a run that died without reaching
         // its finally block. Taking the lock is only half of that cleanup: the
@@ -460,10 +448,10 @@ async function readLiveAgentLock(projectId: string): Promise<{ acquired_at: stri
     }
 }
 
-async function releaseAgentLock(projectId: string, token?: string): Promise<void> {
+async function releaseAgentLock(projectId: string): Promise<void> {
     // Single-shot delete used to swallow failures silently with no log line at
     // all. A transient failure here (network blip, Supabase 5xx) then leaves
-    // the lock row alive for the full AGENT_LOCK_STALE_MS since
+    // the lock row alive for the full AGENT_LOCK_STALE_MS (15 min) since
     // nothing else ever deletes it, while the client's own retry budget on a
     // PROJECT_LOCKED response is only ~8-10s (LOCK_RETRY_ATTEMPTS *
     // LOCK_RETRY_DELAY_MS in agentStreamService.ts) -- so a single missed
@@ -471,15 +459,10 @@ async function releaseAgentLock(projectId: string, token?: string): Promise<void
     // user (most visible on the auto-repair follow-up, which fires ~300ms
     // after the prior run ends). Retry the delete itself a few times before
     // giving up, and log if it still fails so a real leak is diagnosable.
-    // The delete is scoped to OUR token when one is known, mirroring the
-    // heartbeat: if this run was already reclaimed as stale by another worker,
-    // we must not delete the row that now belongs to that run.
-    const attempts = 5;
+    const attempts = 3;
     for (let i = 1; i <= attempts; i++) {
         try {
-            let query = supabase.from('agent_locks').delete().eq('project_id', projectId);
-            if (token) query = query.eq('token', token);
-            const { error } = await query;
+            const { error } = await supabase.from('agent_locks').delete().eq('project_id', projectId);
             if (error) throw error;
             return;
         } catch (err) {
@@ -498,7 +481,7 @@ async function releaseAgentLock(projectId: string, token?: string): Promise<void
 // which is exactly how a deploy leaks an agent_locks row: confirmed in
 // production, 4 rows leaked in the same ~90s window as a single `vps3`
 // deploy, each blocking that project's file sync/load for up to
-// AGENT_LOCK_STALE_MS with a false "another generation is running"
+// AGENT_LOCK_STALE_MS (15min) with a false "another generation is running"
 // error. Deleting by owner is deterministic regardless of how far any
 // individual request got, unlike waiting for sockets/finally blocks to run.
 /**
@@ -807,68 +790,30 @@ router.post('/test-providers', authMiddleware, async (req: AuthenticatedRequest,
     }
 });
 
-// Allowed AI models for frontend selector   gated by subscription tier.
-// Guests:      Gemini Flash (fast, free)
-// Free users:  DeepSeek (everyday tasks) + Gemini Flash (fast, free)
-// Paid users:  Claude (EcomSmart) + DeepSeek (everyday) + Gemini (fast)
+// Allowed AI models for frontend selector. Model choice is by task type, not
+// user/subscription tier: CODE_MODEL for code generation, CHEAP_MODEL for
+// small tasks (see the tier-based routing in the agent-stream handler below).
+// Guests are pinned to CHEAP_MODEL regardless of what they pick here.
 router.get('/models', optionalAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     try {
         const control = await getLlmControlState();
-        const keyConfigured = {
-            anthropic: Boolean(control.apiKeys.anthropic),
-            deepseek: Boolean(control.apiKeys.deepseek),
-            gemini: Boolean(control.apiKeys.gemini),
-            zai: Boolean(control.apiKeys.zai),
-        };
-
-        const providerEnabled = {
-            anthropic: control.providers.anthropic.enabled,
-            deepseek: control.providers.deepseek.enabled,
-            gemini: control.providers.gemini.enabled,
-            zai: control.providers.zai.enabled,
-        };
-
-        const allAllowed = control.models.allowed.filter((entry) => {
-            const provider = entry.provider;
-            return providerEnabled[provider] && keyConfigured[provider];
-        });
+        const allAllowed = control.providers.openrouter.enabled && control.apiKeys.openrouter
+            ? control.models.allowed
+            : [];
 
         if (allAllowed.length === 0) {
             return res.status(503).json({
                 success: false,
-                error: 'No AI providers are currently configured. Add at least one API key in Admin settings.',
+                error: 'OpenRouter is not currently configured. Add OPENROUTER_API_KEY in Admin settings.',
             });
         }
 
-        // Determine the user's tier and restrict accordingly.
         const userId = req.user?.id;
-
-        // Dev mode: expose all configured models without auth so local testing works
-        if (!userId && process.env.NODE_ENV === 'development') {
-            const primary = allAllowed.find((m) => m.id === control.models.primary) || allAllowed[0];
-            return res.json({ success: true, primary: primary.id, allowed: allAllowed });
-        }
-
-        // Guest (no token)   only Gemini
         if (!userId) {
             const guestEntry = allAllowed.find((m) => m.id === GUEST_MODEL) || allAllowed[0];
             return res.json({ success: true, primary: guestEntry.id, allowed: [guestEntry], isGuest: true });
         }
 
-        const tier = await getUserPlanTier(userId);
-
-        if (tier === 'free') {
-            // Free users get only DeepSeek + Gemini 2.5 models.
-            const freeModels = allAllowed.filter((m) => {
-                const id = m.id.toLowerCase();
-                return id.includes('deepseek') || id.includes('gemini-2.5');
-            });
-            const freeModelId = control.models.freeModel || DEFAULT_FREE_MODEL;
-            const defaultFree = freeModels.find((m) => m.id === freeModelId) || freeModels[0] || allAllowed[0];
-            return res.json({ success: true, primary: defaultFree.id, allowed: freeModels.length > 0 ? freeModels : [defaultFree] });
-        }
-
-        // Paid users get all enabled models: Claude (primary/EcomSmart) + DeepSeek (everyday) + Gemini (fast)
         const primary = allAllowed.some((m) => m.id === control.models.primary)
             ? control.models.primary
             : (allAllowed[0]?.id || control.models.primary);
@@ -1303,22 +1248,9 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                 return;
             }
 
-            const tier = await getUserPlanTier(req.user!.id);
-   
-               if (tier === 'free') {
-                   // Free users: GLM models only (fast, cost-effective).
-                   const allowedFreeModels = ['glm-4.5-flash', 'glm-4.7-flash', 'glm-4.5'];
-                   effectiveModel = (model && allowedFreeModels.some(m => model.toLowerCase() === m.toLowerCase()))
-                       ? model
-                       : (control.models.freeModel || DEFAULT_FREE_MODEL);
-               } else {
-                   // Paid users: Gemini / Sonnet via admin-configured primary, or user's picker choice.
-                   effectiveModel = model || control.models.primary;
-               }
-
-               if (tier === 'free' && model && !['glm'].some(m => model.toLowerCase().includes(m))) {
-                   logger.info(`[agent-stream] Free user ${req.user!.id} requested restricted model "${model}"   overriding to "${effectiveModel}"`);
-               }
+            // Entitled default; the tier-based routing below (isCheapTier)
+            // is what actually decides CODE_MODEL vs CHEAP_MODEL per request.
+            effectiveModel = model || control.models.primary;
         }
 
         const effectiveMode = resolveAgentMode(prompt, mode);
@@ -1375,7 +1307,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         // env vars   do not re-derive any of these locally here. This file used to
         // independently recompute VITE_FUNCTIONS_API_URL/VITE_SUPABASE_* with its own
         // fallback logic and silently diverged from database.service.ts (wrong
-        // gen.ecomgear.dev fallback, missing VITE_SUPABASE_URL entirely).
+        // gen.SMEsAgent.dev fallback, missing VITE_SUPABASE_URL entirely).
         let projectSecrets: Array<{ key_name: string; key_value: string }> = [];
         try {
             const { buildProjectEnvSecrets } = await import('../services/database.service.js');
@@ -1409,50 +1341,13 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             }
         })();
 
-        // Sync the FULL secret set (VITE_ AND custom non-VITE keys) to the VPS5
-        // edge-function store (tenant_secrets). Edge functions read secrets by the
-        // exact saved name (secrets.CUSTOM_KEY) from a local copy on VPS5, so a key
-        // the OWNER saved through Settings (which writes project_secrets directly via
-        // RLS) was invisible to edge functions until some other path happened to sync
-        // it -- the recurring "I added a custom key but the agent can't use it" report.
-        // set_secret.ts syncs on the agent path; this closes the gap for the Settings
-        // path (and for any other writer) on every run start. Fire-and-forget; never
-        // blocks or fails the run. No-op when the project has no hosted database.
-        (async () => {
-            try {
-                const internalSecret = process.env.FUNCTIONS_INTERNAL_SECRET;
-                if (!userId || !internalSecret) return;
-                const { databaseService } = await import('../services/database.service.js');
-                const dbStatus = await databaseService.getStatus(userId, projectId).catch(() => null);
-                if (dbStatus?.status !== 'active') return;
-                const creds = await databaseService.getCredentials(userId, projectId);
-                if (!creds) return;
-                const { data: allSecrets } = await supabase
-                    .from('project_secrets')
-                    .select('key_name, key_value')
-                    .eq('project_id', projectId);
-                if (!allSecrets || allSecrets.length === 0) return;
-                await fetch(`${creds.api_url}/secrets/_sync`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Internal-Secret': internalSecret,
-                    },
-                    body: JSON.stringify({ secrets: allSecrets }),
-                    signal: AbortSignal.timeout(10_000),
-                });
-            } catch {
-                // Non-fatal   edge functions will lack custom secrets until the next successful sync
-            }
-        })();
-
         // Resolve the agent working directory.
         //
         // Priority:
         //  1. DB-stored server_path (set explicitly for production deployments)
         //  2. SERVER_PROJECTS_DIR env var → persistent directory
-        //  3. Production: /var/ecomgear/projects/{projectId} (persistent, survives restarts)
-        //  4. Local dev: ~/.ecomgear/preview/{projectId}
+        //  3. Production: /var/SMEsAgent/projects/{projectId} (persistent, survives restarts)
+        //  4. Local dev: ~/.SMEsAgent/preview/{projectId}
         const IS_PRODUCTION = process.env.NODE_ENV === 'production';
         // Persistent per-project dir: holds the warm node_modules the sandbox
         // symlinks to, and the template scaffold for a brand-new project. It is
@@ -1463,10 +1358,10 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         } else if (process.env.SERVER_PROJECTS_DIR) {
             projectDir = path.join(process.env.SERVER_PROJECTS_DIR, projectId);
         } else if (IS_PRODUCTION) {
-            projectDir = path.join('/var/ecomgear/projects', projectId);
+            projectDir = path.join('/var/SMEsAgent/projects', projectId);
         } else {
             const localBase = process.env.LOCAL_PREVIEW_DATA
-                || path.join(os.homedir(), '.ecomgear', 'preview');
+                || path.join(os.homedir(), '.SMEsAgent', 'preview');
             projectDir = path.join(localBase, projectId);
         }
 
@@ -1549,7 +1444,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                             agentIds: ecgRow.agentIds ?? [],
                             config: ecgRow.config ?? {},
                             projectId,
-                            proxyUrl: process.env.ECOMGEAR_SERVER_URL || 'https://api.ecomgear.ai',
+                            proxyUrl: process.env.SMEsAgent_SERVER_URL || 'https://api.SMEsAgent.ai',
                         });
                         logger.info(`[agent-stream] Re-seeded eCG dashboard overlay locally for project=${projectId}`);
                     } else {
@@ -1614,44 +1509,18 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             promptPreview: typeof prompt === 'string' ? prompt.slice(0, 80) : '',
         });
 
-        // Tier-based model routing:
-        //   micro → Gemini Flash  (visual tweaks, $0.075/MTok   40× cheaper than Sonnet)
-        //   micro → free model (glm-4.7-flash by default   visual tweaks)
-        //   fix   → fallback model (glm-5 by default   error diagnosis)
-        //   edit/feature/build → user's selected model / admin primary
-        // Guests always stay on GUEST_MODEL regardless.
-        // The model the user's plan actually entitles them to   escalation target.
-        // Downgrade-then-escalate cascade: a cheap model attempts first; if it
-        // lands ZERO changes (stuck/failed), one automatic retry runs on this
-        // model. Never escalates ABOVE the plan model, so a free-tier failure
-        // can't silently burn premium spend. Rationale (measured 2026-07-21):
-        // edit-tier on Claude averages $0.60-$1.66/request vs ~$0.02-$0.05 on
-        // Flash-class models   a failed cheap attempt is a rounding error next
-        // to a single Claude run, so cheap-first wins whenever the cheap model
-        // succeeds even a modest fraction of the time.
-        const entitledModel = effectiveModel;
+        // Task-based model routing: cheap tier (micro/chit-chat/small visual
+        // tweaks) gets CHEAP_MODEL; everything that touches code (fix, edit,
+        // feature, build) gets CODE_MODEL. Guests always stay on GUEST_MODEL
+        // regardless (set above).
         if (!isGuest) {
-            if (isCheapTier(requestTier)) {
-                const cheapModel = process.env.CHEAP_TASK_MODEL || control.models.freeModel || DEFAULT_FREE_MODEL;
-                logger.info(`[agent-stream] Tier=${requestTier} → cheap model: ${cheapModel} (was ${effectiveModel})`);
-                effectiveModel = cheapModel;
-            } else if (requestTier === 'fix') {
-                const fixModel = process.env.FIX_TIER_MODEL || control.models.fallback || DEFAULT_FREE_MODEL;
-                logger.info(`[agent-stream] Tier=fix → fix model: ${fixModel} (was ${effectiveModel})`);
-                effectiveModel = fixModel;
-            } else if (
-                requestTier === 'edit' && !isRepairPrompt &&
-                process.env.EDIT_TIER_CHEAP_FIRST !== '0'
-            ) {
-                // Edit tier is the volume tier and was the only one still going
-                // straight to the expensive model. Cheap-first, escalate on failure.
-                const editFirstModel = process.env.EDIT_TIER_FIRST_MODEL || control.models.fallback || DEFAULT_FREE_MODEL;
-                if (editFirstModel !== effectiveModel) {
-                    logger.info(`[agent-stream] Tier=edit → cheap-first model: ${editFirstModel} (entitled: ${entitledModel})`);
-                    effectiveModel = editFirstModel;
-                }
-            }
+            effectiveModel = isCheapTier(requestTier) ? CHEAP_MODEL : CODE_MODEL;
+            logger.info(`[agent-stream] Tier=${requestTier} → model: ${effectiveModel}`);
         }
+        // Escalation ceiling for the "cheap-first made no progress" retry below.
+        // Guests never escalate (their ceiling equals their model, so the
+        // effectiveModel !== entitledModel check below is always false).
+        const entitledModel = isGuest ? GUEST_MODEL : CODE_MODEL;
 
         logger.info(`[agent-stream] Request tier=${requestTier} maxSteps=${TIER_MAX_STEPS[requestTier]} model=${effectiveModel}`);
 
@@ -1669,14 +1538,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             logger.info(`[agent-stream] Fast path (conversational)   bypassing agent loop`);
             currentRun.emit('start', { projectId, model: 'fast-path', mode: effectiveMode });
 
-            const anthropicKey = process.env.AI_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
-            const geminiKey = process.env.GEMINI_API_KEY;
-            let fastModel: any = null;
-            if (anthropicKey && process.env.AI_DISABLE_ANTHROPIC !== '1') {
-                fastModel = createAnthropic({ apiKey: anthropicKey })('claude-haiku-4-5-20251001');
-            } else if (geminiKey && process.env.AI_DISABLE_GEMINI !== '1') {
-                fastModel = createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-flash-latest');
-            }
+            let fastModel = process.env.OPENROUTER_API_KEY ? getCheapProvider().model : null;
 
             if (fastModel) {
                 try {
@@ -1684,7 +1546,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
                         model: fastModel,
                         maxOutputTokens: 400,
                         temperature: 0.5,
-                        system: `You are EcomGear AI, an app builder. Answer briefly and helpfully. Rules: NO emojis. Do not use the em dash character. Sound like a calm human teammate, not a bot. Never start a reply with phrases like "Great question", "Absolutely", "Of course", or "I would be happy to".`,
+                        system: `You are SMEsAgent AI, an app builder. Answer briefly and helpfully. Rules: NO emojis. Do not use the em dash character. Sound like a calm human teammate, not a bot. Never start a reply with phrases like "Great question", "Absolutely", "Of course", or "I would be happy to".`,
                         prompt: trimmedPrompt,
                     });
                     currentRun.emit('text-delta', { text });
@@ -1706,7 +1568,6 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             appPath,
             model,
             mode: effectiveMode,
-            sandboxHeadByPath: sandbox?.headByPath ?? null,
             chatMode: chatMode === 'admin' ? 'admin' : 'normal',
             approvedPlanSteps,
             existingFiles: Array.isArray(existingFiles) ? existingFiles : [],
@@ -1856,7 +1717,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         }
     } catch (error) {
         if ((error as { clientAborted?: boolean }).clientAborted || routeAbortController.signal.aborted) {
-            logger.warn(`[agent-stream] Run cancelled for project ${projectId}`);
+            logger.warn(`[agent-stream] Client disconnected, cancelled run for project ${projectId}`);
         } else {
             const message = (error as Error).message;
             logger.error(`[agent-stream] Error: ${message}`);
@@ -1880,15 +1741,14 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
 
         stopAgentLockHeartbeat();
         // Release the cross-worker DB lock BEFORE dropping the in-memory entry.
-        // The old order deleted the map entry first, so if all delete retries
+        // The old order deleted the map entry first, so if all 3 delete retries
         // failed the project was left in the one inconsistent state that is
         // user-visible and self-sustaining: DB says locked, no worker can see
         // or rejoin the run, and nothing clears it until the staleness bound
         // lapses. Releasing first means the only transient inconsistency is the
         // harmless direction (lock free, map entry lingering for the few ms
-        // until the next line). Scoped to this run's token so a lock reclaimed
-        // by a newer run is never deleted out from under it.
-        await releaseAgentLock(projectId, agentLockToken);
+        // until the next line).
+        await releaseAgentLock(projectId);
         // Converge the happy path onto the same ledger state the crash path
         // produces. Without this a cleanly-released lock still reads as
         // "standing" to every other worker, which is the visibility bug again
@@ -1936,7 +1796,7 @@ function extractOutermostJsonArray(text: string): unknown[] | null {
     return null;
 }
 
-// Generate contextual follow-up suggestions via Gemini Flash based on what was just built.
+// Generate contextual follow-up suggestions via the cheap model based on what was just built.
 router.post('/suggestions', optionalAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     const { summary, filePaths = [], userPrompt = '' } = req.body as {
         summary?: string;
@@ -1948,14 +1808,13 @@ router.post('/suggestions', optionalAuthMiddleware, async (req: AuthenticatedReq
         return;
     }
 
-    const geminiKey = process.env.GEMINI_API_KEY;
-    if (!geminiKey || process.env.AI_DISABLE_GEMINI === '1') {
+    if (!process.env.OPENROUTER_API_KEY) {
         res.json({ suggestions: [] });
         return;
     }
 
     try {
-        const model = createGoogleGenerativeAI({ apiKey: geminiKey })('gemini-flash-latest');
+        const model = getCheapProvider().model;
 
         const fileContext = filePaths.length > 0
             ? `\nFiles changed: ${filePaths.slice(0, 8).join(', ')}`
@@ -1969,8 +1828,6 @@ router.post('/suggestions', optionalAuthMiddleware, async (req: AuthenticatedReq
             model,
             maxOutputTokens: 300,
             temperature: 0.6,
-            // Disable thinking budget   saves tokens on this tiny task
-            providerOptions: { google: { thinkingConfig: { thinkingBudget: 0 } } },
             prompt: `You are a product assistant inside an AI web app builder. The user just completed a task and you need to suggest 3 smart follow-up actions they might want to take next.
 
 Context:
@@ -1997,7 +1854,7 @@ Rules:
         }
         res.json({ suggestions: [] });
     } catch (err) {
-        logger.warn('[/suggestions] Gemini call failed:', (err as Error)?.message);
+        logger.warn('[/suggestions] LLM call failed:', (err as Error)?.message);
         res.json({ suggestions: [] });
     }
 });
@@ -2013,18 +1870,6 @@ Rules:
  */
 router.post('/cancel-run/:projectId', optionalAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     const { projectId } = req.params;
-    // An authenticated caller may only stop a run on a project they can edit.
-    // Before this check any logged-in user who knew (or guessed) a projectId
-    // could abort another tenant's live generation. Guests have no verifiable
-    // project ownership (fingerprint-only) and stay on the legacy path.
-    if (req.user?.id) {
-        try {
-            await projectService.assertCanEditProject(projectId, req.user.id);
-        } catch {
-            res.status(404).json({ error: 'Project not found' });
-            return;
-        }
-    }
     const local = activeAgentRuns.get(projectId);
     if (local) {
         local.abort();
@@ -2049,17 +1894,6 @@ subscribeRunCancel((projectId) => {
 // Check if a project has an active agent run (used by frontend to auto-reconnect)
 router.get('/active-run/:projectId', optionalAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     const { projectId } = req.params;
-    // An authenticated caller may only query runs for a project they can see;
-    // otherwise this route leaks whether an arbitrary project is generating.
-    // Guests (fingerprint-only, no verifiable ownership) stay on the legacy path.
-    if (req.user?.id) {
-        try {
-            await projectService.getProject(projectId, req.user.id);
-        } catch {
-            res.status(404).json({ error: 'Project not found' });
-            return;
-        }
-    }
     const run = activeAgentRuns.get(projectId);
     if (run) {
         // Owned by THIS worker, so its event bus is in our memory and the
@@ -2075,7 +1909,7 @@ router.get('/active-run/:projectId', optionalAuthMiddleware, async (req: Authent
         return;
     }
 
-    // `activeAgentRuns` is per-process but `ecomgear-gen` runs 2 PM2 cluster
+    // `activeAgentRuns` is per-process but `SMEsAgent-gen` runs 2 PM2 cluster
     // workers, so a miss here does NOT mean no run is happening -- it means no
     // run is happening *on this worker*. Answering a flat `active: false` while
     // the other worker holds the project's lock is what produced the reported
@@ -2250,9 +2084,9 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
         if (serverPath) {
             appPath = serverPath;
         } else if (IS_PRODUCTION) {
-            appPath = path.join(os.tmpdir(), 'ecomgear-preview', projectId);
+            appPath = path.join(os.tmpdir(), 'SMEsAgent-preview', projectId);
         } else {
-            const localBase = process.env.LOCAL_PREVIEW_DATA || path.join(os.homedir(), '.ecomgear', 'preview');
+            const localBase = process.env.LOCAL_PREVIEW_DATA || path.join(os.homedir(), '.SMEsAgent', 'preview');
             appPath = path.join(localBase, projectId);
         }
     } catch (err) {
@@ -2263,9 +2097,9 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
     // Resolve snapshot dir   check persistent store first, fall back to /tmp
     const SNAPSHOTS_DIR = process.env.SNAPSHOTS_DIR
         ? path.resolve(process.env.SNAPSHOTS_DIR)
-        : path.join(os.homedir(), '.ecomgear', 'snapshots');
+        : path.join(os.homedir(), '.SMEsAgent', 'snapshots');
     const persistentDir = path.join(SNAPSHOTS_DIR, snapshotId);
-    const legacyDir = path.join(os.tmpdir(), 'ecomgear-snapshots', snapshotId);
+    const legacyDir = path.join(os.tmpdir(), 'SMEsAgent-snapshots', snapshotId);
     const snapshotDir = fs.existsSync(persistentDir) ? persistentDir : legacyDir;
 
     if (!fs.existsSync(snapshotDir)) {
@@ -2351,7 +2185,7 @@ router.post('/rollback', authMiddleware, async (req: AuthenticatedRequest, res: 
                     restoredFiles.push({
                         path: rel,
                         content: BINARY.has(ext)
-                            ? `__ECOMGEAR_BIN64__${fs.readFileSync(fp).toString('base64')}`
+                            ? `__SMEsAgent_BIN64__${fs.readFileSync(fp).toString('base64')}`
                             : fs.readFileSync(fp, 'utf8'),
                     });
                 } catch { /* skip */ }
@@ -2492,7 +2326,7 @@ router.get('/versions/:projectId', authMiddleware, async (req: AuthenticatedRequ
 
     const SNAPSHOTS_DIR = process.env.SNAPSHOTS_DIR
         ? path.resolve(process.env.SNAPSHOTS_DIR)
-        : path.join(os.homedir(), '.ecomgear', 'snapshots');
+        : path.join(os.homedir(), '.SMEsAgent', 'snapshots');
 
     // Annotate each version with whether its snapshot is still on disk
     const versions = (data ?? []).map((row: any) => {
@@ -2500,7 +2334,7 @@ router.get('/versions/:projectId', authMiddleware, async (req: AuthenticatedRequ
         let available = false;
         if (sid) {
             const persistentPath = path.join(SNAPSHOTS_DIR, sid);
-            const legacyPath = path.join(os.tmpdir(), 'ecomgear-snapshots', sid);
+            const legacyPath = path.join(os.tmpdir(), 'SMEsAgent-snapshots', sid);
             available = fs.existsSync(persistentPath) || fs.existsSync(legacyPath);
         }
         return { ...row, available };
@@ -2518,7 +2352,7 @@ router.post('/kb/:projectId/reindex', authMiddleware, async (req: AuthenticatedR
     const serverPath = supabase
         ? ((await supabase.from('projects').select('server_path').eq('id', projectId).single()).data as any)?.server_path
         : null;
-    const localBase = process.env.SERVER_PROJECTS_DIR || path.join(os.homedir(), '.ecomgear', 'projects');
+    const localBase = process.env.SERVER_PROJECTS_DIR || path.join(os.homedir(), '.SMEsAgent', 'projects');
     const appPath = serverPath || path.join(localBase, projectId);
 
     if (!fs.existsSync(appPath)) { res.status(404).json({ error: 'Project files not found on server' }); return; }

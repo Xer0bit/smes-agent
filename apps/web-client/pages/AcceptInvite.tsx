@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import BrandLoader from '@/components/BrandLoader';
 import { Badge } from '@/components/ui/badge';
 import { Building2, CheckCircle, XCircle, Clock, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -175,19 +176,16 @@ export default function AcceptInvite() {
 
     if (loading) {
         return (
-            <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
-                <div className="flex flex-col items-center gap-4">
-                    <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
-                    <p className="text-gray-400">Loading invitation...</p>
-                </div>
+            <div className="min-h-screen bg-background flex items-center justify-center">
+                <BrandLoader variant="drop" size={100} label="Loading invitation" />
             </div>
         );
     }
 
     if (error) {
         return (
-            <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4">
-                <Card className="max-w-md w-full bg-[#1a1a1a] border-white/10">
+            <div className="min-h-screen bg-background flex items-center justify-center p-4">
+                <Card className="max-w-md w-full bg-card border-white/10">
                     <CardContent className="flex flex-col items-center py-12 text-center">
                         <XCircle className="h-16 w-16 text-red-500 mb-4" />
                         <h2 className="text-xl font-semibold text-white mb-2">Invitation Error</h2>
@@ -204,12 +202,12 @@ export default function AcceptInvite() {
     if (!invitation) return null;
 
     return (
-        <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4">
-            <Card className="max-w-md w-full bg-[#1a1a1a] border-white/10">
+        <div className="min-h-screen bg-background flex items-center justify-center p-4">
+            <Card className="max-w-md w-full bg-card border-white/10">
                 <CardHeader className="text-center pb-2">
                     <div className="flex justify-center mb-4">
-                        <div className="h-16 w-16 rounded-full bg-indigo-600/20 flex items-center justify-center">
-                            <Building2 className="h-8 w-8 text-indigo-400" />
+                        <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center">
+                            <Building2 className="h-8 w-8 text-muted-foreground" />
                         </div>
                     </div>
                     <CardTitle className="text-2xl text-white">You're Invited!</CardTitle>
@@ -225,7 +223,7 @@ export default function AcceptInvite() {
                     </div>
 
                     <div className="flex justify-center">
-                        <Badge className="bg-indigo-600/20 text-indigo-400 px-4 py-1.5 text-sm">
+                        <Badge className="bg-muted text-muted-foreground px-4 py-1.5 text-sm">
                             Role: {getRoleName(invitation.role)}
                         </Badge>
                     </div>
@@ -244,7 +242,7 @@ export default function AcceptInvite() {
                             Decline
                         </Button>
                         <Button
-                            className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white"
+                            className="flex-1 bg-primary hover:bg-primary/90 text-white"
                             onClick={handleAccept}
                             disabled={accepting}
                         >

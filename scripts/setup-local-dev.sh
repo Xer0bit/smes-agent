@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# EcomGear   Local dev environment setup (frontend + api-gateway + preview)
+# SMEsAgent   Local dev environment setup (frontend + api-gateway + preview)
 # Usage: bash scripts/setup-local-dev.sh
 #
 # Configures the "local code, production data" pattern this repo already uses:
@@ -10,8 +10,8 @@
 #   - .env.development.local   -> frontend auth stays on production Supabase,
 #                                 but API/gen/agent/preview calls are routed
 #                                 to your own locally-running processes
-#                                 (npm run dev:all -> :5001 api-gateway,
-#                                 :3001 preview-service, :8080 vite)
+#                                 (npm run dev:all -> :5002 api-gateway,
+#                                 :3002 preview-service, :8081 vite)
 #
 # Idempotent: safe to re-run, only touches the specific keys it sets, never
 # wipes the rest of either file. Pulls all secret VALUES from .deploy.env
@@ -43,7 +43,7 @@ set_env() {
 
 echo "▶ Configuring apps/api-gateway/.env (local backend -> production data)..."
 API_ENV="$ROOT_DIR/apps/api-gateway/.env"
-set_env "$API_ENV" SUPABASE_URL "https://api.ecomgear.dev"
+set_env "$API_ENV" SUPABASE_URL "https://api-smes.xer0bit.com"
 set_env "$API_ENV" SUPABASE_ANON_KEY "${SUPABASE_ANON_KEY:?missing SUPABASE_ANON_KEY in .deploy.env}"
 set_env "$API_ENV" SUPABASE_SERVICE_ROLE_KEY "${SUPABASE_SERVICE_ROLE_KEY:?missing SUPABASE_SERVICE_ROLE_KEY in .deploy.env}"
 set_env "$API_ENV" SUPABASE_SERVICE_KEY "${SUPABASE_SERVICE_ROLE_KEY}"
@@ -62,14 +62,14 @@ set_env "$API_ENV" TENANT_DB_RELOAD_SECRET "${TENANT_DB_RELOAD_SECRET}"
 echo "▶ Configuring .env.development.local (frontend -> local backend + preview)..."
 FRONTEND_ENV="$ROOT_DIR/.env.development.local"
 # Auth stays on production -- no local Supabase/Postgres stack exists.
-set_env "$FRONTEND_ENV" VITE_SUPABASE_URL "https://api.ecomgear.dev"
+set_env "$FRONTEND_ENV" VITE_SUPABASE_URL "https://api-smes.xer0bit.com"
 set_env "$FRONTEND_ENV" VITE_SUPABASE_PUBLISHABLE_KEY "${SUPABASE_PUBLISHABLE_KEY:?missing SUPABASE_PUBLISHABLE_KEY in .deploy.env}"
 # API/gen/agent/preview calls go to your own locally-running processes.
-set_env "$FRONTEND_ENV" VITE_API_SERVER_URL "http://localhost:5001"
-set_env "$FRONTEND_ENV" VITE_GEN_SERVER_URL "http://localhost:5001"
-set_env "$FRONTEND_ENV" VITE_AGENT_SERVER_URL "http://localhost:5001"
-set_env "$FRONTEND_ENV" VITE_PREVIEW_URL "http://localhost:3001"
-set_env "$FRONTEND_ENV" VITE_PREVIEW_SERVICE_URL "http://localhost:3001"
+set_env "$FRONTEND_ENV" VITE_API_SERVER_URL "http://localhost:5002"
+set_env "$FRONTEND_ENV" VITE_GEN_SERVER_URL "http://localhost:5002"
+set_env "$FRONTEND_ENV" VITE_AGENT_SERVER_URL "http://localhost:5002"
+set_env "$FRONTEND_ENV" VITE_PREVIEW_URL "http://localhost:3002"
+set_env "$FRONTEND_ENV" VITE_PREVIEW_SERVICE_URL "http://localhost:3002"
 
 echo ""
 echo "✓ Local dev environment configured."
@@ -79,7 +79,7 @@ echo "values are actually loaded (Vite/Node only read env files at boot):"
 echo ""
 echo "    npm run dev:all"
 echo ""
-echo "  Frontend  -> http://localhost:8080"
-echo "  API/agent -> http://localhost:5001"
-echo "  Preview   -> http://localhost:3001"
-echo "  Auth/DB   -> production (api.ecomgear.dev, tenant DB on VPS5)"
+echo "  Frontend  -> http://localhost:8081"
+echo "  API/agent -> http://localhost:5002"
+echo "  Preview   -> http://localhost:3002"
+echo "  Auth/DB   -> production (api-smes.xer0bit.com, tenant DB on VPS5)"

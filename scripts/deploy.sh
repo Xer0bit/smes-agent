@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# EcomGear   Multi-VPS Manual Deploy Script
+# SMEsAgent   Multi-VPS Manual Deploy Script
 # Usage: ./scripts/deploy.sh [vps1|vps2|vps3|vps4|vps5|all]
 #
 # Infrastructure:
@@ -32,7 +32,7 @@ VPS3_IP="3.148.126.20";    VPS3_USER="root"
 VPS4_IP="${VPS4_HOST:-187.77.157.231}"; VPS4_USER="root"
 VPS5_IP="${VPS5_HOST:-187.127.108.19}"; VPS5_USER="root"
 
-DEPLOY_PATH="/var/www/ecomgear"
+DEPLOY_PATH="/var/www/SMEsAgent"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 TARGET="${1:-all}"
@@ -242,19 +242,19 @@ deploy_vps1() {
     step "Writing production env overrides (.env.production.local)..."
     PROD_ENV_OVERRIDE="$STAGE_DIR/.env.production.local"
     cat > "$PROD_ENV_OVERRIDE" <<EOF
-VITE_SUPABASE_URL=https://api.ecomgear.dev
-VITE_API_URL=https://api.ecomgear.dev
+VITE_SUPABASE_URL=https://api.SMEsAgent.dev
+VITE_API_URL=https://api.SMEsAgent.dev
 VITE_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY not set (check .deploy.env)}
 VITE_SUPABASE_PUBLISHABLE_KEY=${SUPABASE_ANON_KEY}
-VITE_PREVIEW_SERVICE_URL=https://preview.ecomgear.app
-VITE_PREVIEW_URL=https://preview.ecomgear.app
-VITE_APP_URL=https://ecomgear.dev
-VITE_SITE_URL=https://ecomgear.dev
-VITE_GEN_URL=https://gen.ecomgear.dev
-VITE_AGENT_URL=https://gen.ecomgear.dev
-VITE_GEN_SERVER_URL=https://gen.ecomgear.dev
-VITE_AGENT_SERVER_URL=https://gen.ecomgear.dev
-VITE_HOSTING_SERVICE_URL=https://hosting.ecomgear.app
+VITE_PREVIEW_SERVICE_URL=https://preview.SMEsAgent.app
+VITE_PREVIEW_URL=https://preview.SMEsAgent.app
+VITE_APP_URL=https://SMEsAgent.dev
+VITE_SITE_URL=https://SMEsAgent.dev
+VITE_GEN_URL=https://gen.SMEsAgent.dev
+VITE_AGENT_URL=https://gen.SMEsAgent.dev
+VITE_GEN_SERVER_URL=https://gen.SMEsAgent.dev
+VITE_AGENT_SERVER_URL=https://gen.SMEsAgent.dev
+VITE_HOSTING_SERVICE_URL=https://hosting.SMEsAgent.app
 EOF
     trap 'rm -f "$PROD_ENV_OVERRIDE"' EXIT
 
@@ -277,7 +277,7 @@ EOF
     ssh_vps1 "bash -s" << 'DBBACKUP'
 set -e
 DB_CONTAINER="supabase_db_zurneeqpussrefamhtoq"
-BACKUP_DIR="/var/www/ecomgear/db-backups"
+BACKUP_DIR="/var/www/SMEsAgent/db-backups"
 mkdir -p "$BACKUP_DIR"
 TS=$(date +%Y%m%d-%H%M%S)
 docker exec "$DB_CONTAINER" pg_dumpall -U postgres | gzip > "$BACKUP_DIR/platform-${TS}.sql.gz"
@@ -335,14 +335,14 @@ MIGRATIONS
     ssh_vps1 "mkdir -p $DEPLOY_PATH/dist.new"
     scp_vps1 "$STAGE_DIR/dist/" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/dist.new/"
     step "Uploading nginx configs..."
-    scp_vps1 "$STAGE_DIR/infrastructure/nginx/vps1-ecomgear.dev.conf" \
-             "$VPS1_USER@$VPS1_IP:/etc/nginx/sites-available/ecomgear"
-    scp_vps1 "$STAGE_DIR/infrastructure/nginx/vps1-1000.ecomgear.dev.conf" \
-             "$VPS1_USER@$VPS1_IP:/etc/nginx/sites-available/1000.ecomgear.dev"
+    scp_vps1 "$STAGE_DIR/infrastructure/nginx/vps1-SMEsAgent.dev.conf" \
+             "$VPS1_USER@$VPS1_IP:/etc/nginx/sites-available/SMEsAgent"
+    scp_vps1 "$STAGE_DIR/infrastructure/nginx/vps1-1000.SMEsAgent.dev.conf" \
+             "$VPS1_USER@$VPS1_IP:/etc/nginx/sites-available/1000.SMEsAgent.dev"
     step "Remote: atomic swap dist.new → dist + nginx reload..."
     ssh_vps1 "bash -s" << 'REMOTE'
 set -e
-cd /var/www/ecomgear
+cd /var/www/SMEsAgent
 rm -rf dist.old
 # Use if/then so set -e doesn't exit when dist doesn't exist yet
 if [ -d dist ]; then mv dist dist.old; fi
@@ -353,15 +353,15 @@ mv dist.new dist
 # Keep the previous build's assets alongside the new ones for one generation
 # (never overwriting a new file) so those tabs keep working until they reload.
 if [ -d dist.old/assets ]; then cp -n dist.old/assets/* dist/assets/ 2>/dev/null || true; fi
-ln -sf /etc/nginx/sites-available/ecomgear /etc/nginx/sites-enabled/ecomgear
-ln -sf /etc/nginx/sites-available/1000.ecomgear.dev /etc/nginx/sites-enabled/1000.ecomgear.dev
-rm -f /etc/nginx/sites-enabled/ecomgear.conf
+ln -sf /etc/nginx/sites-available/SMEsAgent /etc/nginx/sites-enabled/SMEsAgent
+ln -sf /etc/nginx/sites-available/1000.SMEsAgent.dev /etc/nginx/sites-enabled/1000.SMEsAgent.dev
+rm -f /etc/nginx/sites-enabled/SMEsAgent.conf
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx && echo 'nginx reloaded'
 echo "Backup preserved at dist.old for rollback"
 REMOTE
 
-    # ── ecomgear-api (apps/api-gateway/, SERVICE_ROLE=api)   everything except LLM gen ──
+    # ── SMEsAgent-api (apps/api-gateway/, SERVICE_ROLE=api)   everything except LLM gen ──
     # Rebuilt independently of deploy_vps3's server build since either function
     # can run alone (single-target deploys)   a little duplicate CI time, but
     # keeps the two VPS deploys decoupled instead of depending on run order.
@@ -379,17 +379,17 @@ REMOTE
         scp_vps1 --exclude='.env' --exclude='.env.*' --exclude='node_modules' \
             "$STAGE_DIR/apps/api-gateway/" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/server.staging/"
     scp_vps1 "$STAGE_DIR/infrastructure/ecosystem.config.cjs" "$VPS1_USER@$VPS1_IP:$DEPLOY_PATH/"
-    step "Writing ecomgear-api env to VPS1..."
+    step "Writing SMEsAgent-api env to VPS1..."
     if [[ -n "${ECG_AUTH_BASE_URL:-}" && ( -z "${ECG_AUTH_ADMIN_USERNAME:-}" || -z "${ECG_AUTH_ADMIN_PASSWORD:-}" ) ]]; then
         echo -e "${YELLOW}  ⚠ ECG_AUTH_ADMIN_USERNAME/PASSWORD not set   eCG Auth is configured but the AR-0006 cross-app identity lookup (apps/api-gateway/scripts/migrate-existing-users-to-ecg-auth.ts, and the login-time background-migration path) will silently no-op on production.${NC}"
     fi
     SK="${SUPABASE_SERVICE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
     ssh_vps1 "bash -s" << ENVREMOTE
 set -e
-cat > /var/www/ecomgear/.env.production << ENV
+cat > /var/www/SMEsAgent/.env.production << ENV
 NODE_ENV=production
-ECOMGEAR_RUNS_DIR=${ECOMGEAR_RUNS_DIR:-/var/ecomgear/runs}
-SUPABASE_URL=https://api.ecomgear.dev
+SMEsAgent_RUNS_DIR=${SMEsAgent_RUNS_DIR:-/var/SMEsAgent/runs}
+SUPABASE_URL=https://api.SMEsAgent.dev
 SUPABASE_SERVICE_ROLE_KEY=${SK}
 SUPABASE_SERVICE_KEY=${SK}
 SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
@@ -400,19 +400,19 @@ TENANT_DB_SUPERUSER=${TENANT_DB_SUPERUSER:-ecg_provisioner}
 TENANT_DB_SUPERUSER_PASSWORD=${TENANT_DB_SUPERUSER_PASSWORD:-}
 TENANT_DB_NAME=${TENANT_DB_NAME:-ecg_tenants}
 TENANT_DB_JWT_SECRET=${TENANT_DB_JWT_SECRET:-}
-TENANT_DB_API_URL=${TENANT_DB_API_URL:-https://cloud.ecomgear.app}
+TENANT_DB_API_URL=${TENANT_DB_API_URL:-https://cloud.SMEsAgent.app}
 TENANT_DB_SSL=${TENANT_DB_SSL:-true}
 TENANT_DB_RELOAD_URL=${TENANT_DB_RELOAD_URL:-}
 TENANT_DB_RELOAD_SECRET=${TENANT_DB_RELOAD_SECRET:-}
 ECG_PORTAL_URL=${ECG_PORTAL_URL:-}
 ECG_SERVICE_KEY=${ECG_SERVICE_KEY:-}
-ECOMGEAR_SERVER_URL=${ECOMGEAR_SERVER_URL:-}
+SMEsAgent_SERVER_URL=${SMEsAgent_SERVER_URL:-}
 DASHBOARD_ACCESS_SECRET=${DASHBOARD_ACCESS_SECRET:-}
 GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
 GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
-PREVIEW_SERVICE_URL=${PREVIEW_SERVICE_URL:-https://preview.ecomgear.app}
+PREVIEW_SERVICE_URL=${PREVIEW_SERVICE_URL:-https://preview.SMEsAgent.app}
 PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}
 # Cloudflare Turnstile secret (registration bot-gate). Value comes from
 # .deploy.env; the api-gateway reads TURNSTILE_SECRET_KEY in production.
@@ -425,13 +425,13 @@ EDGE_FUNCTIONS_INVOKE_ENABLED=${EDGE_FUNCTIONS_INVOKE_ENABLED:-true}
 STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
 STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
 STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
-FRONTEND_URL=${FRONTEND_URL:-https://www.ecomgear.dev}
+FRONTEND_URL=${FRONTEND_URL:-https://www.SMEsAgent.dev}
 # Logger verbosity. Settable durably from .deploy.env; defaults to info.
 # Without this line, deploys silently deleted any live-set LOG_LEVEL.
 LOG_LEVEL=${LOG_LEVEL:-info}
 HOSTING_SERVICE_URL=${HOSTING_SERVICE_URL:-}
 HOSTING_SERVICE_SECRET=${HOSTING_SERVICE_SECRET:-}
-ECG_AUTH_BASE_URL=${ECG_AUTH_BASE_URL:-https://auth.ecomgear.ai}
+ECG_AUTH_BASE_URL=${ECG_AUTH_BASE_URL:-https://auth.SMEsAgent.ai}
 ECG_AUTH_API_KEY=${ECG_AUTH_API_KEY:-}
 ECG_AUTH_2FA_ACTIVE=${ECG_AUTH_2FA_ACTIVE:-false}
 ECG_AUTH_ADMIN_USERNAME=${ECG_AUTH_ADMIN_USERNAME:-}
@@ -439,19 +439,19 @@ ECG_AUTH_ADMIN_PASSWORD=${ECG_AUTH_ADMIN_PASSWORD:-}
 FUNCTIONS_INTERNAL_SECRET=${FUNCTIONS_INTERNAL_SECRET:-}
 ENV
 ENVREMOTE
-    step "Remote: atomic swap + PM2 restart (ecomgear-api)..."
+    step "Remote: atomic swap + PM2 restart (SMEsAgent-api)..."
     ssh_vps1 "bash -s" << 'REMOTE_API'
 set -e
-cd /var/www/ecomgear
+cd /var/www/SMEsAgent
 rm -rf server.old
 if [ -d server ]; then mv server server.old; fi
 if [ ! -d server.staging ]; then echo "ERROR: server.staging missing   rsync may have failed" >&2; exit 1; fi
 mv server.staging server
 cd server
 npm ci --omit=dev
-[ -f /var/www/ecomgear/.env.production ] && set -a && . /var/www/ecomgear/.env.production && set +a
-pm2 delete ecomgear-api 2>/dev/null || true
-pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-api --update-env
+[ -f /var/www/SMEsAgent/.env.production ] && set -a && . /var/www/SMEsAgent/.env.production && set +a
+pm2 delete SMEsAgent-api 2>/dev/null || true
+pm2 start /var/www/SMEsAgent/ecosystem.config.cjs --only SMEsAgent-api --update-env
 pm2 save
 # Sweep truly-stale leaked workers: a node process running from a DELETED
 # directory is unambiguously serving code that no longer exists on disk
@@ -471,7 +471,7 @@ for c in $(pgrep -f "node .*/server/dist/index.js"); do
         kill "$c" 2>/dev/null; sleep 1; kill -9 "$c" 2>/dev/null || true
     fi
 done
-echo "ecomgear-api restarted"
+echo "SMEsAgent-api restarted"
 REMOTE_API
     success "VPS1 API server deployed"
 
@@ -481,7 +481,7 @@ REMOTE_API
     # before failing the deploy   preventing a half-broken release from being
     # declared "done".
     step "Post-deploy health gate (auth + REST, up to 90s)..."
-    API="https://api.ecomgear.dev"
+    API="https://api.SMEsAgent.dev"
     ANON_KEY="${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY not set}"
     DEADLINE=$(( $(date +%s) + 90 ))
     AUTH_OK=0; REST_OK=0
@@ -505,7 +505,7 @@ REMOTE_API
         echo "  Rolling back dist/ → previous version (dist.old)..."
         ssh_vps1 "bash -s" << 'REMOTE' || echo "  ⚠ Rollback command itself failed   manual intervention needed on VPS1"
 set -e
-cd /var/www/ecomgear
+cd /var/www/SMEsAgent
 if [ -d dist.old ]; then
     rm -rf dist.failed
     mv dist dist.failed
@@ -523,7 +523,7 @@ REMOTE
     # answer identically whether or not this deploy's api-gateway code landed.
     # Covers the server subtree only -- the SPA is a built dist/ with no stamp.
     verify_remote_sha ssh_vps1 "$DEPLOY_PATH/server" "VPS1 (api server)"
-    success "VPS1 deploy complete → https://ecomgear.dev"
+    success "VPS1 deploy complete → https://SMEsAgent.dev"
 }
 
 # =========================================================================
@@ -552,7 +552,7 @@ deploy_vps2() {
     # Fix: pull the live package.json's dependencies and merge any that are
     # missing locally BEFORE installing, so they survive this deploy and get
     # committed here for every deploy after.
-    REMOTE_PKG_JSON=$(ssh_vps2 "cat /var/www/ecomgear/preview-service/package.json 2>/dev/null" || echo "")
+    REMOTE_PKG_JSON=$(ssh_vps2 "cat /var/www/SMEsAgent/preview-service/package.json 2>/dev/null" || echo "")
     if [ -n "$REMOTE_PKG_JSON" ]; then
         MERGE_RESULT=$(node -e "
 const fs = require('fs');
@@ -621,15 +621,15 @@ console.log(added.length + (added.length ? ':' + added.join(',') : ''));
              "$VPS2_USER@$VPS2_IP:$DEPLOY_PATH/preview-service.staging/"
     scp_vps2 "$STAGE_DIR/infrastructure/ecosystem.config.cjs" "$VPS2_USER@$VPS2_IP:$DEPLOY_PATH/"
     step "Uploading nginx config..."
-    scp_vps2 "$STAGE_DIR/infrastructure/nginx/vps2-preview.ecomgear.app.conf" \
-             "$VPS2_USER@$VPS2_IP:/etc/nginx/sites-available/ecomgear-preview"
+    scp_vps2 "$STAGE_DIR/infrastructure/nginx/vps2-preview.SMEsAgent.app.conf" \
+             "$VPS2_USER@$VPS2_IP:/etc/nginx/sites-available/SMEsAgent-preview"
     step "Writing preview-service env to VPS2..."
     SK="${SUPABASE_SERVICE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
     ssh_vps2 "bash -s" << ENVREMOTE
 set -e
-cat > /var/www/ecomgear/preview-service.staging/.env.production << ENV
+cat > /var/www/SMEsAgent/preview-service.staging/.env.production << ENV
 NODE_ENV=production
-SUPABASE_URL=https://api.ecomgear.dev
+SUPABASE_URL=https://api.SMEsAgent.dev
 SUPABASE_SERVICE_ROLE_KEY=${SK}
 PREVIEW_CHILD_PROCESS_MODE=${PREVIEW_CHILD_PROCESS_MODE:-off}
 PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}
@@ -641,14 +641,14 @@ ENVREMOTE
     step "Remote: installing node_modules on VPS2 (npm ci, not shipped over the network)..."
     ssh_vps2 "bash -s" << 'REMOTE_NPM'
 set -e
-cd /var/www/ecomgear/preview-service.staging
+cd /var/www/SMEsAgent/preview-service.staging
 npm ci --omit=dev
 REMOTE_NPM
 
     step "Remote: atomic swap + pm2 graceful reload..."
     ssh_vps2 "bash -s" << 'REMOTE'
 set -e
-cd /var/www/ecomgear
+cd /var/www/SMEsAgent
 
 # Preserve user project files: carry the existing projects/ dir into staging
 # so nothing is lost during the directory swap
@@ -665,7 +665,7 @@ rm -rf preview-service.old
 [ -d preview-service ] && mv preview-service preview-service.old
 mv preview-service.staging preview-service
 
-ln -sf /etc/nginx/sites-available/ecomgear-preview /etc/nginx/sites-enabled/ecomgear-preview
+ln -sf /etc/nginx/sites-available/SMEsAgent-preview /etc/nginx/sites-enabled/SMEsAgent-preview
 rm -f /etc/nginx/sites-enabled/preview.conf
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
@@ -679,20 +679,20 @@ nginx -t && systemctl reload nginx
 # .env.production has no effect and the process runs the old secret forever.
 # That is how VPS2 kept serving a stale PREVIEW_UPDATE_SECRET (2026-08-24) and
 # 401'd every preview push while its own env file held the correct value.
-pm2 reload /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-preview --update-env 2>/dev/null || \
-    pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-preview --update-env
+pm2 reload /var/www/SMEsAgent/ecosystem.config.cjs --only SMEsAgent-preview --update-env 2>/dev/null || \
+    pm2 start /var/www/SMEsAgent/ecosystem.config.cjs --only SMEsAgent-preview --update-env
 pm2 save --force
 
 sleep 4
 if ! curl -sf http://localhost:3001/health; then
     echo "ERROR: preview health check failed   rolling back"
     # Rollback: restore old version
-    pm2 stop ecomgear-preview 2>/dev/null || true
+    pm2 stop SMEsAgent-preview 2>/dev/null || true
     rm -rf preview-service.failed
     mv preview-service preview-service.failed
     [ -d preview-service.old ] && mv preview-service.old preview-service
-    pm2 reload /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-preview --update-env 2>/dev/null || \
-        pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-preview --update-env
+    pm2 reload /var/www/SMEsAgent/ecosystem.config.cjs --only SMEsAgent-preview --update-env 2>/dev/null || \
+        pm2 start /var/www/SMEsAgent/ecosystem.config.cjs --only SMEsAgent-preview --update-env
     echo "ROLLED BACK to previous version"
     exit 1
 fi
@@ -703,7 +703,7 @@ REMOTE
     # a still-running OLD process passes /health just as happily as a new one,
     # which is exactly how a no-op VPS2 deploy went unnoticed (2026-08-22).
     verify_remote_sha ssh_vps2 "$DEPLOY_PATH/preview-service" "VPS2 (preview-service)"
-    success "VPS2 deploy complete → https://preview.ecomgear.app"
+    success "VPS2 deploy complete → https://preview.SMEsAgent.app"
 }
 
 # =========================================================================
@@ -750,14 +750,14 @@ deploy_vps3() {
     scp_vps3 "$STAGE_DIR/supabase/migrations/" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/supabase/migrations/"
     scp_vps3 "$STAGE_DIR/infrastructure/ecosystem.config.cjs" "$VPS3_USER@$VPS3_IP:$DEPLOY_PATH/"
     step "Uploading nginx config..."
-    scp_vps3 "$STAGE_DIR/infrastructure/nginx/vps3-gen.ecomgear.dev.conf" \
-             "$VPS3_USER@$VPS3_IP:/etc/nginx/sites-available/ecomgear-gen"
+    scp_vps3 "$STAGE_DIR/infrastructure/nginx/vps3-gen.SMEsAgent.dev.conf" \
+             "$VPS3_USER@$VPS3_IP:/etc/nginx/sites-available/SMEsAgent-gen"
     step "Remote: atomic swap + clean PM2 restart..."
     SK="${SUPABASE_SERVICE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"; SAK="${SUPABASE_ANON_KEY:-}"
     ssh_vps3 "bash -s" << 'REMOTE_EOF'
 set -euo pipefail
-DEPLOY_PATH="/var/www/ecomgear"
-APP_NAME="ecomgear-gen"
+DEPLOY_PATH="/var/www/SMEsAgent"
+APP_NAME="SMEsAgent-gen"
 PORT=5001
 BACKUP_DIR="$DEPLOY_PATH/backups"
 TS=$(date +%Y%m%d-%H%M%S)
@@ -775,14 +775,14 @@ REMOTE_EOF
     TDB_PASS="${TENANT_DB_SUPERUSER_PASSWORD:-}"
     TDB_NAME="${TENANT_DB_NAME:-ecg_tenants}"
     TDB_JWT="${TENANT_DB_JWT_SECRET:-}"
-    TDB_API_URL="${TENANT_DB_API_URL:-https://cloud.ecomgear.app}"
+    TDB_API_URL="${TENANT_DB_API_URL:-https://cloud.SMEsAgent.app}"
     TDB_SSL="${TENANT_DB_SSL:-true}"
     TDB_RELOAD_URL="${TENANT_DB_RELOAD_URL:-}"
     TDB_RELOAD_SECRET="${TENANT_DB_RELOAD_SECRET:-}"
     ssh_vps3 "bash -s" << REMOTE
 set -euo pipefail
-DEPLOY_PATH="/var/www/ecomgear"
-APP_NAME="ecomgear-gen"
+DEPLOY_PATH="/var/www/SMEsAgent"
+APP_NAME="SMEsAgent-gen"
 PORT=5001
 BACKUP_DIR="\$DEPLOY_PATH/backups"
 TS=\$(date +%Y%m%d-%H%M%S)
@@ -796,9 +796,9 @@ NODE_ENV=production
 PORT=5001
 # Per-run agent sandboxes. Without this the runs root falls back to /tmp,
 # where a systemd tmp-cleaner can delete an ACTIVE sandbox mid-run.
-ECOMGEAR_RUNS_DIR=${ECOMGEAR_RUNS_DIR:-/var/ecomgear/runs}
-PREVIEW_SERVICE_URL=https://preview.ecomgear.app
-SUPABASE_URL=https://api.ecomgear.dev
+SMEsAgent_RUNS_DIR=${SMEsAgent_RUNS_DIR:-/var/SMEsAgent/runs}
+PREVIEW_SERVICE_URL=https://preview.SMEsAgent.app
+SUPABASE_URL=https://api.SMEsAgent.dev
 SUPABASE_SERVICE_ROLE_KEY=${SK}
 SUPABASE_SERVICE_KEY=${SK}
 SUPABASE_ANON_KEY=${SAK}
@@ -819,7 +819,7 @@ AI_FALLBACK_MODEL=gemini-flash-latest
 AI_DISABLED_MODEL_IDS=${AI_DISABLED_MODEL_IDS:-}
 ECG_PORTAL_URL=${ECG_PORTAL_URL}
 ECG_SERVICE_KEY=${ECG_SERVICE_KEY}
-ECOMGEAR_SERVER_URL=${ECOMGEAR_SERVER_URL}
+SMEsAgent_SERVER_URL=${SMEsAgent_SERVER_URL}
 DASHBOARD_ACCESS_SECRET=${DASHBOARD_ACCESS_SECRET:-}
 FUNCTIONS_INTERNAL_SECRET=${FUNCTIONS_INTERNAL_SECRET:-}
 PREVIEW_UPDATE_SECRET=${PREVIEW_UPDATE_SECRET:-}
@@ -858,7 +858,7 @@ mv server.staging server
 rm -rf server.old   # only the swap-temp dir; real history is in backups/
 
 # ── 4. Nginx ─────────────────────────────────────────────────────────────────
-ln -sf /etc/nginx/sites-available/ecomgear-gen /etc/nginx/sites-enabled/ecomgear-gen
+ln -sf /etc/nginx/sites-available/SMEsAgent-gen /etc/nginx/sites-enabled/SMEsAgent-gen
 rm -f /etc/nginx/sites-enabled/gen-agent.conf /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable nginx >/dev/null 2>&1 || true
@@ -917,7 +917,7 @@ sleep 2
 # across all worker restarts. New workers receive connections via IPC from
 # the master. Do NOT wait for port release here.
 
-# Start only ecomgear-gen from the ecosystem file (ecomgear-preview lives on VPS2)
+# Start only SMEsAgent-gen from the ecosystem file (SMEsAgent-preview lives on VPS2)
 if [ -f "\$DEPLOY_PATH/ecosystem.config.cjs" ]; then
     pm2 start "\$DEPLOY_PATH/ecosystem.config.cjs" --only "\$APP_NAME" --update-env 2>/dev/null || \
     pm2 start "\$DEPLOY_PATH/server/dist/index.js" \
@@ -1007,7 +1007,7 @@ BACKUP_COUNT=\$(ls -1d "\$BACKUP_DIR"/server-* 2>/dev/null | wc -l)
 echo "  Backups stored: \$BACKUP_COUNT (in \$BACKUP_DIR)"
 REMOTE
     verify_remote_sha ssh_vps3 "$DEPLOY_PATH/server" "VPS3 (gen server)"
-    success "VPS3 deploy complete → https://gen.ecomgear.dev"
+    success "VPS3 deploy complete → https://gen.SMEsAgent.dev"
 }
 
 # =========================================================================
@@ -1048,14 +1048,14 @@ if ! command -v caddy &>/dev/null; then
     apt-get update -qq
     apt-get install -y caddy
 fi
-mkdir -p /opt/ecomgear/hosting-service.staging /var/www/ecomgear/sites /etc/caddy/sites
+mkdir -p /opt/SMEsAgent/hosting-service.staging /var/www/SMEsAgent/sites /etc/caddy/sites
 ufw allow 80/tcp 2>/dev/null || true
 ufw allow 443/tcp 2>/dev/null || true
 REMOTE
 
     step "Uploading apps/hosting-service/ to VPS4 (staging dir)..."
     scp_vps4 --delete --exclude='node_modules' --exclude='.git' --exclude='*.log' \
-        "$STAGE_DIR/apps/hosting-service/" "$VPS4_USER@$VPS4_IP:/opt/ecomgear/hosting-service.staging/"
+        "$STAGE_DIR/apps/hosting-service/" "$VPS4_USER@$VPS4_IP:/opt/SMEsAgent/hosting-service.staging/"
 
     step "Remote: install deps, atomic swap, Caddy + PM2 restart..."
     # Real incident: this read HOSTING_DEPLOY_SECRET, but .deploy.env (and
@@ -1071,19 +1071,19 @@ REMOTE
     fi
     ssh_vps4 "bash -s" << REMOTE
 set -e
-cd /opt/ecomgear/hosting-service.staging
+cd /opt/SMEsAgent/hosting-service.staging
 npm ci --omit=dev
 
-cat > /opt/ecomgear/hosting-service.staging/ecosystem.config.cjs << 'PMEOF'
+cat > /opt/SMEsAgent/hosting-service.staging/ecosystem.config.cjs << 'PMEOF'
 module.exports = {
   apps: [{
-    name: 'ecomgear-hosting',
+    name: 'SMEsAgent-hosting',
     script: 'server.js',
-    cwd: '/opt/ecomgear/hosting-service',
+    cwd: '/opt/SMEsAgent/hosting-service',
     env: {
       HOSTING_PUBLIC_IP: '$VPS4_IP',
       HOSTING_NODE_NAME: 'vps4-hosting-1',
-      DEFAULT_DOMAIN: 'apps.ecomgear.app',
+      DEFAULT_DOMAIN: 'apps.SMEsAgent.app',
       HOSTING_PORT: '4000',
       NODE_ENV: 'production',
       HOSTING_DEPLOY_SECRET: '${HOSTING_SECRET}'
@@ -1094,30 +1094,30 @@ PMEOF
 
 # Atomic swap   same pattern as VPS2/VPS3, keeps the old version until the
 # new one is confirmed healthy below.
-rm -rf /opt/ecomgear/hosting-service.old
-[ -d /opt/ecomgear/hosting-service ] && mv /opt/ecomgear/hosting-service /opt/ecomgear/hosting-service.old
-mv /opt/ecomgear/hosting-service.staging /opt/ecomgear/hosting-service
+rm -rf /opt/SMEsAgent/hosting-service.old
+[ -d /opt/SMEsAgent/hosting-service ] && mv /opt/SMEsAgent/hosting-service /opt/SMEsAgent/hosting-service.old
+mv /opt/SMEsAgent/hosting-service.staging /opt/SMEsAgent/hosting-service
 
-cp /opt/ecomgear/hosting-service/Caddyfile /etc/caddy/Caddyfile 2>/dev/null || true
+cp /opt/SMEsAgent/hosting-service/Caddyfile /etc/caddy/Caddyfile 2>/dev/null || true
 systemctl stop nginx 2>/dev/null || true
 systemctl disable nginx 2>/dev/null || true
 systemctl enable caddy 2>/dev/null || true
 systemctl start caddy 2>/dev/null || caddy start --config /etc/caddy/Caddyfile --adapter caddyfile
 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>/dev/null || true
 
-cd /opt/ecomgear/hosting-service
-pm2 delete ecomgear-hosting 2>/dev/null || true
+cd /opt/SMEsAgent/hosting-service
+pm2 delete SMEsAgent-hosting 2>/dev/null || true
 pm2 start ecosystem.config.cjs
 pm2 save --force
 
 sleep 4
 if ! curl -sf http://127.0.0.1:4000/health >/dev/null 2>&1; then
     echo "ERROR: hosting service failed health check   rolling back"
-    pm2 delete ecomgear-hosting 2>/dev/null || true
-    rm -rf /opt/ecomgear/hosting-service.failed
-    mv /opt/ecomgear/hosting-service /opt/ecomgear/hosting-service.failed
-    [ -d /opt/ecomgear/hosting-service.old ] && mv /opt/ecomgear/hosting-service.old /opt/ecomgear/hosting-service
-    cd /opt/ecomgear/hosting-service
+    pm2 delete SMEsAgent-hosting 2>/dev/null || true
+    rm -rf /opt/SMEsAgent/hosting-service.failed
+    mv /opt/SMEsAgent/hosting-service /opt/SMEsAgent/hosting-service.failed
+    [ -d /opt/SMEsAgent/hosting-service.old ] && mv /opt/SMEsAgent/hosting-service.old /opt/SMEsAgent/hosting-service
+    cd /opt/SMEsAgent/hosting-service
     pm2 start ecosystem.config.cjs 2>/dev/null || true
     pm2 save --force
     echo "ROLLED BACK   check hosting-service.failed for the broken build"
@@ -1128,8 +1128,8 @@ echo "Backup preserved at hosting-service.old for manual rollback"
 REMOTE
     # hosting-service was already stamped but never checked -- same blind spot
     # as VPS1/VPS2 had, just one nobody had hit yet.
-    verify_remote_sha ssh_vps4 "/opt/ecomgear/hosting-service" "VPS4 (hosting-service)"
-    success "VPS4 deploy complete → https://apps.ecomgear.app"
+    verify_remote_sha ssh_vps4 "/opt/SMEsAgent/hosting-service" "VPS4 (hosting-service)"
+    success "VPS4 deploy complete → https://apps.SMEsAgent.app"
 }
 
 # =========================================================================
@@ -1196,7 +1196,7 @@ REMOTE
     step "Backing up tenant Postgres (VPS5) before deploy..."
     ssh_vps5 "bash -s" << TDBBACKUP
 set -e
-BACKUP_DIR="/root/.ecomgear/db-backups"
+BACKUP_DIR="/root/.SMEsAgent/db-backups"
 mkdir -p "\$BACKUP_DIR"
 TS=\$(date +%Y%m%d-%H%M%S)
 PGPASSWORD='${TENANT_DB_SUPERUSER_PASSWORD:-}' pg_dump -h 127.0.0.1 -p ${TDB_PORT_CHECK} -U '${TENANT_DB_SUPERUSER:-ecg_provisioner}' -d '${TENANT_DB_NAME:-ecg_tenants}' | gzip > "\$BACKUP_DIR/tenant-\${TS}.sql.gz"
@@ -1262,7 +1262,7 @@ REMOTE
 # =========================================================================
 echo ""
 echo "  ╔══════════════════════════════════════╗"
-echo "  ║   EcomGear Multi-VPS Deploy          ║"
+echo "  ║   SMEsAgent Multi-VPS Deploy          ║"
 echo "  ╚══════════════════════════════════════╝"
 echo "  Target: ${TARGET}"
 echo ""
@@ -1283,9 +1283,9 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo -e "${GREEN}  All done!${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-[[ "$TARGET" == "all" || "$TARGET" == "vps1" ]] && echo "  Frontend  → https://ecomgear.dev"
-[[ "$TARGET" == "all" || "$TARGET" == "vps2" ]] && echo "  Preview   → https://preview.ecomgear.app"
-[[ "$TARGET" == "all" || "$TARGET" == "vps3" ]] && echo "  Gen API   → https://gen.ecomgear.dev"
-[[ "$TARGET" == "all" || "$TARGET" == "vps4" ]] && echo "  Hosting   → https://apps.ecomgear.app"
+[[ "$TARGET" == "all" || "$TARGET" == "vps1" ]] && echo "  Frontend  → https://SMEsAgent.dev"
+[[ "$TARGET" == "all" || "$TARGET" == "vps2" ]] && echo "  Preview   → https://preview.SMEsAgent.app"
+[[ "$TARGET" == "all" || "$TARGET" == "vps3" ]] && echo "  Gen API   → https://gen.SMEsAgent.dev"
+[[ "$TARGET" == "all" || "$TARGET" == "vps4" ]] && echo "  Hosting   → https://apps.SMEsAgent.app"
 [[ "$TARGET" == "all" || "$TARGET" == "vps5" ]] && echo "  Tenant DB → checked (no deploy)"
 echo ""

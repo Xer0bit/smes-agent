@@ -19,10 +19,10 @@ interface HeaderIntegrationsData {
   custom_body_code?: string;
 }
 
-const HEAD_START = '<!-- ecomgear:header-integrations:head:start -->';
-const HEAD_END   = '<!-- ecomgear:header-integrations:head:end -->';
-const BODY_START = '<!-- ecomgear:header-integrations:body:start -->';
-const BODY_END   = '<!-- ecomgear:header-integrations:body:end -->';
+const HEAD_START = '<!-- SMEsAgent:header-integrations:head:start -->';
+const HEAD_END   = '<!-- SMEsAgent:header-integrations:head:end -->';
+const BODY_START = '<!-- SMEsAgent:header-integrations:body:start -->';
+const BODY_END   = '<!-- SMEsAgent:header-integrations:body:end -->';
 
 /** Replace a previously-injected marker block, or insert a fresh one before the anchor. */
 function replaceBlock(html: string, startMarker: string, endMarker: string, block: string, insertBeforeAnchor: string): string {

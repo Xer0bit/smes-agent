@@ -53,7 +53,7 @@ describe('agentToolSet DB-action mutation circuit breaker (checkpoint 1)', () =>
   let toolSet: ReturnType<typeof buildToolSet>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecomgear-db-mutation-breaker-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'SMEsAgent-db-mutation-breaker-'));
     ctx = {
       appPath: tmpDir,
       projectId: 'test-project',

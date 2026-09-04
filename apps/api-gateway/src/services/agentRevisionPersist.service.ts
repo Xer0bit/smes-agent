@@ -81,94 +81,12 @@ export function exceedsObjectLimit(content: string, limit: number = MAX_OBJECT_B
   return Buffer.byteLength(content, 'utf8') > limit;
 }
 
-export interface PrevEntry { path: string; hash: string; source_revision: string }
-
-interface PlannedEntry {
-  path: string;
-  hash: string;
-  /** source_revision to point at when the entry is carried (never uploaded). */
-  source_revision?: string;
-  /** set only when the content must be uploaded to this revision. */
-  content?: string;
-}
-
-export interface RevisionPlan {
-  /** Collected-tree files: carried from prev when unchanged-or-untouched, uploaded when the run changed them. */
-  collected: PlannedEntry[];
-  /**
-   * prev files ABSENT from the run's tree that did not exist at run start
-   * (baseByPath lacks the path) -- a file the USER added mid-run, which a
-   * whole-tree persist used to drop from HEAD. Carried forward unchanged.
-   */
-  carryPrev: PrevEntry[];
-}
-
-/**
- * Decide, for each collected sandbox file, whether to re-upload it or carry
- * the newest known copy forward.
- *
- * Three inputs:
- * - `files`: the whole tree collected from the run's sandbox.
- * - `prevByPath`: the NEWEST readable revision at persist time (may be newer
- *   than the run's starting point, because the user can save mid-run).
- * - `baseByPath`: the revision the sandbox was materialized FROM (run-start
- *   HEAD), path -> hash. Null when the sandbox was scaffold-seeded, in which
- *   case the whole tree is the run's output and every file is uploaded unless
- *   byte-identical to prev (legacy behavior).
- *
- * The rule that fixes mid-run-edit reversion: a file whose sandbox content is
- * IDENTICAL to the run-start base was NOT changed by the run, so it must not
- * be re-uploaded even when it differs from prev -- prev may hold the user's
- * mid-run edit of that file, and the stale sandbox copy would revert it.
- * Upload only what the run actually changed; carry everything else from the
- * newest revision that has it.
- */
-export function planRevisionUploads(
-  files: ReadonlyArray<{ path: string; content: string }>,
-  prevByPath: ReadonlyMap<string, { hash: string; source_revision: string }>,
-  baseByPath: ReadonlyMap<string, string> | null | undefined,
-): RevisionPlan {
-  const collected: PlannedEntry[] = [];
-  const seen = new Set<string>();
-  for (const f of files) {
-    const content = f.content ?? '';
-    const hash = createHash('sha256').update(content, 'utf8').digest('hex');
-    const path = f.path;
-    seen.add(path);
-    const prev = prevByPath.get(path);
-    const runChanged = baseByPath ? (baseByPath.get(path) !== hash) : true;
-    if (prev && (prev.hash === hash || !runChanged)) {
-      // Byte-identical to prev (dedup), or untouched by the run (a user edit
-      // landed in prev mid-run; carry that newer content, never this stale copy).
-      collected.push({ path, hash, source_revision: prev.source_revision });
-    } else {
-      collected.push({ path, hash, content });
-    }
-  }
-
-  const carryPrev: PrevEntry[] = [];
-  if (baseByPath) {
-    for (const [path, prev] of prevByPath) {
-      // Absent from the run's tree AND not part of the run's starting state:
-      // added by someone else (the user) while the run was in flight. A
-      // whole-tree persist silently dropped these from HEAD; carry them.
-      if (!seen.has(path) && !baseByPath.has(path)) {
-        carryPrev.push({ path, hash: prev.hash, source_revision: prev.source_revision });
-      }
-      // Present in baseByPath but absent from the tree: the RUN deleted it.
-      // Deliberately not carried.
-    }
-  }
-  return { collected, carryPrev };
-}
-
 export async function persistAgentRevision(
   projectId: string,
   userId: string,
   files: Array<{ path: string; content: string }>,
   summary: string,
   prompt: string,
-  baseByPath?: ReadonlyMap<string, string> | null,
 ): Promise<{
   ok: boolean;
   revisionId?: string;
@@ -181,34 +99,17 @@ export async function persistAgentRevision(
   if (files.length === 0) return { ok: false, error: 'no files' };
 
   try {
-    // 1. Previous readable revision's manifest (dedup + carry base), before
-    //    inserting ours. Mirrors runSandbox's fetchHeadManifest: several
-    //    writers insert the row FIRST and write generated_files LAST, so the
-    //    newest row can be a half-written/legacy one -- falling back to the
-    //    most recent READABLE manifest keeps dedup and carry working through
-    //    a failed write instead of re-uploading the whole tree.
-    const HEAD_LOOKBACK = 10;
-    const { data: prevRevRows } = await supabase
+    // 1. Previous latest revision's manifest (for dedup), before inserting ours.
+    const { data: prevRevData } = await supabase
       .from('revisions')
       .select('id, generated_files')
       .eq('project_id', projectId)
       .order('created_at', { ascending: false })
-      .limit(HEAD_LOOKBACK);
+      .limit(1);
     const prevByPath = new Map<string, { hash: string; source_revision: string }>();
-    for (const row of prevRevRows ?? []) {
-      const gf = row?.generated_files;
-      if (!gf || typeof gf !== 'object') continue;
-      const manifest = gf as { format?: unknown; files?: unknown };
-      if (manifest.format !== 'manifest-v1' || !Array.isArray(manifest.files)) continue;
-      for (const f of manifest.files) {
-        const p = (f as { path?: unknown })?.path;
-        const h = (f as { hash?: unknown })?.hash;
-        const sr = (f as { source_revision?: unknown })?.source_revision;
-        if (typeof p === 'string' && typeof h === 'string' && typeof sr === 'string') {
-          prevByPath.set(p, { hash: h, source_revision: sr });
-        }
-      }
-      break; // newest readable manifest is the one we dedup/carry against
+    const prevManifest = prevRevData?.[0]?.generated_files;
+    if (prevManifest?.format === 'manifest-v1' && Array.isArray(prevManifest.files)) {
+      for (const f of prevManifest.files) prevByPath.set(f.path, { hash: f.hash, source_revision: f.source_revision });
     }
 
     // 2. Insert the revision row (manifest set last -- see failure-mode note above).
@@ -227,23 +128,23 @@ export async function persistAgentRevision(
     if (insertErr || !inserted) return { ok: false, error: insertErr?.message ?? 'revision insert failed' };
     const revisionId: string = inserted.id;
 
-    // 3. Decide uploads vs carries. The plan is pure (see planRevisionUploads):
-    //    upload only files the run changed (or that no readable prev has),
-    //    carry everything else from the newest revision -- including files the
-    //    USER edited/saved while the run was in flight, which a whole-tree
-    //    upload used to revert with the sandbox's stale copy. Binary files
-    //    arrive as BINARY_SENTINEL-prefixed base64 strings and are
-    //    hashed/uploaded as those strings -- the same round-trip the
+    // 3. Hash + dedup: upload only files whose content changed since the
+    //    previous manifest; unchanged files keep their old source_revision
+    //    pointer (identical semantics to revisionService.createRevision).
+    //    Binary files arrive as BINARY_SENTINEL-prefixed base64 strings and
+    //    are hashed/uploaded as those strings -- the same round-trip the
     //    browser-side save already does today, so readers are unaffected.
-    const plan = planRevisionUploads(files, prevByPath, baseByPath);
-    const manifest: ManifestEntry[] = plan.carryPrev.map((p) => ({ path: p.path, hash: p.hash, source_revision: p.source_revision }));
+    const manifest: ManifestEntry[] = [];
     const toUpload: Array<{ path: string; content: string }> = [];
-    for (const entry of plan.collected) {
-      if (entry.content !== undefined) {
-        toUpload.push({ path: entry.path, content: entry.content });
-        manifest.push({ path: entry.path, hash: entry.hash, source_revision: revisionId });
+    for (const f of files) {
+      const content = f.content ?? '';
+      const hash = createHash('sha256').update(content, 'utf8').digest('hex');
+      const prev = prevByPath.get(f.path);
+      if (prev && prev.hash === hash) {
+        manifest.push({ path: f.path, hash, source_revision: prev.source_revision });
       } else {
-        manifest.push({ path: entry.path, hash: entry.hash, source_revision: entry.source_revision! });
+        toUpload.push({ path: f.path, content });
+        manifest.push({ path: f.path, hash, source_revision: revisionId });
       }
     }
 

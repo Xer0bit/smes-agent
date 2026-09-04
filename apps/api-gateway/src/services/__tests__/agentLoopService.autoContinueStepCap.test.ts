@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-process.env.AI_ANTHROPIC_API_KEY = process.env.AI_ANTHROPIC_API_KEY || 'test-anthropic-key';
+process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || 'test-openrouter-key';
 
 // Same module-load requirement as agentLoopService.scopeSeeding.test.ts:
 // agentLoopService.ts -> agentToolSet.ts -> propose_plan.ts -> config/database.js
@@ -92,19 +92,13 @@ const thinkStep = (thought: string): StepFinishArgs => ({
 describe('agentLoopService needsAutoContinue step-cap extension (micro tier, MAX_STEPS=8)', () => {
   let tmpDir: string;
   const originalKeys = {
-    AI_ANTHROPIC_API_KEY: process.env.AI_ANTHROPIC_API_KEY,
-    ZAI_API_KEY: process.env.ZAI_API_KEY,
-    DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
-    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   };
 
   beforeEach(() => {
     scriptedSteps = [];
     scriptedFinishReason = 'tool-calls';
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecomgear-autocontinue-stepcap-'));
-    delete process.env.ZAI_API_KEY;
-    delete process.env.DEEPSEEK_API_KEY;
-    delete process.env.GEMINI_API_KEY;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'SMEsAgent-autocontinue-stepcap-'));
   });
 
   afterEach(() => {

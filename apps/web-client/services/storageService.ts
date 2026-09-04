@@ -27,7 +27,7 @@ const STORAGE_BUCKET = 'user-projects-free'; // PRIVATE bucket
 // never gets written -- broken <img> reference even though the file is still
 // intact in this very storage bucket.
 const BINARY_EXT_RE = /\.(png|jpe?g|gif|ico|webp|woff2?|ttf|eot|otf|mp4|mp3|pdf|zip)$/i;
-const BINARY_SENTINEL = '__ECOMGEAR_BIN64__';
+const BINARY_SENTINEL = '__SMEsAgent_BIN64__';
 
 async function blobToFileContent(path: string, blob: Blob): Promise<string> {
     if (!BINARY_EXT_RE.test(path)) return blob.text();

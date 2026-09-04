@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# EcomGear   Instant Rollback Script
+# SMEsAgent   Instant Rollback Script
 # Usage: ./scripts/rollback.sh [vps1|vps2|vps3|all]
 #
 # Each deploy keeps a *.old backup on the server.
@@ -13,7 +13,7 @@ VPS1_IP="156.67.218.75";   VPS1_USER="root"
 VPS2_IP="72.62.126.99";    VPS2_USER="root"
 VPS3_IP="3.148.126.20";    VPS3_USER="root"
 
-DEPLOY_PATH="/var/www/ecomgear"
+DEPLOY_PATH="/var/www/SMEsAgent"
 TARGET="${1:-}"
 
 VPS1_KEY_PATH="${VPS1_KEY_PATH:-}"
@@ -52,7 +52,7 @@ rollback_vps1() {
     step "VPS1   rolling back frontend..."
     ssh_vps1 "bash -s" << 'REMOTE'
 set -e
-cd /var/www/ecomgear
+cd /var/www/SMEsAgent
 if [ ! -d dist.old ]; then
     echo "ERROR: no dist.old backup found   cannot rollback"
     exit 1
@@ -64,7 +64,7 @@ nginx -t && systemctl reload nginx
 echo "VPS1 rollback complete   now serving dist/ (was dist.old)"
 echo "Failed build preserved at dist.failed"
 REMOTE
-    success "VPS1 rollback complete → https://ecomgear.dev"
+    success "VPS1 rollback complete → https://SMEsAgent.dev"
 }
 
 # ── VPS2: swap preview-service.old back into place ───────────────────────────
@@ -72,7 +72,7 @@ rollback_vps2() {
     step "VPS2   rolling back preview service..."
     ssh_vps2 "bash -s" << 'REMOTE'
 set -e
-cd /var/www/ecomgear
+cd /var/www/SMEsAgent
 if [ ! -d preview-service.old ]; then
     echo "ERROR: no preview-service.old backup found   cannot rollback"
     exit 1
@@ -89,20 +89,20 @@ rm -rf preview-service.failed
 mv preview-service.old preview-service
 
 # Graceful reload: warmup list from previous session will restore Vite servers
-pm2 reload ecomgear-preview --update-env 2>/dev/null || \
-    pm2 start /var/www/ecomgear/ecosystem.config.cjs --only ecomgear-preview
+pm2 reload SMEsAgent-preview --update-env 2>/dev/null || \
+    pm2 start /var/www/SMEsAgent/ecosystem.config.cjs --only SMEsAgent-preview
 pm2 save --force
 
 sleep 4
 if ! curl -sf http://localhost:3001/health; then
     echo "ERROR: rollback health check failed"
-    pm2 logs ecomgear-preview --nostream --lines 50 || true
+    pm2 logs SMEsAgent-preview --nostream --lines 50 || true
     exit 1
 fi
 echo "VPS2 rollback complete"
 echo "Failed version preserved at preview-service.failed"
 REMOTE
-    success "VPS2 rollback complete → https://preview.ecomgear.app"
+    success "VPS2 rollback complete → https://preview.SMEsAgent.app"
 }
 
 # ── VPS3: swap server.old back into place ────────────────────────────────────
@@ -110,7 +110,7 @@ rollback_vps3() {
     step "VPS3   rolling back API server..."
     ssh_vps3 "bash -s" << 'REMOTE'
 set -e
-cd /var/www/ecomgear
+cd /var/www/SMEsAgent
 if [ ! -d server.old ]; then
     echo "ERROR: no server.old backup found   cannot rollback"
     exit 1
@@ -120,26 +120,26 @@ rm -rf server.failed
 mv server.old server
 
 # Rolling reload: cluster workers are replaced one at a time
-pm2 reload ecomgear-gen --update-env 2>/dev/null || \
-    pm2 start server/dist/index.js --name ecomgear-gen \
-        --cwd /var/www/ecomgear/server --update-env
+pm2 reload SMEsAgent-gen --update-env 2>/dev/null || \
+    pm2 start server/dist/index.js --name SMEsAgent-gen \
+        --cwd /var/www/SMEsAgent/server --update-env
 pm2 save --force
 
 sleep 6
 if ! curl -sf http://127.0.0.1:5001/health; then
     echo "ERROR: rollback health check failed on port 5001"
-    pm2 logs ecomgear-gen --nostream --lines 50 || true
+    pm2 logs SMEsAgent-gen --nostream --lines 50 || true
     exit 1
 fi
 echo "VPS3 rollback complete"
 echo "Failed version preserved at server.failed"
 REMOTE
-    success "VPS3 rollback complete → https://gen.ecomgear.dev"
+    success "VPS3 rollback complete → https://gen.SMEsAgent.dev"
 }
 
 echo ""
 echo "  ╔══════════════════════════════════════╗"
-echo "  ║   EcomGear Rollback                  ║"
+echo "  ║   SMEsAgent Rollback                  ║"
 echo "  ╚══════════════════════════════════════╝"
 echo "  Target: ${TARGET}"
 echo ""
@@ -156,7 +156,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo -e "${GREEN}  Rollback complete!${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-[[ "$TARGET" == "all" || "$TARGET" == "vps1" ]] && echo "  Frontend  → https://ecomgear.dev"
-[[ "$TARGET" == "all" || "$TARGET" == "vps2" ]] && echo "  Preview   → https://preview.ecomgear.app"
-[[ "$TARGET" == "all" || "$TARGET" == "vps3" ]] && echo "  Gen API   → https://gen.ecomgear.dev"
+[[ "$TARGET" == "all" || "$TARGET" == "vps1" ]] && echo "  Frontend  → https://SMEsAgent.dev"
+[[ "$TARGET" == "all" || "$TARGET" == "vps2" ]] && echo "  Preview   → https://preview.SMEsAgent.app"
+[[ "$TARGET" == "all" || "$TARGET" == "vps3" ]] && echo "  Gen API   → https://gen.SMEsAgent.dev"
 echo ""

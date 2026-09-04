@@ -13,7 +13,7 @@ const { execSync } = require('child_process');
 
 const LOCAL_DEV = process.env.LOCAL_DEV === '1' || process.env.NODE_ENV === 'development';
 const CADDY_CONFIG_DIR = process.env.CADDY_CONFIG_DIR || (LOCAL_DEV ? path.join(__dirname, '..', '.local-caddy') : '/etc/caddy/sites');
-const SITES_ROOT = process.env.SITES_ROOT || (LOCAL_DEV ? path.join(__dirname, '..', '.local-sites') : '/var/www/ecomgear/sites');
+const SITES_ROOT = process.env.SITES_ROOT || (LOCAL_DEV ? path.join(__dirname, '..', '.local-sites') : '/var/www/SMEsAgent/sites');
 
 /**
  * Write a Caddy config for a tenant's domain.

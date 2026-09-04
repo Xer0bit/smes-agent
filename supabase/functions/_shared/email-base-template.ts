@@ -12,7 +12,7 @@ export interface BaseTemplateOptions {
   frontendUrl: string;
 }
 
-const LOGO_URL = 'https://www.ecomgear.dev/assets/ecomgear-auth-logo-sfGodRbL.png';
+const LOGO_URL = 'https://www.SMEsAgent.dev/assets/SMEsAgent-auth-logo-sfGodRbL.png';
 
 export function baseTemplate(opts: BaseTemplateOptions): string {
   const { title, preheader, body, button, footer, frontendUrl } = opts;
@@ -63,7 +63,7 @@ export function baseTemplate(opts: BaseTemplateOptions): string {
           <td align="center" style="background:#0f0f11;border-radius:14px 14px 0 0;padding:28px 40px 24px;">
             <a href="${frontendUrl}" style="text-decoration:none;display:inline-block;line-height:1;">
               <img src="${LOGO_URL}"
-                   alt="EcomGear"
+                   alt="SMEsAgent"
                    width="148"
                    style="display:block;height:auto;border:0;outline:0;margin:0 auto;" />
             </a>
@@ -92,8 +92,8 @@ export function baseTemplate(opts: BaseTemplateOptions): string {
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
               <tr>
                 <td style="font-size:12px;color:#94a3b8;line-height:1.6;">
-                  &copy; ${year} EcomGear &middot;
-                  <a href="${frontendUrl}" style="color:#94a3b8;text-decoration:underline;">ecomgear.dev</a>
+                  &copy; ${year} SMEsAgent &middot;
+                  <a href="${frontendUrl}" style="color:#94a3b8;text-decoration:underline;">SMEsAgent.dev</a>
                   &middot;
                   <a href="${frontendUrl}/dashboard/settings" style="color:#94a3b8;text-decoration:underline;">Manage preferences</a>
                 </td>
