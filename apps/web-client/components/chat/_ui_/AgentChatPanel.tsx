@@ -1388,6 +1388,11 @@ export const AgentChatPanel: React.FC<AgentChatPanelProps> = ({
                 // and onRepairFailed (fired for this same run, above) is escalating the repair
                 // counter. Showing "App updated." here would contradict both. Don't reset the
                 // counter either: onRepairFailed just incremented it for this exact failure.
+              } else if (result.revertedToPreAgent) {
+                // The run's changes were all reverted to the last known-good state because
+                // the build could not be repaired. onRepairFailed already escalated to the
+                // Auto-fix affordance; the summary/caveat text says what happened. A success
+                // toast would claim changes landed that were just discarded.
               } else {
                 autoRepairCountRef.current = 0; // successful build   reset repair counter
                 toast.success('App updated.');

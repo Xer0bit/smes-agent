@@ -491,6 +491,7 @@ export async function streamAgentGeneration(params: {
                 stagedSql: Array.isArray(payload.stagedSql) ? payload.stagedSql : [],
                 batchId: typeof payload.batchId === 'string' ? payload.batchId : null,
                 smokeFailureSurvivedRepair: payload.smokeFailureSurvivedRepair === true,
+                revertedToPreAgent: payload.revertedToPreAgent === true,
                 previewDepsError: typeof payload.previewDepsError === 'string' ? payload.previewDepsError : null,
                 costUsd: typeof payload.costUsd === 'number' ? payload.costUsd : undefined,
                 ecoUsed: typeof payload.ecoUsed === 'number' ? payload.ecoUsed : undefined,

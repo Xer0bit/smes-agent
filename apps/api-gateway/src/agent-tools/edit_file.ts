@@ -216,13 +216,38 @@ export const editFileTool: ToolDefinition<z.infer<typeof schema>> = {
       });
       ctx.editSearchMissCount = (ctx.editSearchMissCount ?? 0) + 1;
 
-      // Include the first 100 lines of the current file so the agent can see
-      // the exact content and correct the SEARCH text without an extra read_file call.
-      const previewLines = allLines.slice(0, PREVIEW_LINES).join('\n');
-      const filePreview = allLines.length > PREVIEW_LINES
-        ? `${previewLines}\n… (${allLines.length - PREVIEW_LINES} more lines   call read_file for the full content)`
-        : previewLines;
-      return `Error applying edit to ${args.path}: ${result.error}\n\nCurrent file content (first 100 lines):\n\`\`\`\n${filePreview}\n\`\`\`\n\nFix your SEARCH text to exactly match the content above.`;
+      // Show the model content it can actually repair from, not always the file
+      // head. Three cases, each with the evidence that discriminates them:
+      //  - SEARCH text present but mismatched (whitespace/indent/format): the
+      //    old head-only 100-line preview left a target below line 100
+      //    invisible, so the model re-guessed the same wrong text and thrashed.
+      //    Anchor the preview around where the text actually sits instead.
+      //  - text absent AND the file is truncated (>=300 lines, edit/fix tier):
+      //    read_file never showed this region; the model must pull the whole
+      //    file with full:true before it can write a correct SEARCH.
+      //  - otherwise: absent from a small file, the head preview + exact-match
+      //    instruction is the right recovery.
+      const ANCHOR_RADIUS = 25;
+      let filePreview: string;
+      let guidance: string;
+      if (diag.targetFoundAtLine != null) {
+        const anchor = diag.targetFoundAtLine - 1; // 0-based
+        const from = Math.max(0, anchor - ANCHOR_RADIUS);
+        const to = Math.min(allLines.length, anchor + ANCHOR_RADIUS + 1);
+        const body = allLines.slice(from, to).join('\n');
+        filePreview = `${from > 0 ? '… earlier lines omitted\n' : ''}${body}${to < allLines.length ? '\n… later lines omitted' : ''}`;
+        guidance = `Your SEARCH text appears near line ${diag.targetFoundAtLine} but does not match exactly (whitespace, indentation, or formatting differs). Match the exact text shown above, indentation included.`;
+      } else if (diag.readWasTruncated) {
+        filePreview = allLines.slice(0, PREVIEW_LINES).join('\n')
+          + `\n… (${allLines.length - PREVIEW_LINES} more lines   this file is ${allLines.length} lines, and read_file serves only a truncated view at this tier)`;
+        guidance = `SEARCH text was not found anywhere in this ${allLines.length}-line file. Call read_file with full:true to load the whole file, then re-issue edit_file with the exact text from disk.`;
+      } else {
+        filePreview = allLines.length > PREVIEW_LINES
+          ? `${allLines.slice(0, PREVIEW_LINES).join('\n')}\n… (${allLines.length - PREVIEW_LINES} more lines)`
+          : allLines.join('\n');
+        guidance = 'SEARCH text was not found in this file. Fix your SEARCH text to exactly match the content above.';
+      }
+      return `Error applying edit to ${args.path}: ${result.error}\n\nCurrent file content${diag.targetFoundAtLine != null ? ' (around the intended target)' : ''}:\n\`\`\`\n${filePreview}\n\`\`\`\n\n${guidance}`;
     }
 
     const { content: sanitized, fixes, diff: sanitizeDiff } = sanitizeFileContent(args.path, result.content);

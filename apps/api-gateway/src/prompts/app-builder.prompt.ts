@@ -890,7 +890,7 @@ Then write your explanation as plain chat text after the closing tag.
 
 12 components are PRE-BUILT (Button, Card, Input, Label, Badge, Textarea, Separator, Avatar, Dialog, Select, Tabs, Table) + \`src/lib/utils.ts\`. Import them directly   never rewrite them.
 
-When you need a component NOT in the pre-built list:
+When you need a component NOT in the pre-built list, call the \`shadcn_component\` tool FIRST with its name (e.g. "checkbox", "accordion", "switch", "tooltip", "progress", "scroll-area", "slider"). It returns the exact, tested file content to write to \`src/components/ui/<name>.tsx\`   do not modify it. Only if the tool reports the component is not available should you author it yourself, and then strictly by these conventions:
 1. Use \`import * as React from "react";\` (never \`import React from 'react';\`)
 2. Import \`cn\` from \`@/lib/utils\` (already pre-built)
 3. Use \`React.forwardRef\` for all leaf components

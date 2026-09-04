@@ -338,11 +338,22 @@ async function tryAcquireAgentLock(projectId: string): Promise<string | null> {
     if (!isLockLive(existing.acquired_at)) {
         const age = Date.now() - new Date(existing.acquired_at).getTime();
         logger.warn(`[agent-lock] Reclaiming stale lock for ${projectId} (age ${Math.round(age / 1000)}s)`);
-        const { error: updateError } = await supabase
+        // Compare-and-set on the token we just read: two workers can both find
+        // the same stale row (read-modify-write), and the loser must not
+        // proceed believing it owns the lock. Scoping the UPDATE to the read
+        // token means exactly one reclaim wins; a count of 0 means another
+        // worker reclaimed it first, so this request reports the project as
+        // locked rather than running concurrently.
+        const { error: updateError, count } = await supabase
             .from('agent_locks')
-            .update({ token, owner: `pid:${process.pid}`, acquired_at: new Date().toISOString() })
-            .eq('project_id', projectId);
+            .update({ token, owner: `pid:${process.pid}`, acquired_at: new Date().toISOString() }, { count: 'exact' })
+            .eq('project_id', projectId)
+            .eq('token', existing.token);
         if (updateError) return null;
+        if (count === 0) {
+            logger.warn(`[agent-lock] Lost stale-lock reclaim race for ${projectId} to another worker`);
+            return null;
+        }
 
         // The lock we just took belonged to a run that died without reaching
         // its finally block. Taking the lock is only half of that cleanup: the
@@ -449,10 +460,10 @@ async function readLiveAgentLock(projectId: string): Promise<{ acquired_at: stri
     }
 }
 
-async function releaseAgentLock(projectId: string): Promise<void> {
+async function releaseAgentLock(projectId: string, token?: string): Promise<void> {
     // Single-shot delete used to swallow failures silently with no log line at
     // all. A transient failure here (network blip, Supabase 5xx) then leaves
-    // the lock row alive for the full AGENT_LOCK_STALE_MS (15 min) since
+    // the lock row alive for the full AGENT_LOCK_STALE_MS since
     // nothing else ever deletes it, while the client's own retry budget on a
     // PROJECT_LOCKED response is only ~8-10s (LOCK_RETRY_ATTEMPTS *
     // LOCK_RETRY_DELAY_MS in agentStreamService.ts) -- so a single missed
@@ -460,10 +471,15 @@ async function releaseAgentLock(projectId: string): Promise<void> {
     // user (most visible on the auto-repair follow-up, which fires ~300ms
     // after the prior run ends). Retry the delete itself a few times before
     // giving up, and log if it still fails so a real leak is diagnosable.
-    const attempts = 3;
+    // The delete is scoped to OUR token when one is known, mirroring the
+    // heartbeat: if this run was already reclaimed as stale by another worker,
+    // we must not delete the row that now belongs to that run.
+    const attempts = 5;
     for (let i = 1; i <= attempts; i++) {
         try {
-            const { error } = await supabase.from('agent_locks').delete().eq('project_id', projectId);
+            let query = supabase.from('agent_locks').delete().eq('project_id', projectId);
+            if (token) query = query.eq('token', token);
+            const { error } = await query;
             if (error) throw error;
             return;
         } catch (err) {
@@ -482,7 +498,7 @@ async function releaseAgentLock(projectId: string): Promise<void> {
 // which is exactly how a deploy leaks an agent_locks row: confirmed in
 // production, 4 rows leaked in the same ~90s window as a single `vps3`
 // deploy, each blocking that project's file sync/load for up to
-// AGENT_LOCK_STALE_MS (15min) with a false "another generation is running"
+// AGENT_LOCK_STALE_MS with a false "another generation is running"
 // error. Deleting by owner is deterministic regardless of how far any
 // individual request got, unlike waiting for sockets/finally blocks to run.
 /**
@@ -1393,6 +1409,43 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             }
         })();
 
+        // Sync the FULL secret set (VITE_ AND custom non-VITE keys) to the VPS5
+        // edge-function store (tenant_secrets). Edge functions read secrets by the
+        // exact saved name (secrets.CUSTOM_KEY) from a local copy on VPS5, so a key
+        // the OWNER saved through Settings (which writes project_secrets directly via
+        // RLS) was invisible to edge functions until some other path happened to sync
+        // it -- the recurring "I added a custom key but the agent can't use it" report.
+        // set_secret.ts syncs on the agent path; this closes the gap for the Settings
+        // path (and for any other writer) on every run start. Fire-and-forget; never
+        // blocks or fails the run. No-op when the project has no hosted database.
+        (async () => {
+            try {
+                const internalSecret = process.env.FUNCTIONS_INTERNAL_SECRET;
+                if (!userId || !internalSecret) return;
+                const { databaseService } = await import('../services/database.service.js');
+                const dbStatus = await databaseService.getStatus(userId, projectId).catch(() => null);
+                if (dbStatus?.status !== 'active') return;
+                const creds = await databaseService.getCredentials(userId, projectId);
+                if (!creds) return;
+                const { data: allSecrets } = await supabase
+                    .from('project_secrets')
+                    .select('key_name, key_value')
+                    .eq('project_id', projectId);
+                if (!allSecrets || allSecrets.length === 0) return;
+                await fetch(`${creds.api_url}/secrets/_sync`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Internal-Secret': internalSecret,
+                    },
+                    body: JSON.stringify({ secrets: allSecrets }),
+                    signal: AbortSignal.timeout(10_000),
+                });
+            } catch {
+                // Non-fatal   edge functions will lack custom secrets until the next successful sync
+            }
+        })();
+
         // Resolve the agent working directory.
         //
         // Priority:
@@ -1653,6 +1706,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
             appPath,
             model,
             mode: effectiveMode,
+            sandboxHeadByPath: sandbox?.headByPath ?? null,
             chatMode: chatMode === 'admin' ? 'admin' : 'normal',
             approvedPlanSteps,
             existingFiles: Array.isArray(existingFiles) ? existingFiles : [],
@@ -1802,7 +1856,7 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
         }
     } catch (error) {
         if ((error as { clientAborted?: boolean }).clientAborted || routeAbortController.signal.aborted) {
-            logger.warn(`[agent-stream] Client disconnected, cancelled run for project ${projectId}`);
+            logger.warn(`[agent-stream] Run cancelled for project ${projectId}`);
         } else {
             const message = (error as Error).message;
             logger.error(`[agent-stream] Error: ${message}`);
@@ -1826,14 +1880,15 @@ router.post('/agent-stream', optionalAuthMiddleware, async (req: AuthenticatedRe
 
         stopAgentLockHeartbeat();
         // Release the cross-worker DB lock BEFORE dropping the in-memory entry.
-        // The old order deleted the map entry first, so if all 3 delete retries
+        // The old order deleted the map entry first, so if all delete retries
         // failed the project was left in the one inconsistent state that is
         // user-visible and self-sustaining: DB says locked, no worker can see
         // or rejoin the run, and nothing clears it until the staleness bound
         // lapses. Releasing first means the only transient inconsistency is the
         // harmless direction (lock free, map entry lingering for the few ms
-        // until the next line).
-        await releaseAgentLock(projectId);
+        // until the next line). Scoped to this run's token so a lock reclaimed
+        // by a newer run is never deleted out from under it.
+        await releaseAgentLock(projectId, agentLockToken);
         // Converge the happy path onto the same ledger state the crash path
         // produces. Without this a cleanly-released lock still reads as
         // "standing" to every other worker, which is the visibility bug again
@@ -1958,6 +2013,18 @@ Rules:
  */
 router.post('/cancel-run/:projectId', optionalAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     const { projectId } = req.params;
+    // An authenticated caller may only stop a run on a project they can edit.
+    // Before this check any logged-in user who knew (or guessed) a projectId
+    // could abort another tenant's live generation. Guests have no verifiable
+    // project ownership (fingerprint-only) and stay on the legacy path.
+    if (req.user?.id) {
+        try {
+            await projectService.assertCanEditProject(projectId, req.user.id);
+        } catch {
+            res.status(404).json({ error: 'Project not found' });
+            return;
+        }
+    }
     const local = activeAgentRuns.get(projectId);
     if (local) {
         local.abort();
@@ -1982,6 +2049,17 @@ subscribeRunCancel((projectId) => {
 // Check if a project has an active agent run (used by frontend to auto-reconnect)
 router.get('/active-run/:projectId', optionalAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     const { projectId } = req.params;
+    // An authenticated caller may only query runs for a project they can see;
+    // otherwise this route leaks whether an arbitrary project is generating.
+    // Guests (fingerprint-only, no verifiable ownership) stay on the legacy path.
+    if (req.user?.id) {
+        try {
+            await projectService.getProject(projectId, req.user.id);
+        } catch {
+            res.status(404).json({ error: 'Project not found' });
+            return;
+        }
+    }
     const run = activeAgentRuns.get(projectId);
     if (run) {
         // Owned by THIS worker, so its event bus is in our memory and the

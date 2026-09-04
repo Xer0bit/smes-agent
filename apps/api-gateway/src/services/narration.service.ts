@@ -124,6 +124,14 @@ export async function generateStatus(projectId: string, what: StatusKind): Promi
   // ── Build the prompt + fallback for everything else ────────────────────────
   const { prompt, fallback } = buildPromptAndFallback(what, state);
 
+  // A status was emitted very recently (a burst of tool calls in one step):
+  // skip the LLM round-trip and use the specific fallback -- same event
+  // quality at ~zero cost. Distinct events outside the window still get the
+  // natural LLM phrasing.
+  if (state && Date.now() - state.lastStatusAt < STATUS_LLM_COOLDOWN_MS) {
+    return emit(projectId, state, fallback);
+  }
+
   let status: string | null = null;
   try {
     const { model, priceTag } = getProvider();
@@ -254,7 +262,15 @@ function buildPromptAndFallback(
   return { prompt, fallback: cfg.fallback };
 }
 
-// ─── Emit (with dedup + throttle) ────────────────────────────────────────────
+// ── Emit (with dedup + throttle) ────────────────────────────────────────────
+// Model-call cooldown: when statuses fire in a burst (multiple tool calls in
+// one step, or rapid repair passes), only the first in each window needs the
+// LLM -- the fallbacks are built from the real operation and are specific and
+// truthful on their own. Skips the provider call entirely within the window
+// and emits the fallback, which cuts narration's provider load (and rate-limit
+// pressure on the shared cheap model) on burst-heavy runs without making the
+// status rail less honest.
+const STATUS_LLM_COOLDOWN_MS = 2500;
 
 function emit(projectId: string, state: RunState | undefined, status: string): string | null {
   const now = Date.now();

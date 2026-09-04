@@ -204,6 +204,36 @@ export const getBuildErrorsTool: ToolDefinition<z.infer<typeof schema>> = {
 
     if (data.healthy) {
       ctx.lastBuildErrorsHealthy = true;
+      // Type errors come back with healthy:true (they don't stop esbuild/Vite
+      // from serving the app), but they ARE in data.errors under
+      // diagnosticKind:'type'. Returning the old all-clear line threw them
+      // away, so a run could ship real TS errors while the model believed it
+      // verified a clean build ("No build errors"). Keep the healthy signal
+      // (type errors must never drive the closure/repair gates -- measured
+      // 2026-08-16: 303 real type errors on a project whose preview served
+      // fine) but surface the diagnostics as an advisory scoped to files this
+      // run touched, so the agent can fix them while it still has budget.
+      if (data.diagnosticKind === 'type' && data.errors && data.errors.length > 0) {
+        const touchedPaths = ctx.pendingPreviewFiles ? new Set(ctx.pendingPreviewFiles.keys()) : new Set<string>();
+        const inScope: string[] = [];
+        let outOfScope = 0;
+        for (const e of data.errors) {
+          const m = e.match(/^([^\s:]+\.[a-zA-Z0-9]+):\d+:\d+/);
+          const p = m ? m[1] : null;
+          if (p !== null && touchedPaths.has(p)) inScope.push(e);
+          else outOfScope++;
+        }
+        const typePreview = inScope.slice(0, 5).map((e) => e.split('\n').slice(0, 4).join('\n')).join('\n\n');
+        const scopeNote = outOfScope > 0
+          ? `\n${outOfScope} type error(s) are in files you didn't touch this run; those are pre-existing and out of scope -- leave them unless the user asked.`
+          : '';
+        return (
+          'The preview is running, but the TypeScript check found type errors that WILL matter once the code is compiled for production:' +
+          (inScope.length > 0 ? `\n\n${typePreview}` : '') +
+          scopeNote +
+          (inScope.length > 0 ? '\n\nThese are in files you changed this run. Fix them with edit_file/write_file; the preview keeps running meanwhile.' : '')
+        );
+      }
       return 'No build errors   the preview is healthy and running correctly.';
     }
 

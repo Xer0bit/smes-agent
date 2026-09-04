@@ -314,6 +314,17 @@ export interface AgentRunParams {
    * a direct manual push racing this same run.
    */
   agentLockToken?: string;
+  /**
+   * path -> content hash of the revision the run's sandbox was materialized
+   * from (run-start HEAD). Passed to the run-end persist so it can tell files
+   * the run left unchanged apart from files the run actually changed: an
+   * unchanged file whose content a NEWER revision (a mid-run autosave of the
+   * user's own edit) changed must be carried from that revision, not
+   * re-uploaded from the stale sandbox copy -- the whole-tree persist used to
+   * revert exactly that edit. Null/absent (scaffold-seeded sandbox, template
+   * remix, rollback) keeps the legacy whole-tree behavior.
+   */
+  sandboxHeadByPath?: ReadonlyMap<string, string> | null;
 }
 
 export interface AgentRunResult {
@@ -873,17 +884,28 @@ async function _runAgentLoopInner(params: AgentRunParams): Promise<AgentRunResul
   let reconciledClientFiles = existingFiles ?? [];
   if (existingFiles && existingFiles.length > 0 && projectId && supabase) {
     try {
-      const { data: headRev } = await supabase
+      // Newest READABLE manifest-v1 row (10-row lookback), mirroring how the
+      // sandbox materializes and how the client's own loader skips half-written
+      // or legacy rows. Reading strictly the newest row here diverged from the
+      // sandbox when that row was a half-written insert (manifest null) or a
+      // legacy-format revision: the sandbox treated an older readable revision
+      // as HEAD while this reconcile trusted the raw newest row's (possibly
+      // different) path set -- the membership decision disagreed with the very
+      // manifest the run's files came from.
+      const { data: headRows } = await supabase
         .from('revisions')
         .select('generated_files')
         .eq('project_id', projectId)
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const headFiles = (headRev?.generated_files as { files?: Array<{ path?: unknown }> } | null)?.files;
-      const headPaths = Array.isArray(headFiles)
-        ? new Set(headFiles.map((f) => (typeof f.path === 'string' ? f.path : '')).filter(Boolean))
-        : null;
+        .limit(10);
+      let headPaths: Set<string> | null = null;
+      for (const row of headRows ?? []) {
+        const gf = row?.generated_files as { format?: unknown; files?: unknown } | null;
+        if (!gf || typeof gf !== 'object' || gf.format !== 'manifest-v1') continue;
+        if (!Array.isArray(gf.files)) continue;
+        headPaths = new Set(gf.files.map((f) => (typeof (f as { path?: unknown })?.path === 'string' ? (f as { path: string }).path : '')).filter(Boolean));
+        break;
+      }
       const { files, dropped } = reconcileClientFilesToHead(existingFiles, headPaths);
       reconciledClientFiles = files;
       if (dropped.length > 0) {
@@ -1668,7 +1690,17 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // access unconditional instead of tool-call-dependent.
   const secretsBlock = await (async () => {
     if (!projectSecrets || projectSecrets.length === 0) return '';
-    const lines = projectSecrets.map(s => `${s.key_name}=${s.key_value}`).join('\n');
+    // Each key is annotated the way list_secrets annotates: a VITE_ prefix is
+    // the ONLY way a value reaches browser code (import.meta.env.VITE_X); a
+    // non-VITE key exists only in the edge-function runtime (secrets.NAME).
+    // This stops the recurring failure where the agent sees a bare name like
+    // MY_API_KEY in the list, writes import.meta.env.MY_API_KEY or
+    // process.env.MY_API_KEY into FRONTEND code, and the value is silently
+    // undefined at runtime (Vite only exposes VITE_* to the browser; there is
+    // no process.env in generated frontend code).
+    const secretLines = projectSecrets
+      .map(s => `${s.key_name}=${s.key_value}${s.key_name.startsWith('VITE_') ? '' : '   (edge-function only: secrets.' + s.key_name + ')  '}`)
+      .join('\n');
     const hasSb  = projectSecrets.some(s => s.key_name === 'VITE_SUPABASE_URL');
     const hasDb  = projectSecrets.some(s => s.key_name === 'VITE_DB_API_URL');
     const hasEcg = projectSecrets.some(s => s.key_name === 'ECG_PORTAL_TOKEN');
@@ -1797,7 +1829,7 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const noHardcodeRule = '\n\n**NEVER hardcode any secret value from this list as a string literal anywhere in generated code   not even as a fallback/default for a missing env var (e.g. `getEnvVar(\'X\', \'<real value>\')`).** Always reference `import.meta.env.VITE_XXX` / `process.env.XXX` directly. A hardcoded fallback that happens to be a real credential from THIS project can end up copied into a DIFFERENT project by mistake, silently pointing that other project at this one\'s database or auth   this has happened before. If an env var might be missing, fail loudly (throw/log an error) instead of falling back to a real value.' +
       '\n\n**The same rule applies to EcomGear platform URLs.** `api.ecomgear.dev`, `gen.ecomgear.dev`, `preview.ecomgear.app`, and `apps.ecomgear.app` are EcomGear\'s own infrastructure servers   they are NOT part of the user\'s app and must NEVER appear as string literals in generated code, not even as env-var fallbacks like `import.meta.env.X || \'https://api.ecomgear.dev\'`. The hosted database endpoint (`db.ecomgear.app` / `cloud.ecomgear.app`) is only ever reached through `import.meta.env.VITE_DB_API_URL`   never hardcode it either. Never invent placeholder values like `\'dummy\'` for keys. If an integration\'s env var is NOT in the list below, that integration is not configured for this project   do not guess a URL or key; tell the user what needs to be set up instead.';
 
-    return `\n\n# Project Environment Variables\n\nThe following secrets are available as \`import.meta.env.VITE_XXX\` (frontend) or \`process.env.XXX\` (backend). NEVER echo, print, log, or reveal their values in chat responses   treat them as confidential.${noHardcodeRule}${sbNote}${dbNote}${ecgNote}\n\n\`\`\`\n${lines}\n\`\`\``;
+    return `\n\n# Project Environment Variables\n\nSaved secrets for this project are listed below with values. Treat them as confidential: NEVER echo, print, log, or reveal their values in chat responses or in generated code.\n\n**How each secret can be read from generated code (this is the whole rule):**\n- A key that starts with \`VITE_\` is available to FRONTEND code as \`import.meta.env.VITE_X\` (Vite exposes only \`VITE_\`-prefixed names to the browser) AND inside edge functions as \`secrets.VITE_X\`.\n- A key WITHOUT the \`VITE_\` prefix is available ONLY inside edge functions, read with the EXACT saved name: \`secrets.MY_KEY\`, not a shortened guess and not \`secrets.MY_KEY\`-with-VITE added.\n- \`process.env.X\` does NOT exist in generated frontend code, and \`import.meta.env.MY_KEY\` (a non-VITE name) is \`undefined\` in the browser. Do not write either.\n\n**If the user's app needs a custom key in the BROWSER (frontend):** the key must be saved with a \`VITE_\` prefix (e.g. a maps/analytics/payment PUBLISHABLE key stored as \`VITE_GOOGLE_MAPS_KEY\`). If the saved name has no \`VITE_\` prefix, do NOT copy its value into code and do NOT invent a fallback. Ask the user to re-save it with the \`VITE_\` prefix (Settings → Secrets), or save a new \`VITE_\`-named copy of the same value if the value is public and safe to ship to browsers. If the key is server-only (private/secret/token), it must stay non-VITE and be used inside an edge function only.\n\n**If the app has no hosted database, edge functions cannot be invoked** (function calls require the project's database credentials). A non-VITE key then cannot be used by generated code at all -- tell the user that server-only features (and this key) need the hosted database, or that a browser-usable key must be saved with a \`VITE_\` prefix.${noHardcodeRule}${sbNote}${dbNote}${ecgNote}\n\n\`\`\`\n${secretLines}\n\`\`\``;
   })();
 
   // micro: no modeInstruction (MICRO_SYSTEM_PROMPT already embeds directives)
@@ -2009,6 +2041,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
   // Set to true when the timeout handler already emitted a 'done' event.
   // Prevents the route-level catch from emitting a second 'error' SSE after abort.
   let timeoutDoneSent = false;
+  // Set when the timeout handler persisted the salvaged partial progress, so
+  // the abort catch can mark the run 'completed' instead of 'failed' -- the
+  // client was already told the partial work was saved.
+  let timeoutPersistedRevisionId: string | null = null;
 
   const agentTimeoutId = AGENT_TIMEOUT_MS > 0 ? setTimeout(async () => {
     if (abortController.signal.aborted) return;
@@ -2096,6 +2132,37 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         logger.warn('[AgentLoop] Timeout: salvaged files emitted as done event', {
           projectId, userId, fileCount: salvageFiles.length, usedCleanSnapshot: useCleanSnapshot,
         });
+
+        // Persist the salvaged partial progress so HEAD matches what the client
+        // was just told ('done' with these files). The clean-snapshot revert
+        // skips this: it restored the pre-agent state, which already IS the
+        // current HEAD -- persisting would only duplicate it. Without this the
+        // disk-scan branch left the salvaged files only in the client's memory,
+        // so the "Partial progress was saved" summary was false after a reload,
+        // and a reload reverted to HEAD (the recurring "where did my changes
+        // go" failure class). Same base-aware persist the success path uses, so
+        // a mid-run user edit is never reverted by the salvage.
+        if (!useCleanSnapshot && runtimeMode === 'build' && supabase && userId && agentRunId && salvageFiles.length > 0) {
+          try {
+            const persistResult = await persistAgentRevision(
+              projectId, userId, salvageFiles,
+              'Agent timed out; partial progress saved', prompt, params.sandboxHeadByPath,
+            );
+            if (persistResult.ok) {
+              timeoutPersistedRevisionId = persistResult.revisionId ?? null;
+              void linkRevision(agentRunId, persistResult.revisionId!);
+              logger.info('[AgentLoop] Timeout: partial progress persisted', {
+                projectId, revisionId: persistResult.revisionId, fileCount: salvageFiles.length,
+              });
+            } else {
+              logger.warn('[AgentLoop] Timeout: partial progress persist FAILED, HEAD stays at the pre-run state', {
+                projectId, error: persistResult.error,
+              });
+            }
+          } catch (persistErr: any) {
+            logger.warn('[AgentLoop] Timeout: partial progress persist threw', { projectId, error: persistErr?.message });
+          }
+        }
       }
     } catch (salvageErr: any) {
       logger.warn('[AgentLoop] File salvage on timeout failed', {
@@ -4386,6 +4453,13 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     // after the push section resolves (see the text-delta emit below).
     const droppedFiles: string[] = [];
 
+    // True when the repair give-up path reverted the run's whole output back
+    // to the pre-agent state (below). The client must not toast "App updated."
+    // for a run whose changes were all discarded -- the summary streamed
+    // earlier is kept (it says what was attempted) and repair-failed drives
+    // the Auto-fix affordance, but the success toast would contradict both.
+    let revertedToPreAgent = false;
+
     let previewPushOk = false;
     let previewDepsError: string | null = null;
     // Result of the pre-response smoke gate (gap G2), read again by the
@@ -5349,6 +5423,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
             const preAgentFiles = Array.from(preAgentDiskSnapshot.entries()).map(([p, c]) => ({ path: p, content: c }));
             mergedWrites.length = 0;
             preAgentFiles.forEach(f => mergedWrites.push(f));
+            // The run's own output is being discarded in favor of the pre-agent
+            // state; from here on the changes the user asked for are gone, so
+            // the success toast downstream must not fire.
+            revertedToPreAgent = true;
             // Push the clean pre-agent state to the preview service. This is the
             // last line of defense when repair fails   if it silently fails too,
             // the live preview stays broken with nothing telling the user. Retry
@@ -5641,11 +5719,25 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       previewDepsError,
       needsAutoContinue,
       continuationPrompt,
+      // True when every change this run made was reverted to the pre-agent
+      // state (repair gave up). The client suppresses its "App updated." toast
+      // for this run -- repair-failed already escalated, and the summary text
+      // above is caveated.
+      revertedToPreAgent,
     });
 
-    // ── Background: save token usage + npm install (non-blocking) ───────────
-    logger.debug('[AgentLoop] background post-response tasks starting', { projectId, userId, agentRunId, stepCount });
-    void (async () => {
+    // ── Durable post-run commit (awaited) ───────────────────────────────────
+    // The agent_runs 'completed' write and the server-side revision persist
+    // must finish BEFORE _runAgentLoopInner returns, or the route's finally
+    // (lock release, sandbox discard) could outrun them: a following run would
+    // materialize a stale HEAD, and a transient Storage failure at this exact
+    // moment would silently lose a run the user was told was done. 'done' is
+    // already emitted above, so awaiting here never delays what the user sees;
+    // it only keeps the project lock held a few seconds longer. Failures are
+    // logged and swallowed -- the run is already delivered.
+    logger.debug('[AgentLoop] durable post-run commit starting', { projectId, userId, agentRunId, stepCount });
+    try {
+      await (async () => {
       // runTokens is already populated by onStepFinish at this point.
       // Fall back to result.usage only if onStepFinish captured nothing (e.g. non-Anthropic provider).
       let tokensUsed = runTokens.total;
@@ -5747,10 +5839,12 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
         });
       }
 
-      // Update agent_runs with all completion data (status + token count + snapshot_id)
+      // Update agent_runs with all completion data (status + token count + snapshot_id).
+      // Awaited (not fire-and-forget): this row must read 'completed' before the
+      // lock is released, so the watchdog can never mislabel a finished run.
       if (supabase && agentRunId) {
         stopRunHeartbeat();
-        supabase.from('agent_runs').update({
+        await supabase.from('agent_runs').update({
           status: 'completed',
           phase: 'done',
           // The column has existed since 20260417100000 with DEFAULT false and
@@ -5809,11 +5903,30 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
       // dedup-aware uploads at run-end buys a durability guarantee; failures
       // log server-side where they are actually observable.
       if (supabase && userId && doneFilesToWrite.length > 0) {
-        try {
-          const persistResult = await persistAgentRevision(
+        // The durable write gets ONE retry: a transient Storage hiccup at the
+        // exact moment of commit is how a finished run silently loses its
+        // revision. This runs before the lock is released, so retrying is
+        // cheap; it closes the single-attempt gap.
+        const persistWithRetry = async () => {
+          const attempt = () => persistAgentRevision(
             projectId, userId, doneFilesToWrite,
             summary || `Agent run: ${stepCount} step(s)`, prompt,
+            params.sandboxHeadByPath,
           );
+          try {
+            const first = await attempt();
+            if (first.ok) return first;
+            logger.warn('[AgentLoop] revision persist attempt 1 not ok, retrying once', { projectId, userId, error: first.error });
+            await new Promise((resolve) => setTimeout(resolve, 750));
+            return attempt();
+          } catch (attemptErr: any) {
+            logger.warn('[AgentLoop] revision persist attempt 1 threw, retrying once', { projectId, userId, error: attemptErr?.message });
+            await new Promise((resolve) => setTimeout(resolve, 750));
+            return attempt();
+          }
+        };
+        try {
+          const persistResult = await persistWithRetry();
           if (persistResult.ok) {
             void linkRevision(agentRunId, persistResult.revisionId);
             logger.info('[AgentLoop] Revision persisted server-side', {
@@ -5905,7 +6018,14 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
           }
         })();
       }
-    })();
+      })();
+    } catch (postRunErr: any) {
+      // Non-fatal by design: 'done' already went out. Error level on purpose --
+      // this is the last place a lost commit can hide.
+      logger.error('[AgentLoop] durable post-run commit failed', {
+        projectId, userId, agentRunId, error: postRunErr instanceof Error ? postRunErr.message : String(postRunErr),
+      });
+    }
 
     // Semantic cache: only store a fresh, empty-project, first-message BUILD
     // run that actually produced files and didn't get stuck -- that's the one
@@ -5941,7 +6061,10 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
     const isAbort = abortController.signal.aborted || err?.name === 'AbortError';
     if (isAbort) {
       if (abortSignal?.aborted) {
-        logger.warn('[AgentLoop] Aborted due to client disconnect', { projectId, userId, stepCount, durationMs: Date.now() - _innerStartedAtMs });
+        // A client disconnect deliberately does NOT abort a run (runs outlive
+        // their connection); the only route to abortSignal is an explicit
+        // cancel (Stop button, peer-worker cancel relay).
+        logger.warn('[AgentLoop] Aborted by user cancel', { projectId, userId, stepCount, durationMs: Date.now() - _innerStartedAtMs });
       } else {
         logger.warn('[AgentLoop] Aborted due to timeout/cancellation', { projectId, userId, stepCount, durationMs: Date.now() - _innerStartedAtMs });
       }
@@ -5952,10 +6075,16 @@ Conversational, sharp, helpful. Think of yourself as a senior technical co-found
 
       if (supabase && agentRunId) {
         stopRunHeartbeat();
+        // A timeout whose partial progress was persisted delivered a real
+        // outcome (client got 'done' with the files, HEAD has them), so the
+        // run reads 'completed', not 'failed'. Internal aborts here are the
+        // agent timeout; external abortSignal is a user cancel.
+        const isUserCancel = Boolean(abortSignal?.aborted);
+        const partialSavedOnTimeout = !isUserCancel && timeoutPersistedRevisionId != null;
         supabase.from('agent_runs').update({
-          status: 'failed',
+          status: partialSavedOnTimeout ? 'completed' : 'failed',
           phase: 'done',
-          error_message: abortSignal?.aborted ? 'Cancelled: client disconnected' : 'Cancelled: aborted',
+          error_message: isUserCancel ? 'Cancelled by user' : partialSavedOnTimeout ? null : 'Agent timed out',
           completed_at: new Date().toISOString(),
           is_internal: isInternalRun,
           estimated_cost_usd: runCostUsd,

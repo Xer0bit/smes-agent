@@ -90,8 +90,9 @@ export const readFileTool: ToolDefinition<z.infer<typeof schema>> = {
           const head = allLines.slice(0, TRUNC_HEAD_LINES).join('\n');
           return (
             `[TRUNCATED VIEW] ${args.path} is ${allLines.length} lines; showing lines 1-${TRUNC_HEAD_LINES} + outline.\n` +
-            `To work efficiently: use grep("<pattern>") or find_symbol_usages to locate the exact spot, then ` +
-            `read_file with start_line/end_line for just that region. Call read_file({path, full: true}) ONLY if you ` +
+            `To work efficiently: grep("<pattern>") for exact text, search_codebase("<what it does, in plain words>") ` +
+            `to find code by MEANING (returns the file plus the matching lines), or find_symbol_usages for a symbol -- ` +
+            `then read_file with start_line/end_line for just that region. Call read_file({path, full: true}) ONLY if you ` +
             `genuinely need the entire file.\n\n${head}\n${outline}`
           );
         }

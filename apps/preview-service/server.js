@@ -458,7 +458,13 @@ async function closeProjectServer(projectId, reason = 'cleanup') {
 // is only rejected if a lock is currently held by someone else (no token, or
 // a mismatched one). No lock held at all → always allowed, so direct/manual
 // pushes work exactly as before when nothing is running.
-const AGENT_LOCK_STALE_MS = 15 * 60_000;
+// Must match AGENT_LOCK_STALE_MS in api-gateway/src/services/agentLockState.ts
+// (3 min) — the api-gateway heartbeats the row every 30s and reclaims stale
+// locks at 3 min, so a longer bound here would keep rejecting manual pushes
+// for up to 15 min after a crashed run that api-gateway already considers
+// free. A live run's row is refreshed every 30s, so 3 min is safely above the
+// heartbeat and never rejects a genuine run's own pushes.
+const AGENT_LOCK_STALE_MS = 3 * 60_000;
 async function checkAgentLock(projectId, providedToken) {
     if (!SUPABASE_SERVICE_KEY) return { ok: true }; // fail open   locking unavailable, don't block all pushes
     try {
